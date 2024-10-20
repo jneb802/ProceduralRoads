@@ -101,33 +101,12 @@ public class RoadGenerator
             {
                 Vector2 roadPoint = road.p0 + direction * i + perpendicular * 0;
                 
-                ModifyTerrainForRoadOld(roadPoint, road.widthMin);
+                ModifyTerrainForRoad(roadPoint, road.widthMin);
             }
         }
     }
-
-    private static void ModifyTerrainForRoad(Vector2 roadPoint, float width)
-    {
-        Debug.Log("Modifying terrain at point " + roadPoint);
-        
-        Vector3 roadPositionTemp = new Vector3(roadPoint.x, 2000, roadPoint.y);
-        Vector3 roadPosition = new Vector3(roadPoint.x, ZoneSystem.instance.GetGroundHeight(roadPositionTemp), roadPoint.y);
-        
-        GameObject terrainModifierObj = new GameObject("RoadTerrainModifier");
-        TerrainModifier terrainModifier = terrainModifierObj.AddComponent<TerrainModifier>();
-        
-        terrainModifier.m_level = false;
-        terrainModifier.m_levelRadius = width;
-        terrainModifier.m_paintType = TerrainModifier.PaintType.Paved;
-        terrainModifier.m_paintRadius = width;
-        terrainModifier.m_smooth = true;
-        terrainModifier.m_smoothRadius = width + 3;
-        terrainModifier.m_smoothPower = Random.Range(4, 8);
-        
-        Object.Instantiate(terrainModifierObj, roadPosition, new Quaternion(0, 0, 0, 0));
-    }
     
-    private static void ModifyTerrainForRoadOld(Vector2 roadPoint, float width)
+    private static void ModifyTerrainForRoad(Vector2 roadPoint, float width)
     {
         Debug.Log("Modifying terrain at point " + roadPoint);
         

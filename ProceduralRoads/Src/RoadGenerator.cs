@@ -140,4 +140,15 @@ public class RoadGenerator
         
         terrainComp.DoOperation(roadPosition, modifierSettings);
     }
+    
+    public class Road
+    {
+        public Vector2i p0;
+        public Vector2i p1;
+        public Vector2i center;
+        public float widthMin;
+        public float widthMax;
+        public float curveWidth;
+    }
+    
 }

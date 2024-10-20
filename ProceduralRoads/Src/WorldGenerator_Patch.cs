@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace ProceduralRoads;
 
-public class GenerateWorld_Patch
+public class WorldGenerator_Patch
 {
     [HarmonyPatch(typeof(WorldGenerator), "Pregenerate")]
     public class WorldGeneratorPatch

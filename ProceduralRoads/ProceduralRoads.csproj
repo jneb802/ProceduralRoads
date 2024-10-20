@@ -122,7 +122,8 @@
     <ItemGroup>
         <Compile Include="Managers\LocalizationManager.cs"/>
         <Compile Include="Properties\AssemblyInfo.cs"/>
-        <Compile Include="Src\GenerateWorld_Patch.cs" />
+        <Compile Include="Src\WorldGenerator_Patch.cs" />
+        <Compile Include="Src\ZoneSystem_Patch.cs" />
         <Compile Include="Src\Plugin.cs" />
         <Compile Include="Src\RoadGenerator.cs" />
         <Compile Include="VersionHandshake.cs"/>

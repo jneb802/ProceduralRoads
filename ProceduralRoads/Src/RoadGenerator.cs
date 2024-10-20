@@ -9,7 +9,7 @@ namespace ProceduralRoads;
 public class RoadGenerator
 {
     public static int roadCount = 100;
-    public static List<WorldGenerator.River> roads = new List<WorldGenerator.River>();
+    public static List<RoadGenerator.Road> roads = new List<RoadGenerator.Road>();
     public static bool roadsRendered = false;
     
     public static void PlaceRoads(WorldGenerator worldGenerator)
@@ -25,15 +25,14 @@ public class RoadGenerator
             {
                 Debug.Log("Road " + i + 1 + " Start Point: " + start);
                 
-                WorldGenerator.River road = new WorldGenerator.River
+                RoadGenerator.Road road = new RoadGenerator.Road
                 {
                     p0 = start,
                     p1 = end,
                     center = (start + end) * 0.5f,
                     widthMax = 5,
                     widthMin = Random.Range(2,5),
-                    curveWidth = 0f,
-                    curveWavelength = 0f  // Less curvature for roads
+                    curveWidth = 5
                 };
 
                 roads.Add(road);
@@ -86,7 +85,7 @@ public class RoadGenerator
         return false;
     }
 
-    public static void RenderRoads(List<WorldGenerator.River> roads)
+    public static void RenderRoads(List<RoadGenerator.Road> roads)
     {
         foreach (var road in roads)
         {
@@ -135,7 +134,8 @@ public class RoadGenerator
             m_smoothPower = Random.Range(4,6),
             m_paintCleared = true,
             m_paintType = TerrainModifier.PaintType.Paved,
-            m_paintRadius = width
+            m_paintRadius = width,
+            m_levelOffset = new Vector3(roadPoint.x, ZoneSystem.instance.GetGroundHeight(roadPositionTemp), roadPoint.y).y
         };
         
         terrainComp.DoOperation(roadPosition, modifierSettings);

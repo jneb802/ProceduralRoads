@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 
@@ -5,18 +6,18 @@ namespace ProceduralRoads;
 
 public class ZoneSystem_Patch
 {
-    [HarmonyPatch(typeof(ZoneSystem), "PlaceLocations")]
-    public class ZoneSystem_PostFix
+    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.SpawnZone))]
+    public static class ZoneSystem_SpawnZone_Patch
     {
-        // Patch the method to inject road generation after the world has been generated
-        [HarmonyPostfix]
-        public static void Postfix(ZoneSystem __instance)
+        private static void Postfix(ZoneSystem __instance, ref Vector2i zoneID)
         {
-            if (!RoadGenerator.roadsRendered)
+            List<RoadGenerator.RoadPoint> zoneRoadPoints = RoadGenerator.GetRoadPointsInZone(zoneID);
+            foreach (RoadGenerator.RoadPoint roadPoint in zoneRoadPoints)
             {
-                RoadGenerator.RenderRoads(RoadGenerator.roads);
-                RoadGenerator.roadsRendered = true;
+                RoadGenerator.RenderRoadPoint(roadPoint);
             }
+            
+            
         }
     }
 }

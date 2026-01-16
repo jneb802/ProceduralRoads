@@ -7,8 +7,6 @@ using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 using JetBrains.Annotations;
-using LocalizationManager;
-using ServerSync;
 using UnityEngine;
 
 namespace ProceduralRoads
@@ -27,9 +25,6 @@ namespace ProceduralRoads
 
         public static readonly ManualLogSource ProceduralRoadsLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
 
-        private static readonly ConfigSync ConfigSync = new(ModGUID)
-            { DisplayName = ModName, CurrentVersion = ModVersion, MinimumRequiredVersion = ModVersion };
-
         // Location Manager variables
         public Texture2D tex = null!;
 
@@ -45,15 +40,8 @@ namespace ProceduralRoads
 
         public void Awake()
         {
-            // Uncomment the line below to use the LocalizationManager for localizing your mod.
-            //Localizer.Load(); // Use this to initialize the LocalizationManager (for more information on LocalizationManager, see the LocalizationManager documentation https://github.com/blaxxun-boop/LocalizationManager#example-project).
             bool saveOnSet = Config.SaveOnConfigSet;
-            Config.SaveOnConfigSet =
-                false; // This and the variable above are used to prevent the config from saving on startup for each config entry. This is speeds up the startup process.
-
-            _serverConfigLocked = config("1 - General", "Lock Configuration", Toggle.On,
-                "If on, the configuration is locked and can be changed by server admins only.");
-            _ = ConfigSync.AddLockingConfigEntry(_serverConfigLocked);
+            Config.SaveOnConfigSet = false;
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
@@ -100,29 +88,14 @@ namespace ProceduralRoads
 
         #region ConfigOptions
 
-        private static ConfigEntry<Toggle> _serverConfigLocked = null!;
-
-        private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description,
-            bool synchronizedSetting = true)
+        private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description)
         {
-            ConfigDescription extendedDescription =
-                new(
-                    description.Description +
-                    (synchronizedSetting ? " [Synced with Server]" : " [Not Synced with Server]"),
-                    description.AcceptableValues, description.Tags);
-            ConfigEntry<T> configEntry = Config.Bind(group, name, value, extendedDescription);
-            //var configEntry = Config.Bind(group, name, value, description);
-
-            SyncedConfigEntry<T> syncedConfigEntry = ConfigSync.AddConfigEntry(configEntry);
-            syncedConfigEntry.SynchronizedConfig = synchronizedSetting;
-
-            return configEntry;
+            return Config.Bind(group, name, value, description);
         }
 
-        private ConfigEntry<T> config<T>(string group, string name, T value, string description,
-            bool synchronizedSetting = true)
+        private ConfigEntry<T> config<T>(string group, string name, T value, string description)
         {
-            return config(group, name, value, new ConfigDescription(description), synchronizedSetting);
+            return config(group, name, value, new ConfigDescription(description));
         }
 
         private class ConfigurationManagerAttributes

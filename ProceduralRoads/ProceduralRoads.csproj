@@ -31,26 +31,7 @@
 
     <!-- NuGet Packages -->
     <ItemGroup>
-        <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.18.2"/>
         <PackageReference Include="JotunnLib" Version="2.16.2"/>
-        <PackageReference Include="Mono.Cecil" Version="0.11.5"/>
-        <PackageReference Include="MonoMod" Version="22.7.31.1"/>
-        <PackageReference Include="MonoMod.RuntimeDetour" Version="25.1.0-prerelease.2"/>
-        <PackageReference Include="MonoMod.Utils" Version="25.0.3"/>
-        <PackageReference Include="YamlDotNet" Version="13.2.0"/>
-    </ItemGroup>
-
-    <!-- Local DLL References -->
-    <ItemGroup>
-        <Reference Include="ServerSync">
-            <HintPath>Libs/ServerSync.dll</HintPath>
-            <Private>true</Private>
-        </Reference>
-    </ItemGroup>
-
-    <!-- Embedded Resources -->
-    <ItemGroup>
-        <EmbeddedResource Include="translations/English.yml"/>
     </ItemGroup>
 
     <!-- Additional Content Files to Include in Project -->
@@ -58,19 +39,13 @@
         <None Include="App.config"/>
         <None Include="assets/**" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="icons/**"/>
-        <None Include="Libs/**" CopyToOutputDirectory="PreserveNewest"/>
         <None Include="Thunderstore/**"/>
         <None Include="*.md"/>
         <None Include="*.ps1"/>
     </ItemGroup>
 
     <!-- Build Targets -->
-    <UsingTask AssemblyFile="KeyManager.dll" TaskName="KeyManager.Seal" Condition="'$(AfterTargets)' == 'KeyManager'"/>
-    <Target Name="KeyManager" AfterTargets="ILRepack" Condition="'$(AfterTargets)' == 'KeyManager'">
-        <Seal DLL="$(TargetPath)"/>
-    </Target>
-    
-    <Target Name="GetAssemblyVersion" AfterTargets="$(AfterTargets)">
+    <Target Name="GetAssemblyVersion" AfterTargets="Build">
         <GetAssemblyIdentity AssemblyFiles="$(TargetPath)">
             <Output TaskParameter="Assemblies" ItemName="Targets"/>
         </GetAssemblyIdentity>

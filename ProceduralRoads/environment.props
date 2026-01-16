@@ -40,14 +40,6 @@
         <GamePath>$(VALHEIM_INSTALL)</GamePath>
     </PropertyGroup>
 
-    <PropertyGroup Condition="$(OS) == 'Windows_NT'">
-        <AfterTargets>ILRepacker</AfterTargets>
-    </PropertyGroup>
-    
-    <PropertyGroup Condition="$(OS) == 'Unix' OR $(OS) == 'OSX'">
-        <AfterTargets>Build</AfterTargets>
-    </PropertyGroup>
-
     <!-- BepInEx and Harmony -->
     <ItemGroup>
         <Reference Include="BepInEx">

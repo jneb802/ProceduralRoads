@@ -97,7 +97,7 @@ public class RoadGenerator
             
             Vector3 roadPointVector3 = new Vector3(Mathf.RoundToInt(roadPoint.x),0,Mathf.RoundToInt(roadPoint.y));
             
-            Vector2i zoneID = ZoneSystem.instance.GetZone(roadPointVector3);
+            Vector2i zoneID = ZoneSystem.GetZone(roadPointVector3);
             
             roadPoints.Add(new RoadPoint
             {

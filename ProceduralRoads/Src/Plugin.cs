@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -43,6 +44,7 @@ namespace ProceduralRoads
         public static ConfigEntry<int> MaxRoadsFromSpawn = null!;
         public static ConfigEntry<float> MaxRoadLength = null!;
         public static ConfigEntry<bool> EnableRoads = null!;
+        public static ConfigEntry<string> CustomLocations = null!;
 
         public void Awake()
         {
@@ -61,6 +63,11 @@ namespace ProceduralRoads
             MaxRoadLength = Config.Bind("Roads", "MaxRoadLength", 3000f,
                 new ConfigDescription("Maximum road length in meters",
                     new AcceptableValueRange<float>(500f, 8000f)));
+
+            CustomLocations = Config.Bind("Locations", "CustomLocations", "",
+                "Comma-separated list of location names to include in road generation. " +
+                "Use this for locations added by Expand World Data or other mods. " +
+                "Example: Runestone_Boars,Runestone_Greydwarfs,MerchantCamp");
 
             // Apply config to road generator
             ApplyConfiguration();
@@ -83,6 +90,31 @@ namespace ProceduralRoads
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.MaxRoadsFromSpawn = MaxRoadsFromSpawn.Value;
             RoadNetworkGenerator.MaxRoadLength = MaxRoadLength.Value;
+            // CustomLocations is parsed at generation time to preserve API registrations
+        }
+
+        /// <summary>
+        /// Parse the CustomLocations config string into a list of location names.
+        /// Called at generation time to merge with API-registered locations.
+        /// </summary>
+        public static HashSet<string> GetConfigLocationNames()
+        {
+            var result = new HashSet<string>();
+            
+            if (string.IsNullOrWhiteSpace(CustomLocations.Value))
+                return result;
+
+            string[] locationNames = CustomLocations.Value.Split(',');
+            foreach (string name in locationNames)
+            {
+                string trimmed = name.Trim();
+                if (!string.IsNullOrEmpty(trimmed))
+                {
+                    result.Add(trimmed);
+                }
+            }
+            
+            return result;
         }
 
         private void OnDestroy()

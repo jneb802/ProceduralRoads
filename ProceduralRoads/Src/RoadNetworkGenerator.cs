@@ -20,6 +20,54 @@ public static class RoadNetworkGenerator
         "SeekerQueen",
     };
 
+    /// <summary>
+    /// Location names registered via API or config for road generation.
+    /// </summary>
+    private static readonly HashSet<string> RegisteredLocationNames = new HashSet<string>();
+
+    #region Location Registration API
+
+    /// <summary>
+    /// Register a location name for road generation.
+    /// Call this from other mods to include custom locations in the road network.
+    /// </summary>
+    public static void RegisterLocation(string locationName)
+    {
+        if (string.IsNullOrWhiteSpace(locationName))
+            return;
+        
+        string trimmed = locationName.Trim();
+        if (RegisteredLocationNames.Add(trimmed))
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Registered location for roads: {trimmed}");
+        }
+    }
+
+    /// <summary>
+    /// Unregister a location name from road generation.
+    /// </summary>
+    public static void UnregisterLocation(string locationName)
+    {
+        if (string.IsNullOrWhiteSpace(locationName))
+            return;
+        
+        string trimmed = locationName.Trim();
+        if (RegisteredLocationNames.Remove(trimmed))
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Unregistered location from roads: {trimmed}");
+        }
+    }
+
+    /// <summary>
+    /// Get all currently registered location names.
+    /// </summary>
+    public static IReadOnlyCollection<string> GetRegisteredLocations()
+    {
+        return RegisteredLocationNames;
+    }
+
+    #endregion
+
     public static float RoadWidth = 4f;
     public static int MaxRoadsFromSpawn = 5;
     public static float MaxRoadLength = 3000f;
@@ -80,6 +128,7 @@ public static class RoadNetworkGenerator
 
         // === Call different generation methods here ===
         GenerateBossRoads(locations.Value);
+        GenerateLocationRoads(locations.Value);
         
         // Future: Add more generation methods
         // GenerateVillageRoads(locations.Value);
@@ -278,6 +327,56 @@ public static class RoadNetworkGenerator
             currentRadius = boss.radius;
             currentName = bossName;
         }
+    }
+
+    /// <summary>
+    /// Generates roads to custom locations registered via API or config.
+    /// Connection strategy is pending future implementation.
+    /// </summary>
+    private static void GenerateLocationRoads(LocationData locations)
+    {
+        // Merge API-registered locations with config locations
+        var allRegistered = new HashSet<string>(RegisteredLocationNames);
+        foreach (var configLocation in ProceduralRoadsPlugin.GetConfigLocationNames())
+        {
+            allRegistered.Add(configLocation);
+        }
+
+        if (allRegistered.Count == 0)
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No custom locations registered for road generation");
+            return;
+        }
+
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Registered location names: [{string.Join(", ", allRegistered)}]");
+
+        // Find matching locations in the world
+        var matchedLocations = new List<(string name, UnityEngine.Vector3 position, float radius)>();
+        foreach (var loc in locations.AllLocations)
+        {
+            if (allRegistered.Contains(loc.name))
+            {
+                matchedLocations.Add(loc);
+            }
+        }
+
+        if (matchedLocations.Count == 0)
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+                $"Registered locations not found in world: {string.Join(", ", allRegistered)}");
+            return;
+        }
+
+        // Log summary: count per location type
+        var countsByType = matchedLocations.GroupBy(l => l.name)
+            .Select(g => $"{g.Key}({g.Count()})")
+            .ToArray();
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+            $"Custom locations: {string.Join(", ", countsByType)}");
+
+        // TODO: Connection strategy - implement road connections between locations
+        // This is intentionally left as a stub. The connection logic (how to string
+        // locations together) will be implemented separately as its own module.
     }
 
     #endregion

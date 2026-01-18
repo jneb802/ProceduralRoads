@@ -227,74 +227,56 @@ public static class RoadNetworkGenerator
 
     #region Generation Methods (Add new methods here)
 
+    // Boss progression order (game progression chain)
+    private static readonly string[] BossProgressionOrder = new[]
+    {
+        "Eikthyrnir",   // Meadows
+        "GDKing",       // Black Forest
+        "Bonemass",     // Swamp
+        "Dragonqueen",  // Mountain
+        "GoblinKing",   // Plains
+        "SeekerQueen",  // Mistlands
+    };
+
     /// <summary>
-    /// Generates roads from spawn to boss locations, plus inter-boss connections.
+    /// Generates roads following boss progression:
+    /// StartTemple -> Eikthyrnir -> GDKing -> Bonemass -> Dragonqueen -> GoblinKing -> SeekerQueen
     /// </summary>
     private static void GenerateBossRoads(LocationData locations)
     {
-        // Sort bosses by distance from spawn
-        var sortedBosses = locations.BossLocations
-            .OrderBy(b => Vector3.Distance(b.position, locations.SpawnPoint))
-            .ToList();
-
-        // Connect spawn to nearby bosses
-        int roadsFromSpawn = 0;
-        foreach (var boss in sortedBosses)
+        // Build a lookup for boss locations by name
+        var bossLookup = new Dictionary<string, (string name, Vector3 position, float radius)>();
+        foreach (var boss in locations.BossLocations)
         {
-            if (roadsFromSpawn >= MaxRoadsFromSpawn)
-                break;
+            bossLookup[boss.name] = boss;
+        }
 
-            float distance = Vector3.Distance(boss.position, locations.SpawnPoint);
-            if (distance > MaxRoadLength)
+        // Start from spawn point
+        Vector3 currentPos = locations.SpawnPoint;
+        float currentRadius = locations.SpawnRadius;
+        string currentName = "StartTemple";
+
+        // Connect through the progression chain
+        foreach (string bossName in BossProgressionOrder)
+        {
+            if (!bossLookup.TryGetValue(bossName, out var boss))
             {
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Skipping {boss.name} - too far ({distance:F0}m)");
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Boss {bossName} not found in world, skipping");
                 continue;
             }
 
-            bool success = GenerateRoad(
-                locations.SpawnPoint, locations.SpawnRadius,
+            float distance = Vector3.Distance(currentPos, boss.position);
+
+            GenerateRoad(
+                currentPos, currentRadius,
                 boss.position, boss.radius,
                 RoadWidth,
-                $"Spawn -> {boss.name} ({distance:F0}m)");
+                $"{currentName} -> {bossName} ({distance:F0}m)");
 
-            if (success)
-                roadsFromSpawn++;
-        }
-
-        // Connect early-game bosses to each other
-        GenerateInterBossRoads(sortedBosses);
-    }
-
-    /// <summary>
-    /// Generates roads connecting early-game bosses to each other.
-    /// </summary>
-    private static void GenerateInterBossRoads(List<(string name, Vector3 position, float radius)> bosses)
-    {
-        int maxAdditionalRoads = 3;
-        int additionalRoads = 0;
-
-        var earlyBosses = bosses
-            .Where(b => b.name == "Eikthyrnir" || b.name == "GDKing" || b.name == "Bonemass")
-            .ToList();
-
-        for (int i = 0; i < earlyBosses.Count && additionalRoads < maxAdditionalRoads; i++)
-        {
-            for (int j = i + 1; j < earlyBosses.Count && additionalRoads < maxAdditionalRoads; j++)
-            {
-                float distance = Vector3.Distance(earlyBosses[i].position, earlyBosses[j].position);
-
-                if (distance > MaxRoadLength * 0.7f)
-                    continue;
-
-                bool success = GenerateRoad(
-                    earlyBosses[i].position, earlyBosses[i].radius,
-                    earlyBosses[j].position, earlyBosses[j].radius,
-                    RoadWidth * 0.8f,
-                    $"{earlyBosses[i].name} -> {earlyBosses[j].name}");
-
-                if (success)
-                    additionalRoads++;
-            }
+            // Move to this boss for the next connection
+            currentPos = boss.position;
+            currentRadius = boss.radius;
+            currentName = bossName;
         }
     }
 

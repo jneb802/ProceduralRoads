@@ -66,6 +66,10 @@
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.UI.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <Reference Include="UnityEngine.UIModule">
+            <HintPath>$(VALHEIM_MANAGED)/UnityEngine.UIModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="UnityEngine.AssetBundleModule">
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.AssetBundleModule.dll</HintPath>
             <Private>false</Private>

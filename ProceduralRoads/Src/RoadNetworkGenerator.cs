@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ProceduralRoads;
 
@@ -118,12 +119,22 @@ public static class RoadNetworkGenerator
                 continue;
             }
 
-            var (startEdge, endEdge) = CalculateRoadEndpoints(spawnPoint.Value, spawnRadius, dest.position, dest.radius);
+            Vector2 startCenter = new Vector2(spawnPoint.Value.x, spawnPoint.Value.z);
+            Vector2 endCenter = new Vector2(dest.position.x, dest.position.z);
 
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Finding path to {dest.name} at distance {distance:F0}m (spawn radius: {spawnRadius:F1}m, dest radius: {dest.radius:F1}m)...");
 
-            List<Vector2> path = pathfinder.FindPath(startEdge, endEdge);
+            List<Vector2> path = pathfinder.FindPath(startCenter, endCenter);
+            
+            // Attempt to keep UI responsive during generation
+            UnityEngine.Canvas.ForceUpdateCanvases();
+
+            if (path != null && path.Count >= 2)
+            {
+                // Trim path to stop at location radii
+                path = TrimPathToRadii(path, startCenter, spawnRadius, endCenter, dest.radius);
+            }
 
             if (path != null && path.Count >= 2)
             {
@@ -185,11 +196,15 @@ public static class RoadNetworkGenerator
                 if (distance > MaxRoadLength * 0.7f)
                     continue;
 
-                var (edge1, edge2) = CalculateRoadEndpoints(
-                    bossAltars[i].position, bossAltars[i].radius,
-                    bossAltars[j].position, bossAltars[j].radius);
+                Vector2 center1 = new Vector2(bossAltars[i].position.x, bossAltars[i].position.z);
+                Vector2 center2 = new Vector2(bossAltars[j].position.x, bossAltars[j].position.z);
 
-                List<Vector2> path = pathfinder.FindPath(edge1, edge2);
+                List<Vector2> path = pathfinder.FindPath(center1, center2);
+
+                if (path != null && path.Count >= 2)
+                {
+                    path = TrimPathToRadii(path, center1, bossAltars[i].radius, center2, bossAltars[j].radius);
+                }
 
                 if (path != null && path.Count >= 2)
                 {
@@ -209,11 +224,75 @@ public static class RoadNetworkGenerator
         RoadSpatialGrid.Clear();
     }
 
-    private static (Vector2 start, Vector2 end) CalculateRoadEndpoints(Vector3 pos1, float radius1, Vector3 pos2, float radius2)
+    /// <summary>
+    /// Trims a path so it stops at the exterior radius of both endpoints.
+    /// This ensures roads don't cut through locations regardless of approach direction.
+    /// </summary>
+    private static List<Vector2>? TrimPathToRadii(List<Vector2> path, Vector2 startCenter, float startRadius, Vector2 endCenter, float endRadius)
     {
-        Vector2 center1 = new Vector2(pos1.x, pos1.z);
-        Vector2 center2 = new Vector2(pos2.x, pos2.z);
-        Vector2 direction = (center2 - center1).normalized;
-        return (center1 + direction * radius1, center2 - direction * radius2);
+        if (path == null || path.Count < 2)
+            return null;
+
+        // Trim from start: find first point outside start radius
+        int startIndex = 0;
+        float startRadiusSq = startRadius * startRadius;
+        for (int i = 0; i < path.Count; i++)
+        {
+            if ((path[i] - startCenter).sqrMagnitude > startRadiusSq)
+            {
+                startIndex = i;
+                break;
+            }
+        }
+
+        // Trim from end: find last point outside end radius
+        int endIndex = path.Count - 1;
+        float endRadiusSq = endRadius * endRadius;
+        for (int i = path.Count - 1; i >= 0; i--)
+        {
+            if ((path[i] - endCenter).sqrMagnitude > endRadiusSq)
+            {
+                endIndex = i;
+                break;
+            }
+        }
+
+        // Validate we have enough path remaining
+        if (endIndex <= startIndex)
+            return null;
+
+        // Extract the trimmed portion
+        var trimmedPath = new List<Vector2>();
+        
+        // Add edge point at start radius if we trimmed anything
+        if (startIndex > 0 && startIndex < path.Count)
+        {
+            Vector2 edgePoint = CalculateRadiusIntersection(path[startIndex], startCenter, startRadius);
+            trimmedPath.Add(edgePoint);
+        }
+        
+        // Add all points between start and end indices
+        for (int i = startIndex; i <= endIndex; i++)
+        {
+            trimmedPath.Add(path[i]);
+        }
+        
+        // Add edge point at end radius if we trimmed anything
+        if (endIndex < path.Count - 1 && endIndex >= 0)
+        {
+            Vector2 edgePoint = CalculateRadiusIntersection(path[endIndex], endCenter, endRadius);
+            trimmedPath.Add(edgePoint);
+        }
+
+        return trimmedPath.Count >= 2 ? trimmedPath : null;
+    }
+
+    /// <summary>
+    /// Calculates the point on the radius circle in the direction from center to the given point.
+    /// </summary>
+    private static Vector2 CalculateRadiusIntersection(Vector2 outsidePoint, Vector2 center, float radius)
+    {
+        Vector2 direction = (outsidePoint - center).normalized;
+        return center + direction * radius;
     }
 }

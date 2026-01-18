@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -38,20 +38,51 @@ namespace ProceduralRoads
             Off = 0
         }
 
+        // Configuration entries
+        public static ConfigEntry<float> RoadWidth = null!;
+        public static ConfigEntry<int> MaxRoadsFromSpawn = null!;
+        public static ConfigEntry<float> MaxRoadLength = null!;
+        public static ConfigEntry<bool> EnableRoads = null!;
+
         public void Awake()
         {
             bool saveOnSet = Config.SaveOnConfigSet;
             Config.SaveOnConfigSet = false;
 
+            // Initialize configuration
+            EnableRoads = Config.Bind("General", "EnableRoads", true,
+                "Enable procedural road generation");
+            RoadWidth = Config.Bind("Roads", "RoadWidth", 4f,
+                new ConfigDescription("Width of generated roads in meters", 
+                    new AcceptableValueRange<float>(2f, 10f)));
+            MaxRoadsFromSpawn = Config.Bind("Roads", "MaxRoadsFromSpawn", 5,
+                new ConfigDescription("Maximum number of roads to generate from spawn point",
+                    new AcceptableValueRange<int>(1, 10)));
+            MaxRoadLength = Config.Bind("Roads", "MaxRoadLength", 3000f,
+                new ConfigDescription("Maximum road length in meters",
+                    new AcceptableValueRange<float>(500f, 8000f)));
+
+            // Apply config to road generator
+            ApplyConfiguration();
+
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
             SetupWatcher();
+
+            ProceduralRoadsLogger.LogInfo($"{ModName} v{ModVersion} loaded - Procedural roads enabled");
 
             if (saveOnSet)
             {
                 Config.SaveOnConfigSet = saveOnSet;
                 Config.Save();
             }
+        }
+
+        private static void ApplyConfiguration()
+        {
+            RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
+            RoadNetworkGenerator.MaxRoadsFromSpawn = MaxRoadsFromSpawn.Value;
+            RoadNetworkGenerator.MaxRoadLength = MaxRoadLength.Value;
         }
 
         private void OnDestroy()
@@ -77,6 +108,7 @@ namespace ProceduralRoads
             {
                 ProceduralRoadsLogger.LogDebug("ReadConfigValues called");
                 Config.Reload();
+                ApplyConfiguration();
             }
             catch
             {

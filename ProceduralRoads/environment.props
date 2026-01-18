@@ -114,6 +114,10 @@
             <HintPath>$(PUBLICIZED_PATH)/assembly_utils_publicized.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <Reference Include="SoftReferenceableAssets">
+            <HintPath>$(PUBLICIZED_PATH)/SoftReferenceableAssets_publicized.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
     </ItemGroup>
 
 </Project>

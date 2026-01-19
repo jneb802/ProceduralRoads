@@ -24,6 +24,66 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | RoadWidth | 4 | Road width in meters (2-10) |
 | MaxRoadsFromSpawn | 5 | Number of roads from spawn (1-10) |
 | MaxRoadLength | 3000 | Maximum road length in meters (500-8000) |
+| CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
+
+### Custom Locations via Config
+
+Use the `CustomLocations` setting to add locations from other mods (e.g., Expand World Data):
+
+```
+CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp
+```
+
+## API for Mod Authors
+
+Other mods can register locations for road generation programmatically.
+
+### Direct Reference (if embedding or referencing the DLL)
+
+```csharp
+using ProceduralRoads;
+
+// Register a location
+RoadNetworkGenerator.RegisterLocation("MyCustomLocation");
+
+// Unregister if needed
+RoadNetworkGenerator.UnregisterLocation("MyCustomLocation");
+
+// Get all registered locations
+IReadOnlyCollection<string> locations = RoadNetworkGenerator.GetRegisteredLocations();
+```
+
+### Reflection (soft dependency, no DLL reference required)
+
+```csharp
+private static void RegisterRoadLocation(string locationName)
+{
+    var assembly = AppDomain.CurrentDomain.GetAssemblies()
+        .FirstOrDefault(a => a.GetName().Name == "ProceduralRoads");
+
+    if (assembly == null) return;
+
+    var generatorType = assembly.GetType("ProceduralRoads.RoadNetworkGenerator");
+    var method = generatorType?.GetMethod("RegisterLocation", 
+        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+
+    method?.Invoke(null, new object[] { locationName });
+}
+```
+
+### Available API Methods
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `RegisterLocation` | `void RegisterLocation(string locationName)` | Add a location to road generation |
+| `UnregisterLocation` | `void UnregisterLocation(string locationName)` | Remove a location from road generation |
+| `GetRegisteredLocations` | `IReadOnlyCollection<string> GetRegisteredLocations()` | Get all registered location names |
+
+### Notes
+
+- Register locations during mod initialization (Awake/Start)
+- Location names must match the prefab name exactly (e.g., `Runestone_Boars`, not `Runestone Boars`)
+- Both API registrations and config entries are merged at generation time
 
 ## License
 

@@ -11,7 +11,7 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadNetworkGenerator
 {
-    private static ManualLogSource Log => Log;
+    private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
     
     private static readonly HashSet<string> BossLocationNames = new HashSet<string>
     {

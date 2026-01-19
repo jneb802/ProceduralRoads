@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using HarmonyLib;
 using UnityEngine;
 
@@ -13,6 +14,17 @@ public static class ZoneSystem_Patch
         new Dictionary<Vector2i, List<ZoneSystem.ClearArea>>();
     
     private static int s_coordLogCount = 0;
+    
+    // Performance timing
+    private static readonly Stopwatch s_zoneTimer = new Stopwatch();
+    private static int s_timedZoneCount = 0;
+    private static double s_totalZoneTimeMs = 0;
+    private static double s_maxZoneTimeMs = 0;
+    private const int TimingLogInterval = 10; // Log summary every N zones
+    
+    // Zone caching - skip already-processed zones
+    private static int s_skippedZoneCount = 0;
+    private static readonly int s_roadVersionHash = "ProceduralRoads_RoadVersion".GetStableHashCode();
     
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))]
     public static class ZoneSystem_Start_Patch
@@ -100,9 +112,58 @@ public static class ZoneSystem_Patch
             if (roadPoints.Count == 0)
                 return;
 
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Applying {roadPoints.Count} road points in zone {zoneID}");
+            // Check if this zone was already processed with the current road network version
+            if (IsZoneAlreadyProcessed(zoneID))
+            {
+                s_skippedZoneCount++;
+                if (s_skippedZoneCount <= 5 || s_skippedZoneCount % 20 == 0)
+                {
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                        $"Zone {zoneID}: skipped (already processed), total skipped: {s_skippedZoneCount}");
+                }
+                return;
+            }
+
+            s_zoneTimer.Restart();
+            
             ApplyRoadTerrainMods(zoneID, roadPoints);
+            
+            s_zoneTimer.Stop();
+            double elapsedMs = s_zoneTimer.Elapsed.TotalMilliseconds;
+            
+            // Track timing stats
+            s_timedZoneCount++;
+            s_totalZoneTimeMs += elapsedMs;
+            if (elapsedMs > s_maxZoneTimeMs)
+                s_maxZoneTimeMs = elapsedMs;
+            
+            // Log individual zone timing for zones with roads
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Zone {zoneID}: {roadPoints.Count} road points, {elapsedMs:F2}ms");
+            
+            // Log summary periodically
+            if (s_timedZoneCount % TimingLogInterval == 0)
+            {
+                double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+                    $"[PERF] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} skipped, avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms");
+            }
         }
+    }
+    
+    /// <summary>
+    /// Check if this zone's terrain has already been modified with the current road network version.
+    /// </summary>
+    private static bool IsZoneAlreadyProcessed(Vector2i zoneID)
+    {
+        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
+        TerrainComp terrainComp = TerrainComp.FindTerrainCompiler(zonePos);
+        
+        if (terrainComp == null || !terrainComp.m_nview.IsValid())
+            return false;
+        
+        int storedVersion = terrainComp.m_nview.GetZDO().GetInt(s_roadVersionHash, 0);
+        return storedVersion == RoadSpatialGrid.RoadNetworkVersion && storedVersion != 0;
     }
 
     private static void ApplyRoadTerrainMods(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
@@ -263,8 +324,20 @@ public static class ZoneSystem_Patch
 
     private static void ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells)
     {
+        // Direct array modification instead of DoOperation (which triggers Save+Poke per call)
+        // Based on TerrainComp.PaintCleared decompiled logic
+        
+        Heightmap hmap = terrainComp.m_hmap;
+        if (hmap == null)
+            return;
+            
+        int gridSize = terrainComp.m_width + 1;
+        Vector3 terrainPos = hmap.transform.position;
+        float scale = hmap.m_scale;
+        
         foreach (var roadPoint in roadPoints)
         {
+            // Dedupe by cell to avoid redundant paint operations
             Vector2i cell = new Vector2i(
                 Mathf.RoundToInt(roadPoint.p.x / RoadConstants.PaintDedupeInterval),
                 Mathf.RoundToInt(roadPoint.p.y / RoadConstants.PaintDedupeInterval));
@@ -273,19 +346,51 @@ public static class ZoneSystem_Patch
                 continue;
             paintedCells.Add(cell);
             
-            Vector3 paintPos = new Vector3(roadPoint.p.x, 0f, roadPoint.p.y);
+            // Convert world position to paint mask coordinates
+            // Following TerrainComp.PaintCleared logic: offset by 0.5 before conversion
+            Vector3 worldPos = new Vector3(roadPoint.p.x - 0.5f, 0f, roadPoint.p.y - 0.5f);
+            Vector3 localPos = worldPos - terrainPos;
+            int halfWidth = (terrainComp.m_width + 1) / 2;
+            int centerX = Mathf.FloorToInt(localPos.x / scale + 0.5f) + halfWidth;
+            int centerY = Mathf.FloorToInt(localPos.z / scale + 0.5f) + halfWidth;
             
-            TerrainOp.Settings paintSettings = new TerrainOp.Settings
+            float radius = roadPoint.w * 0.5f;
+            float radiusInVertices = radius / scale;
+            int radiusCeil = Mathf.CeilToInt(radiusInVertices);
+            
+            // Paint all vertices within radius
+            for (int dy = -radiusCeil; dy <= radiusCeil; dy++)
             {
-                m_level = false,
-                m_smooth = false,
-                m_paintCleared = true,
-                m_paintType = TerrainModifier.PaintType.Paved,
-                m_paintRadius = roadPoint.w * 0.5f,
-                m_paintHeightCheck = false,
-            };
-            
-            terrainComp.DoOperation(paintPos, paintSettings);
+                for (int dx = -radiusCeil; dx <= radiusCeil; dx++)
+                {
+                    int vx = centerX + dx;
+                    int vy = centerY + dy;
+                    
+                    // Bounds check
+                    if (vx < 0 || vy < 0 || vx >= gridSize || vy >= gridSize)
+                        continue;
+                    
+                    // Distance check (circular brush)
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (dist > radiusInVertices)
+                        continue;
+                    
+                    // Calculate blend factor (matches PaintCleared logic)
+                    float blendFactor = 1f - Mathf.Clamp01(dist / radiusInVertices);
+                    blendFactor = Mathf.Pow(blendFactor, 0.1f);
+                    
+                    int index = vy * gridSize + vx;
+                    
+                    // Get current color, blend with paved color, preserve alpha
+                    Color currentColor = terrainComp.m_paintMask[index];
+                    float alpha = currentColor.a;
+                    Color newColor = Color.Lerp(currentColor, Heightmap.m_paintMaskPaved, blendFactor);
+                    newColor.a = alpha;
+                    
+                    terrainComp.m_modifiedPaint[index] = true;
+                    terrainComp.m_paintMask[index] = newColor;
+                }
+            }
         }
     }
 
@@ -295,10 +400,17 @@ public static class ZoneSystem_Patch
         
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
+            // Store the road network version in the ZDO so we can skip this zone on future loads
+            if (context.TerrainComp.m_nview.IsValid() && context.TerrainComp.m_nview.IsOwner())
+            {
+                context.TerrainComp.m_nview.GetZDO().Set(s_roadVersionHash, RoadSpatialGrid.RoadNetworkVersion);
+            }
+            
+            // Single Save + Poke at the end (not per-operation)
             context.TerrainComp.Save();
-            context.Heightmap.Poke(false);
+            context.Heightmap.Poke(true); // Use delayed=true to batch with other updates
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint ops");
+                $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
         }
         else if (roadPointCount > 0)
         {
@@ -329,10 +441,26 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static void Prefix(ZoneSystem __instance)
         {
+            // Log final timing stats before reset
+            if (s_timedZoneCount > 0 || s_skippedZoneCount > 0)
+            {
+                double avgMs = s_timedZoneCount > 0 ? s_totalZoneTimeMs / s_timedZoneCount : 0;
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+                    $"[PERF FINAL] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} skipped, " +
+                    $"avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms, total={s_totalZoneTimeMs:F0}ms");
+            }
+            
             __instance.GenerateLocationsCompleted -= OnLocationsGenerated;
             RoadNetworkGenerator.Reset();
             s_roadClearAreasCache.Clear();
             s_coordLogCount = 0;
+            
+            // Reset timing stats
+            s_timedZoneCount = 0;
+            s_totalZoneTimeMs = 0;
+            s_maxZoneTimeMs = 0;
+            s_skippedZoneCount = 0;
+            
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road data cleared on world unload");
         }
     }

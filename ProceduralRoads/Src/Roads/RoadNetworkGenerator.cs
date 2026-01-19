@@ -222,6 +222,9 @@ public static class RoadNetworkGenerator
         TimeSpan elapsed = DateTime.Now - startTime;
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
 
+        // Finalize the road network and compute version hash for zone caching
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        
         m_roadsGenerated = true;
         m_pathfinder = null;
     }

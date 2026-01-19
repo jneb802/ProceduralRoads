@@ -39,6 +39,12 @@ public static class RoadSpatialGrid
     public static int GridCellsWithRoads { get; private set; } = 0;
     public static float TotalRoadLength { get; private set; } = 0f;
     
+    /// <summary>
+    /// Version hash for the current road network. Changes when roads are regenerated.
+    /// Used to detect if a zone's terrain mods are stale and need reapplication.
+    /// </summary>
+    public static int RoadNetworkVersion { get; private set; } = 0;
+    
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
 
     public static bool IsInitialized => m_initialized;
@@ -55,6 +61,7 @@ public static class RoadSpatialGrid
             TotalRoadPoints = 0;
             GridCellsWithRoads = 0;
             TotalRoadLength = 0f;
+            RoadNetworkVersion = 0;
         }
         finally
         {
@@ -73,23 +80,11 @@ public static class RoadSpatialGrid
         for (int i = 0; i < path.Count - 1; i++)
             totalLength += Vector2.Distance(path[i], path[i + 1]);
         
-        List<Vector2> densePoints = new List<Vector2>();
-        List<float> denseHeights = new List<float>();
+        List<Vector2> densePoints = SplinePath(path, segmentLength);
+        List<float> denseHeights = new List<float>(densePoints.Count);
         
-        for (int i = 0; i < path.Count - 1; i++)
-        {
-            Vector2 start = path[i];
-            Vector2 end = path[i + 1];
-            Vector2 direction = (end - start).normalized;
-            float segDist = Vector2.Distance(start, end);
-
-            for (float t = 0; t <= segDist; t += segmentLength)
-            {
-                Vector2 point = start + direction * t;
-                densePoints.Add(point);
-                denseHeights.Add(worldGen.GetHeight(point.x, point.y));
-            }
-        }
+        foreach (var point in densePoints)
+            denseHeights.Add(worldGen.GetHeight(point.x, point.y));
         
         List<float> smoothedHeights = SmoothHeights(denseHeights, RoadConstants.HeightSmoothingWindow);
         
@@ -114,7 +109,64 @@ public static class RoadSpatialGrid
         TotalRoadLength += totalLength;
         m_initialized = true;
     }
+
+    /// <summary>
+    /// Called after all roads are generated to compute the network version hash.
+    /// This version is stored in TerrainComp ZDOs to detect already-processed zones.
+    /// </summary>
+    public static void FinalizeRoadNetwork()
+    {
+        // Compute a version hash from road network properties + world seed
+        // This changes when: world seed changes, road count changes, road layout changes
+        int worldSeed = WorldGenerator.instance?.GetSeed() ?? 0;
+        int hash = worldSeed;
+        hash = hash * 31 + TotalRoadPoints;
+        hash = hash * 31 + GridCellsWithRoads;
+        hash = hash * 31 + (int)(TotalRoadLength * 10); // Include length with some precision
+        
+        RoadNetworkVersion = hash;
+        Log.LogInfo($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
+    }
     
+    private static Vector2 CatmullRom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
+    {
+        float t2 = t * t;
+        float t3 = t2 * t;
+        return 0.5f * (
+            (2f * p1) +
+            (-p0 + p2) * t +
+            (2f * p0 - 5f * p1 + 4f * p2 - p3) * t2 +
+            (-p0 + 3f * p1 - 3f * p2 + p3) * t3
+        );
+    }
+
+    private static List<Vector2> SplinePath(List<Vector2> waypoints, float segmentLength)
+    {
+        if (waypoints.Count < 2) return new List<Vector2>(waypoints);
+        
+        var result = new List<Vector2>();
+        
+        for (int i = 0; i < waypoints.Count - 1; i++)
+        {
+            Vector2 p0 = waypoints[Mathf.Max(0, i - 1)];
+            Vector2 p1 = waypoints[i];
+            Vector2 p2 = waypoints[i + 1];
+            Vector2 p3 = waypoints[Mathf.Min(waypoints.Count - 1, i + 2)];
+            
+            float segDist = Vector2.Distance(p1, p2);
+            int steps = Mathf.Max(1, Mathf.CeilToInt(segDist / segmentLength));
+            
+            for (int s = 0; s < steps; s++)
+            {
+                float t = s / (float)steps;
+                result.Add(CatmullRom(p0, p1, p2, p3, t));
+            }
+        }
+        
+        result.Add(waypoints[waypoints.Count - 1]);
+        return result;
+    }
+
     private static List<float> SmoothHeights(List<float> heights, int windowSize)
     {
         List<float> smoothed = new List<float>(heights.Count);

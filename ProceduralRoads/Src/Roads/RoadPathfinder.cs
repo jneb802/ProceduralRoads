@@ -9,7 +9,7 @@ namespace ProceduralRoads;
 /// </summary>
 public class RoadPathfinder
 {
-    private static ManualLogSource Log => Log;
+    private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
     
     public const float CellSize = RoadConstants.PathfindingCellSize;
     public const int MaxIterations = RoadConstants.PathfindingMaxIterations;

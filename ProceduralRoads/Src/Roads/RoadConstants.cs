@@ -26,7 +26,7 @@ public static class RoadConstants
     public const float DefaultBaseCost = 1f;
     public const float DefaultSlopeMultiplier = 10f;
     public const float DefaultRiverPenalty = 100000f;
-    public const float DefaultWaterPenalty = 500f;
+    public const float DefaultWaterPenalty = 100000f;
     public const float DefaultSteepSlopePenalty = 2000f;
     public const float DefaultSteepSlopeThreshold = 0.6f;
     public const float DefaultTerrainVariancePenalty = 1000f;

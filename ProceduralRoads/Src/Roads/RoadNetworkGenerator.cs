@@ -20,6 +20,68 @@ public static class RoadNetworkGenerator
         "SeekerQueen",
     };
 
+    private static readonly Dictionary<string, int> LocationPriorities = new()
+    {
+        // Bosses - always include (100)
+        { "Eikthyrnir", 100 },
+        { "GDKing", 100 },
+        { "Bonemass", 100 },
+        { "Dragonqueen", 100 },
+        { "GoblinKing", 100 },
+        { "SeekerQueen", 100 },
+        
+        // Major dungeons (80)
+        { "Crypt4", 80 },
+        { "SunkenCrypt4", 80 },
+        { "MountainCave02", 80 },
+        { "TrollCave02", 80 },
+        { "Crypt3", 75 },
+        
+        // Mistlands major (75)
+        { "Mistlands_DvergrTownEntrance1", 75 },
+        { "Mistlands_DvergrTownEntrance2", 75 },
+        { "Mistlands_Harbour1", 70 },
+        
+        // Villages/Farms (60)
+        { "WoodVillage1", 60 },
+        { "WoodFarm1", 55 },
+        
+        // Mistlands structures (50)
+        { "Mistlands_GuardTower1_new", 50 },
+        { "Mistlands_GuardTower2_new", 50 },
+        { "Mistlands_GuardTower3_new", 50 },
+        { "Mistlands_Lighthouse1_new", 50 },
+        { "Mistlands_Excavation1", 45 },
+        { "Mistlands_Excavation2", 45 },
+        { "Mistlands_Excavation3", 45 },
+        
+        // Towers (40)
+        { "StoneTower1", 40 },
+        { "StoneTower3", 40 },
+        
+        // Ruins/minor (30)
+        { "Mistlands_GuardTower1_ruined_new", 30 },
+        { "Mistlands_GuardTower3_ruined_new", 30 },
+        { "StoneTowerRuins03", 30 },
+        { "StoneTowerRuins04", 30 },
+        { "StoneTowerRuins05", 30 },
+        { "StoneTowerRuins07", 30 },
+        { "StoneTowerRuins08", 30 },
+        { "StoneTowerRuins09", 30 },
+        { "StoneTowerRuins10", 30 },
+        { "StoneHenge1", 25 },
+        { "StoneHenge2", 25 },
+        { "StoneHenge3", 25 },
+        { "SwampHut5", 25 },
+        { "SwampRuin1", 25 },
+        { "SwampRuin2", 25 },
+    };
+    
+    private const int DefaultPriority = 20;
+    private const int MinLocationsPerIsland = 2;
+    private const int MaxLocationsPerIsland = 12;
+    private const float AreaPerLocation = 2_000_000f; // 2 km² per additional location
+
     /// <summary>
     /// Location names registered via API or config for road generation.
     /// </summary>
@@ -126,13 +188,36 @@ public static class RoadNetworkGenerator
         if (locations == null)
             return;
 
-        // === Call different generation methods here ===
-        GenerateBossRoads(locations.Value);
-        GenerateLocationRoads(locations.Value);
-        
-        // Future: Add more generation methods
-        // GenerateVillageRoads(locations.Value);
-        // GenerateTraderRoutes(locations.Value);
+        // Detect islands
+        var islands = IslandDetector.DetectIslands();
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Generating roads for {islands.Count} islands");
+
+        // Generate roads per island (DEBUG: limit to 5 islands)
+        foreach (var island in islands.Take(5))
+        {
+            var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
+            if (islandLocations.Count == 0) continue;
+            
+            // Filter to priority locations based on island size
+            int maxLocs = GetMaxLocationsForIsland(island);
+            var selected = SelectLocations(islandLocations, maxLocs);
+            
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Island {island.Id}: {islandLocations.Count} candidates -> {selected.Count} selected (max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km²)");
+            
+            // Check if this island contains StartTemple
+            bool isStarterIsland = island.ContainsPoint(locations.Value.SpawnPoint);
+            
+            if (isStarterIsland)
+            {
+                GenerateIslandRoads(island, selected, 
+                    locations.Value.SpawnPoint, locations.Value.SpawnRadius);
+            }
+            else
+            {
+                GenerateIslandRoads(island, selected);
+            }
+        }
 
         TimeSpan elapsed = DateTime.Now - startTime;
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
@@ -272,9 +357,190 @@ public static class RoadNetworkGenerator
         };
     }
 
+    private static List<(string name, Vector3 position, float radius)> GetLocationsOnIsland(
+        Island island, List<(string name, Vector3 position, float radius)> allLocations)
+    {
+        var result = new List<(string name, Vector3 position, float radius)>();
+        foreach (var loc in allLocations)
+        {
+            if (island.ContainsPoint(loc.position) && IsRoadLocation(loc.name))
+                result.Add(loc);
+        }
+        return result;
+    }
+
+    private static bool IsRoadLocation(string locationName)
+    {
+        return BossLocationNames.Contains(locationName) ||
+               LocationPriorities.ContainsKey(locationName) ||
+               RegisteredLocationNames.Contains(locationName);
+    }
+
+    private static int GetMaxLocationsForIsland(Island island)
+    {
+        int scaled = MinLocationsPerIsland + (int)(island.ApproxArea / AreaPerLocation);
+        return Mathf.Clamp(scaled, MinLocationsPerIsland, MaxLocationsPerIsland);
+    }
+
+    private static List<(string name, Vector3 position, float radius)> SelectLocations(
+        List<(string name, Vector3 position, float radius)> candidates, int maxCount)
+    {
+        if (candidates.Count <= maxCount)
+            return candidates;
+        
+        return candidates
+            .OrderByDescending(loc => GetLocationPriority(loc.name))
+            .Take(maxCount)
+            .ToList();
+    }
+
+    private static int GetLocationPriority(string locationName)
+    {
+        return LocationPriorities.TryGetValue(locationName, out int priority) ? priority : DefaultPriority;
+    }
+
     #endregion
 
-    #region Generation Methods (Add new methods here)
+    #region Island Road Strategies
+
+    private static void GenerateChainRoads(
+        Vector3 startPos, float startRadius,
+        List<(string name, Vector3 position, float radius)> locations)
+    {
+        if (locations.Count == 0) return;
+        
+        var unvisited = new List<(string name, Vector3 position, float radius)>(locations);
+        Vector3 current = startPos;
+        float currentRadius = startRadius;
+        string currentName = "Start";
+        
+        while (unvisited.Count > 0)
+        {
+            int nearestIdx = 0;
+            float nearestDist = float.MaxValue;
+            for (int i = 0; i < unvisited.Count; i++)
+            {
+                float dist = Vector3.Distance(current, unvisited[i].position);
+                if (dist < nearestDist)
+                {
+                    nearestDist = dist;
+                    nearestIdx = i;
+                }
+            }
+            
+            var nearest = unvisited[nearestIdx];
+            unvisited.RemoveAt(nearestIdx);
+            
+            GenerateRoad(current, currentRadius, nearest.position, nearest.radius, RoadWidth,
+                $"{currentName} -> {nearest.name}");
+            
+            current = nearest.position;
+            currentRadius = nearest.radius;
+            currentName = nearest.name;
+        }
+    }
+
+    private static void GenerateMSTRoads(
+        Vector3 startPos, float startRadius,
+        List<(string name, Vector3 position, float radius)> locations)
+    {
+        if (locations.Count == 0) return;
+        
+        // Build node list: start point + all locations
+        var nodes = new List<(string name, Vector3 position, float radius)>();
+        nodes.Add(("Start", startPos, startRadius));
+        nodes.AddRange(locations);
+        
+        // Prim's algorithm for MST
+        var inTree = new bool[nodes.Count];
+        var minEdge = new float[nodes.Count];
+        var parent = new int[nodes.Count];
+        
+        for (int i = 0; i < nodes.Count; i++)
+        {
+            minEdge[i] = float.MaxValue;
+            parent[i] = -1;
+        }
+        
+        minEdge[0] = 0;
+        
+        for (int iter = 0; iter < nodes.Count; iter++)
+        {
+            int u = -1;
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                if (!inTree[i] && (u == -1 || minEdge[i] < minEdge[u]))
+                    u = i;
+            }
+            
+            if (u == -1 || minEdge[u] == float.MaxValue) break;
+            inTree[u] = true;
+            
+            for (int v = 0; v < nodes.Count; v++)
+            {
+                if (!inTree[v])
+                {
+                    float dist = Vector3.Distance(nodes[u].position, nodes[v].position);
+                    if (dist < minEdge[v])
+                    {
+                        minEdge[v] = dist;
+                        parent[v] = u;
+                    }
+                }
+            }
+        }
+        
+        // Generate roads for MST edges
+        for (int i = 1; i < nodes.Count; i++)
+        {
+            if (parent[i] >= 0)
+            {
+                var from = nodes[parent[i]];
+                var to = nodes[i];
+                GenerateRoad(from.position, from.radius, to.position, to.radius, RoadWidth,
+                    $"{from.name} -> {to.name}");
+            }
+        }
+    }
+
+    private static void GenerateIslandRoads(
+        Island island,
+        List<(string name, Vector3 position, float radius)> islandLocations,
+        Vector3? overrideStart = null,
+        float overrideStartRadius = 0f)
+    {
+        if (islandLocations.Count == 0) return;
+        
+        // Determine start point
+        Vector3 startPos;
+        float startRadius;
+        if (overrideStart.HasValue)
+        {
+            startPos = overrideStart.Value;
+            startRadius = overrideStartRadius;
+        }
+        else
+        {
+            Vector2 edge = island.GetEdgePoint(island.CellSize, island.WorldOffset);
+            startPos = new Vector3(edge.x, 0, edge.y);
+            startRadius = 0f;
+        }
+        
+        // Pick strategy based on island ID (deterministic)
+        bool useMST = (island.Id % 2) == 0;
+        
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+            $"Island {island.Id}: {islandLocations.Count} locations, strategy={(useMST ? "MST" : "Chain")}");
+        
+        if (useMST)
+            GenerateMSTRoads(startPos, startRadius, islandLocations);
+        else
+            GenerateChainRoads(startPos, startRadius, islandLocations);
+    }
+
+    #endregion
+
+    #region Generation Methods
 
     // Boss progression order (game progression chain)
     private static readonly string[] BossProgressionOrder = new[]

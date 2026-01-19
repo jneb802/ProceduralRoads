@@ -11,14 +11,16 @@ namespace ProceduralRoads;
 /// Console commands for road generation and debugging.
 /// Commands:
 ///   road_generate - Generate roads for existing worlds
-///   road_debug - Show detailed road info at player position
+///   road_pins - Place pins at road start points
 ///   road_islands - Detect and display islands with map pins
+///   road_clearpins - Remove all pins added by this mod
+///   road_debug - Show detailed road info at player position
 /// </summary>
 public static class ConsoleCommands
 {
     private static bool s_commandsRegistered = false;
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
-    private static List<Minimap.PinData> s_islandPins = new();
+    private static List<Minimap.PinData> s_modPins = new();
 
     /// <summary>
     /// Register console commands. Called from Terminal.InitTerminal patch.
@@ -42,7 +44,7 @@ public static class ConsoleCommands
         // road_islands - Detect and visualize islands
         new Terminal.ConsoleCommand(
             "road_islands",
-            "Detect islands and place map pins at their centers. Args: [cellSize] [minCells] [clear]",
+            "Detect islands and place map pins at their centers. Args: [cellSize] [minCells]",
             (args) => DetectAndShowIslands(args),
             isCheat: true,
             isNetwork: false,
@@ -61,6 +63,28 @@ public static class ConsoleCommands
             isSecret: false,
             allowInDevBuild: true);
 
+        // road_pins - Show road start points on map
+        new Terminal.ConsoleCommand(
+            "road_pins",
+            "Place map pins at the start point of each generated road.",
+            (args) => ShowRoadStartPins(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_clearpins - Remove all pins added by this mod
+        new Terminal.ConsoleCommand(
+            "road_clearpins",
+            "Remove all map pins added by ProceduralRoads commands.",
+            (args) => ClearAllModPins(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
         s_commandsRegistered = true;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road console commands registered");
     }
@@ -73,31 +97,14 @@ public static class ConsoleCommands
         // Parse arguments
         float cellSize = 128f;
         int minCells = 10;
-        bool clearOnly = false;
         
-        if (args.Length > 1)
+        if (args.Length > 1 && float.TryParse(args[1], out float cs))
         {
-            if (args[1].ToLower() == "clear")
-            {
-                clearOnly = true;
-            }
-            else if (float.TryParse(args[1], out float cs))
-            {
-                cellSize = cs;
-            }
+            cellSize = cs;
         }
         if (args.Length > 2 && int.TryParse(args[2], out int mc))
         {
             minCells = mc;
-        }
-        
-        // Clear previous pins
-        ClearIslandPins();
-        
-        if (clearOnly)
-        {
-            args.Context.AddString("Cleared island pins");
-            return;
         }
         
         // Check prerequisites
@@ -141,42 +148,76 @@ public static class ConsoleCommands
             var pin = Minimap.instance.AddPin(pinPos, Minimap.PinType.Icon3, pinName, false, false, 0L, PlatformUserID.None);
             if (pin != null)
             {
-                s_islandPins.Add(pin);
-                pinCount++;
-            }
-            
-            // Also add a pin at the edge point (potential road start)
-            Vector2 edgePoint = island.GetEdgePoint();
-            Vector3 edgePinPos = new Vector3(edgePoint.x, 0, edgePoint.y);
-            string edgePinName = $"Edge {island.Id}";
-            
-            var edgePin = Minimap.instance.AddPin(edgePinPos, Minimap.PinType.Icon0, edgePinName, false, false, 0L, PlatformUserID.None);
-            if (edgePin != null)
-            {
-                s_islandPins.Add(edgePin);
+                s_modPins.Add(pin);
                 pinCount++;
             }
         }
         
-        args.Context.AddString($"Added {pinCount} map pins. Use 'road_islands clear' to remove them.");
+        args.Context.AddString($"Added {pinCount} map pins. Use 'road_clearpins' to remove them.");
         args.Context.AddString("Open map (M) to see island locations.");
     }
     
     /// <summary>
-    /// Clear all island visualization pins from the map.
+    /// Show road start points on the map.
     /// </summary>
-    private static void ClearIslandPins()
+    private static void ShowRoadStartPins(Terminal.ConsoleEventArgs args)
     {
-        if (Minimap.instance == null) return;
-        
-        foreach (var pin in s_islandPins)
+        if (!RoadNetworkGenerator.RoadsGenerated)
+        {
+            args.Context.AddString("Error: No roads generated. Run 'road_generate' first.");
+            return;
+        }
+
+        if (Minimap.instance == null)
+        {
+            args.Context.AddString("Error: Minimap not available");
+            return;
+        }
+
+        var roadStarts = RoadNetworkGenerator.GetRoadStartPoints();
+        if (roadStarts.Count == 0)
+        {
+            args.Context.AddString("No road start points recorded.");
+            return;
+        }
+
+        int pinCount = 0;
+        foreach (var start in roadStarts)
+        {
+            Vector3 pinPos = new Vector3(start.position.x, 0, start.position.y);
+            var pin = Minimap.instance.AddPin(pinPos, Minimap.PinType.Icon0, start.label, false, false, 0L, PlatformUserID.None);
+            if (pin != null)
+            {
+                s_modPins.Add(pin);
+                pinCount++;
+            }
+        }
+
+        args.Context.AddString($"Added {pinCount} road start pins. Use 'road_clearpins' to remove them.");
+    }
+
+    /// <summary>
+    /// Clear all pins added by this mod.
+    /// </summary>
+    private static void ClearAllModPins(Terminal.ConsoleEventArgs args)
+    {
+        if (Minimap.instance == null)
+        {
+            args.Context.AddString("Error: Minimap not available");
+            return;
+        }
+
+        int count = s_modPins.Count;
+        foreach (var pin in s_modPins)
         {
             if (pin != null)
             {
                 Minimap.instance.RemovePin(pin);
             }
         }
-        s_islandPins.Clear();
+        s_modPins.Clear();
+
+        args.Context.AddString($"Removed {count} pins.");
     }
 
     /// <summary>

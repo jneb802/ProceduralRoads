@@ -140,8 +140,14 @@ public static class RoadNetworkGenerator
     private static bool m_roadsGenerated = false;
     private static RoadPathfinder? m_pathfinder;
     private static int m_roadsGeneratedCount = 0;
+    private static List<(Vector2 position, string label)> m_roadStartPoints = new();
 
     public static bool RoadsGenerated => m_roadsGenerated;
+
+    /// <summary>
+    /// Get the start points of all generated roads for visualization.
+    /// </summary>
+    public static IReadOnlyList<(Vector2 position, string label)> GetRoadStartPoints() => m_roadStartPoints;
 
     public static void Initialize() => Reset();
 
@@ -282,6 +288,13 @@ public static class RoadNetworkGenerator
 
         RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
         m_roadsGeneratedCount++;
+
+        // Track road start point for visualization
+        if (path.Count > 0)
+        {
+            string pinLabel = label ?? $"Road {m_roadsGeneratedCount}";
+            m_roadStartPoints.Add((path[0], pinLabel));
+        }
 
         if (label != null)
             Log.LogDebug($"Generated road: {label} ({path.Count} waypoints)");
@@ -662,6 +675,7 @@ public static class RoadNetworkGenerator
         m_roadsGenerated = false;
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
+        m_roadStartPoints.Clear();
         RoadSpatialGrid.Clear();
     }
 

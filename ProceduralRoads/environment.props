@@ -122,6 +122,10 @@
             <HintPath>$(PUBLICIZED_PATH)/SoftReferenceableAssets_publicized.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <Reference Include="Splatform">
+            <HintPath>$(PUBLICIZED_PATH)/Splatform_publicized.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
     </ItemGroup>
 
 </Project>

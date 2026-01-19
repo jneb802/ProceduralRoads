@@ -365,12 +365,6 @@ public static class ConsoleCommands
             return;
         }
 
-        if (!ProceduralRoadsPlugin.EnableRoads.Value)
-        {
-            args.Context.AddString("Error: Roads are disabled in config. Enable them first.");
-            return;
-        }
-
         // Check if roads already exist
         bool alreadyGenerated = RoadNetworkGenerator.RoadsGenerated;
         if (alreadyGenerated)

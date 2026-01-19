@@ -50,7 +50,7 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static void Prefix(Vector2i zoneID, List<ZoneSystem.ClearArea> clearAreas)
         {
-            if (!ProceduralRoadsPlugin.EnableRoads.Value || !RoadNetworkGenerator.RoadsGenerated)
+            if (!RoadNetworkGenerator.RoadsGenerated)
                 return;
 
             if (!s_roadClearAreasCache.TryGetValue(zoneID, out var roadClearAreas))
@@ -104,76 +104,95 @@ public static class ZoneSystem_Patch
             if (!__result || mode == ZoneSystem.SpawnMode.Client)
                 return;
 
-            if (!ProceduralRoadsPlugin.EnableRoads.Value)
-                return;
-
-            // Get TerrainComp for this zone
-            Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
-            TerrainComp terrainComp = TerrainComp.FindTerrainCompiler(zonePos);
-            
-            if (terrainComp == null || !terrainComp.m_nview.IsValid() || !terrainComp.m_nview.IsOwner())
-                return;
-
-            var zdo = terrainComp.m_nview.GetZDO();
-            
-            // Try to load persisted road data from ZDO first
-            byte[] savedData = zdo.GetByteArray(RoadSpatialGrid.RoadDataHash, null);
-            if (savedData != null && savedData.Length > 0)
+            // Check if we have in-memory road data (from generation this session)
+            if (RoadNetworkGenerator.RoadsGenerated)
             {
-                // Repopulate RoadSpatialGrid from saved data (for queries like road_debug)
-                RoadSpatialGrid.DeserializeZoneRoadPoints(zoneID, savedData);
-                s_skippedZoneCount++;
-                if (s_skippedZoneCount <= 5 || s_skippedZoneCount % 20 == 0)
+                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+                if (roadPoints.Count > 0)
                 {
+                    s_zoneTimer.Restart();
+                    
+                    // Apply terrain mods and save to ZDO
+                    ApplyRoadTerrainModsAndPersist(zoneID, roadPoints);
+                    
+                    s_zoneTimer.Stop();
+                    double elapsedMs = s_zoneTimer.Elapsed.TotalMilliseconds;
+                    
+                    s_timedZoneCount++;
+                    s_totalZoneTimeMs += elapsedMs;
+                    if (elapsedMs > s_maxZoneTimeMs)
+                        s_maxZoneTimeMs = elapsedMs;
+                    
                     ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                        $"Zone {zoneID}: loaded {savedData.Length} bytes from ZDO, total loaded: {s_skippedZoneCount}");
+                        $"Zone {zoneID}: {roadPoints.Count} road points, {elapsedMs:F2}ms");
+                    
+                    if (s_timedZoneCount % TimingLogInterval == 0)
+                    {
+                        double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
+                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                            $"[PERF] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} loaded from ZDO, avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms");
+                    }
+                    return;
                 }
-                return; // Terrain mods already applied and saved
             }
             
-            // No persisted data - check if we have in-memory data (from road generation)
-            if (!RoadNetworkGenerator.RoadsGenerated)
-                return;
+            // No in-memory data - try to load persisted road data from ZDO
+            // This happens when loading an existing world where roads were previously generated
+            TryLoadRoadDataFromZDO(zoneID);
+        }
+    }
+    
+    /// <summary>
+    /// Try to load road data from the zone's TerrainComp ZDO (for existing worlds).
+    /// </summary>
+    private static void TryLoadRoadDataFromZDO(Vector2i zoneID)
+    {
+        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
+        Heightmap heightmap = Heightmap.FindHeightmap(zonePos);
+        if (heightmap == null)
+            return;
+        
+        TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
+        if (terrainComp == null || !terrainComp.m_nview.IsValid())
+            return;
+        
+        var zdo = terrainComp.m_nview.GetZDO();
+        byte[] savedData = zdo.GetByteArray(RoadSpatialGrid.RoadDataHash, null);
+        
+        if (savedData != null && savedData.Length > 0)
+        {
+            RoadSpatialGrid.DeserializeZoneRoadPoints(zoneID, savedData);
+            s_skippedZoneCount++;
+            if (s_skippedZoneCount <= 5 || s_skippedZoneCount % 20 == 0)
+            {
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                    $"Zone {zoneID}: loaded {savedData.Length} bytes from ZDO, total loaded: {s_skippedZoneCount}");
+            }
+        }
+    }
+    
+    /// <summary>
+    /// Apply terrain mods and persist road data to ZDO.
+    /// </summary>
+    private static void ApplyRoadTerrainModsAndPersist(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
+    {
+        var context = GetTerrainContext(zoneID);
+        if (context == null)
+            return;
 
-            var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-            if (roadPoints.Count == 0)
-                return;
-
-            s_zoneTimer.Restart();
-            
-            // First time: save road data to ZDO for future loads
+        // Save road data to ZDO for future loads
+        if (context.Value.TerrainComp.m_nview.IsValid() && context.Value.TerrainComp.m_nview.IsOwner())
+        {
             byte[] data = RoadSpatialGrid.SerializeZoneRoadPoints(zoneID);
             if (data != null)
             {
-                zdo.Set(RoadSpatialGrid.RoadDataHash, data);
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                    $"Zone {zoneID}: saved {data.Length} bytes to ZDO");
-            }
-            
-            // Apply terrain mods (first time only)
-            ApplyRoadTerrainMods(zoneID, roadPoints);
-            
-            s_zoneTimer.Stop();
-            double elapsedMs = s_zoneTimer.Elapsed.TotalMilliseconds;
-            
-            // Track timing stats
-            s_timedZoneCount++;
-            s_totalZoneTimeMs += elapsedMs;
-            if (elapsedMs > s_maxZoneTimeMs)
-                s_maxZoneTimeMs = elapsedMs;
-            
-            // Log individual zone timing for zones with roads
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"Zone {zoneID}: {roadPoints.Count} road points, {elapsedMs:F2}ms");
-            
-            // Log summary periodically
-            if (s_timedZoneCount % TimingLogInterval == 0)
-            {
-                double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                    $"[PERF] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} loaded from ZDO, avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms");
+                context.Value.TerrainComp.m_nview.GetZDO().Set(RoadSpatialGrid.RoadDataHash, data);
             }
         }
+
+        var stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
+        ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
+        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
     }
 
     private static void ApplyRoadTerrainMods(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)

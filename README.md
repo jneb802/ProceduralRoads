@@ -20,7 +20,6 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| EnableRoads | true | Enable road generation |
 | RoadWidth | 4 | Road width in meters (2-10) |
 | MaxRoadsFromSpawn | 5 | Number of roads from spawn (1-10) |
 | MaxRoadLength | 3000 | Maximum road length in meters (500-8000) |

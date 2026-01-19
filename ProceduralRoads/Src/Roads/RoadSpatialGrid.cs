@@ -546,41 +546,34 @@ public static class RoadSpatialGrid
 
     /// <summary>
     /// Serialize road points for a specific zone to a byte array for ZDO storage.
+    /// Uses the same logic as GetRoadPointsInZone to capture all affecting points.
     /// </summary>
     public static byte[]? SerializeZoneRoadPoints(Vector2i zoneID)
     {
-        m_roadCacheLock.EnterReadLock();
-        try
-        {
-            // Get road points that belong to this zone's grid cell
-            Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
-            Vector2i grid = GetRoadGrid(zonePos.x, zonePos.z);
-            
-            if (!m_roadPoints.TryGetValue(grid, out var points) || points.Length == 0)
-                return null;
+        // Get all road points that affect this zone (same as GetRoadPointsInZone)
+        var points = GetRoadPointsInZone(zoneID);
+        
+        if (points.Count == 0)
+            return null;
 
-            using var ms = new MemoryStream();
-            using var writer = new BinaryWriter(ms);
-            
-            writer.Write(points.Length);
-            foreach (var rp in points)
-            {
-                writer.Write(rp.p.x);
-                writer.Write(rp.p.y);
-                writer.Write(rp.w);
-                writer.Write(rp.h);
-            }
-            
-            return ms.ToArray();
-        }
-        finally
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+        
+        writer.Write(points.Count);
+        foreach (var rp in points)
         {
-            m_roadCacheLock.ExitReadLock();
+            writer.Write(rp.p.x);
+            writer.Write(rp.p.y);
+            writer.Write(rp.w);
+            writer.Write(rp.h);
         }
+        
+        return ms.ToArray();
     }
 
     /// <summary>
     /// Deserialize road points from a byte array and add them to the grid.
+    /// Points are added to grid cells based on their actual position.
     /// </summary>
     public static void DeserializeZoneRoadPoints(Vector2i zoneID, byte[] data)
     {
@@ -595,18 +588,30 @@ public static class RoadSpatialGrid
             int count = reader.ReadInt32();
             if (count <= 0 || count > 100000) // Sanity check
                 return;
-                
-            var points = new RoadPoint[count];
+            
+            // Group points by their grid cell
+            var pointsByGrid = new Dictionary<Vector2i, List<RoadPoint>>();
+            
             for (int i = 0; i < count; i++)
             {
                 float px = reader.ReadSingle();
                 float py = reader.ReadSingle();
                 float w = reader.ReadSingle();
                 float h = reader.ReadSingle();
-                points[i] = new RoadPoint(new Vector2(px, py), w, h);
+                
+                var point = new RoadPoint(new Vector2(px, py), w, h);
+                Vector2i grid = GetRoadGrid(px, py);
+                
+                if (!pointsByGrid.TryGetValue(grid, out var list))
+                {
+                    list = new List<RoadPoint>();
+                    pointsByGrid[grid] = list;
+                }
+                list.Add(point);
             }
             
-            AddDeserializedPoints(zoneID, points);
+            // Add to grid
+            AddDeserializedPoints(pointsByGrid);
         }
         catch (System.Exception ex)
         {
@@ -617,24 +622,29 @@ public static class RoadSpatialGrid
     /// <summary>
     /// Add deserialized road points to the grid without duplicating.
     /// </summary>
-    private static void AddDeserializedPoints(Vector2i zoneID, RoadPoint[] points)
+    private static void AddDeserializedPoints(Dictionary<Vector2i, List<RoadPoint>> pointsByGrid)
     {
-        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
-        Vector2i grid = GetRoadGrid(zonePos.x, zonePos.z);
-        
         m_roadCacheLock.EnterWriteLock();
         try
         {
-            if (!m_roadPoints.ContainsKey(grid))
+            foreach (var kvp in pointsByGrid)
             {
-                m_roadPoints[grid] = points;
-                GridCellsWithRoads = m_roadPoints.Count;
-                m_initialized = true;
+                Vector2i grid = kvp.Key;
+                var newPoints = kvp.Value;
                 
-                // Invalidate cache
-                m_cachedRoadGrid = new Vector2i(-999999, -999999);
-                m_cachedRoadPoints = null;
+                if (!m_roadPoints.ContainsKey(grid))
+                {
+                    m_roadPoints[grid] = newPoints.ToArray();
+                }
+                // If grid already has points, they were loaded from another zone or generated - skip
             }
+            
+            GridCellsWithRoads = m_roadPoints.Count;
+            m_initialized = true;
+            
+            // Invalidate cache
+            m_cachedRoadGrid = new Vector2i(-999999, -999999);
+            m_cachedRoadPoints = null;
         }
         finally
         {

@@ -136,6 +136,7 @@ public static class RoadNetworkGenerator
     public static float RoadWidth = 4f;
     public static int MaxRoadsFromSpawn = 5;
     public static float MaxRoadLength = 3000f;
+    public static int IslandRoadPercentage = 50;
 
     private static bool m_roadsGenerated = false;
     private static RoadPathfinder? m_pathfinder;
@@ -170,12 +171,6 @@ public static class RoadNetworkGenerator
             Reset();
         }
 
-        if (!ProceduralRoadsPlugin.EnableRoads.Value)
-        {
-            Log.LogDebug("Road generation disabled in config");
-            return;
-        }
-
         if (WorldGenerator.instance == null)
         {
             Log.LogWarning("WorldGenerator not available, cannot generate roads");
@@ -199,12 +194,20 @@ public static class RoadNetworkGenerator
         if (locations == null)
             return;
 
-        // Detect islands
+        // Detect islands and select based on percentage config
         var islands = IslandDetector.DetectIslands();
-        Log.LogDebug($"Generating roads for {islands.Count} islands");
+        
+        // Sort by size (largest first) for deterministic selection
+        var sortedIslands = islands.OrderByDescending(i => i.ApproxArea).ToList();
+        
+        // Calculate how many islands to process based on percentage
+        int islandCount = Mathf.Max(1, Mathf.RoundToInt(sortedIslands.Count * IslandRoadPercentage / 100f));
+        var selectedIslands = sortedIslands.Take(islandCount).ToList();
+        
+        Log.LogDebug($"Islands: {islands.Count} total, {islandCount} selected ({IslandRoadPercentage}%)");
 
-        // Generate roads per island (DEBUG: limit to 5 islands)
-        foreach (var island in islands.Take(5))
+        // Generate roads for selected islands
+        foreach (var island in selectedIslands)
         {
             var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
             if (islandLocations.Count == 0) continue;

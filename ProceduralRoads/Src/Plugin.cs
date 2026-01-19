@@ -42,8 +42,8 @@ namespace ProceduralRoads
         public static ConfigEntry<float> RoadWidth = null!;
         public static ConfigEntry<int> MaxRoadsFromSpawn = null!;
         public static ConfigEntry<float> MaxRoadLength = null!;
-        public static ConfigEntry<bool> EnableRoads = null!;
         public static ConfigEntry<string> CustomLocations = null!;
+        public static ConfigEntry<int> IslandRoadPercentage = null!;
 
         public void Awake()
         {
@@ -51,8 +51,6 @@ namespace ProceduralRoads
             Config.SaveOnConfigSet = false;
 
             // Initialize configuration
-            EnableRoads = Config.Bind("General", "EnableRoads", true,
-                "Enable procedural road generation");
             RoadWidth = Config.Bind("Roads", "RoadWidth", 4f,
                 new ConfigDescription("Width of generated roads in meters", 
                     new AcceptableValueRange<float>(2f, 10f)));
@@ -62,6 +60,11 @@ namespace ProceduralRoads
             MaxRoadLength = Config.Bind("Roads", "MaxRoadLength", 3000f,
                 new ConfigDescription("Maximum road length in meters",
                     new AcceptableValueRange<float>(500f, 8000f)));
+
+            IslandRoadPercentage = Config.Bind("Roads", "IslandRoadPercentage", 50,
+                new ConfigDescription("Percentage of islands that will have roads generated (0-100). " +
+                    "Islands are selected by size (largest first).",
+                    new AcceptableValueRange<int>(0, 100)));
 
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
@@ -89,6 +92,7 @@ namespace ProceduralRoads
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.MaxRoadsFromSpawn = MaxRoadsFromSpawn.Value;
             RoadNetworkGenerator.MaxRoadLength = MaxRoadLength.Value;
+            RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
             // CustomLocations is parsed at generation time to preserve API registrations
         }
 

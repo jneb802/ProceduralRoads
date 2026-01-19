@@ -8,8 +8,9 @@ using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
-/// Console commands for debugging road generation.
+/// Console commands for road generation and debugging.
 /// Commands:
+///   road_generate - Generate roads for existing worlds
 ///   road_debug - Show detailed road info at player position
 ///   road_islands - Detect and display islands with map pins
 /// </summary>
@@ -43,6 +44,17 @@ public static class ConsoleCommands
             "road_islands",
             "Detect islands and place map pins at their centers. Args: [cellSize] [minCells] [clear]",
             (args) => DetectAndShowIslands(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_generate - Generate roads for existing worlds
+        new Terminal.ConsoleCommand(
+            "road_generate",
+            "Generate roads for an existing world. Use after adding mod to existing save.",
+            (args) => GenerateRoadsCommand(args),
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
@@ -134,7 +146,7 @@ public static class ConsoleCommands
             }
             
             // Also add a pin at the edge point (potential road start)
-            Vector2 edgePoint = island.GetEdgePoint(cellSize, 10000f);
+            Vector2 edgePoint = island.GetEdgePoint();
             Vector3 edgePinPos = new Vector3(edgePoint.x, 0, edgePoint.y);
             string edgePinName = $"Edge {island.Id}";
             
@@ -229,7 +241,7 @@ public static class ConsoleCommands
         float heightSpread = maxHeight - minHeight;
 
         args.Context.AddString($"Height stats: min={minHeight:F2}m, max={maxHeight:F2}m, spread={heightSpread:F2}m, avg={avgHeight:F2}m");
-        Log.LogInfo($"Height stats: min={minHeight:F2}m, max={maxHeight:F2}m, spread={heightSpread:F2}m, avg={avgHeight:F2}m");
+        Log.LogDebug($"Height stats: min={minHeight:F2}m, max={maxHeight:F2}m, spread={heightSpread:F2}m, avg={avgHeight:F2}m");
 
         // Show closest points with details
         int showCount = System.Math.Min(10, nearbyPoints.Count);
@@ -292,6 +304,86 @@ public static class ConsoleCommands
             args.Context.AddString("NOTE: Few road points - may be edge of road path");
             Log.LogInfo("Few road points - may be edge of road path");
         }
+    }
+
+    /// <summary>
+    /// Generate roads for an existing world that was created before the mod was installed.
+    /// </summary>
+    private static void GenerateRoadsCommand(Terminal.ConsoleEventArgs args)
+    {
+        // Check prerequisites
+        if (WorldGenerator.instance == null)
+        {
+            args.Context.AddString("Error: WorldGenerator not available. Are you in a world?");
+            return;
+        }
+
+        if (ZoneSystem.instance == null)
+        {
+            args.Context.AddString("Error: ZoneSystem not available. Are you in a world?");
+            return;
+        }
+
+        if (!ProceduralRoadsPlugin.EnableRoads.Value)
+        {
+            args.Context.AddString("Error: Roads are disabled in config. Enable them first.");
+            return;
+        }
+
+        // Check if roads already exist
+        bool alreadyGenerated = RoadNetworkGenerator.RoadsGenerated;
+        if (alreadyGenerated)
+        {
+            args.Context.AddString("Roads already generated. Forcing regeneration...");
+        }
+        else
+        {
+            args.Context.AddString("Generating roads for existing world...");
+        }
+
+        Log.LogInfo("Manual road generation triggered via console command");
+
+        // Generate roads (force=true to regenerate if needed)
+        RoadNetworkGenerator.GenerateRoads(force: true);
+
+        if (!RoadNetworkGenerator.RoadsGenerated)
+        {
+            args.Context.AddString("Road generation failed. Check the log for details.");
+            return;
+        }
+
+        args.Context.AddString($"Road generation complete!");
+        args.Context.AddString($"  Total road points: {RoadSpatialGrid.TotalRoadPoints}");
+        args.Context.AddString($"  Total road length: {RoadSpatialGrid.TotalRoadLength:F0}m");
+        args.Context.AddString($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
+
+        // Apply roads to currently loaded zones
+        args.Context.AddString("Applying to loaded zones...");
+
+        var heightmaps = Heightmap.GetAllHeightmaps();
+        int zonesWithRoads = 0;
+
+        if (heightmaps != null)
+        {
+            foreach (var heightmap in heightmaps)
+            {
+                if (heightmap == null) continue;
+
+                Vector3 hmPos = heightmap.transform.position;
+                Vector2i zoneID = ZoneSystem.GetZone(hmPos);
+
+                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+                if (roadPoints.Count == 0) continue;
+
+                TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
+                if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
+
+                ZoneSystem_Patch.ApplyRoadTerrainModsPublic(zoneID, roadPoints, heightmap, terrainComp);
+                zonesWithRoads++;
+            }
+        }
+
+        args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
     }
 }
 

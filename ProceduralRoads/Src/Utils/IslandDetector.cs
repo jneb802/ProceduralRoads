@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using BepInEx.Logging;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -31,7 +32,7 @@ public class Island
     
     public bool ContainsPoint(Vector3 worldPos) => ContainsPoint(worldPos.x, worldPos.z);
     
-    public Vector2 GetEdgePoint(float cellSize, float worldOffset)
+    public Vector2 GetEdgePoint()
     {
         if (Cells.Count == 0) return Center;
         
@@ -40,7 +41,7 @@ public class Island
         
         foreach (var cell in Cells)
         {
-            Vector2 worldPos = CellToWorld(cell, cellSize, worldOffset);
+            Vector2 worldPos = CellToWorld(cell);
             float distToMinX = Mathf.Abs(worldPos.x - Min.x);
             float distToMaxX = Mathf.Abs(worldPos.x - Max.x);
             float distToMinY = Mathf.Abs(worldPos.y - Min.y);
@@ -54,30 +55,34 @@ public class Island
             }
         }
         
-        return CellToWorld(edgeCell, cellSize, worldOffset);
+        return CellToWorld(edgeCell);
     }
     
-    private Vector2 CellToWorld(Vector2Int cell, float cellSize, float worldOffset)
+    public Vector2 CellToWorld(Vector2Int cell) => IslandDetector.CellToWorld(cell, CellSize, WorldOffset);
+}
+
+public static class IslandDetector
+{
+    private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
+    
+    private const float WaterThreshold = 0.05f;
+    private const float DefaultCellSize = 128f;
+    private const int MinIslandCells = 10;
+    
+    public static Vector2 CellToWorld(Vector2Int cell, float cellSize, float worldOffset)
     {
         return new Vector2(
             cell.x * cellSize - worldOffset,
             cell.y * cellSize - worldOffset
         );
     }
-}
-
-public static class IslandDetector
-{
-    private const float WaterThreshold = 0.05f;
-    private const float DefaultCellSize = 128f;
-    private const int MinIslandCells = 10;
     
     public static List<Island> DetectIslands(float cellSize = DefaultCellSize, int minCells = MinIslandCells)
     {
         var wg = WorldGenerator.instance;
         if (wg == null)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("IslandDetector: WorldGenerator not available");
+            Log.LogWarning("IslandDetector: WorldGenerator not available");
             return new List<Island>();
         }
         
@@ -86,7 +91,7 @@ public static class IslandDetector
         int gridSize = Mathf.CeilToInt(worldSize / cellSize);
         float worldOffset = worldRadius;
         
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"IslandDetector: Scanning {gridSize}x{gridSize} grid (cellSize={cellSize}m)");
+        Log.LogDebug($"IslandDetector: Scanning {gridSize}x{gridSize} grid (cellSize={cellSize}m)");
         
         bool[,] isLand = new bool[gridSize, gridSize];
         int landCells = 0;
@@ -111,7 +116,7 @@ public static class IslandDetector
             }
         }
         
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"IslandDetector: Found {landCells} land cells out of {gridSize * gridSize} total");
+        Log.LogDebug($"IslandDetector: Found {landCells} land cells out of {gridSize * gridSize} total");
         
         bool[,] visited = new bool[gridSize, gridSize];
         var islands = new List<Island>();
@@ -135,7 +140,7 @@ public static class IslandDetector
         
         islands.Sort((a, b) => b.CellCount.CompareTo(a.CellCount));
         
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"IslandDetector: Detected {islands.Count} islands (min {minCells} cells)");
+        Log.LogDebug($"IslandDetector: Detected {islands.Count} islands (min {minCells} cells)");
         
         return islands;
     }
@@ -161,15 +166,14 @@ public static class IslandDetector
             island.Cells.Add(cell);
             island.CellCount++;
             
-            float worldX = cell.x * cellSize - worldOffset;
-            float worldY = cell.y * cellSize - worldOffset;
-            sumX += worldX;
-            sumY += worldY;
+            Vector2 worldPos = CellToWorld(cell, cellSize, worldOffset);
+            sumX += worldPos.x;
+            sumY += worldPos.y;
             
-            if (worldX < minX) minX = worldX;
-            if (worldX > maxX) maxX = worldX;
-            if (worldY < minY) minY = worldY;
-            if (worldY > maxY) maxY = worldY;
+            if (worldPos.x < minX) minX = worldPos.x;
+            if (worldPos.x > maxX) maxX = worldPos.x;
+            if (worldPos.y < minY) minY = worldPos.y;
+            if (worldPos.y > maxY) maxY = worldPos.y;
             
             for (int i = 0; i < 4; i++)
             {
@@ -191,13 +195,13 @@ public static class IslandDetector
         Vector2 closestCell = centroid;
         foreach (var cell in island.Cells)
         {
-            float wx = cell.x * cellSize - worldOffset;
-            float wy = cell.y * cellSize - worldOffset;
-            float dist = (wx - centroid.x) * (wx - centroid.x) + (wy - centroid.y) * (wy - centroid.y);
+            Vector2 cellWorld = CellToWorld(cell, cellSize, worldOffset);
+            float dist = (cellWorld.x - centroid.x) * (cellWorld.x - centroid.x) + 
+                         (cellWorld.y - centroid.y) * (cellWorld.y - centroid.y);
             if (dist < minDistToCentroid)
             {
                 minDistToCentroid = dist;
-                closestCell = new Vector2(wx, wy);
+                closestCell = cellWorld;
             }
         }
         

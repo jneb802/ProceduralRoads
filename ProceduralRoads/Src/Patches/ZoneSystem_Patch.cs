@@ -40,7 +40,7 @@ public static class ZoneSystem_Patch
 
     private static void OnLocationsGenerated()
     {
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo("Location generation complete, generating roads...");
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete, generating roads...");
         RoadNetworkGenerator.GenerateRoads();
         s_roadClearAreasCache.Clear();
     }
@@ -145,7 +145,7 @@ public static class ZoneSystem_Patch
             if (s_timedZoneCount % TimingLogInterval == 0)
             {
                 double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                     $"[PERF] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} skipped, avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms");
             }
         }
@@ -175,6 +175,37 @@ public static class ZoneSystem_Patch
         var stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
         ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
         FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
+    }
+
+    /// <summary>
+    /// Public entry point for applying road terrain mods to a specific zone.
+    /// Used by console commands to force-update loaded zones.
+    /// </summary>
+    public static void ApplyRoadTerrainModsPublic(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, 
+        Heightmap heightmap, TerrainComp terrainComp)
+    {
+        if (roadPoints == null || roadPoints.Count == 0)
+            return;
+
+        int gridSize = terrainComp.m_width + 1;
+        if (terrainComp.m_levelDelta == null || terrainComp.m_levelDelta.Length < gridSize * gridSize)
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Zone {zoneID}: TerrainComp arrays not initialized");
+            return;
+        }
+
+        var context = new TerrainContext
+        {
+            Heightmap = heightmap,
+            TerrainComp = terrainComp,
+            HeightmapPosition = heightmap.transform.position,
+            GridSize = gridSize,
+            VertexSpacing = RoadConstants.ZoneSize / terrainComp.m_width
+        };
+
+        var stats = ModifyVertexHeights(zoneID, roadPoints, context);
+        ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
+        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context);
     }
 
     private struct TerrainContext
@@ -267,7 +298,7 @@ public static class ZoneSystem_Patch
                     
                     if (stats.VerticesModified <= RoadConstants.MaxVertexModificationLogs)
                     {
-                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                             $"[VERTEX] Zone {zoneID} v[{vx},{vz}]: pos=({vertexWorldPos.x:F1},{vertexWorldPos.z:F1}), " +
                             $"base={baseHeight:F2}m, target={blendResult.TargetHeight:F2}m, blend={blendResult.MaxBlend:F2}, delta={delta:F2}m");
                     }
@@ -429,7 +460,7 @@ public static class ZoneSystem_Patch
         float halfSize = context.TerrainComp.m_width / 2f * context.VertexSpacing;
         var firstRoadPoint = roadPoints.Count > 0 ? roadPoints[0] : default;
         
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
             $"[COORD DEBUG] Zone {zoneID}: hmPos=({context.HeightmapPosition.x:F1},{context.HeightmapPosition.z:F1}), " +
             $"vertices cover X[{context.HeightmapPosition.x - halfSize:F1},{context.HeightmapPosition.x + halfSize:F1}], " +
             $"first road point=({firstRoadPoint.p.x:F1},{firstRoadPoint.p.y:F1}), width={firstRoadPoint.w:F1}m");
@@ -445,7 +476,7 @@ public static class ZoneSystem_Patch
             if (s_timedZoneCount > 0 || s_skippedZoneCount > 0)
             {
                 double avgMs = s_timedZoneCount > 0 ? s_totalZoneTimeMs / s_timedZoneCount : 0;
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                     $"[PERF FINAL] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} skipped, " +
                     $"avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms, total={s_totalZoneTimeMs:F0}ms");
             }

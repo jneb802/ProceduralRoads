@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using BepInEx.Logging;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -8,6 +9,8 @@ namespace ProceduralRoads;
 /// </summary>
 public class RoadPathfinder
 {
+    private static ManualLogSource Log => Log;
+    
     public const float CellSize = RoadConstants.PathfindingCellSize;
     public const int MaxIterations = RoadConstants.PathfindingMaxIterations;
 
@@ -109,7 +112,7 @@ public class RoadPathfinder
         }
 
         string reason = openSet.Count == 0 ? "no reachable path" : "max iterations reached";
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning($"Pathfinding failed: {reason} after {iterations} iterations");
+        Log.LogWarning($"Pathfinding failed: {reason} after {iterations} iterations");
         return null;
     }
 

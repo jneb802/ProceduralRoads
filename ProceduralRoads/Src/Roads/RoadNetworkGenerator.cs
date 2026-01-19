@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using BepInEx.Logging;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -10,6 +11,8 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadNetworkGenerator
 {
+    private static ManualLogSource Log => Log;
+    
     private static readonly HashSet<string> BossLocationNames = new HashSet<string>
     {
         "Eikthyrnir",
@@ -101,7 +104,7 @@ public static class RoadNetworkGenerator
         string trimmed = locationName.Trim();
         if (RegisteredLocationNames.Add(trimmed))
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Registered location for roads: {trimmed}");
+            Log.LogDebug($"Registered location for roads: {trimmed}");
         }
     }
 
@@ -116,7 +119,7 @@ public static class RoadNetworkGenerator
         string trimmed = locationName.Trim();
         if (RegisteredLocationNames.Remove(trimmed))
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Unregistered location from roads: {trimmed}");
+            Log.LogDebug($"Unregistered location from roads: {trimmed}");
         }
     }
 
@@ -140,44 +143,46 @@ public static class RoadNetworkGenerator
 
     public static bool RoadsGenerated => m_roadsGenerated;
 
-    public static void Initialize()
-    {
-        m_roadsGenerated = false;
-        m_pathfinder = null;
-        m_roadsGeneratedCount = 0;
-        RoadSpatialGrid.Clear();
-    }
+    public static void Initialize() => Reset();
 
     /// <summary>
     /// Main entry point for road generation. Calls various generation methods.
     /// </summary>
-    public static void GenerateRoads()
+    /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
+    public static void GenerateRoads(bool force = false)
     {
-        if (m_roadsGenerated)
+        if (m_roadsGenerated && !force)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Roads already generated, skipping");
+            Log.LogDebug("Roads already generated, skipping");
             return;
+        }
+        
+        // If forcing regeneration, reset state first
+        if (force && m_roadsGenerated)
+        {
+            Log.LogDebug("Force regenerating roads...");
+            Reset();
         }
 
         if (!ProceduralRoadsPlugin.EnableRoads.Value)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo("Road generation disabled in config");
+            Log.LogDebug("Road generation disabled in config");
             return;
         }
 
         if (WorldGenerator.instance == null)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("WorldGenerator not available, cannot generate roads");
+            Log.LogWarning("WorldGenerator not available, cannot generate roads");
             return;
         }
 
         if (ZoneSystem.instance == null)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("ZoneSystem not available, cannot generate roads");
+            Log.LogWarning("ZoneSystem not available, cannot generate roads");
             return;
         }
 
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo("Starting road network generation...");
+        Log.LogDebug("Starting road network generation...");
 
         DateTime startTime = DateTime.Now;
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
@@ -190,7 +195,7 @@ public static class RoadNetworkGenerator
 
         // Detect islands
         var islands = IslandDetector.DetectIslands();
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Generating roads for {islands.Count} islands");
+        Log.LogDebug($"Generating roads for {islands.Count} islands");
 
         // Generate roads per island (DEBUG: limit to 5 islands)
         foreach (var island in islands.Take(5))
@@ -202,7 +207,7 @@ public static class RoadNetworkGenerator
             int maxLocs = GetMaxLocationsForIsland(island);
             var selected = SelectLocations(islandLocations, maxLocs);
             
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+            Log.LogDebug(
                 $"Island {island.Id}: {islandLocations.Count} candidates -> {selected.Count} selected (max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km²)");
             
             // Check if this island contains StartTemple
@@ -249,7 +254,7 @@ public static class RoadNetworkGenerator
     {
         if (m_pathfinder == null)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("GenerateRoad called without active pathfinder");
+            Log.LogWarning("GenerateRoad called without active pathfinder");
             return false;
         }
 
@@ -261,7 +266,7 @@ public static class RoadNetworkGenerator
         if (path == null || path.Count < 2)
         {
             if (label != null)
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning($"Could not find path: {label}");
+                Log.LogWarning($"Could not find path: {label}");
             return false;
         }
 
@@ -271,7 +276,7 @@ public static class RoadNetworkGenerator
         if (path == null || path.Count < 2)
         {
             if (label != null)
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning($"Path too short after trimming: {label}");
+                Log.LogWarning($"Path too short after trimming: {label}");
             return false;
         }
 
@@ -279,7 +284,7 @@ public static class RoadNetworkGenerator
         m_roadsGeneratedCount++;
 
         if (label != null)
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Generated road: {label} ({path.Count} waypoints)");
+            Log.LogDebug($"Generated road: {label} ({path.Count} waypoints)");
 
         return true;
     }
@@ -315,7 +320,7 @@ public static class RoadNetworkGenerator
         var locationInstances = ZoneSystem.instance.GetLocationList();
         if (locationInstances == null || locationInstances.Count == 0)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("No location instances found");
+            Log.LogWarning("No location instances found");
             return null;
         }
 
@@ -344,11 +349,11 @@ public static class RoadNetworkGenerator
 
         if (!spawnPoint.HasValue)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("Could not find spawn point (StartTemple)");
+            Log.LogWarning("Could not find spawn point (StartTemple)");
             spawnPoint = Vector3.zero;
         }
 
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+        Log.LogDebug(
             $"Found spawn at {spawnPoint.Value}, {bossLocations.Count} boss locations, {allLocations.Count} total locations");
 
         return new LocationData
@@ -524,7 +529,7 @@ public static class RoadNetworkGenerator
         }
         else
         {
-            Vector2 edge = island.GetEdgePoint(island.CellSize, island.WorldOffset);
+            Vector2 edge = island.GetEdgePoint();
             startPos = new Vector3(edge.x, 0, edge.y);
             startRadius = 0f;
         }
@@ -532,7 +537,7 @@ public static class RoadNetworkGenerator
         // Pick strategy based on island ID (deterministic)
         bool useMST = (island.Id % 2) == 0;
         
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+        Log.LogDebug(
             $"Island {island.Id}: {islandLocations.Count} locations, strategy={(useMST ? "MST" : "Chain")}");
         
         if (useMST)
@@ -579,7 +584,7 @@ public static class RoadNetworkGenerator
         {
             if (!bossLookup.TryGetValue(bossName, out var boss))
             {
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Boss {bossName} not found in world, skipping");
+                Log.LogDebug($"Boss {bossName} not found in world, skipping");
                 continue;
             }
 
@@ -613,11 +618,11 @@ public static class RoadNetworkGenerator
 
         if (allRegistered.Count == 0)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No custom locations registered for road generation");
+            Log.LogDebug("No custom locations registered for road generation");
             return;
         }
 
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Registered location names: [{string.Join(", ", allRegistered)}]");
+        Log.LogDebug($"Registered location names: [{string.Join(", ", allRegistered)}]");
 
         // Find matching locations in the world
         var matchedLocations = new List<(string name, UnityEngine.Vector3 position, float radius)>();
@@ -631,7 +636,7 @@ public static class RoadNetworkGenerator
 
         if (matchedLocations.Count == 0)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+            Log.LogWarning(
                 $"Registered locations not found in world: {string.Join(", ", allRegistered)}");
             return;
         }
@@ -640,7 +645,7 @@ public static class RoadNetworkGenerator
         var countsByType = matchedLocations.GroupBy(l => l.name)
             .Select(g => $"{g.Key}({g.Count()})")
             .ToArray();
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
+        Log.LogDebug(
             $"Custom locations: {string.Join(", ", countsByType)}");
 
         // TODO: Connection strategy - implement road connections between locations
@@ -662,23 +667,23 @@ public static class RoadNetworkGenerator
 
     private static void LogGenerationStats(int roadsGenerated, TimeSpan elapsed)
     {
-        var log = ProceduralRoadsPlugin.ProceduralRoadsLogger;
+        var log = Log;
 
-        log.LogInfo("=== Road Generation Summary ===");
-        log.LogInfo($"  Roads generated: {roadsGenerated}");
-        log.LogInfo($"  Total road points: {RoadSpatialGrid.TotalRoadPoints}");
-        log.LogInfo($"  Total road length: {RoadSpatialGrid.TotalRoadLength:F0}m");
-        log.LogInfo($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
+        log.LogDebug("=== Road Generation Summary ===");
+        log.LogDebug($"  Roads generated: {roadsGenerated}");
+        log.LogDebug($"  Total road points: {RoadSpatialGrid.TotalRoadPoints}");
+        log.LogDebug($"  Total road length: {RoadSpatialGrid.TotalRoadLength:F0}m");
+        log.LogDebug($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
 
         if (roadsGenerated > 0)
         {
-            log.LogInfo($"  Avg points/road: {RoadSpatialGrid.TotalRoadPoints / (float)roadsGenerated:F0}");
-            log.LogInfo($"  Avg length/road: {RoadSpatialGrid.TotalRoadLength / roadsGenerated:F0}m");
+            log.LogDebug($"  Avg points/road: {RoadSpatialGrid.TotalRoadPoints / (float)roadsGenerated:F0}");
+            log.LogDebug($"  Avg length/road: {RoadSpatialGrid.TotalRoadLength / roadsGenerated:F0}m");
         }
 
-        log.LogInfo($"  Generation time: {elapsed.TotalSeconds:F2}s");
-        log.LogInfo($"  Road width: {RoadWidth}m");
-        log.LogInfo("===============================");
+        log.LogDebug($"  Generation time: {elapsed.TotalSeconds:F2}s");
+        log.LogDebug($"  Road width: {RoadWidth}m");
+        log.LogDebug("===============================");
     }
 
     /// <summary>

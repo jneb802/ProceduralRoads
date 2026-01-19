@@ -91,13 +91,13 @@ public static class RoadSpatialGrid
         int overlapCount = DetectOverlap(densePoints, width);
         if (overlapCount > densePoints.Count * RoadConstants.OverlapThreshold)
         {
-            Log.LogInfo($"Road path overlaps with existing roads ({overlapCount}/{densePoints.Count} points), blending heights");
+            Log.LogDebug($"Road path overlaps with existing roads ({overlapCount}/{densePoints.Count} points), blending heights");
             BlendWithExistingRoads(densePoints, smoothedHeights, width);
         }
         
-        Log.LogInfo($"Road path: {path.Count} waypoints -> {densePoints.Count} dense points");
-        Log.LogInfo($"  Path length: {totalLength:F0}m, smoothing window: {RoadConstants.HeightSmoothingWindow} points");
-        Log.LogInfo($"  Overlap: {overlapCount}/{densePoints.Count} points overlap existing roads");
+        Log.LogDebug($"Road path: {path.Count} waypoints -> {densePoints.Count} dense points");
+        Log.LogDebug($"  Path length: {totalLength:F0}m, smoothing window: {RoadConstants.HeightSmoothingWindow} points");
+        Log.LogDebug($"  Overlap: {overlapCount}/{densePoints.Count} points overlap existing roads");
 
         Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
         for (int i = 0; i < densePoints.Count; i++)
@@ -125,7 +125,7 @@ public static class RoadSpatialGrid
         hash = hash * 31 + (int)(TotalRoadLength * 10); // Include length with some precision
         
         RoadNetworkVersion = hash;
-        Log.LogInfo($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
+        Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
     }
     
     private static Vector2 CatmullRom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)

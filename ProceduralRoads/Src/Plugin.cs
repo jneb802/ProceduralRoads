@@ -7,7 +7,6 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
-using JetBrains.Annotations;
 using UnityEngine;
 
 namespace ProceduralRoads
@@ -150,40 +149,6 @@ namespace ProceduralRoads
         }
 
 
-        #region ConfigOptions
-
-        private ConfigEntry<T> config<T>(string group, string name, T value, ConfigDescription description)
-        {
-            return Config.Bind(group, name, value, description);
-        }
-
-        private ConfigEntry<T> config<T>(string group, string name, T value, string description)
-        {
-            return config(group, name, value, new ConfigDescription(description));
-        }
-
-        private class ConfigurationManagerAttributes
-        {
-            [UsedImplicitly] public int? Order = null!;
-            [UsedImplicitly] public bool? Browsable = null!;
-            [UsedImplicitly] public string? Category = null!;
-            [UsedImplicitly] public Action<ConfigEntryBase>? CustomDrawer = null!;
-        }
-
-        class AcceptableShortcuts : AcceptableValueBase
-        {
-            public AcceptableShortcuts() : base(typeof(KeyboardShortcut))
-            {
-            }
-
-            public override object Clamp(object value) => value;
-            public override bool IsValid(object value) => true;
-
-            public override string ToDescriptionString() =>
-                "# Acceptable values: " + string.Join(", ", UnityInput.Current.SupportedKeyCodes);
-        }
-
-        #endregion
     }
 
     public static class KeyboardExtensions

@@ -37,7 +37,7 @@ public static class RoadNetworkGenerator
         { "Crypt4", 80 },
         { "SunkenCrypt4", 80 },
         { "MountainCave02", 80 },
-        { "TrollCave02", 80 },
+        { "TrollCave02", 40 },
         { "Crypt3", 75 },
         
         // Mistlands major (75)
@@ -558,113 +558,6 @@ public static class RoadNetworkGenerator
             GenerateMSTRoads(startPos, startRadius, islandLocations);
         else
             GenerateChainRoads(startPos, startRadius, islandLocations);
-    }
-
-    #endregion
-
-    #region Generation Methods
-
-    // Boss progression order (game progression chain)
-    private static readonly string[] BossProgressionOrder = new[]
-    {
-        "Eikthyrnir",   // Meadows
-        "GDKing",       // Black Forest
-        "Bonemass",     // Swamp
-        "Dragonqueen",  // Mountain
-        "GoblinKing",   // Plains
-        "SeekerQueen",  // Mistlands
-    };
-
-    /// <summary>
-    /// Generates roads following boss progression:
-    /// StartTemple -> Eikthyrnir -> GDKing -> Bonemass -> Dragonqueen -> GoblinKing -> SeekerQueen
-    /// </summary>
-    private static void GenerateBossRoads(LocationData locations)
-    {
-        // Build a lookup for boss locations by name
-        var bossLookup = new Dictionary<string, (string name, Vector3 position, float radius)>();
-        foreach (var boss in locations.BossLocations)
-        {
-            bossLookup[boss.name] = boss;
-        }
-
-        // Start from spawn point
-        Vector3 currentPos = locations.SpawnPoint;
-        float currentRadius = locations.SpawnRadius;
-        string currentName = "StartTemple";
-
-        // Connect through the progression chain
-        foreach (string bossName in BossProgressionOrder)
-        {
-            if (!bossLookup.TryGetValue(bossName, out var boss))
-            {
-                Log.LogDebug($"Boss {bossName} not found in world, skipping");
-                continue;
-            }
-
-            float distance = Vector3.Distance(currentPos, boss.position);
-
-            GenerateRoad(
-                currentPos, currentRadius,
-                boss.position, boss.radius,
-                RoadWidth,
-                $"{currentName} -> {bossName} ({distance:F0}m)");
-
-            // Move to this boss for the next connection
-            currentPos = boss.position;
-            currentRadius = boss.radius;
-            currentName = bossName;
-        }
-    }
-
-    /// <summary>
-    /// Generates roads to custom locations registered via API or config.
-    /// Connection strategy is pending future implementation.
-    /// </summary>
-    private static void GenerateLocationRoads(LocationData locations)
-    {
-        // Merge API-registered locations with config locations
-        var allRegistered = new HashSet<string>(RegisteredLocationNames);
-        foreach (var configLocation in ProceduralRoadsPlugin.GetConfigLocationNames())
-        {
-            allRegistered.Add(configLocation);
-        }
-
-        if (allRegistered.Count == 0)
-        {
-            Log.LogDebug("No custom locations registered for road generation");
-            return;
-        }
-
-        Log.LogDebug($"Registered location names: [{string.Join(", ", allRegistered)}]");
-
-        // Find matching locations in the world
-        var matchedLocations = new List<(string name, UnityEngine.Vector3 position, float radius)>();
-        foreach (var loc in locations.AllLocations)
-        {
-            if (allRegistered.Contains(loc.name))
-            {
-                matchedLocations.Add(loc);
-            }
-        }
-
-        if (matchedLocations.Count == 0)
-        {
-            Log.LogWarning(
-                $"Registered locations not found in world: {string.Join(", ", allRegistered)}");
-            return;
-        }
-
-        // Log summary: count per location type
-        var countsByType = matchedLocations.GroupBy(l => l.name)
-            .Select(g => $"{g.Key}({g.Count()})")
-            .ToArray();
-        Log.LogDebug(
-            $"Custom locations: {string.Join(", ", countsByType)}");
-
-        // TODO: Connection strategy - implement road connections between locations
-        // This is intentionally left as a stub. The connection logic (how to string
-        // locations together) will be implemented separately as its own module.
     }
 
     #endregion

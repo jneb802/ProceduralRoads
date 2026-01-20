@@ -120,34 +120,6 @@ public static class BiomeBlendedHeight
     }
     
     /// <summary>
-    /// Check if a point is near a biome boundary (within detection radius).
-    /// Useful for debugging or deciding when to apply special handling.
-    /// </summary>
-    public static bool IsNearBiomeBoundary(float wx, float wy, WorldGenerator worldGen, float radius = 32f)
-    {
-        if (worldGen == null)
-            return false;
-            
-        Heightmap.Biome centerBiome = worldGen.GetBiome(wx, wy);
-        
-        // Check cardinal + diagonal directions
-        float[] offsets = { -radius, 0, radius };
-        foreach (float dz in offsets)
-        {
-            foreach (float dx in offsets)
-            {
-                if (dx == 0 && dz == 0) continue;
-                if (worldGen.GetBiome(wx + dx, wy + dz) != centerBiome)
-                {
-                    return true;
-                }
-            }
-        }
-        
-        return false;
-    }
-    
-    /// <summary>
     /// Get detailed debug info about height calculations at a point.
     /// Returns a struct with all the intermediate values for diagnosis.
     /// </summary>

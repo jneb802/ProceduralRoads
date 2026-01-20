@@ -195,17 +195,6 @@ public static class ZoneSystem_Patch
         FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
     }
 
-    private static void ApplyRoadTerrainMods(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
-    {
-        var context = GetTerrainContext(zoneID);
-        if (context == null)
-            return;
-
-        var stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
-        ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
-        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
-    }
-
     /// <summary>
     /// Public entry point for applying road terrain mods to a specific zone.
     /// Used by console commands to force-update loaded zones.

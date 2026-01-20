@@ -55,6 +55,7 @@ public static class ZoneSystem_Patch
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"WorldGenerator and locations available ({ZoneSystem.instance.GetLocationList().Count} locations), generating roads now...");
             RoadNetworkGenerator.GenerateRoads();
+            RoadNetworkGenerator.SaveRoadMetadata();
         }
         else
         {
@@ -142,6 +143,7 @@ public static class ZoneSystem_Patch
                     ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                         "No roads in ZDO, generating (deferred)...");
                     RoadNetworkGenerator.GenerateRoads();
+                    RoadNetworkGenerator.SaveRoadMetadata();
                 }
             }
 
@@ -578,6 +580,9 @@ public static class ZoneSystem_Patch
             // Mark as loaded from ZDO - road points will be loaded lazily per-zone
             // as the player moves around via the SpawnZone patch
             RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+
+            // Load road metadata (start points for visualization)
+            RoadNetworkGenerator.TryLoadRoadMetadata();
 
             // Load road data for zones near spawn point
             Vector2i playerZone = ZoneSystem.GetZone(spawnPoint);

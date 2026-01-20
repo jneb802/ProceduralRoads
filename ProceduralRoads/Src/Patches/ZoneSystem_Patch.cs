@@ -313,7 +313,10 @@ public static class ZoneSystem_Patch
                 if (blendResult.InfluencingPoints == 0)
                     continue;
 
-                float baseHeight = WorldGenerator.instance.GetHeight(vertexWorldPos.x, vertexWorldPos.z);
+                // Use biome-blended height to match road point heights (which also use blending).
+                // WorldGenerator.GetHeight has phantom cliffs at biome boundaries that don't exist
+                // in the rendered terrain, causing incorrect delta calculations.
+                float baseHeight = BiomeBlendedHeight.GetBlendedHeight(vertexWorldPos.x, vertexWorldPos.z, WorldGenerator.instance);
                 float finalHeight = Mathf.Lerp(baseHeight, blendResult.TargetHeight, blendResult.MaxBlend);
                 float delta = Mathf.Clamp(finalHeight - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
 

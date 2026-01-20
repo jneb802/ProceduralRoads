@@ -27,6 +27,22 @@ public static class RoadSpatialGrid
         }
     }
 
+    /// <summary>
+    /// Debug information about how a road point's height was calculated.
+    /// Stored during generation for later inspection.
+    /// </summary>
+    public struct RoadPointDebugInfo
+    {
+        public int PointIndex;           // Index in the path
+        public int TotalPoints;          // Total points in this road
+        public float OriginalHeight;     // Height before smoothing (terrain height)
+        public float SmoothedHeight;     // Final height after smoothing
+        public int WindowStart;          // First index used in smoothing window
+        public int WindowEnd;            // Last index used in smoothing window
+        public int ActualWindowSize;     // How many heights were averaged
+        public float[] WindowHeights;    // The original heights in window
+    }
+
     public const float GridSize = RoadConstants.SpatialGridSize;
     public const float DefaultRoadWidth = RoadConstants.DefaultRoadWidth;
 
@@ -35,6 +51,9 @@ public static class RoadSpatialGrid
     private static Vector2i m_cachedRoadGrid = new Vector2i(-999999, -999999);
     private static ReaderWriterLockSlim m_roadCacheLock = new ReaderWriterLockSlim();
     private static bool m_initialized = false;
+    
+    // Debug info storage - keyed by road point position for lookup
+    private static Dictionary<Vector2, RoadPointDebugInfo> m_debugInfo = new Dictionary<Vector2, RoadPointDebugInfo>();
     
     public static int TotalRoadPoints { get; private set; } = 0;
     public static int GridCellsWithRoads { get; private set; } = 0;
@@ -63,11 +82,20 @@ public static class RoadSpatialGrid
             GridCellsWithRoads = 0;
             TotalRoadLength = 0f;
             RoadNetworkVersion = 0;
+            m_debugInfo.Clear();
         }
         finally
         {
             m_roadCacheLock.ExitWriteLock();
         }
+    }
+
+    /// <summary>
+    /// Try to get debug info for a road point at the given position.
+    /// </summary>
+    public static bool TryGetDebugInfo(Vector2 position, out RoadPointDebugInfo debugInfo)
+    {
+        return m_debugInfo.TryGetValue(position, out debugInfo);
     }
 
     public static void AddRoadPath(List<Vector2> path, float width, WorldGenerator worldGen)
@@ -84,10 +112,13 @@ public static class RoadSpatialGrid
         List<Vector2> densePoints = SplinePath(path, segmentLength);
         List<float> denseHeights = new List<float>(densePoints.Count);
         
+        // Use biome-blended heights to match what Heightmap actually renders.
+        // WorldGenerator.GetHeight doesn't blend at biome boundaries, causing
+        // "phantom cliffs" that don't exist in the visible terrain.
         foreach (var point in densePoints)
-            denseHeights.Add(worldGen.GetHeight(point.x, point.y));
+            denseHeights.Add(BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, worldGen));
         
-        List<float> smoothedHeights = SmoothHeights(denseHeights, RoadConstants.HeightSmoothingWindow);
+        List<float> smoothedHeights = SmoothHeights(denseHeights, RoadConstants.HeightSmoothingWindow, out var debugInfos);
         
         int overlapCount = DetectOverlap(densePoints, width);
         if (overlapCount > densePoints.Count * RoadConstants.OverlapThreshold)
@@ -102,7 +133,12 @@ public static class RoadSpatialGrid
 
         Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
         for (int i = 0; i < densePoints.Count; i++)
+        {
             AddRoadPoint(tempPoints, densePoints[i], width, smoothedHeights[i]);
+            
+            // Store debug info keyed by position
+            m_debugInfo[densePoints[i]] = debugInfos[i];
+        }
 
         MergePoints(tempPoints);
         
@@ -168,8 +204,30 @@ public static class RoadSpatialGrid
         return result;
     }
 
-    private static List<float> SmoothHeights(List<float> heights, int windowSize)
+    /// <summary>
+    /// Simple moving average height smoothing.
+    /// Creates smooth road surfaces by averaging heights in a sliding window.
+    /// </summary>
+    private static List<float> SmoothHeights(List<float> heights, int windowSize, out List<RoadPointDebugInfo> debugInfos)
     {
+        debugInfos = new List<RoadPointDebugInfo>(heights.Count);
+        
+        if (heights.Count < 2)
+        {
+            if (heights.Count == 1)
+            {
+                debugInfos.Add(new RoadPointDebugInfo
+                {
+                    PointIndex = 0,
+                    TotalPoints = 1,
+                    OriginalHeight = heights[0],
+                    SmoothedHeight = heights[0],
+                    ActualWindowSize = 1
+                });
+            }
+            return new List<float>(heights);
+        }
+        
         List<float> smoothed = new List<float>(heights.Count);
         int halfWindow = windowSize / 2;
         
@@ -177,17 +235,32 @@ public static class RoadSpatialGrid
         {
             float sum = 0f;
             int count = 0;
+            int windowStart = Mathf.Max(0, i - halfWindow);
+            int windowEnd = Mathf.Min(heights.Count - 1, i + halfWindow);
             
-            for (int j = i - halfWindow; j <= i + halfWindow; j++)
+            List<float> windowHeights = new List<float>();
+            
+            for (int j = windowStart; j <= windowEnd; j++)
             {
-                if (j >= 0 && j < heights.Count)
-                {
-                    sum += heights[j];
-                    count++;
-                }
+                sum += heights[j];
+                count++;
+                windowHeights.Add(heights[j]);
             }
             
-            smoothed.Add(sum / count);
+            float smoothedHeight = sum / count;
+            smoothed.Add(smoothedHeight);
+            
+            debugInfos.Add(new RoadPointDebugInfo
+            {
+                PointIndex = i,
+                TotalPoints = heights.Count,
+                OriginalHeight = heights[i],
+                SmoothedHeight = smoothedHeight,
+                WindowStart = windowStart,
+                WindowEnd = windowEnd,
+                ActualWindowSize = count,
+                WindowHeights = windowHeights.ToArray()
+            });
         }
         
         return smoothed;

@@ -134,8 +134,6 @@ public static class RoadNetworkGenerator
     #endregion
 
     public static float RoadWidth = 4f;
-    public static int MaxRoadsFromSpawn = 5;
-    public static float MaxRoadLength = 3000f;
     public static int IslandRoadPercentage = 50;
 
     private static bool m_roadsGenerated = false;

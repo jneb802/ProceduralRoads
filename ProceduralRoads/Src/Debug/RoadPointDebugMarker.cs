@@ -130,7 +130,7 @@ public class RoadPointDebugMarker : MonoBehaviour, Interactable, Hoverable
         string output = sb.ToString();
         
         // Log to BepInEx
-        Log.LogInfo(output);
+        Log.LogDebug(output);
         
         // Also show in-game message
         Player.m_localPlayer?.Message(MessageHud.MessageType.Center, $"Road point {DebugInfo.PointIndex}: delta={delta:F2}m (see console)");

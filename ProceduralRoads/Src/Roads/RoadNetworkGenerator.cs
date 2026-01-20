@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -688,6 +690,195 @@ public static class RoadNetworkGenerator
     {
         Vector2 direction = (outsidePoint - center).normalized;
         return center + direction * radius;
+    }
+
+    #endregion
+
+    #region Metadata Persistence
+
+    /// <summary>
+    /// Unique prefab name for our metadata ZDO. Must not conflict with any game prefabs.
+    /// </summary>
+    private const string MetadataPrefabName = "ProceduralRoads_Metadata";
+    
+    /// <summary>
+    /// Prefab hash derived from the name.
+    /// </summary>
+    private static readonly int MetadataPrefabHash = MetadataPrefabName.GetStableHashCode();
+    
+    /// <summary>
+    /// Hash key for storing road start points data on the ZDO.
+    /// </summary>
+    private static readonly int RoadStartPointsHash = "ProceduralRoads_StartPoints".GetStableHashCode();
+
+    /// <summary>
+    /// Save road metadata (start points) to a dedicated ZDO for persistence across world reloads.
+    /// Call this after road generation completes.
+    /// </summary>
+    public static void SaveRoadMetadata()
+    {
+        if (m_roadStartPoints.Count == 0)
+        {
+            Log.LogDebug("No road start points to save");
+            return;
+        }
+
+        if (ZDOMan.instance == null)
+        {
+            Log.LogWarning("ZDOMan not available, cannot save road metadata");
+            return;
+        }
+
+        // Find existing metadata ZDO or create new one
+        ZDO? metadataZdo = FindMetadataZDO();
+        
+        if (metadataZdo == null)
+        {
+            // Create new ZDO at world origin
+            metadataZdo = ZDOMan.instance.CreateNewZDO(Vector3.zero, MetadataPrefabHash);
+            Log.LogDebug($"Created new metadata ZDO: {metadataZdo.m_uid}");
+        }
+        else
+        {
+            Log.LogDebug($"Found existing metadata ZDO: {metadataZdo.m_uid}");
+        }
+
+        // Serialize road start points
+        byte[] data = SerializeRoadStartPoints();
+        if (data != null && data.Length > 0)
+        {
+            metadataZdo.Set(RoadStartPointsHash, data);
+            Log.LogDebug($"Saved {m_roadStartPoints.Count} road start points ({data.Length} bytes)");
+        }
+    }
+
+    /// <summary>
+    /// Try to load road metadata from persisted ZDO.
+    /// Call this on world load to restore road start points for visualization.
+    /// </summary>
+    /// <returns>True if metadata was found and loaded</returns>
+    public static bool TryLoadRoadMetadata()
+    {
+        if (ZDOMan.instance == null)
+            return false;
+
+        ZDO? metadataZdo = FindMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogDebug("No road metadata ZDO found");
+            return false;
+        }
+
+        byte[]? data = metadataZdo.GetByteArray(RoadStartPointsHash, null);
+        if (data == null || data.Length == 0)
+        {
+            Log.LogDebug("Metadata ZDO found but no start points data");
+            return false;
+        }
+
+        if (DeserializeRoadStartPoints(data))
+        {
+            Log.LogDebug($"Loaded {m_roadStartPoints.Count} road start points from ZDO");
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Find the metadata ZDO by iterating through all ZDOs with our prefab hash.
+    /// </summary>
+    private static ZDO? FindMetadataZDO()
+    {
+        if (ZDOMan.instance == null)
+            return null;
+
+        var zdos = new List<ZDO>();
+        int index = 0;
+        
+        // GetAllZDOsWithPrefabIterative takes a prefab name string and hashes it internally
+        while (ZDOMan.instance.GetAllZDOsWithPrefabIterative(MetadataPrefabName, zdos, ref index))
+        {
+            // Keep iterating until done
+        }
+
+        // Return first found (should only be one)
+        if (zdos.Count > 0)
+        {
+            return zdos[0];
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Serialize road start points to binary format.
+    /// Format: [count][x1][y1][labelLen1][labelBytes1]...
+    /// </summary>
+    private static byte[] SerializeRoadStartPoints()
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+
+        writer.Write(m_roadStartPoints.Count);
+        
+        foreach (var (position, label) in m_roadStartPoints)
+        {
+            writer.Write(position.x);
+            writer.Write(position.y);
+            
+            byte[] labelBytes = Encoding.UTF8.GetBytes(label ?? "");
+            writer.Write(labelBytes.Length);
+            writer.Write(labelBytes);
+        }
+
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Deserialize road start points from binary format.
+    /// </summary>
+    private static bool DeserializeRoadStartPoints(byte[] data)
+    {
+        try
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+
+            int count = reader.ReadInt32();
+            if (count < 0 || count > 10000) // Sanity check
+            {
+                Log.LogWarning($"Invalid road start points count: {count}");
+                return false;
+            }
+
+            m_roadStartPoints.Clear();
+            
+            for (int i = 0; i < count; i++)
+            {
+                float x = reader.ReadSingle();
+                float y = reader.ReadSingle();
+                int labelLen = reader.ReadInt32();
+                
+                if (labelLen < 0 || labelLen > 1000) // Sanity check
+                {
+                    Log.LogWarning($"Invalid label length: {labelLen}");
+                    return false;
+                }
+                
+                byte[] labelBytes = reader.ReadBytes(labelLen);
+                string label = Encoding.UTF8.GetString(labelBytes);
+                
+                m_roadStartPoints.Add((new Vector2(x, y), label));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"Failed to deserialize road start points: {ex.Message}");
+            return false;
+        }
     }
 
     #endregion

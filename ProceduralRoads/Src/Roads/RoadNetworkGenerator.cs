@@ -137,11 +137,16 @@ public static class RoadNetworkGenerator
     public static int IslandRoadPercentage = 50;
 
     private static bool m_roadsGenerated = false;
+    private static bool m_locationsReady = false;
+    private static bool m_roadsLoadedFromZDO = false;
     private static RoadPathfinder? m_pathfinder;
     private static int m_roadsGeneratedCount = 0;
     private static List<(Vector2 position, string label)> m_roadStartPoints = new();
 
     public static bool RoadsGenerated => m_roadsGenerated;
+    public static bool IsLocationsReady => m_locationsReady;
+    public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
+    public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
 
     /// <summary>
     /// Get the start points of all generated roads for visualization.
@@ -149,6 +154,24 @@ public static class RoadNetworkGenerator
     public static IReadOnlyList<(Vector2 position, string label)> GetRoadStartPoints() => m_roadStartPoints;
 
     public static void Initialize() => Reset();
+
+    /// <summary>
+    /// Called when location generation is complete. Does not trigger road generation.
+    /// </summary>
+    public static void MarkLocationsReady()
+    {
+        m_locationsReady = true;
+        Log.LogDebug("Locations marked ready for road generation");
+    }
+
+    /// <summary>
+    /// Called when roads have been loaded from ZDO persistence (existing world).
+    /// </summary>
+    public static void MarkRoadsLoadedFromZDO()
+    {
+        m_roadsLoadedFromZDO = true;
+        Log.LogDebug("Roads marked as loaded from ZDO persistence");
+    }
 
     /// <summary>
     /// Main entry point for road generation. Calls various generation methods.
@@ -567,6 +590,8 @@ public static class RoadNetworkGenerator
     public static void Reset()
     {
         m_roadsGenerated = false;
+        m_locationsReady = false;
+        m_roadsLoadedFromZDO = false;
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();

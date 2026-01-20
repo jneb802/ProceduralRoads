@@ -31,17 +31,36 @@ public static class ZoneSystem_Patch
         [HarmonyPostfix]
         public static void Postfix(ZoneSystem __instance)
         {
-            __instance.GenerateLocationsCompleted += OnLocationsGenerated;
+            // Initialize FIRST - for existing worlds, the callback fires immediately on subscription
+            // because m_locationsGenerated is already true from save data
             RoadNetworkGenerator.Initialize();
+            __instance.GenerateLocationsCompleted += OnLocationsGenerated;
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Subscribed to GenerateLocationsCompleted event");
         }
     }
 
     private static void OnLocationsGenerated()
     {
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete, generating roads...");
-        RoadNetworkGenerator.GenerateRoads();
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete...");
+        RoadNetworkGenerator.MarkLocationsReady();
         s_roadClearAreasCache.Clear();
+
+        // For NEW worlds: WorldGenerator is ready AND locations are populated, generate now
+        // For EXISTING worlds: callback fires immediately but locations aren't loaded yet from save
+        bool hasWorldGen = WorldGenerator.instance != null;
+        bool hasLocations = ZoneSystem.instance?.GetLocationList()?.Count > 0;
+
+        if (hasWorldGen && hasLocations)
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"WorldGenerator and locations available ({ZoneSystem.instance.GetLocationList().Count} locations), generating roads now...");
+            RoadNetworkGenerator.GenerateRoads();
+        }
+        else
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Deferring road generation (WorldGen={hasWorldGen}, Locations={hasLocations})...");
+        }
     }
 
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.PlaceVegetation))]
@@ -101,64 +120,90 @@ public static class ZoneSystem_Patch
         [HarmonyPostfix]
         public static void Postfix(ZoneSystem __instance, Vector2i zoneID, ZoneSystem.SpawnMode mode, ref bool __result)
         {
-            if (!__result || mode == ZoneSystem.SpawnMode.Client)
+            if (mode == ZoneSystem.SpawnMode.Client)
                 return;
 
-            // Check if we have in-memory road data (from generation this session)
-            if (RoadNetworkGenerator.RoadsGenerated)
+            // Handle deferred generation/loading - check this regardless of __result
+            // For existing worlds, zones near spawn already exist so __result is false,
+            // but we still need to trigger road loading/generation
+            if (RoadNetworkGenerator.IsLocationsReady && !RoadNetworkGenerator.RoadsAvailable)
             {
-                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+                // Try to load from ZDO first (existing world with persisted roads)
+                if (TryLoadRoadDataFromZDO(zoneID))
+                {
+                    RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                        "Roads found in ZDO, loading from persistence");
+                }
+                else
+                {
+                    // Existing world without persisted roads - generate now
+                    // This should be rare (only happens if world was created before this mod)
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                        "No roads in ZDO, generating (deferred)...");
+                    RoadNetworkGenerator.GenerateRoads();
+                }
+            }
+
+            // For newly spawned zones, apply terrain mods if we have generated roads
+            if (__result && RoadNetworkGenerator.RoadsGenerated)
+            {
+                List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
                 if (roadPoints.Count > 0)
                 {
                     s_zoneTimer.Restart();
-                    
+
                     // Apply terrain mods and save to ZDO
                     ApplyRoadTerrainModsAndPersist(zoneID, roadPoints);
-                    
+
                     s_zoneTimer.Stop();
                     double elapsedMs = s_zoneTimer.Elapsed.TotalMilliseconds;
-                    
+
                     s_timedZoneCount++;
                     s_totalZoneTimeMs += elapsedMs;
                     if (elapsedMs > s_maxZoneTimeMs)
                         s_maxZoneTimeMs = elapsedMs;
-                    
+
                     ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                         $"Zone {zoneID}: {roadPoints.Count} road points, {elapsedMs:F2}ms");
-                    
+
                     if (s_timedZoneCount % TimingLogInterval == 0)
                     {
                         double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
                         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                             $"[PERF] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} loaded from ZDO, avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms");
                     }
-                    return;
                 }
+                return;
             }
-            
-            // No in-memory data - try to load persisted road data from ZDO
-            // This happens when loading an existing world where roads were previously generated
-            TryLoadRoadDataFromZDO(zoneID);
+
+            // Roads loaded from ZDO - load this zone's road points into memory for debug/API access
+            // This runs regardless of __result so existing zones also get their road points loaded
+            if (RoadNetworkGenerator.RoadsLoadedFromZDO)
+            {
+                TryLoadRoadDataFromZDO(zoneID);
+            }
         }
     }
     
     /// <summary>
     /// Try to load road data from the zone's TerrainComp ZDO (for existing worlds).
     /// </summary>
-    private static void TryLoadRoadDataFromZDO(Vector2i zoneID)
+    /// <returns>True if road data was found and loaded from ZDO</returns>
+    private static bool TryLoadRoadDataFromZDO(Vector2i zoneID)
     {
         Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
         Heightmap heightmap = Heightmap.FindHeightmap(zonePos);
         if (heightmap == null)
-            return;
-        
+            return false;
+
         TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
         if (terrainComp == null || !terrainComp.m_nview.IsValid())
-            return;
-        
-        var zdo = terrainComp.m_nview.GetZDO();
+            return false;
+
+        ZDO zdo = terrainComp.m_nview.GetZDO();
         byte[] savedData = zdo.GetByteArray(RoadSpatialGrid.RoadDataHash, null);
-        
+
         if (savedData != null && savedData.Length > 0)
         {
             RoadSpatialGrid.DeserializeZoneRoadPoints(zoneID, savedData);
@@ -168,7 +213,9 @@ public static class ZoneSystem_Patch
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                     $"Zone {zoneID}: loaded {savedData.Length} bytes from ZDO, total loaded: {s_skippedZoneCount}");
             }
+            return true;
         }
+        return false;
     }
     
     /// <summary>
@@ -495,19 +542,61 @@ public static class ZoneSystem_Patch
                     $"[PERF FINAL] Road zones: {s_timedZoneCount} processed, {s_skippedZoneCount} skipped, " +
                     $"avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms, total={s_totalZoneTimeMs:F0}ms");
             }
-            
+
             __instance.GenerateLocationsCompleted -= OnLocationsGenerated;
             RoadNetworkGenerator.Reset();
             s_roadClearAreasCache.Clear();
             s_coordLogCount = 0;
-            
+
             // Reset timing stats
             s_timedZoneCount = 0;
             s_totalZoneTimeMs = 0;
             s_maxZoneTimeMs = 0;
             s_skippedZoneCount = 0;
-            
+
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road data cleared on world unload");
+        }
+    }
+
+    /// <summary>
+    /// Hook into Game.SpawnPlayer to trigger deferred road loading for existing worlds.
+    /// This runs after the player spawns, when ZDOs are available.
+    /// </summary>
+    [HarmonyPatch(typeof(Game), nameof(Game.SpawnPlayer))]
+    public static class Game_SpawnPlayer_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Vector3 spawnPoint)
+        {
+            // Check if we need to do deferred loading (existing world case)
+            if (!RoadNetworkGenerator.IsLocationsReady || RoadNetworkGenerator.RoadsAvailable)
+                return;
+
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Player spawning at {spawnPoint}, loading road data from ZDOs...");
+
+            // Mark as loaded from ZDO - road points will be loaded lazily per-zone
+            // as the player moves around via the SpawnZone patch
+            RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+
+            // Load road data for zones near spawn point
+            Vector2i playerZone = ZoneSystem.GetZone(spawnPoint);
+            int loadedZones = 0;
+
+            for (int dx = -2; dx <= 2; dx++)
+            {
+                for (int dy = -2; dy <= 2; dy++)
+                {
+                    Vector2i checkZone = new Vector2i(playerZone.x + dx, playerZone.y + dy);
+                    if (TryLoadRoadDataFromZDO(checkZone))
+                    {
+                        loadedZones++;
+                    }
+                }
+            }
+
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Loaded road data from {loadedZones} zones near player");
         }
     }
 }

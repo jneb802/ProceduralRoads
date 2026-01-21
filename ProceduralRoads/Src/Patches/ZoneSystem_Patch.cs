@@ -53,7 +53,7 @@ public static class ZoneSystem_Patch
         if (hasWorldGen && hasLocations)
         {
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"WorldGenerator and locations available ({ZoneSystem.instance.GetLocationList().Count} locations), generating roads now...");
+                $"WorldGenerator and locations available ({ZoneSystem.instance!.GetLocationList()!.Count} locations), generating roads now...");
             RoadNetworkGenerator.GenerateRoads();
             RoadNetworkGenerator.SaveRoadMetadata();
         }
@@ -232,7 +232,7 @@ public static class ZoneSystem_Patch
         // Save road data to ZDO for future loads
         if (context.Value.TerrainComp.m_nview.IsValid() && context.Value.TerrainComp.m_nview.IsOwner())
         {
-            byte[] data = RoadSpatialGrid.SerializeZoneRoadPoints(zoneID);
+            byte[]? data = RoadSpatialGrid.SerializeZoneRoadPoints(zoneID);
             if (data != null)
             {
                 context.Value.TerrainComp.m_nview.GetZDO().Set(RoadSpatialGrid.RoadDataHash, data);

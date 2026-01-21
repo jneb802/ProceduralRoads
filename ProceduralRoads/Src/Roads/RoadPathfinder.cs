@@ -47,7 +47,7 @@ public class RoadPathfinder
         m_worldGen = worldGen;
     }
 
-    public List<Vector2> FindPath(Vector2 start, Vector2 end)
+    public List<Vector2>? FindPath(Vector2 start, Vector2 end)
     {
         Vector2i startGrid = WorldToGrid(start);
         Vector2i endGrid = WorldToGrid(end);

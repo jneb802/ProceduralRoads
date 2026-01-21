@@ -128,4 +128,12 @@
         </Reference>
     </ItemGroup>
 
+    <!-- Jotunn Modding Library -->
+    <ItemGroup>
+        <Reference Include="Jotunn">
+            <HintPath>$(BEPINEX_PLUGINS)/Jotunn/Jotunn.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+
 </Project>

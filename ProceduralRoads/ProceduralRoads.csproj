@@ -29,10 +29,6 @@
         <DefineConstants>TRACE</DefineConstants>
     </PropertyGroup>
 
-    <!-- NuGet Packages -->
-    <ItemGroup>
-        <PackageReference Include="JotunnLib" Version="2.16.2"/>
-    </ItemGroup>
 
     <!-- Additional Content Files to Include in Project -->
     <ItemGroup>

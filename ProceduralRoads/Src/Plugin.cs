@@ -7,11 +7,14 @@ using BepInEx;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
+using Jotunn.Entities;
+using Jotunn.Managers;
 using UnityEngine;
 
 namespace ProceduralRoads
 {
     [BepInPlugin(ModGUID, ModName, ModVersion)]
+    [BepInDependency(Jotunn.Main.ModGuid)]
     public class ProceduralRoadsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "ProceduralRoads";
@@ -45,6 +48,9 @@ namespace ProceduralRoads
 
         public void Awake()
         {
+            // Register the metadata prefab with Jotunn FIRST - must happen before ZNetScene.Awake
+            RegisterMetadataPrefab();
+            
             bool saveOnSet = Config.SaveOnConfigSet;
             Config.SaveOnConfigSet = false;
 
@@ -77,6 +83,27 @@ namespace ProceduralRoads
                 Config.SaveOnConfigSet = saveOnSet;
                 Config.Save();
             }
+        }
+
+        /// <summary>
+        /// Register the metadata prefab with Jotunn's PrefabManager.
+        /// This creates an empty, invisible GameObject that will be used to store road data.
+        /// Must be called before ZNetScene.Awake so the prefab is registered in time.
+        /// </summary>
+        private void RegisterMetadataPrefab()
+        {
+            // Create an empty GameObject - no mesh, no collider, completely invisible
+            var prefab = new GameObject(RoadNetworkGenerator.MetadataPrefabName);
+            
+            // Add ZNetView for ZDO creation and networking
+            var nview = prefab.AddComponent<ZNetView>();
+            nview.m_persistent = true;
+            
+            // Wrap in CustomPrefab and register with Jotunn
+            var customPrefab = new CustomPrefab(prefab, false);
+            PrefabManager.Instance.AddPrefab(customPrefab);
+            
+            ProceduralRoadsLogger.LogDebug($"Registered metadata prefab: {RoadNetworkGenerator.MetadataPrefabName}");
         }
 
         private static void ApplyConfiguration()

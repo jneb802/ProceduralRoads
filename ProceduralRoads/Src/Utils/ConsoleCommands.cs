@@ -219,9 +219,12 @@ public static class ConsoleCommands
     /// </summary>
     private static void ShowRoadStartPins(Terminal.ConsoleEventArgs args)
     {
-        if (!RoadNetworkGenerator.RoadsGenerated)
+        // Debug: show current state
+        Log.LogDebug($"[road_pins] RoadsGenerated={RoadNetworkGenerator.RoadsGenerated}, RoadsLoadedFromZDO={RoadNetworkGenerator.RoadsLoadedFromZDO}, RoadsAvailable={RoadNetworkGenerator.RoadsAvailable}");
+        
+        if (!RoadNetworkGenerator.RoadsAvailable)
         {
-            args.Context.AddString("Error: No roads generated. Run 'road_generate' first.");
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
             return;
         }
 
@@ -232,6 +235,8 @@ public static class ConsoleCommands
         }
 
         var roadStarts = RoadNetworkGenerator.GetRoadStartPoints();
+        Log.LogDebug($"[road_pins] GetRoadStartPoints returned {roadStarts.Count} points");
+        
         if (roadStarts.Count == 0)
         {
             args.Context.AddString("No road start points recorded.");

@@ -264,6 +264,10 @@ public static class RoadNetworkGenerator
         
         m_roadsGenerated = true;
         m_pathfinder = null;
+        
+        // Create the metadata instance now (while ZNetView.Awake can create ZDOs)
+        // This ensures we have a ZDO ready for saving later
+        EnsureMetadataInstance();
     }
 
     #region Core Road Generation Primitive
@@ -597,6 +601,7 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
+        s_metadataZdo = null;
         RoadSpatialGrid.Clear();
     }
 
@@ -698,8 +703,9 @@ public static class RoadNetworkGenerator
 
     /// <summary>
     /// Unique prefab name for our metadata ZDO. Must not conflict with any game prefabs.
+    /// This is public so Plugin.cs can register the prefab with Jotunn.
     /// </summary>
-    private const string MetadataPrefabName = "ProceduralRoads_Metadata";
+    public const string MetadataPrefabName = "ProceduralRoads_Metadata";
     
     /// <summary>
     /// Prefab hash derived from the name.
@@ -710,46 +716,155 @@ public static class RoadNetworkGenerator
     /// Hash key for storing road start points data on the ZDO.
     /// </summary>
     private static readonly int RoadStartPointsHash = "ProceduralRoads_StartPoints".GetStableHashCode();
+    
+    /// <summary>
+    /// Hash key for storing global road network data on the ZDO.
+    /// </summary>
+    private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
 
     /// <summary>
-    /// Save road metadata (start points) to a dedicated ZDO for persistence across world reloads.
-    /// Call this after road generation completes.
+    /// Save the entire road network to a dedicated ZDO for persistence across world reloads.
+    /// Call this on world save.
     /// </summary>
-    public static void SaveRoadMetadata()
+    public static void SaveGlobalRoadData()
     {
-        if (m_roadStartPoints.Count == 0)
+        Log.LogDebug($"[SAVE] SaveGlobalRoadData called. RoadsGenerated={m_roadsGenerated}");
+        
+        if (!m_roadsGenerated)
         {
-            Log.LogDebug("No road start points to save");
+            Log.LogDebug("[SAVE] No roads generated, skipping global save");
             return;
         }
 
-        if (ZDOMan.instance == null)
-        {
-            Log.LogWarning("ZDOMan not available, cannot save road metadata");
-            return;
-        }
-
-        // Find existing metadata ZDO or create new one
-        ZDO? metadataZdo = FindMetadataZDO();
+        // Get the metadata ZDO (should have been created after road generation)
+        ZDO? metadataZdo = GetMetadataZDO();
         
         if (metadataZdo == null)
         {
-            // Create new ZDO at world origin
-            metadataZdo = ZDOMan.instance.CreateNewZDO(Vector3.zero, MetadataPrefabHash);
-            Log.LogDebug($"Created new metadata ZDO: {metadataZdo.m_uid}");
+            Log.LogError("[SAVE] No metadata ZDO available! EnsureMetadataInstance should have been called after road generation.");
+            return;
+        }
+        
+        Log.LogDebug($"[SAVE] Using metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}");
+
+        byte[]? data = RoadSpatialGrid.SerializeAllRoadPoints();
+        if (data != null && data.Length > 0)
+        {
+            metadataZdo.Set(GlobalRoadDataHash, data);
+            Log.LogDebug($"[SAVE] Saved global road data: {data.Length} bytes, {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
         }
         else
         {
-            Log.LogDebug($"Found existing metadata ZDO: {metadataZdo.m_uid}");
+            Log.LogWarning("[SAVE] SerializeAllRoadPoints returned null or empty data!");
+        }
+        
+        // Also save start points for visualization
+        byte[] startPointsData = SerializeRoadStartPoints();
+        if (startPointsData != null && startPointsData.Length > 0)
+        {
+            metadataZdo.Set(RoadStartPointsHash, startPointsData);
+            Log.LogDebug($"[SAVE] Saved {m_roadStartPoints.Count} road start points ({startPointsData.Length} bytes)");
+        }
+    }
+    
+    /// <summary>
+    /// Cached reference to the metadata ZDO (not a GameObject - we create ZDO directly).
+    /// </summary>
+    private static ZDO? s_metadataZdo;
+    
+    /// <summary>
+    /// Ensure the metadata ZDO exists. Call this after road generation.
+    /// Creates the ZDO directly - no GameObject needed during the session.
+    /// The prefab registration with Jotunn ensures the hash is recognized on reload.
+    /// </summary>
+    private static void EnsureMetadataInstance()
+    {
+        // Already have a cached ZDO
+        if (s_metadataZdo != null)
+        {
+            Log.LogDebug("[META] Metadata ZDO already cached");
+            return;
+        }
+        
+        // Try to find existing ZDO first (reload scenario)
+        s_metadataZdo = FindMetadataZDO();
+        if (s_metadataZdo != null)
+        {
+            Log.LogDebug($"[META] Found existing metadata ZDO: {s_metadataZdo.m_uid}");
+            return;
+        }
+        
+        // Create ZDO directly - no GameObject needed
+        if (ZDOMan.instance == null)
+        {
+            Log.LogError("[META] ZDOMan.instance is null!");
+            return;
+        }
+        
+        s_metadataZdo = ZDOMan.instance.CreateNewZDO(Vector3.zero, MetadataPrefabHash);
+        s_metadataZdo.Persistent = true;
+        s_metadataZdo.SetPrefab(MetadataPrefabHash);
+        
+        Log.LogDebug($"[META] Created metadata ZDO directly: m_uid={s_metadataZdo.m_uid}, prefab={s_metadataZdo.GetPrefab()}");
+    }
+    
+    /// <summary>
+    /// Get the metadata ZDO, either from cache or by searching.
+    /// </summary>
+    private static ZDO? GetMetadataZDO()
+    {
+        if (s_metadataZdo != null)
+            return s_metadataZdo;
+        
+        s_metadataZdo = FindMetadataZDO();
+        return s_metadataZdo;
+    }
+
+    /// <summary>
+    /// Try to load the entire road network from persisted ZDO.
+    /// Call this on world load before road generation would trigger.
+    /// </summary>
+    /// <returns>True if road data was found and loaded</returns>
+    public static bool TryLoadGlobalRoadData()
+    {
+        Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
+        
+        if (ZDOMan.instance == null)
+        {
+            Log.LogDebug("[LOAD] ZDOMan.instance is null!");
+            return false;
+        }
+        
+        ZDO? metadataZdo = FindMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogDebug("[LOAD] No road metadata ZDO found");
+            return false;
         }
 
-        // Serialize road start points
-        byte[] data = SerializeRoadStartPoints();
-        if (data != null && data.Length > 0)
+        Log.LogDebug($"[LOAD] Found metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}");
+
+        byte[]? data = metadataZdo.GetByteArray(GlobalRoadDataHash, null);
+        if (data == null || data.Length == 0)
         {
-            metadataZdo.Set(RoadStartPointsHash, data);
-            Log.LogDebug($"Saved {m_roadStartPoints.Count} road start points ({data.Length} bytes)");
+            Log.LogDebug("[LOAD] Metadata ZDO found but no global road data");
+            return false;
         }
+
+        Log.LogDebug($"[LOAD] Got {data.Length} bytes of road data, deserializing...");
+
+        if (RoadSpatialGrid.DeserializeAllRoadPoints(data))
+        {
+            Log.LogDebug($"[LOAD] Successfully loaded: {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
+            
+            // Also load start points for visualization
+            TryLoadRoadMetadata();
+            
+            return true;
+        }
+
+        Log.LogWarning("[LOAD] DeserializeAllRoadPoints returned false!");
+        return false;
     }
 
     /// <summary>
@@ -791,23 +906,31 @@ public static class RoadNetworkGenerator
     private static ZDO? FindMetadataZDO()
     {
         if (ZDOMan.instance == null)
+        {
+            Log.LogDebug("[FIND] ZDOMan.instance is null");
             return null;
+        }
 
         var zdos = new List<ZDO>();
         int index = 0;
         
         // GetAllZDOsWithPrefabIterative takes a prefab name string and hashes it internally
-        while (ZDOMan.instance.GetAllZDOsWithPrefabIterative(MetadataPrefabName, zdos, ref index))
+        while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(MetadataPrefabName, zdos, ref index))
         {
-            // Keep iterating until done
+            // Keep iterating until done (returns true when complete)
         }
+
+        Log.LogDebug($"[FIND] Search complete: found {zdos.Count} ZDOs matching '{MetadataPrefabName}'");
 
         // Return first found (should only be one)
         if (zdos.Count > 0)
         {
-            return zdos[0];
+            var zdo = zdos[0];
+            Log.LogDebug($"[FIND] Found ZDO: m_uid={zdo.m_uid}, prefab={zdo.GetPrefab()}, persistent={zdo.Persistent}");
+            return zdo;
         }
 
+        Log.LogDebug("[FIND] No matching ZDO found");
         return null;
     }
 

@@ -725,5 +725,134 @@ public static class RoadSpatialGrid
         }
     }
 
+    /// <summary>
+    /// Serialize the entire road network to a byte array for global persistence.
+    /// Format: [version:int][cellCount:int][grid.x:int][grid.y:int][pointCount:int][points...]...
+    /// </summary>
+    public static byte[]? SerializeAllRoadPoints()
+    {
+        m_roadCacheLock.EnterReadLock();
+        try
+        {
+            if (m_roadPoints.Count == 0)
+                return null;
+
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            
+            // Version for future compatibility
+            writer.Write(1);
+            
+            // Number of grid cells
+            writer.Write(m_roadPoints.Count);
+            
+            foreach (var kvp in m_roadPoints)
+            {
+                // Grid coordinates
+                writer.Write(kvp.Key.x);
+                writer.Write(kvp.Key.y);
+                
+                // Points in this cell
+                writer.Write(kvp.Value.Length);
+                foreach (var rp in kvp.Value)
+                {
+                    writer.Write(rp.p.x);
+                    writer.Write(rp.p.y);
+                    writer.Write(rp.w);
+                    writer.Write(rp.h);
+                }
+            }
+            
+            return ms.ToArray();
+        }
+        finally
+        {
+            m_roadCacheLock.ExitReadLock();
+        }
+    }
+
+    /// <summary>
+    /// Deserialize the entire road network from a byte array.
+    /// Clears existing data and replaces with loaded data.
+    /// </summary>
+    public static bool DeserializeAllRoadPoints(byte[] data)
+    {
+        if (data == null || data.Length == 0)
+            return false;
+
+        try
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+            
+            int version = reader.ReadInt32();
+            if (version != 1)
+            {
+                Log.LogWarning($"Unknown road data version: {version}");
+                return false;
+            }
+            
+            int cellCount = reader.ReadInt32();
+            if (cellCount < 0 || cellCount > 1000000) // Sanity check
+            {
+                Log.LogWarning($"Invalid cell count: {cellCount}");
+                return false;
+            }
+            
+            var loadedPoints = new Dictionary<Vector2i, RoadPoint[]>(cellCount);
+            int totalPoints = 0;
+            
+            for (int c = 0; c < cellCount; c++)
+            {
+                int gridX = reader.ReadInt32();
+                int gridY = reader.ReadInt32();
+                int pointCount = reader.ReadInt32();
+                
+                if (pointCount < 0 || pointCount > 100000) // Sanity check
+                {
+                    Log.LogWarning($"Invalid point count at cell ({gridX},{gridY}): {pointCount}");
+                    return false;
+                }
+                
+                var points = new RoadPoint[pointCount];
+                for (int i = 0; i < pointCount; i++)
+                {
+                    float px = reader.ReadSingle();
+                    float py = reader.ReadSingle();
+                    float w = reader.ReadSingle();
+                    float h = reader.ReadSingle();
+                    points[i] = new RoadPoint(new Vector2(px, py), w, h);
+                }
+                
+                loadedPoints[new Vector2i(gridX, gridY)] = points;
+                totalPoints += pointCount;
+            }
+            
+            // Replace current data
+            m_roadCacheLock.EnterWriteLock();
+            try
+            {
+                m_roadPoints = loadedPoints;
+                m_cachedRoadGrid = new Vector2i(-999999, -999999);
+                m_cachedRoadPoints = null;
+                m_initialized = true;
+                GridCellsWithRoads = loadedPoints.Count;
+                TotalRoadPoints = totalPoints;
+            }
+            finally
+            {
+                m_roadCacheLock.ExitWriteLock();
+            }
+            
+            Log.LogDebug($"Deserialized {cellCount} grid cells, {totalPoints} road points");
+            return true;
+        }
+        catch (System.Exception ex)
+        {
+            Log.LogWarning($"Failed to deserialize global road data: {ex.Message}");
+            return false;
+        }
+    }
+
     #endregion
 }

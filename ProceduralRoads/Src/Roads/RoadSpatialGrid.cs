@@ -27,22 +27,6 @@ public static class RoadSpatialGrid
         }
     }
 
-    /// <summary>
-    /// Debug information about how a road point's height was calculated.
-    /// Stored during generation for later inspection.
-    /// </summary>
-    public struct RoadPointDebugInfo
-    {
-        public int PointIndex;           // Index in the path
-        public int TotalPoints;          // Total points in this road
-        public float OriginalHeight;     // Height before smoothing (terrain height)
-        public float SmoothedHeight;     // Final height after smoothing
-        public int WindowStart;          // First index used in smoothing window
-        public int WindowEnd;            // Last index used in smoothing window
-        public int ActualWindowSize;     // How many heights were averaged
-        public float[] WindowHeights;    // The original heights in window
-    }
-
     public const float GridSize = RoadConstants.SpatialGridSize;
     public const float DefaultRoadWidth = RoadConstants.DefaultRoadWidth;
 

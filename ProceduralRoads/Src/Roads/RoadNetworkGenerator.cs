@@ -27,7 +27,6 @@ public static class RoadNetworkGenerator
 
     private static readonly Dictionary<string, int> LocationPriorities = new()
     {
-        // Bosses - always include (100)
         { "Eikthyrnir", 100 },
         { "GDKing", 100 },
         { "Bonemass", 100 },
@@ -35,23 +34,19 @@ public static class RoadNetworkGenerator
         { "GoblinKing", 100 },
         { "SeekerQueen", 100 },
         
-        // Major dungeons (80)
         { "Crypt4", 80 },
         { "SunkenCrypt4", 80 },
         { "MountainCave02", 80 },
         { "TrollCave02", 40 },
         { "Crypt3", 75 },
         
-        // Mistlands major (75)
         { "Mistlands_DvergrTownEntrance1", 75 },
         { "Mistlands_DvergrTownEntrance2", 75 },
         { "Mistlands_Harbour1", 70 },
         
-        // Villages/Farms (60)
         { "WoodVillage1", 60 },
         { "WoodFarm1", 55 },
         
-        // Mistlands structures (50)
         { "Mistlands_GuardTower1_new", 50 },
         { "Mistlands_GuardTower2_new", 50 },
         { "Mistlands_GuardTower3_new", 50 },
@@ -60,11 +55,9 @@ public static class RoadNetworkGenerator
         { "Mistlands_Excavation2", 45 },
         { "Mistlands_Excavation3", 45 },
         
-        // Towers (40)
         { "StoneTower1", 40 },
         { "StoneTower3", 40 },
         
-        // Ruins/minor (30)
         { "Mistlands_GuardTower1_ruined_new", 30 },
         { "Mistlands_GuardTower3_ruined_new", 30 },
         { "StoneTowerRuins03", 30 },
@@ -85,7 +78,7 @@ public static class RoadNetworkGenerator
     private const int DefaultPriority = 20;
     private const int MinLocationsPerIsland = 2;
     private const int MaxLocationsPerIsland = 12;
-    private const float AreaPerLocation = 2_000_000f; // 2 km² per additional location
+    private const float AreaPerLocation = 2_000_000f;
 
     /// <summary>
     /// Location names registered via API or config for road generation.
@@ -187,7 +180,6 @@ public static class RoadNetworkGenerator
             return;
         }
         
-        // If forcing regeneration, reset state first
         if (force && m_roadsGenerated)
         {
             Log.LogDebug("Force regenerating roads...");
@@ -212,38 +204,31 @@ public static class RoadNetworkGenerator
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
         m_roadsGeneratedCount = 0;
 
-        // Gather all location data
         var locations = GatherLocationData();
         if (locations == null)
             return;
 
-        // Detect islands and select based on percentage config
         var islands = IslandDetector.DetectIslands();
         
-        // Sort by size (largest first) for deterministic selection
         var sortedIslands = islands.OrderByDescending(i => i.ApproxArea).ToList();
         
-        // Calculate how many islands to process based on percentage
         int islandCount = Mathf.Max(1, Mathf.RoundToInt(sortedIslands.Count * IslandRoadPercentage / 100f));
         var selectedIslands = sortedIslands.Take(islandCount).ToList();
         
         Log.LogDebug($"Islands: {islands.Count} total, {islandCount} selected ({IslandRoadPercentage}%)");
 
-        // Generate roads for selected islands
         foreach (var island in selectedIslands)
         {
             var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
             if (islandLocations.Count == 0) continue;
             
-            // Filter to priority locations based on island size
             int maxLocs = GetMaxLocationsForIsland(island);
             var selected = SelectLocations(islandLocations, maxLocs);
             
             Log.LogDebug(
                 $"Island {island.Id}: {islandLocations.Count} candidates -> {selected.Count} selected (max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km²)");
             
-            // Check if this island contains StartTemple
-            bool isStarterIsland = island.ContainsPoint(locations.Value.SpawnPoint);
+        bool isStarterIsland = island.ContainsPoint(locations.Value.SpawnPoint);
             
             if (isStarterIsland)
             {
@@ -259,11 +244,12 @@ public static class RoadNetworkGenerator
         TimeSpan elapsed = DateTime.Now - startTime;
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
 
-        // Finalize the road network and compute version hash for zone caching
         RoadSpatialGrid.FinalizeRoadNetwork();
         
         m_roadsGenerated = true;
         m_pathfinder = null;
+        
+        EnsureMetadataInstance();
     }
 
     #region Core Road Generation Primitive
@@ -292,7 +278,6 @@ public static class RoadNetworkGenerator
 
         List<Vector2>? path = m_pathfinder.FindPath(startCenter, endCenter);
 
-        // Attempt to keep UI responsive during generation
         UnityEngine.Canvas.ForceUpdateCanvases();
 
         if (path == null || path.Count < 2)
@@ -302,7 +287,6 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        // Trim path to stop at location radii
         path = TrimPathToRadii(path, startCenter, startRadius, endCenter, endRadius);
 
         if (path == null || path.Count < 2)
@@ -315,7 +299,6 @@ public static class RoadNetworkGenerator
         RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
         m_roadsGeneratedCount++;
 
-        // Track road start point for visualization
         if (path.Count > 0)
         {
             string pinLabel = label ?? $"Road {m_roadsGeneratedCount}";
@@ -493,12 +476,10 @@ public static class RoadNetworkGenerator
     {
         if (locations.Count == 0) return;
         
-        // Build node list: start point + all locations
         var nodes = new List<(string name, Vector3 position, float radius)>();
         nodes.Add(("Start", startPos, startRadius));
         nodes.AddRange(locations);
         
-        // Prim's algorithm for MST
         var inTree = new bool[nodes.Count];
         var minEdge = new float[nodes.Count];
         var parent = new int[nodes.Count];
@@ -537,7 +518,6 @@ public static class RoadNetworkGenerator
             }
         }
         
-        // Generate roads for MST edges
         for (int i = 1; i < nodes.Count; i++)
         {
             if (parent[i] >= 0)
@@ -558,7 +538,6 @@ public static class RoadNetworkGenerator
     {
         if (islandLocations.Count == 0) return;
         
-        // Determine start point
         Vector3 startPos;
         float startRadius;
         if (overrideStart.HasValue)
@@ -573,7 +552,6 @@ public static class RoadNetworkGenerator
             startRadius = 0f;
         }
         
-        // Pick strategy based on island ID (deterministic)
         bool useMST = (island.Id % 2) == 0;
         
         Log.LogDebug(
@@ -597,6 +575,7 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
+        s_metadataZdo = null;
         RoadSpatialGrid.Clear();
     }
 
@@ -629,7 +608,6 @@ public static class RoadNetworkGenerator
         if (path == null || path.Count < 2)
             return null;
 
-        // Trim from start: find first point outside start radius
         int startIndex = 0;
         float startRadiusSq = startRadius * startRadius;
         for (int i = 0; i < path.Count; i++)
@@ -641,7 +619,6 @@ public static class RoadNetworkGenerator
             }
         }
 
-        // Trim from end: find last point outside end radius
         int endIndex = path.Count - 1;
         float endRadiusSq = endRadius * endRadius;
         for (int i = path.Count - 1; i >= 0; i--)
@@ -653,27 +630,22 @@ public static class RoadNetworkGenerator
             }
         }
 
-        // Validate we have enough path remaining
         if (endIndex <= startIndex)
             return null;
 
-        // Extract the trimmed portion
         var trimmedPath = new List<Vector2>();
 
-        // Add edge point at start radius if we trimmed anything
         if (startIndex > 0 && startIndex < path.Count)
         {
             Vector2 edgePoint = CalculateRadiusIntersection(path[startIndex], startCenter, startRadius);
             trimmedPath.Add(edgePoint);
         }
 
-        // Add all points between start and end indices
         for (int i = startIndex; i <= endIndex; i++)
         {
             trimmedPath.Add(path[i]);
         }
 
-        // Add edge point at end radius if we trimmed anything
         if (endIndex < path.Count - 1 && endIndex >= 0)
         {
             Vector2 edgePoint = CalculateRadiusIntersection(path[endIndex], endCenter, endRadius);
@@ -698,8 +670,9 @@ public static class RoadNetworkGenerator
 
     /// <summary>
     /// Unique prefab name for our metadata ZDO. Must not conflict with any game prefabs.
+    /// This is public so Plugin.cs can register the prefab with Jotunn.
     /// </summary>
-    private const string MetadataPrefabName = "ProceduralRoads_Metadata";
+    public const string MetadataPrefabName = "ProceduralRoads_Metadata";
     
     /// <summary>
     /// Prefab hash derived from the name.
@@ -710,46 +683,149 @@ public static class RoadNetworkGenerator
     /// Hash key for storing road start points data on the ZDO.
     /// </summary>
     private static readonly int RoadStartPointsHash = "ProceduralRoads_StartPoints".GetStableHashCode();
+    
+    /// <summary>
+    /// Hash key for storing global road network data on the ZDO.
+    /// </summary>
+    private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
 
     /// <summary>
-    /// Save road metadata (start points) to a dedicated ZDO for persistence across world reloads.
-    /// Call this after road generation completes.
+    /// Save the entire road network to a dedicated ZDO for persistence across world reloads.
+    /// Call this on world save.
     /// </summary>
-    public static void SaveRoadMetadata()
+    public static void SaveGlobalRoadData()
     {
-        if (m_roadStartPoints.Count == 0)
+        Log.LogDebug($"[SAVE] SaveGlobalRoadData called. RoadsGenerated={m_roadsGenerated}");
+        
+        if (!m_roadsGenerated)
         {
-            Log.LogDebug("No road start points to save");
+            Log.LogDebug("[SAVE] No roads generated, skipping global save");
             return;
         }
 
-        if (ZDOMan.instance == null)
-        {
-            Log.LogWarning("ZDOMan not available, cannot save road metadata");
-            return;
-        }
-
-        // Find existing metadata ZDO or create new one
-        ZDO? metadataZdo = FindMetadataZDO();
+        ZDO? metadataZdo = GetMetadataZDO();
         
         if (metadataZdo == null)
         {
-            // Create new ZDO at world origin
-            metadataZdo = ZDOMan.instance.CreateNewZDO(Vector3.zero, MetadataPrefabHash);
-            Log.LogDebug($"Created new metadata ZDO: {metadataZdo.m_uid}");
+            Log.LogError("[SAVE] No metadata ZDO available! EnsureMetadataInstance should have been called after road generation.");
+            return;
+        }
+        
+        Log.LogDebug($"[SAVE] Using metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}");
+
+        byte[]? data = RoadSpatialGrid.SerializeAllRoadPoints();
+        if (data != null && data.Length > 0)
+        {
+            metadataZdo.Set(GlobalRoadDataHash, data);
+            Log.LogDebug($"[SAVE] Saved global road data: {data.Length} bytes, {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
         }
         else
         {
-            Log.LogDebug($"Found existing metadata ZDO: {metadataZdo.m_uid}");
+            Log.LogWarning("[SAVE] SerializeAllRoadPoints returned null or empty data!");
+        }
+        
+        byte[] startPointsData = SerializeRoadStartPoints();
+        if (startPointsData != null && startPointsData.Length > 0)
+        {
+            metadataZdo.Set(RoadStartPointsHash, startPointsData);
+            Log.LogDebug($"[SAVE] Saved {m_roadStartPoints.Count} road start points ({startPointsData.Length} bytes)");
+        }
+    }
+    
+    /// <summary>
+    /// Cached reference to the metadata ZDO (not a GameObject - we create ZDO directly).
+    /// </summary>
+    private static ZDO? s_metadataZdo;
+    
+    /// <summary>
+    /// Ensure the metadata ZDO exists. Call this after road generation.
+    /// Creates the ZDO directly - no GameObject needed during the session.
+    /// The prefab registration with Jotunn ensures the hash is recognized on reload.
+    /// </summary>
+    private static void EnsureMetadataInstance()
+    {
+        if (s_metadataZdo != null)
+        {
+            Log.LogDebug("[META] Metadata ZDO already cached");
+            return;
+        }
+        
+        s_metadataZdo = FindMetadataZDO();
+        if (s_metadataZdo != null)
+        {
+            Log.LogDebug($"[META] Found existing metadata ZDO: {s_metadataZdo.m_uid}");
+            return;
+        }
+        
+        if (ZDOMan.instance == null)
+        {
+            Log.LogError("[META] ZDOMan.instance is null!");
+            return;
+        }
+        
+        s_metadataZdo = ZDOMan.instance.CreateNewZDO(Vector3.zero, MetadataPrefabHash);
+        s_metadataZdo.Persistent = true;
+        s_metadataZdo.SetPrefab(MetadataPrefabHash);
+        
+        Log.LogDebug($"[META] Created metadata ZDO directly: m_uid={s_metadataZdo.m_uid}, prefab={s_metadataZdo.GetPrefab()}");
+    }
+    
+    /// <summary>
+    /// Get the metadata ZDO, either from cache or by searching.
+    /// </summary>
+    private static ZDO? GetMetadataZDO()
+    {
+        if (s_metadataZdo != null)
+            return s_metadataZdo;
+        
+        s_metadataZdo = FindMetadataZDO();
+        return s_metadataZdo;
+    }
+
+    /// <summary>
+    /// Try to load the entire road network from persisted ZDO.
+    /// Call this on world load before road generation would trigger.
+    /// </summary>
+    /// <returns>True if road data was found and loaded</returns>
+    public static bool TryLoadGlobalRoadData()
+    {
+        Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
+        
+        if (ZDOMan.instance == null)
+        {
+            Log.LogDebug("[LOAD] ZDOMan.instance is null!");
+            return false;
+        }
+        
+        ZDO? metadataZdo = FindMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogDebug("[LOAD] No road metadata ZDO found");
+            return false;
         }
 
-        // Serialize road start points
-        byte[] data = SerializeRoadStartPoints();
-        if (data != null && data.Length > 0)
+        Log.LogDebug($"[LOAD] Found metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}");
+
+        byte[]? data = metadataZdo.GetByteArray(GlobalRoadDataHash, null);
+        if (data == null || data.Length == 0)
         {
-            metadataZdo.Set(RoadStartPointsHash, data);
-            Log.LogDebug($"Saved {m_roadStartPoints.Count} road start points ({data.Length} bytes)");
+            Log.LogDebug("[LOAD] Metadata ZDO found but no global road data");
+            return false;
         }
+
+        Log.LogDebug($"[LOAD] Got {data.Length} bytes of road data, deserializing...");
+
+        if (RoadSpatialGrid.DeserializeAllRoadPoints(data))
+        {
+            Log.LogDebug($"[LOAD] Successfully loaded: {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
+            
+            TryLoadRoadMetadata();
+            
+            return true;
+        }
+
+        Log.LogWarning("[LOAD] DeserializeAllRoadPoints returned false!");
+        return false;
     }
 
     /// <summary>
@@ -791,23 +867,28 @@ public static class RoadNetworkGenerator
     private static ZDO? FindMetadataZDO()
     {
         if (ZDOMan.instance == null)
+        {
+            Log.LogDebug("[FIND] ZDOMan.instance is null");
             return null;
+        }
 
         var zdos = new List<ZDO>();
         int index = 0;
         
-        // GetAllZDOsWithPrefabIterative takes a prefab name string and hashes it internally
-        while (ZDOMan.instance.GetAllZDOsWithPrefabIterative(MetadataPrefabName, zdos, ref index))
+        while (!ZDOMan.instance.GetAllZDOsWithPrefabIterative(MetadataPrefabName, zdos, ref index))
         {
-            // Keep iterating until done
         }
 
-        // Return first found (should only be one)
+        Log.LogDebug($"[FIND] Search complete: found {zdos.Count} ZDOs matching '{MetadataPrefabName}'");
+
         if (zdos.Count > 0)
         {
-            return zdos[0];
+            var zdo = zdos[0];
+            Log.LogDebug($"[FIND] Found ZDO: m_uid={zdo.m_uid}, prefab={zdo.GetPrefab()}, persistent={zdo.Persistent}");
+            return zdo;
         }
 
+        Log.LogDebug("[FIND] No matching ZDO found");
         return null;
     }
 
@@ -846,7 +927,7 @@ public static class RoadNetworkGenerator
             using var reader = new BinaryReader(ms);
 
             int count = reader.ReadInt32();
-            if (count < 0 || count > 10000) // Sanity check
+            if (count < 0 || count > 10000)
             {
                 Log.LogWarning($"Invalid road start points count: {count}");
                 return false;
@@ -860,7 +941,7 @@ public static class RoadNetworkGenerator
                 float y = reader.ReadSingle();
                 int labelLen = reader.ReadInt32();
                 
-                if (labelLen < 0 || labelLen > 1000) // Sanity check
+                if (labelLen < 0 || labelLen > 1000)
                 {
                     Log.LogWarning($"Invalid label length: {labelLen}");
                     return false;

@@ -475,7 +475,7 @@ public static class ConsoleCommands
                 TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
                 if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
 
-                ZoneSystem_Patch.ApplyRoadTerrainModsPublic(zoneID, roadPoints, heightmap, terrainComp);
+                RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
                 zonesWithRoads++;
             }
         }

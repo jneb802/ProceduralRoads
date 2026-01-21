@@ -52,7 +52,6 @@ public static class RoadSpatialGrid
     private static ReaderWriterLockSlim m_roadCacheLock = new ReaderWriterLockSlim();
     private static bool m_initialized = false;
     
-    // Debug info storage - keyed by road point position for lookup
     private static Dictionary<Vector2, RoadPointDebugInfo> m_debugInfo = new Dictionary<Vector2, RoadPointDebugInfo>();
     
     public static int TotalRoadPoints { get; private set; } = 0;
@@ -112,9 +111,6 @@ public static class RoadSpatialGrid
         List<Vector2> densePoints = SplinePath(path, segmentLength);
         List<float> denseHeights = new List<float>(densePoints.Count);
         
-        // Use biome-blended heights to match what Heightmap actually renders.
-        // WorldGenerator.GetHeight doesn't blend at biome boundaries, causing
-        // "phantom cliffs" that don't exist in the visible terrain.
         foreach (var point in densePoints)
             denseHeights.Add(BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, worldGen));
         
@@ -135,8 +131,6 @@ public static class RoadSpatialGrid
         for (int i = 0; i < densePoints.Count; i++)
         {
             AddRoadPoint(tempPoints, densePoints[i], width, smoothedHeights[i]);
-            
-            // Store debug info keyed by position
             m_debugInfo[densePoints[i]] = debugInfos[i];
         }
 
@@ -153,13 +147,11 @@ public static class RoadSpatialGrid
     /// </summary>
     public static void FinalizeRoadNetwork()
     {
-        // Compute a version hash from road network properties + world seed
-        // This changes when: world seed changes, road count changes, road layout changes
         int worldSeed = WorldGenerator.instance?.GetSeed() ?? 0;
         int hash = worldSeed;
         hash = hash * 31 + TotalRoadPoints;
         hash = hash * 31 + GridCellsWithRoads;
-        hash = hash * 31 + (int)(TotalRoadLength * 10); // Include length with some precision
+        hash = hash * 31 + (int)(TotalRoadLength * 10);
         
         RoadNetworkVersion = hash;
         Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
@@ -623,7 +615,6 @@ public static class RoadSpatialGrid
     /// </summary>
     public static byte[]? SerializeZoneRoadPoints(Vector2i zoneID)
     {
-        // Get all road points that affect this zone (same as GetRoadPointsInZone)
         var points = GetRoadPointsInZone(zoneID);
         
         if (points.Count == 0)
@@ -659,10 +650,9 @@ public static class RoadSpatialGrid
             using var reader = new BinaryReader(ms);
             
             int count = reader.ReadInt32();
-            if (count <= 0 || count > 100000) // Sanity check
+            if (count <= 0 || count > 100000)
                 return;
             
-            // Group points by their grid cell
             var pointsByGrid = new Dictionary<Vector2i, List<RoadPoint>>();
             
             for (int i = 0; i < count; i++)
@@ -683,7 +673,6 @@ public static class RoadSpatialGrid
                 list.Add(point);
             }
             
-            // Add to grid
             AddDeserializedPoints(pointsByGrid);
         }
         catch (System.Exception ex)
@@ -709,13 +698,11 @@ public static class RoadSpatialGrid
                 {
                     m_roadPoints[grid] = newPoints.ToArray();
                 }
-                // If grid already has points, they were loaded from another zone or generated - skip
             }
             
             GridCellsWithRoads = m_roadPoints.Count;
             m_initialized = true;
             
-            // Invalidate cache
             m_cachedRoadGrid = new Vector2i(-999999, -999999);
             m_cachedRoadPoints = null;
         }
@@ -740,19 +727,15 @@ public static class RoadSpatialGrid
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             
-            // Version for future compatibility
             writer.Write(1);
             
-            // Number of grid cells
             writer.Write(m_roadPoints.Count);
             
             foreach (var kvp in m_roadPoints)
             {
-                // Grid coordinates
                 writer.Write(kvp.Key.x);
                 writer.Write(kvp.Key.y);
                 
-                // Points in this cell
                 writer.Write(kvp.Value.Length);
                 foreach (var rp in kvp.Value)
                 {
@@ -793,7 +776,7 @@ public static class RoadSpatialGrid
             }
             
             int cellCount = reader.ReadInt32();
-            if (cellCount < 0 || cellCount > 1000000) // Sanity check
+            if (cellCount < 0 || cellCount > 1000000)
             {
                 Log.LogWarning($"Invalid cell count: {cellCount}");
                 return false;
@@ -808,7 +791,7 @@ public static class RoadSpatialGrid
                 int gridY = reader.ReadInt32();
                 int pointCount = reader.ReadInt32();
                 
-                if (pointCount < 0 || pointCount > 100000) // Sanity check
+                if (pointCount < 0 || pointCount > 100000)
                 {
                     Log.LogWarning($"Invalid point count at cell ({gridX},{gridY}): {pointCount}");
                     return false;
@@ -828,7 +811,6 @@ public static class RoadSpatialGrid
                 totalPoints += pointCount;
             }
             
-            // Replace current data
             m_roadCacheLock.EnterWriteLock();
             try
             {

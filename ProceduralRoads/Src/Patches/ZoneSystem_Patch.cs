@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Diagnostics;
 using HarmonyLib;
 using UnityEngine;
 
@@ -15,21 +14,12 @@ public static class ZoneSystem_Patch
     
     private static int s_coordLogCount = 0;
     
-    // Performance timing
-    private static readonly Stopwatch s_zoneTimer = new Stopwatch();
-    private static int s_timedZoneCount = 0;
-    private static double s_totalZoneTimeMs = 0;
-    private static double s_maxZoneTimeMs = 0;
-    private const int TimingLogInterval = 10; // Log summary every N zones
-    
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))]
     public static class ZoneSystem_Start_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(ZoneSystem __instance)
         {
-            // Initialize FIRST - for existing worlds, the callback fires immediately on subscription
-            // because m_locationsGenerated is already true from save data
             RoadNetworkGenerator.Initialize();
             __instance.GenerateLocationsCompleted += OnLocationsGenerated;
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Subscribed to GenerateLocationsCompleted event");
@@ -42,8 +32,6 @@ public static class ZoneSystem_Patch
         RoadNetworkGenerator.MarkLocationsReady();
         s_roadClearAreasCache.Clear();
 
-        // For NEW worlds: WorldGenerator is ready AND locations are populated, generate now
-        // For EXISTING worlds: callback fires immediately but locations aren't loaded yet from save
         bool hasWorldGen = WorldGenerator.instance != null;
         bool hasLocations = ZoneSystem.instance?.GetLocationList()?.Count > 0;
 
@@ -52,7 +40,6 @@ public static class ZoneSystem_Patch
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"WorldGenerator and locations available ({ZoneSystem.instance!.GetLocationList()!.Count} locations)...");
             
-            // Try to load persisted global road data first
             if (RoadNetworkGenerator.TryLoadGlobalRoadData())
             {
                 RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
@@ -60,7 +47,6 @@ public static class ZoneSystem_Patch
             }
             else
             {
-                // No persisted data - generate roads
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No persisted roads found, generating...");
                 RoadNetworkGenerator.GenerateRoads();
             }
@@ -81,7 +67,7 @@ public static class ZoneSystem_Patch
             if (!RoadNetworkGenerator.RoadsGenerated)
                 return;
 
-            if (!s_roadClearAreasCache.TryGetValue(zoneID, out var roadClearAreas))
+            if (!s_roadClearAreasCache.TryGetValue(zoneID, out List<ZoneSystem.ClearArea> roadClearAreas))
             {
                 roadClearAreas = CreateRoadClearAreas(zoneID);
                 s_roadClearAreasCache[zoneID] = roadClearAreas;
@@ -93,15 +79,15 @@ public static class ZoneSystem_Patch
 
     private static List<ZoneSystem.ClearArea> CreateRoadClearAreas(Vector2i zoneID)
     {
-        var clearAreas = new List<ZoneSystem.ClearArea>();
-        var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+        List<ZoneSystem.ClearArea> clearAreas = new List<ZoneSystem.ClearArea>();
+        List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
 
         if (roadPoints.Count == 0)
             return clearAreas;
 
         HashSet<Vector2i> processedCells = new HashSet<Vector2i>();
 
-        foreach (var roadPoint in roadPoints)
+        foreach (RoadSpatialGrid.RoadPoint roadPoint in roadPoints)
         {
             Vector2i cell = new Vector2i(
                 Mathf.RoundToInt(roadPoint.p.x / RoadConstants.VegetationClearSampleInterval),
@@ -132,56 +118,11 @@ public static class ZoneSystem_Patch
             if (mode == ZoneSystem.SpawnMode.Client)
                 return;
 
-            // Handle deferred generation/loading - check this regardless of __result
-            // For existing worlds, zones near spawn already exist so __result is false,
-            // but we still need to trigger road loading/generation
-            if (RoadNetworkGenerator.IsLocationsReady && !RoadNetworkGenerator.RoadsAvailable)
-            {
-                // Try to load global road data first (existing world with persisted roads)
-                if (RoadNetworkGenerator.TryLoadGlobalRoadData())
-                {
-                    RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
-                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                        "Roads loaded from global persistence (deferred)");
-                }
-                else
-                {
-                    // Existing world without persisted roads - generate now
-                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                        "No global road data found, generating (deferred)...");
-                    RoadNetworkGenerator.GenerateRoads();
-                }
-            }
-
-            // For newly spawned zones, apply terrain mods if we have generated roads
             if (__result && RoadNetworkGenerator.RoadsGenerated)
             {
                 List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
                 if (roadPoints.Count > 0)
-                {
-                    s_zoneTimer.Restart();
-
-                    // Apply terrain mods
                     ApplyRoadTerrainMods(zoneID, roadPoints);
-
-                    s_zoneTimer.Stop();
-                    double elapsedMs = s_zoneTimer.Elapsed.TotalMilliseconds;
-
-                    s_timedZoneCount++;
-                    s_totalZoneTimeMs += elapsedMs;
-                    if (elapsedMs > s_maxZoneTimeMs)
-                        s_maxZoneTimeMs = elapsedMs;
-
-                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                        $"Zone {zoneID}: {roadPoints.Count} road points, {elapsedMs:F2}ms");
-
-                    if (s_timedZoneCount % TimingLogInterval == 0)
-                    {
-                        double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
-                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                            $"[PERF] Road zones: {s_timedZoneCount} processed, avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms");
-                    }
-                }
             }
         }
     }
@@ -191,11 +132,11 @@ public static class ZoneSystem_Patch
     /// </summary>
     private static void ApplyRoadTerrainMods(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
     {
-        var context = GetTerrainContext(zoneID);
+        TerrainContext? context = GetTerrainContext(zoneID);
         if (context == null)
             return;
 
-        var stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
+        ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
         ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
         FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
     }
@@ -217,7 +158,7 @@ public static class ZoneSystem_Patch
             return;
         }
 
-        var context = new TerrainContext
+        TerrainContext context = new TerrainContext
         {
             Heightmap = heightmap,
             TerrainComp = terrainComp,
@@ -226,7 +167,7 @@ public static class ZoneSystem_Patch
             VertexSpacing = RoadConstants.ZoneSize / terrainComp.m_width
         };
 
-        var stats = ModifyVertexHeights(zoneID, roadPoints, context);
+        ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context);
         ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
         FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context);
     }
@@ -242,31 +183,13 @@ public static class ZoneSystem_Patch
 
     private static TerrainContext? GetTerrainContext(Vector2i zoneID)
     {
-        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
-        Heightmap heightmap = Heightmap.FindHeightmap(zonePos);
+        Heightmap heightmap = Heightmap.FindHeightmap(ZoneSystem.GetZonePos(zoneID));
+        TerrainComp? terrainComp = heightmap?.GetAndCreateTerrainCompiler();
+        int gridSize = (terrainComp?.m_width ?? 0) + 1;
 
-        if (heightmap == null)
-        {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"No heightmap found for zone {zoneID}");
+        if (heightmap == null || terrainComp == null || !terrainComp.m_nview.IsOwner() ||
+            terrainComp.m_levelDelta == null || terrainComp.m_levelDelta.Length < gridSize * gridSize)
             return null;
-        }
-
-        TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-        if (terrainComp == null)
-        {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Could not get TerrainComp for zone {zoneID}");
-            return null;
-        }
-
-        if (!terrainComp.m_nview.IsOwner())
-            return null;
-
-        int gridSize = terrainComp.m_width + 1;
-        if (terrainComp.m_levelDelta == null || terrainComp.m_levelDelta.Length < gridSize * gridSize)
-        {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Zone {zoneID}: TerrainComp arrays not initialized");
-            return null;
-        }
 
         return new TerrainContext
         {
@@ -287,7 +210,7 @@ public static class ZoneSystem_Patch
 
     private static ModificationStats ModifyVertexHeights(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
     {
-        var stats = new ModificationStats { PaintedCells = new HashSet<Vector2i>() };
+        ModificationStats stats = new ModificationStats { PaintedCells = new HashSet<Vector2i>() };
 
         LogCoordinateDebug(zoneID, roadPoints, context);
 
@@ -303,13 +226,10 @@ public static class ZoneSystem_Patch
                     context.HeightmapPosition.z + (vz - context.TerrainComp.m_width / 2f) * context.VertexSpacing);
                 Vector2 vertexPos2D = new Vector2(vertexWorldPos.x, vertexWorldPos.z);
                 
-                var blendResult = CalculateBlendedHeight(roadPoints, vertexPos2D);
+                BlendResult blendResult = CalculateBlendedHeight(roadPoints, vertexPos2D);
                 if (blendResult.InfluencingPoints == 0)
                     continue;
 
-                // Use biome-blended height to match road point heights (which also use blending).
-                // WorldGenerator.GetHeight has phantom cliffs at biome boundaries that don't exist
-                // in the rendered terrain, causing incorrect delta calculations.
                 float baseHeight = BiomeBlendedHeight.GetBlendedHeight(vertexWorldPos.x, vertexWorldPos.z, WorldGenerator.instance);
                 float finalHeight = Mathf.Lerp(baseHeight, blendResult.TargetHeight, blendResult.MaxBlend);
                 float delta = Mathf.Clamp(finalHeight - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
@@ -349,7 +269,7 @@ public static class ZoneSystem_Patch
         float maxBlend = 0f;
         int influencingPoints = 0;
 
-        foreach (var rp in roadPoints)
+        foreach (RoadSpatialGrid.RoadPoint rp in roadPoints)
         {
             float distSq = (rp.p - vertexPos).sqrMagnitude;
             float influenceRadius = (rp.w * 0.5f) + RoadConstants.TerrainBlendMargin;
@@ -381,9 +301,6 @@ public static class ZoneSystem_Patch
 
     private static void ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells)
     {
-        // Direct array modification instead of DoOperation (which triggers Save+Poke per call)
-        // Based on TerrainComp.PaintCleared decompiled logic
-        
         Heightmap hmap = terrainComp.m_hmap;
         if (hmap == null)
             return;
@@ -392,9 +309,8 @@ public static class ZoneSystem_Patch
         Vector3 terrainPos = hmap.transform.position;
         float scale = hmap.m_scale;
         
-        foreach (var roadPoint in roadPoints)
+        foreach (RoadSpatialGrid.RoadPoint roadPoint in roadPoints)
         {
-            // Dedupe by cell to avoid redundant paint operations
             Vector2i cell = new Vector2i(
                 Mathf.RoundToInt(roadPoint.p.x / RoadConstants.PaintDedupeInterval),
                 Mathf.RoundToInt(roadPoint.p.y / RoadConstants.PaintDedupeInterval));
@@ -403,8 +319,6 @@ public static class ZoneSystem_Patch
                 continue;
             paintedCells.Add(cell);
             
-            // Convert world position to paint mask coordinates
-            // Following TerrainComp.PaintCleared logic: offset by 0.5 before conversion
             Vector3 worldPos = new Vector3(roadPoint.p.x - 0.5f, 0f, roadPoint.p.y - 0.5f);
             Vector3 localPos = worldPos - terrainPos;
             int halfWidth = (terrainComp.m_width + 1) / 2;
@@ -415,7 +329,6 @@ public static class ZoneSystem_Patch
             float radiusInVertices = radius / scale;
             int radiusCeil = Mathf.CeilToInt(radiusInVertices);
             
-            // Paint all vertices within radius
             for (int dy = -radiusCeil; dy <= radiusCeil; dy++)
             {
                 for (int dx = -radiusCeil; dx <= radiusCeil; dx++)
@@ -423,22 +336,18 @@ public static class ZoneSystem_Patch
                     int vx = centerX + dx;
                     int vy = centerY + dy;
                     
-                    // Bounds check
                     if (vx < 0 || vy < 0 || vx >= gridSize || vy >= gridSize)
                         continue;
                     
-                    // Distance check (circular brush)
                     float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusInVertices)
                         continue;
                     
-                    // Calculate blend factor (matches PaintCleared logic)
                     float blendFactor = 1f - Mathf.Clamp01(dist / radiusInVertices);
                     blendFactor = Mathf.Pow(blendFactor, 0.1f);
                     
                     int index = vy * gridSize + vx;
                     
-                    // Get current color, blend with paved color, preserve alpha
                     Color currentColor = terrainComp.m_paintMask[index];
                     float alpha = currentColor.a;
                     Color newColor = Color.Lerp(currentColor, Heightmap.m_paintMaskPaved, blendFactor);
@@ -457,9 +366,8 @@ public static class ZoneSystem_Patch
         
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
-            // Single Save + Poke at the end (not per-operation)
             context.TerrainComp.Save();
-            context.Heightmap.Poke(true); // Use delayed=true to batch with other updates
+            context.Heightmap.Poke(true);
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
         }
@@ -478,7 +386,7 @@ public static class ZoneSystem_Patch
         s_coordLogCount++;
         
         float halfSize = context.TerrainComp.m_width / 2f * context.VertexSpacing;
-        var firstRoadPoint = roadPoints.Count > 0 ? roadPoints[0] : default;
+        RoadSpatialGrid.RoadPoint firstRoadPoint = roadPoints.Count > 0 ? roadPoints[0] : default;
         
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
             $"[COORD DEBUG] Zone {zoneID}: hmPos=({context.HeightmapPosition.x:F1},{context.HeightmapPosition.z:F1}), " +
@@ -508,24 +416,10 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static void Prefix(ZoneSystem __instance)
         {
-            // Log final timing stats before reset
-            if (s_timedZoneCount > 0)
-            {
-                double avgMs = s_totalZoneTimeMs / s_timedZoneCount;
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                    $"[PERF FINAL] Road zones: {s_timedZoneCount} processed, " +
-                    $"avg={avgMs:F2}ms, max={s_maxZoneTimeMs:F2}ms, total={s_totalZoneTimeMs:F0}ms");
-            }
-
             __instance.GenerateLocationsCompleted -= OnLocationsGenerated;
             RoadNetworkGenerator.Reset();
             s_roadClearAreasCache.Clear();
             s_coordLogCount = 0;
-
-            // Reset timing stats
-            s_timedZoneCount = 0;
-            s_totalZoneTimeMs = 0;
-            s_maxZoneTimeMs = 0;
 
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road data cleared on world unload");
         }
@@ -540,14 +434,12 @@ public static class ZoneSystem_Patch
         [HarmonyPostfix]
         public static void Postfix(Vector3 spawnPoint)
         {
-            // Check if we need to enable deferred loading (existing world case)
             if (!RoadNetworkGenerator.IsLocationsReady || RoadNetworkGenerator.RoadsAvailable)
                 return;
 
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Player spawning at {spawnPoint}, attempting to load global road data...");
 
-            // Try to load global road data
             if (RoadNetworkGenerator.TryLoadGlobalRoadData())
             {
                 RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
@@ -555,7 +447,6 @@ public static class ZoneSystem_Patch
             }
             else
             {
-                // No persisted roads - generate now
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No global road data, generating...");
                 RoadNetworkGenerator.GenerateRoads();
             }

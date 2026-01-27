@@ -198,6 +198,16 @@ public static class RoadNetworkGenerator
 
         Log.LogDebug("Starting road network generation...");
 
+        // Merge config-defined custom locations into registered set
+        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
+        foreach (var locName in configLocations)
+        {
+            if (RegisteredLocationNames.Add(locName))
+            {
+                Log.LogDebug($"Added config location: {locName}");
+            }
+        }
+
         DateTime startTime = DateTime.Now;
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
         m_roadsGeneratedCount = 0;

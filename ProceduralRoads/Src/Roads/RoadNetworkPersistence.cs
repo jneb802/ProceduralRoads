@@ -50,6 +50,12 @@ public static class RoadNetworkPersistence
     }
 
     /// <summary>
+    /// Position far outside playable area to prevent ZNetScene from trying to instantiate.
+    /// The world radius is ~10000, so 50000 is well beyond any active area.
+    /// </summary>
+    private static readonly Vector3 FarPosition = new Vector3(50000f, 0f, 50000f);
+
+    /// <summary>
     /// Ensure the metadata ZDO exists. Call this after road generation.
     /// Creates the ZDO directly - no GameObject needed during the session.
     /// </summary>
@@ -64,6 +70,8 @@ public static class RoadNetworkPersistence
         s_metadataZdo = FindMetadataZDO();
         if (s_metadataZdo != null)
         {
+            // Migrate old ZDOs that were created at origin to far position
+            MigrateZdoPosition(s_metadataZdo);
             Log.LogDebug($"[META] Found existing metadata ZDO: {s_metadataZdo.m_uid}");
             return;
         }
@@ -74,7 +82,7 @@ public static class RoadNetworkPersistence
             return;
         }
 
-        s_metadataZdo = ZDOMan.instance.CreateNewZDO(Vector3.zero, MetadataPrefabHash);
+        s_metadataZdo = ZDOMan.instance.CreateNewZDO(FarPosition, MetadataPrefabHash);
         s_metadataZdo.Persistent = true;
         s_metadataZdo.SetPrefab(MetadataPrefabHash);
 
@@ -194,6 +202,23 @@ public static class RoadNetworkPersistence
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Migrate ZDOs that were created at origin to far position.
+    /// This prevents ZNetScene from trying to instantiate them when players are near spawn.
+    /// </summary>
+    private static void MigrateZdoPosition(ZDO zdo)
+    {
+        Vector3 currentPos = zdo.GetPosition();
+        
+        // Check if ZDO is within playable area (roughly within 15000 units of origin)
+        if (currentPos.x < 15000f && currentPos.x > -15000f &&
+            currentPos.z < 15000f && currentPos.z > -15000f)
+        {
+            Log.LogDebug($"[META] Migrating metadata ZDO from {currentPos} to {FarPosition}");
+            zdo.SetPosition(FarPosition);
+        }
     }
 
     /// <summary>

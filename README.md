@@ -21,8 +21,7 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | RoadWidth | 4 | Road width in meters (2-10) |
-| MaxRoadsFromSpawn | 5 | Number of roads from spawn (1-10) |
-| MaxRoadLength | 3000 | Maximum road length in meters (500-8000) |
+| IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 
 ### Custom Locations via Config

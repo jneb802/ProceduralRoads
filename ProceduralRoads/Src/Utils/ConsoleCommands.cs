@@ -475,7 +475,7 @@ public static class ConsoleCommands
                 TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
                 if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
 
-                ZoneSystem_Patch.ApplyRoadTerrainModsPublic(zoneID, roadPoints, heightmap, terrainComp);
+                RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
                 zonesWithRoads++;
             }
         }
@@ -550,7 +550,7 @@ public static class ConsoleCommands
             else
             {
                 // Create minimal debug info if not available (e.g., loaded from ZDO)
-                debugMarker.DebugInfo = new RoadSpatialGrid.RoadPointDebugInfo
+                debugMarker.DebugInfo = new RoadPointDebugInfo
                 {
                     PointIndex = -1,
                     TotalPoints = -1,

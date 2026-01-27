@@ -5,12 +5,28 @@ using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
+/// Debug information about how a road point's height was calculated.
+/// Stored during generation for later inspection.
+/// </summary>
+public struct RoadPointDebugInfo
+{
+    public int PointIndex;           // Index in the path
+    public int TotalPoints;          // Total points in this road
+    public float OriginalHeight;     // Height before smoothing (terrain height)
+    public float SmoothedHeight;     // Final height after smoothing
+    public int WindowStart;          // First index used in smoothing window
+    public int WindowEnd;            // Last index used in smoothing window
+    public int ActualWindowSize;     // How many heights were averaged
+    public float[] WindowHeights;    // The original heights in window
+}
+
+/// <summary>
 /// Interactable debug marker placed above road points.
 /// When the player interacts, logs detailed information about how the road point's height was calculated.
 /// </summary>
 public class RoadPointDebugMarker : MonoBehaviour, Interactable, Hoverable
 {
-    public RoadSpatialGrid.RoadPointDebugInfo DebugInfo;
+    public RoadPointDebugInfo DebugInfo;
     public Vector2 RoadPointPosition;
     public float RoadPointHeight;
     

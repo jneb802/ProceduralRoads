@@ -18,7 +18,7 @@ namespace ProceduralRoads
     public class ProceduralRoadsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "ProceduralRoads";
-        internal const string ModVersion = "1.3.0";
+        internal const string ModVersion = "1.3.1";
         internal const string Author = "warpalicious";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";

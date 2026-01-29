@@ -10,9 +10,10 @@ public static class ZDOMan_Patch
     [HarmonyPatch(typeof(ZDOMan), nameof(ZDOMan.PrepareSave))]
     public static class ZDOMan_PrepareSave_Patch
     {
-        [HarmonyPostfix]
-        public static void Postfix()
+        [HarmonyPrefix]
+        public static void Prefix()
         {
+            // Must run BEFORE PrepareSave clones ZDO data, otherwise our changes won't be saved
             RoadLifecycleManager.OnPrepareSave();
         }
     }

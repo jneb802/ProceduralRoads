@@ -85,8 +85,9 @@ public static class RoadNetworkPersistence
         s_metadataZdo = ZDOMan.instance.CreateNewZDO(FarPosition, MetadataPrefabHash);
         s_metadataZdo.Persistent = true;
         s_metadataZdo.SetPrefab(MetadataPrefabHash);
+        s_metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
 
-        Log.LogDebug($"[META] Created metadata ZDO directly: m_uid={s_metadataZdo.m_uid}, prefab={s_metadataZdo.GetPrefab()}");
+        Log.LogDebug($"[META] Created metadata ZDO directly: m_uid={s_metadataZdo.m_uid}, prefab={s_metadataZdo.GetPrefab()}, owner={s_metadataZdo.GetOwner()}");
     }
 
     /// <summary>
@@ -104,7 +105,14 @@ public static class RoadNetworkPersistence
             return;
         }
 
-        Log.LogDebug($"[SAVE] Using metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}");
+        // Claim ownership so our changes are persisted to the save file
+        if (!metadataZdo.IsOwner())
+        {
+            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
+            Log.LogDebug($"[SAVE] Claimed ownership of metadata ZDO");
+        }
+
+        Log.LogDebug($"[SAVE] Using metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}, owner={metadataZdo.GetOwner()}");
 
         byte[]? data = RoadSpatialGrid.SerializeAllRoadPoints();
         if (data != null && data.Length > 0)

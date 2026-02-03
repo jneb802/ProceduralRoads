@@ -14,7 +14,7 @@ public static class RoadConstants
     public const float TerrainDeltaMax = 8f;
     
     public const float PathfindingCellSize = 8f;
-    public const int PathfindingMaxIterations = 100000;
+    public const int PathfindingMaxIterations = 1000;   
     public const float TerrainVarianceSampleRadius = 16f;
     public const int TerrainVarianceSampleCount = 8;
     public const float MountainSlopeThreshold = 0.4f;

@@ -83,6 +83,8 @@ namespace ProceduralRoads
             _harmony.PatchAll(assembly);
             SetupWatcher();
 
+            Analytics.Init(Config, ModGUID, ModVersion);
+
             ProceduralRoadsLogger.LogInfo($"{ModName} v{ModVersion} loaded - Procedural roads enabled");
 
             if (saveOnSet)

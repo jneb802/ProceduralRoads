@@ -12,7 +12,7 @@ public class RoadPathfinder
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
     
     public const float CellSize = RoadConstants.PathfindingCellSize;
-    public const int MaxIterations = RoadConstants.PathfindingMaxIterations;
+    public static int MaxIterations = RoadConstants.PathfindingMaxIterations;
 
     public float SlopeMultiplier = RoadConstants.DefaultSlopeMultiplier;
     public float RiverPenalty = RoadConstants.DefaultRiverPenalty;

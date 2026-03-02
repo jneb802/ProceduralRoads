@@ -18,7 +18,7 @@ namespace ProceduralRoads
     public class ProceduralRoadsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "ProceduralRoads";
-        internal const string ModVersion = "1.4.1";
+        internal const string ModVersion = "1.4.2";
         internal const string Author = "warpalicious";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -45,6 +45,7 @@ namespace ProceduralRoads
         public static ConfigEntry<float> RoadWidth = null!;
         public static ConfigEntry<string> CustomLocations = null!;
         public static ConfigEntry<int> IslandRoadPercentage = null!;
+        public static ConfigEntry<int> PathfindingMaxIterations = null!;
 
         public void Awake()
         {
@@ -63,6 +64,12 @@ namespace ProceduralRoads
                 new ConfigDescription("Percentage of islands that will have roads generated (0-100). " +
                     "Islands are selected by size (largest first).",
                     new AcceptableValueRange<int>(0, 100)));
+
+            PathfindingMaxIterations = Config.Bind("Roads", "PathfindingMaxIterations", 10000,
+                new ConfigDescription("Maximum number of iterations for each road segment's pathfinding algorithm. " +
+                    "Higher values will generate more roads but increase generation time. " +
+                    "Lower values will speed up generation time but cause less roads to generate.",
+                    new AcceptableValueRange<int>(1000, 100000)));
 
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
@@ -110,6 +117,7 @@ namespace ProceduralRoads
         {
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
+            RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
             // CustomLocations is parsed at generation time to preserve API registrations
         }
 

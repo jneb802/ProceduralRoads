@@ -98,6 +98,10 @@
             <HintPath>$(VALHEIM_MANAGED)/UnityEngine.PhysicsModule.dll</HintPath>
             <Private>false</Private>
         </Reference>
+        <Reference Include="UnityEngine.UnityWebRequestModule">
+            <HintPath>$(VALHEIM_MANAGED)/UnityEngine.UnityWebRequestModule.dll</HintPath>
+            <Private>false</Private>
+        </Reference>
         <Reference Include="Unity.TextMeshPro">
             <HintPath>$(VALHEIM_MANAGED)/Unity.TextMeshPro.dll</HintPath>
             <Private>false</Private>
@@ -131,7 +135,7 @@
     <!-- Jotunn Modding Library -->
     <ItemGroup>
         <Reference Include="Jotunn">
-            <HintPath>$(BEPINEX_PLUGINS)/ValheimModding-Jotunn-2.26.1/plugins/Jotunn.dll</HintPath>
+            <HintPath>$(BEPINEX_PLUGINS)/ValheimModding-Jotunn-2.27.1/plugins/Jotunn.dll</HintPath>
             <Private>false</Private>
         </Reference>
     </ItemGroup>

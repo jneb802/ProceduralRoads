@@ -74,6 +74,7 @@ public static class RoadNetworkGenerator
     };
     
     private const int DefaultPriority = 20;
+    private const int CustomLocationPriority = 80;
     private const int MinLocationsPerIsland = 2;
     private const int MaxLocationsPerIsland = 12;
     private const float AreaPerLocation = 2_000_000f;
@@ -434,7 +435,13 @@ public static class RoadNetworkGenerator
 
     private static int GetLocationPriority(string locationName)
     {
-        return LocationPriorities.TryGetValue(locationName, out int priority) ? priority : DefaultPriority;
+        if (LocationPriorities.TryGetValue(locationName, out int priority))
+            return priority;
+
+        if (RegisteredLocationNames.Contains(locationName))
+            return CustomLocationPriority;
+
+        return DefaultPriority;
     }
 
     #endregion

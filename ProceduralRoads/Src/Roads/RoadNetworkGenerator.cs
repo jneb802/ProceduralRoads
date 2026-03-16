@@ -76,7 +76,7 @@ public static class RoadNetworkGenerator
     private const int DefaultPriority = 20;
     private const int CustomLocationPriority = 80;
     private const int MinLocationsPerIsland = 2;
-    private const int MaxLocationsPerIsland = 12;
+    public static int MaxLocationsPerIsland = 12;
     private const float AreaPerLocation = 2_000_000f;
 
     /// <summary>

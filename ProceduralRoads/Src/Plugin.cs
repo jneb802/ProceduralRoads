@@ -46,6 +46,7 @@ namespace ProceduralRoads
         public static ConfigEntry<string> CustomLocations = null!;
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
+        public static ConfigEntry<int> MaxLocationsPerIsland = null!;
 
         public void Awake()
         {
@@ -70,6 +71,11 @@ namespace ProceduralRoads
                     "Higher values will generate more roads but increase generation time. " +
                     "Lower values will speed up generation time but cause less roads to generate.",
                     new AcceptableValueRange<int>(1000, 100000)));
+
+            MaxLocationsPerIsland = Config.Bind("Roads", "MaxLocationsPerIsland", 12,
+                new ConfigDescription("Maximum number of locations that can be connected by roads on a single island. " +
+                    "Higher values allow more roads on large islands.",
+                    new AcceptableValueRange<int>(2, 30)));
 
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
@@ -118,6 +124,7 @@ namespace ProceduralRoads
         {
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
+            RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
             // CustomLocations is parsed at generation time to preserve API registrations
         }

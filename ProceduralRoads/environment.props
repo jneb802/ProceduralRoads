@@ -135,7 +135,7 @@
     <!-- Jotunn Modding Library -->
     <ItemGroup>
         <Reference Include="Jotunn">
-            <HintPath>$(BEPINEX_PLUGINS)/ValheimModding-Jotunn-2.27.1/plugins/Jotunn.dll</HintPath>
+            <HintPath>$(BEPINEX_CORE)/Jotunn.dll</HintPath>
             <Private>false</Private>
         </Reference>
     </ItemGroup>

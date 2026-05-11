@@ -490,7 +490,7 @@ public static class RoadSpatialGrid
         return t * t * (3f - 2f * t);
     }
 
-    public static List<RoadPoint> GetRoadPointsInZone(Vector2i zoneID)
+    public static List<RoadPoint> GetRoadPointsInZone(Vector2s zoneID)
     {
         List<RoadPoint> result = new List<RoadPoint>();
         
@@ -597,7 +597,7 @@ public static class RoadSpatialGrid
     /// Serialize road points for a specific zone to a byte array for ZDO storage.
     /// Uses the same logic as GetRoadPointsInZone to capture all affecting points.
     /// </summary>
-    public static byte[]? SerializeZoneRoadPoints(Vector2i zoneID)
+    public static byte[]? SerializeZoneRoadPoints(Vector2s zoneID)
     {
         var points = GetRoadPointsInZone(zoneID);
         
@@ -623,7 +623,7 @@ public static class RoadSpatialGrid
     /// Deserialize road points from a byte array and add them to the grid.
     /// Points are added to grid cells based on their actual position.
     /// </summary>
-    public static void DeserializeZoneRoadPoints(Vector2i zoneID, byte[] data)
+    public static void DeserializeZoneRoadPoints(Vector2s zoneID, byte[] data)
     {
         if (data == null || data.Length == 0)
             return;

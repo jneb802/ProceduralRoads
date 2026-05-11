@@ -299,7 +299,7 @@ public static class ConsoleCommands
         float searchRadius = 15f; // Search within 15m
 
         // Get zone info
-        Vector2i zoneID = ZoneSystem.GetZone(playerPos);
+        Vector2s zoneID = ZoneSystem.GetZone(playerPos);
         
         args.Context.AddString($"=== Road Debug at ({playerPos.x:F1}, {playerPos.z:F1}) ===");
         args.Context.AddString($"Zone: {zoneID}, Player altitude: {playerPos.y:F1}m");
@@ -467,7 +467,7 @@ public static class ConsoleCommands
                 if (heightmap == null) continue;
 
                 Vector3 hmPos = heightmap.transform.position;
-                Vector2i zoneID = ZoneSystem.GetZone(hmPos);
+                Vector2s zoneID = ZoneSystem.GetZone(hmPos);
 
                 var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
                 if (roadPoints.Count == 0) continue;
@@ -502,7 +502,7 @@ public static class ConsoleCommands
         }
 
         Vector3 playerPos = player.transform.position;
-        Vector2i zoneID = ZoneSystem.GetZone(playerPos);
+        Vector2s zoneID = ZoneSystem.GetZone(playerPos);
 
         var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
         if (roadPoints.Count == 0)
@@ -622,7 +622,7 @@ public static class ConsoleCommands
 
         Vector3 playerPos = player.transform.position;
         Vector2 playerPos2D = new Vector2(playerPos.x, playerPos.z);
-        Vector2i zoneID = ZoneSystem.GetZone(playerPos);
+        Vector2s zoneID = ZoneSystem.GetZone(playerPos);
 
         // Get road points from current and adjacent zones
         List<RoadSpatialGrid.RoadPoint> nearbyPoints = new List<RoadSpatialGrid.RoadPoint>();
@@ -630,7 +630,7 @@ public static class ConsoleCommands
         {
             for (int dz = -1; dz <= 1; dz++)
             {
-                Vector2i checkZone = new Vector2i(zoneID.x + dx, zoneID.y + dz);
+                Vector2s checkZone = new Vector2s((int)zoneID.x + dx, (int)zoneID.y + dz);
                 var zonePoints = RoadSpatialGrid.GetRoadPointsInZone(checkZone);
                 foreach (var rp in zonePoints)
                 {

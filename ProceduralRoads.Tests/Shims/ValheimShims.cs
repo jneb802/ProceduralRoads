@@ -85,7 +85,14 @@ public class WorldGenerator
 
     public virtual int GetSeed() => 0;
 
-    public virtual float GetBaseHeight(float wx, float wy, bool menuTerrain) => GetHeight(wx, wy);
+    /// <summary>
+    /// Valheim's base height is a normalised value where water lies below 0.05
+    /// (IslandDetector.WaterThreshold) and the terrain height is roughly
+    /// 200 × base; map the shim's metres onto that scale so the island detector
+    /// sees ocean where the synthetic world puts it (sea level 30 m → 0.05).
+    /// </summary>
+    public virtual float GetBaseHeight(float wx, float wy, bool menuTerrain) =>
+        0.05f + (GetHeight(wx, wy) - ProceduralRoads.RoadConstants.SeaLevel) / 200f;
 
     public virtual float GetBiomeHeight(Heightmap.Biome biome, float wx, float wy, out UnityEngine.Color mask)
     {

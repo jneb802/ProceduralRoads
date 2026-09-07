@@ -323,18 +323,19 @@ public static class RoadTerrainModifier
             float distSq = (rp.p - vertexPos).sqrMagnitude;
             float influenceRadius = (rp.w * 0.5f) + RoadConstants.TerrainBlendMargin;
             float influenceRadiusSq = influenceRadius * influenceRadius;
-            
+
             if (distSq < influenceRadiusSq)
             {
                 float dist = Mathf.Sqrt(distSq);
-                float t = dist / influenceRadius;
-                float pointBlend = 1f - Mathf.SmoothStep(0f, 1f, t);
+                float pointBlend = RoadProfile.LevelBlend(dist, rp.w);
+                if (pointBlend <= 0f)
+                    continue;
                 float weight = pointBlend * pointBlend;
-                
+
                 weightedHeightSum += rp.h * weight;
                 totalWeight += weight;
                 influencingPoints++;
-                
+
                 if (pointBlend > maxBlend)
                     maxBlend = pointBlend;
             }
@@ -342,7 +343,7 @@ public static class RoadTerrainModifier
 
         return new BlendResult
         {
-            TargetHeight = influencingPoints > 0 ? weightedHeightSum / totalWeight : 0f,
+            TargetHeight = influencingPoints > 0 && totalWeight > 0f ? weightedHeightSum / totalWeight : 0f,
             MaxBlend = maxBlend,
             InfluencingPoints = influencingPoints
         };
@@ -391,10 +392,15 @@ public static class RoadTerrainModifier
                     float dist = Mathf.Sqrt(dx * dx + dy * dy);
                     if (dist > radiusInVertices)
                         continue;
-                    
-                    float blendFactor = 1f - Mathf.Clamp01(dist / radiusInVertices);
-                    blendFactor = Mathf.Pow(blendFactor, 0.1f);
-                    
+
+                    // Paint follows the shared cross-section profile: solid
+                    // in the core, fading out strictly inside the leveled
+                    // footprint (unpainted verge), instead of the old
+                    // pow(x,0.1) near-solid disc to the full road edge.
+                    float blendFactor = RoadProfile.PaintStrength(dist * scale, roadPoint.w);
+                    if (blendFactor <= 0f)
+                        continue;
+
                     int index = vy * gridSize + vx;
                     
                     Color currentColor = terrainComp.m_paintMask[index];

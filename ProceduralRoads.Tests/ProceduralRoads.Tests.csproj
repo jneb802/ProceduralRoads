@@ -33,6 +33,10 @@
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRoute.cs" Link="ModSrc/RoadRoute.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/RoadRoute.cs')"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadProfile.cs" Link="ModSrc/RoadProfile.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/RoadProfile.cs')"/>
+        <Compile Remove="RoadProfileTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/RoadProfile.cs')"/>
     </ItemGroup>
 
     <ItemGroup>

@@ -44,8 +44,12 @@ public static class ZoneSystem_Patch
             // mode and whether the network was generated this session or loaded
             // from the save. Zones first created as ghost zones come back later in
             // Client mode; returning early there left them with the road in the data
-            // and nothing on the ground. On a real client of a dedicated server the
-            // TerrainComp is not owned locally and the modifier skips the zone.
+            // and nothing on the ground. A zone whose terrain compiler is already
+            // stamped with the current network version is skipped, so a reload
+            // does not overwrite the player's terrain edits in the road (see
+            // RoadTerrainModifier.CarriesCurrentRoads). On a real client of a
+            // dedicated server the TerrainComp is not owned locally and the
+            // modifier skips the zone.
             if (__result && RoadNetworkGenerator.RoadsAvailable)
             {
                 List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);

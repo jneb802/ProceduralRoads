@@ -10,19 +10,38 @@ public static class RoadTerrainModifier
 {
     private static int s_coordLogCount = 0;
 
+    /// <summary>
+    /// ZDO key on a zone's terrain compiler: the RoadNetworkVersion whose
+    /// roads that zone's terrain carries. Ordinary zone loads skip a zone
+    /// stamped with the current version, so the road terrain is written once
+    /// per network and the player's later terrain edits in the road survive
+    /// reloads. Explicit paths (load-time generation, road_regen_island,
+    /// road_apply) force the write and re-stamp.
+    /// </summary>
+    private static readonly int AppliedVersionHash = "ProceduralRoads_AppliedVersion".GetStableHashCode();
+
     public static void ResetDebugCounters()
     {
         s_coordLogCount = 0;
     }
 
     /// <summary>
-    /// Apply terrain mods for road points in a zone.
+    /// Apply terrain mods for road points in a zone. Without force, a zone
+    /// whose terrain compiler already carries the current network version is
+    /// left alone (see AppliedVersionHash).
     /// </summary>
-    public static void ApplyRoadTerrainMods(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
+    public static void ApplyRoadTerrainMods(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, bool force = false)
     {
         TerrainContext? context = GetTerrainContext(zoneID);
         if (context == null)
             return;
+
+        if (!force && CarriesCurrentRoads(context.Value.TerrainComp))
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Zone {zoneID}: terrain already carries road network version {RoadSpatialGrid.RoadNetworkVersion}, skipping");
+            return;
+        }
 
         ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
         ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
@@ -30,12 +49,28 @@ public static class RoadTerrainModifier
     }
 
     /// <summary>
+    /// Whether the zone's terrain compiler is stamped with the current road
+    /// network version, i.e. its terrain already carries these roads.
+    /// </summary>
+    public static bool CarriesCurrentRoads(TerrainComp terrainComp)
+    {
+        int version = RoadSpatialGrid.RoadNetworkVersion;
+        if (version == 0)
+            return false;
+        ZDO? zdo = terrainComp.m_nview?.GetZDO();
+        return zdo != null && zdo.GetInt(AppliedVersionHash, 0) == version;
+    }
+
+    /// <summary>
     /// Apply the current network's terrain mods to every loaded zone that has
-    /// road points. Zones generated before the network existed (the zones
-    /// around the player's login position on a fresh world, or around a
-    /// teleport target that landed mid-generation) get their roads here; zones
-    /// generated afterwards get them from the ZoneSystem.SpawnZone hook.
-    /// Idempotent: deltas are computed from the world generator height.
+    /// road points, whether or not the zone already carries them. Zones
+    /// generated before the network existed (the zones around the player's
+    /// login position on a fresh world, or around a teleport target that landed
+    /// mid-generation) get their roads here; zones generated afterwards get
+    /// them from the ZoneSystem.SpawnZone hook. Height deltas are computed from
+    /// the world generator height, so writing them again does not accumulate;
+    /// paint is blended toward the paved colour each time, so the road edges
+    /// come out a shade more solid on every explicit reapplication.
     /// </summary>
     public static int ApplyToLoadedZones()
     {
@@ -63,7 +98,8 @@ public static class RoadTerrainModifier
 
     /// <summary>
     /// Public entry point for applying road terrain mods to a specific zone.
-    /// Used by console commands to force-update loaded zones.
+    /// Always writes (the explicit path): used by ApplyToLoadedZones and the
+    /// console commands to force-update loaded zones.
     /// </summary>
     public static void ApplyRoadTerrainModsWithContext(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints,
         Heightmap heightmap, TerrainComp terrainComp)
@@ -286,6 +322,7 @@ public static class RoadTerrainModifier
         
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
+            context.TerrainComp.m_nview?.GetZDO()?.Set(AppliedVersionHash, RoadSpatialGrid.RoadNetworkVersion);
             context.TerrainComp.Save();
             // Valheim 1.0 turned Poke's bool into a selector for WHICH late
             // pass rebuilds the mesh, not a count: LateUpdate acts on 1,

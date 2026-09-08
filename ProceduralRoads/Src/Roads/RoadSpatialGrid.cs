@@ -126,17 +126,58 @@ public static class RoadSpatialGrid
     }
 
     /// <summary>
-    /// Called after all roads are generated to compute the network version hash.
-    /// This version is stored in TerrainComp ZDOs to detect already-processed zones.
+    /// Called after all roads are generated, and after a network is loaded from
+    /// the save, to compute the network version. The version is a hash of the
+    /// world seed and the grid's stored road points (position, width, height),
+    /// independent of the order they sit in, so it is the same after
+    /// generation and after a save/load round trip (which carries exactly the
+    /// stored points, not the per-road counts) and changes whenever any road
+    /// moves or changes height. RoadTerrainModifier stamps it on each zone's
+    /// terrain compiler to tell zones that already carry the current roads
+    /// from zones that still need them.
     /// </summary>
     public static void FinalizeRoadNetwork()
     {
         int worldSeed = WorldGenerator.instance?.GetSeed() ?? 0;
-        int hash = worldSeed;
-        hash = hash * 31 + TotalRoadPoints;
-        hash = hash * 31 + GridCellsWithRoads;
-        hash = hash * 31 + (int)(TotalRoadLength * 10);
-        
+        int pointSum = 0;
+        int storedPoints = 0;
+        int cells = 0;
+        m_roadCacheLock.EnterReadLock();
+        try
+        {
+            foreach (var kvp in m_roadPoints)
+            {
+                cells++;
+                foreach (var rp in kvp.Value)
+                {
+                    storedPoints++;
+                    unchecked
+                    {
+                        int ph = rp.p.x.GetHashCode();
+                        ph = ph * 31 + rp.p.y.GetHashCode();
+                        ph = ph * 31 + rp.w.GetHashCode();
+                        ph = ph * 31 + rp.h.GetHashCode();
+                        pointSum += ph;
+                    }
+                }
+            }
+        }
+        finally
+        {
+            m_roadCacheLock.ExitReadLock();
+        }
+
+        int hash;
+        unchecked
+        {
+            hash = worldSeed;
+            hash = hash * 31 + storedPoints;
+            hash = hash * 31 + cells;
+            hash = hash * 31 + pointSum;
+            if (hash == 0)
+                hash = 1; // 0 means "no network"
+        }
+
         RoadNetworkVersion = hash;
         Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
     }
@@ -811,6 +852,7 @@ public static class RoadSpatialGrid
             }
             
             Log.LogDebug($"Deserialized {cellCount} grid cells, {totalPoints} road points");
+            FinalizeRoadNetwork();
             return true;
         }
         catch (System.Exception ex)

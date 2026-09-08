@@ -309,10 +309,26 @@ public static class RoadTerrainModifier
         public int InfluencingPoints;
     }
 
+    /// <summary>
+    /// The road surface height at a vertex, from the road points within reach.
+    /// The points sit on the centreline, so the surface is fitted as a plane
+    /// through them (weighted least squares, the same blend weights as
+    /// before) and read at the vertex. A weighted mean would do mid-road,
+    /// where the points lie on both sides of the vertex, but at a road end
+    /// every point lies on one side: on a slope the mean of their heights is
+    /// the height some way back along the road, and the terrain at the end,
+    /// and for the blend margin beyond it, came out on a shelf. The plane
+    /// follows the road's own gradient through the end instead.
+    ///
+    /// Across the road the points give no gradient at all (they are
+    /// collinear), and a small ridge term settles that gradient at zero, so
+    /// the surface is level across the road as before.
+    /// </summary>
     private static BlendResult CalculateBlendedHeight(List<RoadSpatialGrid.RoadPoint> roadPoints, Vector2 vertexPos)
     {
-        float weightedHeightSum = 0f;
-        float totalWeight = 0f;
+        // Weighted sums for the fit h = a + b*dx + c*dy, (dx, dy) relative to
+        // the vertex, so a is the surface height at the vertex.
+        double sw = 0, sx = 0, sy = 0, sxx = 0, sxy = 0, syy = 0, sh = 0, sxh = 0, syh = 0;
         float maxBlend = 0f;
         int influencingPoints = 0;
 
@@ -328,10 +344,20 @@ public static class RoadTerrainModifier
                 float pointBlend = RoadProfile.LevelBlend(dist, rp.w);
                 if (pointBlend <= 0f)
                     continue;
-                float weight = pointBlend * pointBlend;
+                double weight = pointBlend * pointBlend;
+                double dx = rp.p.x - vertexPos.x;
+                double dy = rp.p.y - vertexPos.y;
+                double h = rp.h;
 
-                weightedHeightSum += rp.h * weight;
-                totalWeight += weight;
+                sw += weight;
+                sx += weight * dx;
+                sy += weight * dy;
+                sxx += weight * dx * dx;
+                sxy += weight * dx * dy;
+                syy += weight * dy * dy;
+                sh += weight * h;
+                sxh += weight * dx * h;
+                syh += weight * dy * h;
                 influencingPoints++;
 
                 if (pointBlend > maxBlend)
@@ -341,10 +367,62 @@ public static class RoadTerrainModifier
 
         return new BlendResult
         {
-            TargetHeight = influencingPoints > 0 && totalWeight > 0f ? weightedHeightSum / totalWeight : 0f,
+            TargetHeight = influencingPoints > 0 && sw > 0 ? FitHeightAtVertex(sw, sx, sy, sxx, sxy, syy, sh, sxh, syh) : 0f,
             MaxBlend = maxBlend,
             InfluencingPoints = influencingPoints
         };
+    }
+
+    /// <summary>
+    /// The fitted road surface height at the vertex. The points are the
+    /// road's centreline, so the surface is a line along the road: the
+    /// points' principal direction (weighted) is the road direction, the
+    /// height is regressed on the offset along it, and the gradient across
+    /// the road is zero by construction, which keeps the cross-section level
+    /// (a free plane fit let a road's slight curvature turn its height change
+    /// into a steep tilt across the road). The ridge (a prior spread of
+    /// HeightFitRidgeMetres) keeps the gradient defined for a single point
+    /// or two nearly coincident ones, and the clamp bounds it.
+    /// </summary>
+    private static float FitHeightAtVertex(double sw, double sx, double sy, double sxx, double sxy, double syy,
+        double sh, double sxh, double syh)
+    {
+        double mx = sx / sw, my = sy / sw, mh = sh / sw;
+        double cxx = sxx - sw * mx * mx;
+        double cxy = sxy - sw * mx * my;
+        double cyy = syy - sw * my * my;
+        double cxh = sxh - sw * mx * mh;
+        double cyh = syh - sw * my * mh;
+
+        // Principal direction of the 2x2 weighted covariance (largest eigenvalue).
+        double half = 0.5 * (cxx + cyy);
+        double diff = 0.5 * (cxx - cyy);
+        double root = System.Math.Sqrt(diff * diff + cxy * cxy);
+        double ux, uy;
+        if (root < 1e-12)
+        {
+            ux = 1; uy = 0; // isotropic or a single point: any direction
+        }
+        else
+        {
+            // Eigenvector of the largest eigenvalue half + root.
+            ux = cxy;
+            uy = (half + root) - cxx;
+            if (System.Math.Abs(ux) + System.Math.Abs(uy) < 1e-12) { ux = 1; uy = 0; }
+            double len = System.Math.Sqrt(ux * ux + uy * uy);
+            ux /= len; uy /= len;
+        }
+
+        // Regress height on the offset s along that direction (centred sums project linearly).
+        double css = ux * ux * cxx + 2 * ux * uy * cxy + uy * uy * cyy;
+        double csh = ux * cxh + uy * cyh;
+        double ridge = sw * RoadConstants.HeightFitRidgeMetres * RoadConstants.HeightFitRidgeMetres;
+        double b = csh / (css + ridge);
+        double limit = RoadConstants.HeightFitMaxGradient;
+        if (b > limit) b = limit; else if (b < -limit) b = -limit;
+
+        double ms = ux * mx + uy * my; // mean offset along the road, from the vertex
+        return (float)(mh - b * ms);
     }
 
     private static void ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells)

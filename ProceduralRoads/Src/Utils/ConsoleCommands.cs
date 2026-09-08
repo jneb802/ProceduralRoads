@@ -44,6 +44,16 @@ public static class ConsoleCommands
             allowInDevBuild: true);
 
         new Terminal.ConsoleCommand(
+            "road_ends",
+            "For every location with a road end, compare the end's road height with the natural terrain at the end and the mean natural height on a ring: road_ends [ring=8] [top=20]. Writes ProceduralRoads.ends.csv to the config folder; the console shows the worst.",
+            (args) => ReportRoadEnds(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
             (args) => DebugRoadPoints(args),
@@ -290,6 +300,39 @@ public static class ConsoleCommands
         s_modPins.Clear();
 
         args.Context.AddString($"Removed {count} pins.");
+    }
+
+    private static void ReportRoadEnds(Terminal.ConsoleEventArgs args)
+    {
+        float ring = 8f;
+        int top = 20;
+        if (args.Length > 1) float.TryParse(args[1], out ring);
+        if (args.Length > 2) int.TryParse(args[2], out top);
+
+        if (ZoneSystem.instance == null || WorldGenerator.instance == null || !RoadSpatialGrid.IsInitialized)
+        {
+            args.Context.AddString("Error: world or road network not available");
+            return;
+        }
+
+        var locations = new List<(string name, Vector3 position, float radius)>();
+        foreach (var inst in ZoneSystem.instance.GetLocationList())
+            locations.Add((inst.m_location.m_prefab.Name, inst.m_position, inst.m_location.m_exteriorRadius));
+
+        var rows = RoadEndReport.Compute(locations, ring, WorldGenerator.instance);
+
+        string path = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "ProceduralRoads.ends.csv");
+        var sb = new System.Text.StringBuilder("name,x,z,roadHeight,terrainAtEnd,ringMean,ringMin,ringMax,deltaEnd,deltaRing\n");
+        foreach (var r in rows)
+            sb.Append($"{r.Name},{r.Point.x:F1},{r.Point.y:F1},{r.RoadHeight:F2},{r.TerrainAtEnd:F2},{r.RingMean:F2},{r.RingMin:F2},{r.RingMax:F2},{r.DeltaEnd:F2},{r.DeltaRing:F2}\n");
+        System.IO.File.WriteAllText(path, sb.ToString());
+
+        args.Context.AddString($"{rows.Count} road ends -> {path}; worst {Mathf.Min(top, rows.Count)} by |road - ring mean|:");
+        for (int i = 0; i < Mathf.Min(top, rows.Count); i++)
+        {
+            var r = rows[i];
+            args.Context.AddString($"  {r.Name} ({r.Point.x:F0},{r.Point.y:F0}) road={r.RoadHeight:F1} terrain={r.TerrainAtEnd:F1} ring={r.RingMean:F1} [{r.RingMin:F1}..{r.RingMax:F1}] dEnd={r.DeltaEnd:+0.0;-0.0} dRing={r.DeltaRing:+0.0;-0.0}");
+        }
     }
 
     /// <summary>

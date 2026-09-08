@@ -92,18 +92,24 @@ public class TerrainCompilerLifecycleTests
             Heightmap hm = Heightmap.CreateForZone(Zone, 64);
             Heightmap.Registered = hm;
             TerrainComp tc = hm.m_terrainComp!;
+            RoadTimings.Reset();
 
             RoadTerrainModifier.OnTerrainCompilerReady(tc);
             Assert.Equal(1, tc.SaveCount);
             Assert.True(RoadTerrainModifier.CarriesCurrentRoads(tc));
+            Assert.Equal(1, RoadTimings.GetCount("terrain.ready_writes"));
+            Assert.Equal(1, RoadTimings.GetCount("terrain.zones_written"));
 
             RoadTerrainModifier.OnTerrainCompilerReady(tc);
             Assert.Equal(1, tc.SaveCount);
+            Assert.Equal(1, RoadTimings.GetCount("terrain.ready_skipped_stamped"));
 
             // A zone spawn after the compiler is alive and stamped writes nothing either.
             RoadTerrainModifier.OnZoneSpawned(Zone, RoadSpatialGrid.GetRoadPointsInZone(Zone));
             Assert.Equal(1, tc.SaveCount);
             Assert.Equal(1, Compilers());
+            Assert.Equal(1, RoadTimings.GetCount("terrain.skipped_stamped"));
+            Assert.Equal(1, RoadTimings.GetCount("terrain.zones_written"));
         }
         finally { TearDown(); }
     }

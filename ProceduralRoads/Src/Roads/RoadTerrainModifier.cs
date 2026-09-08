@@ -73,8 +73,15 @@ public static class RoadTerrainModifier
         Vector2i zoneID = ZoneSystem.GetZone(terrainComp.m_hmap.transform.position);
         List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
         bool forced = s_pendingForcedZones.Remove(zoneID);
-        if (roadPoints.Count == 0 || (!forced && CarriesCurrentRoads(terrainComp)))
+        if (roadPoints.Count == 0)
             return;
+        if (!forced && CarriesCurrentRoads(terrainComp))
+        {
+            // The common warm case: a zone left and re-entered, or a reload; the
+            // saved compiler already carries these roads.
+            RoadTimings.Count("terrain.ready_skipped_stamped");
+            return;
+        }
 
         if (!terrainComp.m_nview.IsOwner())
         {

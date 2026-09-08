@@ -46,6 +46,7 @@ namespace ProceduralRoads
         public static ConfigEntry<string> CustomLocations = null!;
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<bool> GenerateRoadsOnLoad = null!;
+        public static ConfigEntry<bool> Timings = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
 
@@ -82,6 +83,10 @@ namespace ProceduralRoads
                 "Generate the road network when a world without persisted roads loads. Off, the world stays " +
                 "road-free until the road_generate or road_regen_island console command asks; for validation " +
                 "loops that iterate on one island. Leave on for normal play.");
+
+            Timings = Config.Bind("Debug", "Timings", false,
+                "Record stage timings and work counters for the road_timings console command (validation runs). " +
+                "Off, the probes cost one branch each and nothing is kept; road_timings reset also switches it on for the session.");
 
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
@@ -131,6 +136,8 @@ namespace ProceduralRoads
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
             RoadNetworkGenerator.GenerateOnLoad = GenerateRoadsOnLoad.Value;
+            if (Timings.Value)
+                RoadTimings.Enabled = true;
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
             // CustomLocations is parsed at generation time to preserve API registrations

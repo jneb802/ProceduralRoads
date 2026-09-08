@@ -46,6 +46,7 @@ public static class ConsoleCommands
         new Terminal.ConsoleCommand(
             "road_timings",
             "Stage timings and work counters since the last reset: road_timings [reset [runId] | run <runId> | json [path]]. " +
+            "Recording is off unless [Debug] Timings = true or reset/run switched it on for the session. " +
             "Bare: print the summary. reset: start a new run. run: name the current run without clearing it (a cold start keeps " +
             "the load timings). json: write BepInEx/ProceduralRoads/timings/<runId>.json (or the given path).",
             (args) => TimingsCommand(args),
@@ -499,6 +500,8 @@ public static class ConsoleCommands
                 return;
             }
             default:
+                if (!RoadTimings.Enabled)
+                    args.Context.AddString("(timings off: set [Debug] Timings = true or run road_timings reset)");
                 foreach (string line in RoadTimings.Summary().Split('\n'))
                     if (line.Length > 0) args.Context.AddString(line);
                 return;

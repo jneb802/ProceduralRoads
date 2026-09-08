@@ -50,17 +50,25 @@ public static class RoadTimings
     private static double s_maxFrameMs;
     private static double s_maxFrameAtMs;
 
+    /// <summary>
+    /// Off by default: a player's game records nothing (one branch per probe).
+    /// [Debug] Timings = true in the config, or road_timings reset / run,
+    /// switches recording on for the session.
+    /// </summary>
+    public static bool Enabled { get; set; }
+
     /// <summary>Identifier the station gave this run; empty until road_timings reset &lt;id&gt;.</summary>
     public static string RunId { get; private set; } = "";
 
     public static DateTime StartedUtc => s_startedUtc;
     public static double ElapsedMs => s_clock.Elapsed.TotalMilliseconds;
 
-    /// <summary>Forget everything and start a new run (optionally named).</summary>
+    /// <summary>Forget everything and start a new run (optionally named); recording on.</summary>
     public static void Reset(string? runId = null)
     {
         lock (s_lock)
         {
+            Enabled = true;
             s_stages.Clear();
             s_counters.Clear();
             s_waits.Clear();
@@ -78,15 +86,20 @@ public static class RoadTimings
     /// <summary>Name the run in progress without clearing it (a cold start keeps its load timings).</summary>
     public static void SetRunId(string runId)
     {
-        lock (s_lock) RunId = runId ?? "";
+        lock (s_lock)
+        {
+            RunId = runId ?? "";
+            Enabled = true;
+        }
     }
 
     /// <summary>Time a block: <c>using (RoadTimings.Stage("gen.pathfind", label)) { ... }</c>.</summary>
-    public static Scope Stage(string name, string? label = null) => new Scope(name, label);
+    public static Scope Stage(string name, string? label = null) => Enabled ? new Scope(name, label) : default;
 
     /// <summary>Record one call of a stage that took <paramref name="ms"/>.</summary>
     public static void Record(string name, double ms, string? label = null)
     {
+        if (!Enabled) return;
         lock (s_lock)
         {
             s_stages.TryGetValue(name, out StageStat stat);
@@ -104,6 +117,7 @@ public static class RoadTimings
     /// <summary>Add to a work counter (vertices modified, iterations, zones written...).</summary>
     public static void Count(string name, long by = 1)
     {
+        if (!Enabled) return;
         lock (s_lock)
         {
             s_counters.TryGetValue(name, out long value);
@@ -114,6 +128,7 @@ public static class RoadTimings
     /// <summary>Something was deferred or skipped; the reason is the key, the count says how often.</summary>
     public static void Wait(string reason)
     {
+        if (!Enabled) return;
         lock (s_lock)
         {
             s_waits.TryGetValue(reason, out int value);
@@ -124,6 +139,7 @@ public static class RoadTimings
     /// <summary>An event happened now (world load started, locations ready, player spawned...).</summary>
     public static void Mark(string name)
     {
+        if (!Enabled) return;
         lock (s_lock)
         {
             s_marks.Add(new MarkStat { Name = name, Utc = DateTime.UtcNow, MsSinceStart = s_clock.Elapsed.TotalMilliseconds });
@@ -133,6 +149,7 @@ public static class RoadTimings
     /// <summary>One rendered frame took <paramref name="deltaMs"/>; the plugin calls this every Update.</summary>
     public static void Frame(double deltaMs)
     {
+        if (!Enabled) return;
         lock (s_lock)
         {
             s_frames++;
@@ -326,7 +343,7 @@ public static class RoadTimings
     /// <summary>Disposable timer handed out by <see cref="Stage"/>.</summary>
     public readonly struct Scope : IDisposable
     {
-        private readonly string m_name;
+        private readonly string? m_name;
         private readonly string? m_label;
         private readonly long m_start;
 
@@ -339,6 +356,7 @@ public static class RoadTimings
 
         public void Dispose()
         {
+            if (m_name == null) return; // the empty scope handed out while recording is off
             double ms = (Stopwatch.GetTimestamp() - m_start) * 1000.0 / Stopwatch.Frequency;
             Record(m_name, ms, m_label);
         }

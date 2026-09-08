@@ -106,6 +106,34 @@ public class RoadTimingsTests
     }
 
     [Fact]
+    public void NothingIsRecordedWhileOff()
+    {
+        RoadTimings.Reset();
+        RoadTimings.Enabled = false;
+        using (RoadTimings.Stage("s", "x")) { }
+        RoadTimings.Record("s", 1.0);
+        RoadTimings.Count("c");
+        RoadTimings.Wait("w");
+        RoadTimings.Mark("m");
+        RoadTimings.Frame(500.0);
+
+        Assert.False(RoadTimings.TryGetStage("s", out _));
+        Assert.Equal(0, RoadTimings.GetCount("c"));
+        Assert.Equal(0, RoadTimings.GetWaits("w"));
+        Assert.Empty(RoadTimings.Marks);
+        Assert.Equal(0, RoadTimings.Frames);
+
+        // reset and run switch recording back on for the session
+        RoadTimings.SetRunId("named");
+        Assert.True(RoadTimings.Enabled);
+        RoadTimings.Enabled = false;
+        RoadTimings.Reset("r");
+        Assert.True(RoadTimings.Enabled);
+        RoadTimings.Count("c");
+        Assert.Equal(1, RoadTimings.GetCount("c"));
+    }
+
+    [Fact]
     public void SetRunIdKeepsTheData()
     {
         RoadTimings.Reset();

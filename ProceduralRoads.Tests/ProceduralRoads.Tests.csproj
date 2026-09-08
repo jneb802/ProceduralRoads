@@ -26,6 +26,7 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkGenerator.cs" Link="ModSrc/RoadNetworkGenerator.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.cs" Link="ModSrc/RoadSpatialGrid.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadTerrainModifier.cs" Link="ModSrc/RoadTerrainModifier.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkPersistence.cs" Link="ModSrc/RoadNetworkPersistence.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRoute.cs" Link="ModSrc/RoadRoute.cs"

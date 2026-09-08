@@ -268,6 +268,13 @@ public class FordTests
                 $"the lone second road already crossed where the first does (y={aloneJump.a.y:F0})");
             Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[1]),
                 $"second road crossed at {crossings[1].FromBank}-{crossings[1].ToBank}, the first at {crossings[0].FromBank}-{crossings[0].ToBank}");
+
+            // Sharing costs what walking does: a third road from twice as far
+            // away still comes to the first crossing rather than pay for its own.
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, -80f), 0f, new Vector2(80f, -80f), 0f, 4f, "third"));
+            Assert.Equal(3, crossings.Count);
+            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[2]),
+                $"third road crossed at {crossings[2].FromBank}-{crossings[2].ToBank} instead of the shared crossing");
         }
         finally { TearDownGeneration(); }
     }

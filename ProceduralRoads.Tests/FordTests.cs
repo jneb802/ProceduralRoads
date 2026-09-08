@@ -317,6 +317,42 @@ public class FordTests
         finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
     }
 
+    [Fact]
+    public void TheNetworkVersionChangesWhenAFordTurnsFromWadedToRaised()
+    {
+        // Zones are stamped with the network version and skip an unchanged
+        // network on load; a point that stops being paint-only changes the
+        // terrain and so must change the version, whatever its height.
+        var world = new SlopedBedWorld();
+        WorldGenerator.instance = world;
+        try
+        {
+            var path = new List<Vector2> { new(-25f, 0f), new(25f, 0f) };
+            RoadSpatialGrid.Clear();
+            RoadSpatialGrid.AddRoadPath(path, 4f, world, followTerrain: true);
+            RoadSpatialGrid.FinalizeRoadNetwork();
+            int waded = RoadSpatialGrid.RoadNetworkVersion;
+
+            // Same points and heights, leveling on.
+            RoadSpatialGrid.Clear();
+            RoadSpatialGrid.AddRoadPath(path, 4f, world, followTerrain: false, minHeight: float.NegativeInfinity);
+            var points = RoadSpatialGrid.GetRoadPointsInZone(new Vector2i(0, 0));
+            RoadSpatialGrid.Clear();
+            RoadSpatialGrid.AddRoadPath(path, 4f, world, followTerrain: true);
+            var wadedPoints = RoadSpatialGrid.GetRoadPointsInZone(new Vector2i(0, 0));
+            Assert.Equal(wadedPoints.Count, points.Count);
+
+            RoadSpatialGrid.Clear();
+            RoadSpatialGrid.AddRoadPath(path, 4f, world, followTerrain: false, minHeight: float.NegativeInfinity);
+            // The plane slope smooths to itself, so only the flag differs.
+            RoadSpatialGrid.FinalizeRoadNetwork();
+            int leveled = RoadSpatialGrid.RoadNetworkVersion;
+            Assert.NotEqual(0, waded);
+            Assert.NotEqual(waded, leveled);
+        }
+        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+    }
+
     /// <summary>A knee-deep gully with a 4 m deep channel hidden between the
     /// 8 m cell samples at x = 0 and x = 8.</summary>
     private sealed class HiddenChannelWorld : WorldGenerator

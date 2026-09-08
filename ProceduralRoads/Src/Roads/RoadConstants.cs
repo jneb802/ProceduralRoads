@@ -51,6 +51,10 @@ public static class RoadConstants
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;
     public const float FordWadeMaxDepth = 0.5f;
+    // In swamps a sailable stretch shorter than a boat is a pothole, not a
+    // fairway: a wading-depth swamp channel with no longer sailable stretch
+    // is still a ford.
+    public const float SwampFordMaxFairway = 8f;
     public const float MaxFordBankDelta = 4f;
     public const float BankDeltaPenalty = 1250f;
     public const float BankClearance = 0.75f;

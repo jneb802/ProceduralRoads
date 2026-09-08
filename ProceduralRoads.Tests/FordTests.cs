@@ -373,6 +373,23 @@ public class FordTests
     }
 
     [Fact]
+    public void ARoadSegmentOverDeepWaterIsNotRecordedAsAFord()
+    {
+        // An ordinary move whose interior dips into a channel (today's
+        // behaviour between two dry cells) is not a ford: nothing is
+        // recorded, and nothing is raised over sailable water.
+        var world = new HiddenChannelWorld();
+        var segment = new List<Vector2> { new(-8f, 0f), new(8f, -16f) };
+        Assert.True(world.GetHeight(4f, -12f) < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
+        Assert.Empty(RoadCrossingDetector.Detect(segment, world));
+
+        // The same move over knee-deep water is a ford.
+        var shallow = new GullyWorld();
+        var ford = Assert.Single(RoadCrossingDetector.Detect(new List<Vector2> { new(-16f, 0f), new(16f, 0f) }, shallow));
+        Assert.Equal(CrossingKind.Ford, ford.Kind);
+    }
+
+    [Fact]
     public void AChannelHiddenBetweenCellSamplesIsNotForded()
     {
         var world = new HiddenChannelWorld();

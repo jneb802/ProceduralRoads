@@ -29,11 +29,7 @@ public class ReachableRoadsTests
         private static readonly FieldInfo PathfinderField =
             typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        private static readonly MethodInfo? ReachableMethod =
-            typeof(RoadNetworkGenerator).GetMethod("GenerateReachableRoads", BindingFlags.NonPublic | BindingFlags.Static);
-
-        /// <summary>False on pre-warp-71 bases; these tests no-op there.</summary>
-        public static bool Available => ReachableMethod != null;
+        private static MethodInfo ReachableMethod => StrategySupport.ReachableMethod!;
 
         public Harness(SyntheticWorld world)
         {
@@ -45,7 +41,7 @@ public class ReachableRoadsTests
         }
 
         public void Run(Vector3 start, List<(string name, Vector3 position, float radius)> locations) =>
-            ReachableMethod!.Invoke(null, new object[] { start, 0f, locations, "Start" });
+            ReachableMethod.Invoke(null, new object[] { start, 0f, locations, "Start" });
 
         public List<(string from, string to)> SuccessEdges => Parse(SuccessRe);
         public List<(string from, string to)> FailedEdges => Parse(FailureRe);
@@ -74,10 +70,9 @@ public class ReachableRoadsTests
         ("South", new Vector3(cx, 0, cy - 140), 8f),
     };
 
-    [Fact]
+    [ReachableStrategyFact]
     public void FormsMstLikeTreeOnStarLayout()
     {
-        if (!Harness.Available) return; // strategy arrives with warp-71
         // With all-equal priorities the growth degenerates to nearest-to-tree
         // (Prim) — so the hub/spoke shape of the old MST strategy survives.
         using var h = new Harness(new SyntheticWorld { HasRiver = false, HasMountain = false });
@@ -92,10 +87,9 @@ public class ReachableRoadsTests
         Assert.True(hubDegree >= 3, $"Expected Hub degree >= 3, got {hubDegree}");
     }
 
-    [Fact]
+    [ReachableStrategyFact]
     public void HighPriorityLocationIsConnectedBeforeCloserOnes()
     {
-        if (!Harness.Available) return; // strategy arrives with warp-71
         // Priority bias: a boss location (priority 100 => bonus 2000) beats
         // plain locations that are physically closer to the tree.
         using var h = new Harness(new SyntheticWorld { HasRiver = false, HasMountain = false });
@@ -113,10 +107,9 @@ public class ReachableRoadsTests
         Assert.Equal("Bonemass", h.SuccessEdges[0].to);
     }
 
-    [Fact]
+    [ReachableStrategyFact]
     public void RetriesAlternativesAndPromotesComponentAcrossRiver()
     {
-        if (!Harness.Available) return; // strategy arrives with warp-71
         // Same river scenario the old strategies orphaned silently. The new
         // algorithm tries every cross-river edge, records each failure, then
         // deliberately starts a second component on the far side.
@@ -143,10 +136,9 @@ public class ReachableRoadsTests
         Assert.Contains(h.Logs, l => l.Contains("Started disconnected road component"));
     }
 
-    [Fact]
+    [ReachableStrategyFact]
     public void RendersReachableNetwork()
     {
-        if (!Harness.Available) return; // strategy arrives with warp-71
         // Visual: star west of the river (tree growth, cross shape) and the
         // component-promotion scenario spanning the river below it.
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };

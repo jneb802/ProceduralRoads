@@ -38,24 +38,16 @@ public class RoadTopologyTests
         private static readonly FieldInfo PathfinderField =
             typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        private static readonly MethodInfo? ChainMethod =
-            typeof(RoadNetworkGenerator).GetMethod("GenerateChainRoads", BindingFlags.NonPublic | BindingFlags.Static);
-
-        private static readonly MethodInfo? MstMethod =
-            typeof(RoadNetworkGenerator).GetMethod("GenerateMSTRoads", BindingFlags.NonPublic | BindingFlags.Static);
-
-        /// <summary>
-        /// False once upstream warp-71 (PR #16) is merged — it replaces both
-        /// legacy strategies with GenerateReachableRoads. The legacy
-        /// characterization tests below no-op in that case.
-        /// </summary>
-        public static bool LegacyStrategiesAvailable => ChainMethod != null && MstMethod != null;
+        // Absent once upstream warp-71 (PR #16) merges; the tests below are
+        // then reported as skipped (see StrategySupport).
+        private static MethodInfo ChainMethod => StrategySupport.ChainMethod!;
+        private static MethodInfo MstMethod => StrategySupport.MstMethod!;
 
         public void RunChain(Vector3 start, List<(string name, Vector3 position, float radius)> locations) =>
-            ChainMethod!.Invoke(null, new object[] { start, 0f, locations });
+            ChainMethod.Invoke(null, new object[] { start, 0f, locations });
 
         public void RunMst(Vector3 start, List<(string name, Vector3 position, float radius)> locations) =>
-            MstMethod!.Invoke(null, new object[] { start, 0f, locations });
+            MstMethod.Invoke(null, new object[] { start, 0f, locations });
 
         public List<(string from, string to)> SuccessEdges => Parse(SuccessRe);
         public List<(string from, string to)> FailedEdges => Parse(FailureRe);
@@ -97,10 +89,9 @@ public class RoadTopologyTests
         return deg;
     }
 
-    [Fact]
+    [LegacyStrategyFact]
     public void MstFormsHubAndSpokeOnStarLayout()
     {
-        if (!Harness.LegacyStrategiesAvailable) return; // removed by warp-71
         using var h = new Harness(new SyntheticWorld { HasRiver = false, HasMountain = false });
 
         h.RunMst(new Vector3(-300, 0, 0), StarLayout(0, 0));
@@ -114,10 +105,9 @@ public class RoadTopologyTests
         Assert.True(degrees["Hub"] >= 3, $"Expected Hub degree >= 3, got {degrees["Hub"]}");
     }
 
-    [Fact]
+    [LegacyStrategyFact]
     public void ChainStaysASinglePathOnStarLayout()
     {
-        if (!Harness.LegacyStrategiesAvailable) return; // removed by warp-71
         using var h = new Harness(new SyntheticWorld { HasRiver = false, HasMountain = false });
 
         h.RunChain(new Vector3(-300, 0, 0), StarLayout(0, 0));
@@ -133,10 +123,9 @@ public class RoadTopologyTests
         Assert.All(sources, g => Assert.Single(g));
     }
 
-    [Fact]
+    [LegacyStrategyFact]
     public void ChainVisitsInNearestNeighborOrder()
     {
-        if (!Harness.LegacyStrategiesAvailable) return; // removed by warp-71
         using var h = new Harness(new SyntheticWorld { HasRiver = false, HasMountain = false });
 
         var line = new List<(string name, Vector3 position, float radius)>
@@ -155,10 +144,9 @@ public class RoadTopologyTests
             h.SuccessEdges);
     }
 
-    [Fact]
+    [LegacyStrategyFact]
     public void ChainGreedyWalksFartherThanMstOnAsymmetricLayout()
     {
-        if (!Harness.LegacyStrategiesAvailable) return; // removed by warp-71
         // Classic greedy pitfall: points on both sides of the start. The chain
         // commits east and must double back west; MST connects west directly.
         var layout = new List<(string name, Vector3 position, float radius)>
@@ -189,10 +177,9 @@ public class RoadTopologyTests
             $"Expected greedy chain ({chain:F0}m straight-line) to exceed MST ({mst:F0}m)");
     }
 
-    [Fact]
+    [LegacyStrategyFact]
     public void BothStrategiesKeepRoutingFromNodesTheyFailedToReach()
     {
-        if (!Harness.LegacyStrategiesAvailable) return; // removed by warp-71
         // Characterization of a real quirk: neither strategy reacts to a failed
         // road. The chain moves its cursor to the unreachable node anyway, and
         // MST emits child edges of an unreachable parent — producing orphan
@@ -228,10 +215,9 @@ public class RoadTopologyTests
         }
     }
 
-    [Fact]
+    [LegacyStrategyFact]
     public void RendersTopologyComparison()
     {
-        if (!Harness.LegacyStrategiesAvailable) return; // removed by warp-71
         // Visual artifact: identical star layouts, Chain on the south half of
         // the island, MST on the north half. Chain renders as one snaking
         // path; MST as spokes around the hub.

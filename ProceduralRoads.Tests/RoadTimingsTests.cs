@@ -106,6 +106,17 @@ public class RoadTimingsTests
     }
 
     [Fact]
+    public void SetRunIdKeepsTheData()
+    {
+        RoadTimings.Reset();
+        RoadTimings.Record("s", 2.0);
+        RoadTimings.SetRunId("named");
+        Assert.Equal("named", RoadTimings.RunId);
+        Assert.True(RoadTimings.TryGetStage("s", out var stat));
+        Assert.Equal(2.0, stat.TotalMs, 6);
+    }
+
+    [Fact]
     public void SummaryListsStagesCountersWaitsMarksAndFrames()
     {
         RoadTimings.Reset("r7");

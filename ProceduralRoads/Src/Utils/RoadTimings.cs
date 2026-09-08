@@ -75,6 +75,12 @@ public static class RoadTimings
         }
     }
 
+    /// <summary>Name the run in progress without clearing it (a cold start keeps its load timings).</summary>
+    public static void SetRunId(string runId)
+    {
+        lock (s_lock) RunId = runId ?? "";
+    }
+
     /// <summary>Time a block: <c>using (RoadTimings.Stage("gen.pathfind", label)) { ... }</c>.</summary>
     public static Scope Stage(string name, string? label = null) => new Scope(name, label);
 

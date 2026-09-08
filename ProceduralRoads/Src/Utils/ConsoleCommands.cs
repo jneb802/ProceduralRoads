@@ -45,8 +45,9 @@ public static class ConsoleCommands
 
         new Terminal.ConsoleCommand(
             "road_timings",
-            "Stage timings and work counters since the last reset: road_timings [reset [runId] | json [path]]. " +
-            "Bare: print the summary. reset: start a new run. json: write BepInEx/ProceduralRoads/timings/<runId>.json (or the given path).",
+            "Stage timings and work counters since the last reset: road_timings [reset [runId] | run <runId> | json [path]]. " +
+            "Bare: print the summary. reset: start a new run. run: name the current run without clearing it (a cold start keeps " +
+            "the load timings). json: write BepInEx/ProceduralRoads/timings/<runId>.json (or the given path).",
             (args) => TimingsCommand(args),
             isCheat: false,
             isNetwork: false,
@@ -442,6 +443,15 @@ public static class ConsoleCommands
             case "reset":
                 RoadTimings.Reset(args.Length >= 3 ? args[2] : null);
                 args.Context.AddString($"OK: timings reset run={(RoadTimings.RunId.Length == 0 ? "-" : RoadTimings.RunId)}");
+                return;
+            case "run":
+                if (args.Length < 3)
+                {
+                    args.Context.AddString("Usage: road_timings run <runId>");
+                    return;
+                }
+                RoadTimings.SetRunId(args[2]);
+                args.Context.AddString($"OK: timings run={RoadTimings.RunId} elapsed={RoadTimings.ElapsedMs / 1000.0:F1}s");
                 return;
             case "json":
             {

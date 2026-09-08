@@ -59,6 +59,28 @@ public class IslandRegenerationTests
     }
 
     [Fact]
+    public void LoadTimeGenerationCanBeSwitchedOffAndIslandRegenerationStillWorks()
+    {
+        SetUp();
+        try
+        {
+            RoadNetworkGenerator.GenerateOnLoad = false;
+            Assert.False(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            Assert.False(RoadNetworkGenerator.RoadsAvailable);
+            Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
+
+            Assert.True(RoadNetworkGenerator.RegenerateIslandAt(Vector3.zero, out string summary), summary);
+            Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+
+            RoadNetworkGenerator.GenerateOnLoad = true;
+            RoadNetworkGenerator.Reset();
+            Assert.True(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+        }
+        finally { RoadNetworkGenerator.GenerateOnLoad = true; TearDown(); }
+    }
+
+    [Fact]
     public void RegenerationRefusesAPointInTheOcean()
     {
         SetUp();

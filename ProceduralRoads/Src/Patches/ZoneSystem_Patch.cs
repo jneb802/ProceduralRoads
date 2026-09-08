@@ -31,6 +31,7 @@ public static class ZoneSystem_Patch
 
             List<ZoneSystem.ClearArea> roadClearAreas = RoadClearAreaManager.GetOrCreateClearAreas(zoneID);
             clearAreas.AddRange(roadClearAreas);
+            clearAreas.AddRange(BridgePlacement.GetClearAreas(zoneID));
         }
     }
 
@@ -49,7 +50,15 @@ public static class ZoneSystem_Patch
             // real spawn makes. A zone already stamped with the current network
             // version is left alone, so a reload does not overwrite the
             // player's terrain edits in the road. See RoadTerrainModifier.
-            if (!__result || mode == ZoneSystem.SpawnMode.Ghost || !RoadNetworkGenerator.RoadsAvailable)
+            if (!__result || !RoadNetworkGenerator.RoadsAvailable)
+                return;
+
+            // Bridge pieces (prototype) go in under every mode: as ZDOs only
+            // under ghost generation, the way the game places its own
+            // objects, and a zone that already has them is left alone.
+            BridgePlacement.OnZoneSpawned(zoneID, mode);
+
+            if (mode == ZoneSystem.SpawnMode.Ghost)
                 return;
 
             List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);

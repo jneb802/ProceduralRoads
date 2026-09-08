@@ -24,7 +24,10 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 | Fords/Enabled | false | **Prototype.** Let roads ford knee-deep rivers (see below) |
-| Fords/WadeWeight, RaiseWeight | 1 each | Relative odds of each ford style where a site allows it (0 disables a style) |
+| Fords/WadeWeight, RaiseWeight, SpanWeight | 1 each | Relative odds of each ford style where a site allows it (0 disables a style); spans need Bridges/Enabled |
+| Bridges/Enabled | false | **Prototype.** Let roads cross deeper or wider rivers on ruined wooden bridges (see below) |
+| Bridges/CostFixed | 60000 | Pathfinding cost of a bridge, fixed part; lower = more bridges |
+| Bridges/CostPerMeter | 600 | Pathfinding cost of a bridge per metre of span |
 
 ### Custom Locations via Config
 
@@ -48,6 +51,36 @@ already ford a river are shared by later roads instead of each finding its
 own crossing. Deeper or wider water still blocks. The setting decides how a network is generated; the crossings are
 stored with it. `road_crossings` in the console lists the crossings
 nearest to you.
+
+### Bridges (prototype, off by default)
+
+With `Bridges/Enabled = true` a road may also cross water too wide or too
+deep to ford, up to 128 m from dry ground to dry ground and only between
+near-level banks, at the configured cost; the cost is high, so a bridge
+appears where the way around is long or there is none. The water under the
+jump is never leveled or painted: the road runs down to the water's edge on
+each side (or, where the road climbs a cliff on both sides, the deck springs
+from the bank tops) and a ruined wooden bridge is spawned between the banks
+from vanilla pieces (`wood_pole2` post pairs stacked down to the riverbed,
+`wood_beam` crossbeams, a `wood_floor` plank deck, a `wood_stair` at each
+end) when the zone generates. The bridge is a ruin: piers survive more than
+the deck, fallen stations leave stubs and toppled poles, and a navigation
+gap around the deepest water is always left open so boats still pass. A
+ford may now also be *spanned* (`Fords/SpanWeight`): a low footbridge with a
+step at each end. Pieces are ordinary persistent objects with damage
+states, so unmodded clients see them too; only the server creates them.
+
+No bridge is built in or to the Mistlands for now: its terrain is steep
+and jagged, so banks are rarely level and a deck rarely lands where the
+road wants it. Mistlands bridges will get a pass of their own; fords
+there stay allowed.
+
+The setting decides how a network is generated; a world generated with
+bridges keeps them if it is turned off later. Bridges need the pathfinder
+to exhaust the land routes first, so on large islands raise
+`PathfindingMaxIterations` to let it find them. `road_bridges` in the
+console reports the plans; `road_bridges respawn` rebuilds the spawned
+pieces from the current plans.
 
 ## API for Mod Authors
 

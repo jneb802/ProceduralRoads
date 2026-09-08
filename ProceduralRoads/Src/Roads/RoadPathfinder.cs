@@ -34,6 +34,19 @@ public class RoadPathfinder
 
     public bool Fords = FordsEnabled;
 
+    /// <summary>
+    /// Bridges (prototype; config "Bridges/Enabled", off by default): whether
+    /// a road may jump a river too long or too deep to ford, on a bridge.
+    /// The cost levers are "Bridges/CostFixed" and "Bridges/CostPerMeter".
+    /// </summary>
+    public static bool BridgesEnabled = false;
+    public static float ConfiguredBridgeCostFixed = RoadConstants.DefaultBridgeCostFixed;
+    public static float ConfiguredBridgeCostPerMeter = RoadConstants.DefaultBridgeCostPerMeter;
+
+    public bool Bridges = BridgesEnabled;
+    public float BridgeCostFixed = ConfiguredBridgeCostFixed;
+    public float BridgeCostPerMeter = ConfiguredBridgeCostPerMeter;
+
     /// <summary>Ground a crossing may land on: the shallow-water line plus the bank clearance.</summary>
     public const float LandingFloor = RoadConstants.ShallowWaterHeight + RoadConstants.BankClearance;
 
@@ -118,7 +131,7 @@ public class RoadPathfinder
                     // A blocked neighbour may be the near edge of a river:
                     // with fords on, look for dry ground on the far side
                     // and take the whole crossing as one move.
-                    if (!Fords || !TryGetRiverCrossing(currentPos, Directions[i], out Vector2i landing, out float crossingCost))
+                    if (!(Fords || Bridges) || !TryGetRiverCrossing(currentPos, Directions[i], out Vector2i landing, out float crossingCost))
                         continue;
                     if (closedSet.Contains(landing))
                         continue;
@@ -221,12 +234,14 @@ public class RoadPathfinder
     }
 
     /// <summary>
-    /// Fords (prototype): scans cell by cell from a dry cell across river
-    /// water in one of the eight principal directions and lands on the first
-    /// dry ground outside the river band, if that lies within the ford cap,
-    /// the water under the jump is no deeper than wading and the two banks
-    /// are near level. Water without a river core under it (a lake, the sea)
-    /// is not crossed; neither is a dry river valley.
+    /// Scans cell by cell from a dry cell across river water in one of the
+    /// eight principal directions and lands on the first dry ground outside
+    /// the river band. A jump within the ford cap over water no deeper than
+    /// wading is a FORD at a small cost (with fords on); anything longer or
+    /// deeper is a BRIDGE at the bridge cost (with bridges on), held to
+    /// near-level banks and refused in or to the Mistlands. Water without a
+    /// river core under it (a lake, the sea) is not crossed; neither is a dry
+    /// river valley.
     /// </summary>
     private bool TryGetRiverCrossing(Vector2i from, Vector2Int direction, out Vector2i landing, out float crossingCost)
     {
@@ -242,8 +257,10 @@ public class RoadPathfinder
         float fromHeight = m_worldGen.GetHeight(fromWorld.x, fromWorld.y);
         bool sawRiverWater = false;
         float deepest = float.MaxValue;
+        bool mistlands = m_worldGen.GetBiome(fromWorld.x, fromWorld.y) == Heightmap.Biome.Mistlands;
+        int maxCells = Bridges ? RoadConstants.MaxBridgeCrossingCells : RoadConstants.MaxRiverCrossingCells;
 
-        for (int step = 1; step <= RoadConstants.MaxRiverCrossingCells; step++)
+        for (int step = 1; step <= maxCells; step++)
         {
             Vector2i check = new Vector2i(from.x + direction.x * step, from.y + direction.y * step);
             Vector2 world = GridToWorld(check);
@@ -258,6 +275,7 @@ public class RoadPathfinder
             {
                 sawRiverWater |= water && riverCore;
                 deepest = Mathf.Min(deepest, height);
+                mistlands |= m_worldGen.GetBiome(world.x, world.y) == Heightmap.Biome.Mistlands;
                 continue;
             }
 
@@ -266,19 +284,22 @@ public class RoadPathfinder
                 return false;
 
             float distance = Vector2.Distance(fromWorld, world);
-            if (distance > RoadConstants.MaxRiverCrossingCells * CellSize)
-                return false;
-
             // The cells are 8 m apart and a channel can hide between them:
             // the whole jump is sampled every 2 m before its depth is trusted.
             deepest = Mathf.Min(deepest, DeepestAlong(fromWorld, world));
+            bool bridge = distance > RoadConstants.MaxRiverCrossingCells * CellSize
+                || deepest < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth;
+            if (bridge ? !Bridges : !Fords)
+                return false;
+            if (distance > maxCells * CellSize)
+                return false;
 
-            // Deeper than wading: no ford here.
-            if (deepest < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth)
+            mistlands |= m_worldGen.GetBiome(world.x, world.y) == Heightmap.Biome.Mistlands;
+            if (bridge && mistlands)
                 return false;
 
             float bankDelta = Mathf.Abs(height - fromHeight);
-            if (bankDelta > RoadConstants.MaxFordBankDelta)
+            if (bankDelta > (bridge ? RoadConstants.MaxBridgeBankDelta : RoadConstants.MaxFordBankDelta))
                 return false;
 
             landing = check;
@@ -287,7 +308,9 @@ public class RoadPathfinder
             // and a later road detours to share it rather than build
             // another beside it, up to what that saving buys.
             bool shared = OnExistingRoad(fromWorld) && OnExistingRoad(world);
-            float price = RoadConstants.RiverCrossingPenalty * (shared ? RoadConstants.SharedCrossingCostFraction : 1f);
+            float price = bridge ? BridgeCostFixed + BridgeCostPerMeter * distance : RoadConstants.RiverCrossingPenalty;
+            if (shared)
+                price *= RoadConstants.SharedCrossingCostFraction;
             crossingCost = price + BaseCost * distance
                 + RoadConstants.BankDeltaPenalty * bankDelta * bankDelta;
             return true;

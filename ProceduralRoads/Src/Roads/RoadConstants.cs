@@ -61,6 +61,46 @@ public static class RoadConstants
     public const float DefaultSwampShallowWaterPenalty = 500f;
     public const float SharedCrossingCostFraction = 0.5f;
 
+    // Bridges (prototype, off by default: config Bridges/Enabled). A jump
+    // longer than a ford or over water deeper than wading is a BRIDGE, up
+    // to MaxBridgeCrossingCells (measured in metres), at BridgeCostFixed +
+    // BridgeCostPerMeter per metre (config Bridges/CostFixed and
+    // Bridges/CostPerMeter), between banks within MaxBridgeBankDelta of
+    // each other. For scale in this cost model: easy ground costs about 1
+    // per metre of road, rough or steep ground 1000-2000 per cell, so the
+    // defaults make a 100 m bridge worth roughly 1 km of rough detour; a
+    // bridge appears where the way around is long or there is none.
+    public const int MaxBridgeCrossingCells = 16; // 16 * 8 m = 128 m, dry cell to dry cell
+    public const float MaxBridgeBankDelta = 2.5f;
+    public const float DefaultBridgeCostFixed = 60000f;
+    public const float DefaultBridgeCostPerMeter = 600f;
+
+    // No bridge in or to the Mistlands for now: its terrain is steep and
+    // jagged, so banks are rarely level and a deck rarely lands where the
+    // road wants it. Mistlands bridges get a pass of their own later; fords
+    // there stay allowed.
+
+    // A ford may also be SPANNED (Fords/SpanWeight): a short low footbridge
+    // with a step at each end, where the crossing is at least
+    // FordSpanMinWidth wide; its deck stands FordSpanDeckClearance above
+    // the water and FordSpanDeckRise above the higher bank. In swamps a
+    // sailable stretch shorter than a boat is a pothole, not a fairway, so
+    // a wading-depth swamp channel with no longer sailable stretch is a
+    // ford; a swamp BRIDGE walks its banks outward over the wade shelf up
+    // to SwampBridgeDryReach to find ground above the waterline.
+    public const float FordSpanMinWidth = 6f;
+    public const float FordSpanDeckClearance = 1f;
+    public const float FordSpanDeckRise = 1f;
+    public const float SwampFordMaxFairway = 8f;
+    public const float SwampBridgeDryReach = 120f;
+
+    // High bridge: when the ground within HighBankReach of each bank along
+    // the road stands at least HighBankRise above that bank, the deck
+    // springs from the bank tops (abutments there, piers taller, the road
+    // stopping at the top) instead of from the water's edge.
+    public const float HighBankReach = 12f;
+    public const float HighBankRise = 2.5f;
+
     // Road cross-section (see RoadProfile): flat core fully leveled and
     // solidly painted; paint fades out strictly inside the leveled footprint
     // so roads keep an unpainted, smoothed verge; leveling eases to natural

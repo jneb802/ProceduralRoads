@@ -37,6 +37,11 @@ public static class RoadNetworkPersistence
     private static readonly int RoadCrossingsHash = "ProceduralRoads_Crossings".GetStableHashCode();
 
     /// <summary>
+    /// Hash key for the zones that have received their bridge pieces (bridges prototype).
+    /// </summary>
+    private static readonly int BridgeZonesHash = "ProceduralRoads_BridgeZones".GetStableHashCode();
+
+    /// <summary>
     /// Hash key for storing global road network data on the ZDO.
     /// </summary>
     private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
@@ -100,7 +105,8 @@ public static class RoadNetworkPersistence
     /// </summary>
     public static void SaveGlobalRoadData(
         IReadOnlyList<(Vector2 position, string label)> roadStartPoints,
-        IReadOnlyList<RoadCrossing> roadCrossings)
+        IReadOnlyList<RoadCrossing> roadCrossings,
+        IReadOnlyCollection<Vector2i> bridgeZones)
     {
         Log.LogDebug($"[SAVE] SaveGlobalRoadData called");
 
@@ -144,6 +150,31 @@ public static class RoadNetworkPersistence
         byte[] crossingsData = SerializeRoadCrossings(roadCrossings);
         metadataZdo.Set(RoadCrossingsHash, crossingsData);
         Log.LogDebug($"[SAVE] Saved {roadCrossings.Count} river crossings ({crossingsData.Length} bytes)");
+        WriteBridgeZones(metadataZdo, bridgeZones);
+    }
+
+    /// <summary>
+    /// Save only the zones that have their bridge pieces, on a network that
+    /// was loaded rather than generated this session.
+    /// </summary>
+    public static void SaveBridgeZones(IReadOnlyCollection<Vector2i> bridgeZones)
+    {
+        ZDO? metadataZdo = GetMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogWarning("[SAVE] No metadata ZDO: bridge zones not saved");
+            return;
+        }
+        if (!metadataZdo.IsOwner())
+            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
+        WriteBridgeZones(metadataZdo, bridgeZones);
+    }
+
+    private static void WriteBridgeZones(ZDO metadataZdo, IReadOnlyCollection<Vector2i> bridgeZones)
+    {
+        byte[] data = SerializeBridgeZones(bridgeZones);
+        metadataZdo.Set(BridgeZonesHash, data);
+        Log.LogDebug($"[SAVE] Saved {bridgeZones.Count} bridge zones ({data.Length} bytes)");
     }
 
     /// <summary>
@@ -153,7 +184,8 @@ public static class RoadNetworkPersistence
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData(
         List<(Vector2 position, string label)> roadStartPoints,
-        List<RoadCrossing> roadCrossings)
+        List<RoadCrossing> roadCrossings,
+        HashSet<Vector2i> bridgeZones)
     {
         Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
 
@@ -187,6 +219,7 @@ public static class RoadNetworkPersistence
 
             TryLoadRoadMetadata(roadStartPoints);
             TryLoadRoadCrossings(metadataZdo, roadCrossings);
+            TryLoadBridgeZones(metadataZdo, bridgeZones);
 
             return true;
         }
@@ -399,6 +432,54 @@ public static class RoadNetworkPersistence
             writer.Write((int)crossing.Style);
         }
 
+        return ms.ToArray();
+    }
+
+    private static void TryLoadBridgeZones(ZDO metadataZdo, HashSet<Vector2i> bridgeZones)
+    {
+        bridgeZones.Clear();
+        byte[]? data = metadataZdo.GetByteArray(BridgeZonesHash, null);
+        if (data == null || data.Length == 0)
+            return;
+        try
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+            int version = reader.ReadInt32();
+            if (version != 1)
+            {
+                Log.LogWarning($"Unknown bridge zone data version: {version}");
+                return;
+            }
+            int count = reader.ReadInt32();
+            if (count < 0 || count > 1_000_000)
+            {
+                Log.LogWarning($"Invalid bridge zone count: {count}");
+                return;
+            }
+            for (int i = 0; i < count; i++)
+                bridgeZones.Add(new Vector2i(reader.ReadInt32(), reader.ReadInt32()));
+            Log.LogDebug($"Loaded {bridgeZones.Count} bridge zones from ZDO");
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"Failed to deserialize bridge zones: {ex.Message}");
+            bridgeZones.Clear();
+        }
+    }
+
+    /// <summary>Format: [version=1][count] then [x][y] per zone.</summary>
+    private static byte[] SerializeBridgeZones(IReadOnlyCollection<Vector2i> zones)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+        writer.Write(1);
+        writer.Write(zones.Count);
+        foreach (Vector2i zone in zones)
+        {
+            writer.Write(zone.x);
+            writer.Write(zone.y);
+        }
         return ms.ToArray();
     }
 

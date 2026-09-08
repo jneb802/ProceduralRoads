@@ -9,18 +9,22 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public class IslandRegenerationTests
 {
-    private static SyntheticWorld SetUp()
+    private static readonly (string name, float x, float z, float radius)[] StandardLocations =
+    {
+        ("StartTemple", 0f, 0f, 25f),
+        ("Eikthyrnir", 260f, 40f, 10f),
+        ("Crypt4", -220f, 150f, 18f),
+        ("Crypt4", 120f, -260f, 18f),
+    };
+
+    private static SyntheticWorld SetUp() => SetUp(StandardLocations);
+
+    private static SyntheticWorld SetUp(params (string name, float x, float z, float radius)[] locations)
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
         WorldGenerator.instance = world;
         var zones = new ZoneSystem();
-        foreach (var (name, x, z, radius) in new[]
-        {
-            ("StartTemple", 0f, 0f, 25f),
-            ("Eikthyrnir", 260f, 40f, 10f),
-            ("Crypt4", -220f, 150f, 18f),
-            ("Crypt4", 120f, -260f, 18f),
-        })
+        foreach (var (name, x, z, radius) in locations)
         {
             zones.Locations.Add(new ZoneSystem.LocationInstance
             {
@@ -29,6 +33,7 @@ public class IslandRegenerationTests
             });
         }
         ZoneSystem.instance = zones;
+        ZDOMan.instance = new ZDOMan();
         RoadNetworkGenerator.Reset();
         return world;
     }
@@ -36,6 +41,9 @@ public class IslandRegenerationTests
     private static void TearDown()
     {
         RoadNetworkGenerator.Reset();
+        RoadNetworkGenerator.GenerateOnLoad = true;
+        ProceduralRoadsPlugin.ConfigLocationNames = new();
+        ZDOMan.instance = null;
         ZoneSystem.instance = null;
         WorldGenerator.instance = null;
     }
@@ -103,6 +111,84 @@ public class IslandRegenerationTests
         finally
         {
             Heightmap.Registered = null;
+            TearDown();
+        }
+    }
+
+    [Fact]
+    public void IslandRegenerationOnARoadFreeWorldSavesAndReloads()
+    {
+        // The validation loop: load-time generation off, one island regenerated,
+        // the world saved, the next session loads the roads back. Island
+        // regeneration must create the metadata object the save path writes to,
+        // exactly as global generation does.
+        SetUp();
+        try
+        {
+            RoadNetworkGenerator.GenerateOnLoad = false;
+            Assert.False(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            Assert.True(RoadNetworkGenerator.RegenerateIslandAt(Vector3.zero, out string summary), summary);
+            Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+            byte[] network = RoadSpatialGrid.SerializeAllRoadPoints()!;
+            int version = RoadSpatialGrid.RoadNetworkVersion;
+            Assert.NotEqual(0, version);
+
+            var log = new List<string>();
+            BepInEx.Logging.ManualLogSource.Captured = log;
+            RoadNetworkGenerator.SaveGlobalRoadData();
+            BepInEx.Logging.ManualLogSource.Captured = null;
+            Assert.DoesNotContain(log, l => l.Contains("No metadata ZDO"));
+            Assert.Equal(1, ZDOMan.instance!.CountWithPrefab(RoadNetworkPersistence.MetadataPrefabName));
+
+            RoadNetworkGenerator.Reset();
+            Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
+            Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData(), "saved network did not load back");
+            Assert.Equal(network, RoadSpatialGrid.SerializeAllRoadPoints());
+            Assert.Equal(version, RoadSpatialGrid.RoadNetworkVersion);
+        }
+        finally { TearDown(); }
+    }
+
+    [Fact]
+    public void IslandRegenerationAfterGlobalGenerationReusesTheMetadataObject()
+    {
+        SetUp();
+        try
+        {
+            RoadNetworkGenerator.GenerateRoads(force: true);
+            Assert.True(RoadNetworkGenerator.RegenerateIslandAt(Vector3.zero, out string summary), summary);
+            RoadNetworkGenerator.SaveGlobalRoadData();
+            Assert.Equal(1, ZDOMan.instance!.CountWithPrefab(RoadNetworkPersistence.MetadataPrefabName));
+
+            byte[] network = RoadSpatialGrid.SerializeAllRoadPoints()!;
+            RoadNetworkGenerator.Reset();
+            Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData());
+            Assert.Equal(network, RoadSpatialGrid.SerializeAllRoadPoints());
+        }
+        finally { TearDown(); }
+    }
+
+    [Fact]
+    public void FreshSessionIslandRegenerationSeesConfiguredCustomLocations()
+    {
+        // Only the start temple and a location the config names: without the
+        // config registration the island has no road-eligible location at all.
+        SetUp(("StartTemple", 0f, 0f, 25f), ("ModCamp", 240f, -60f, 12f));
+        try
+        {
+            RoadNetworkGenerator.GenerateOnLoad = false;
+            Assert.False(RoadNetworkGenerator.RegenerateIslandAt(Vector3.zero, out string without));
+            Assert.Contains("no road-eligible locations", without);
+
+            ProceduralRoadsPlugin.ConfigLocationNames = new() { "ModCamp" };
+            Assert.True(RoadNetworkGenerator.RegenerateIslandAt(Vector3.zero, out string summary), summary);
+            Assert.Contains("ModCamp", RoadNetworkGenerator.GetRegisteredLocations());
+            var nearCamp = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(240f, 0f, -60f), 12f + 8f);
+            Assert.True(nearCamp.Count > 0, "no road reaches the configured location");
+        }
+        finally
+        {
+            RoadNetworkGenerator.UnregisterLocation("ModCamp");
             TearDown();
         }
     }

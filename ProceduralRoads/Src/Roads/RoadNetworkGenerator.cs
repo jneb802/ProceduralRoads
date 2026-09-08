@@ -223,15 +223,7 @@ public static class RoadNetworkGenerator
 
         Log.LogDebug("Starting road network generation...");
 
-        // Merge config-defined custom locations into registered set
-        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
-        foreach (var locName in configLocations)
-        {
-            if (RegisteredLocationNames.Add(locName))
-            {
-                Log.LogDebug($"Added config location: {locName}");
-            }
-        }
+        RegisterConfiguredLocations();
 
         DateTime startTime = DateTime.Now;
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
@@ -283,6 +275,23 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         
         RoadNetworkPersistence.EnsureMetadataInstance();
+    }
+
+    /// <summary>
+    /// Merge the config-defined custom locations into the registered set.
+    /// Every generation entry point calls this first, so a location named in
+    /// the config counts as road-eligible whichever entry point runs first.
+    /// </summary>
+    private static void RegisterConfiguredLocations()
+    {
+        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
+        foreach (var locName in configLocations)
+        {
+            if (RegisteredLocationNames.Add(locName))
+            {
+                Log.LogDebug($"Added config location: {locName}");
+            }
+        }
     }
 
     #region Core Road Generation Primitive
@@ -620,6 +629,8 @@ public static class RoadNetworkGenerator
             return false;
         }
 
+        RegisterConfiguredLocations();
+
         var locations = GatherLocationData();
         if (locations == null)
         {
@@ -659,6 +670,9 @@ public static class RoadNetworkGenerator
         RoadSpatialGrid.FinalizeRoadNetwork();
         m_roadsGenerated = true;
         m_pathfinder = null;
+        // Same as after global generation: without the metadata object the
+        // save path has nowhere to put the network and logs an error instead.
+        RoadNetworkPersistence.EnsureMetadataInstance();
 
         TimeSpan elapsed = DateTime.Now - startTime;
         summary =

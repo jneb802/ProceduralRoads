@@ -51,11 +51,12 @@ public static class RoadLifecycleManager
                 $"WorldGenerator and locations available ({ZoneSystem.instance!.GetLocationList()!.Count} locations)...");
             
             bool loaded;
-            using (RoadTimings.Stage("load.road_data"))
+            using (RoadTimings.Stage("load.road_data", "locations ready"))
                 loaded = RoadNetworkGenerator.TryLoadGlobalRoadData();
             if (loaded)
             {
                 RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+                RoadTimings.Mark("load.roads_loaded");
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Loaded roads from global persistence");
             }
             else
@@ -83,9 +84,13 @@ public static class RoadLifecycleManager
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
             $"Player spawning at {spawnPoint}, attempting to load global road data...");
 
-        if (RoadNetworkGenerator.TryLoadGlobalRoadData())
+        bool loaded;
+        using (RoadTimings.Stage("load.road_data", "player spawn"))
+            loaded = RoadNetworkGenerator.TryLoadGlobalRoadData();
+        if (loaded)
         {
             RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+            RoadTimings.Mark("load.roads_loaded");
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Roads loaded from global persistence");
         }
         else

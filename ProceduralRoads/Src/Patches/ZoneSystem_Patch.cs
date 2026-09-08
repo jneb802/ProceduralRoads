@@ -40,22 +40,21 @@ public static class ZoneSystem_Patch
         [HarmonyPostfix]
         public static void Postfix(ZoneSystem __instance, Vector2s zoneID, ZoneSystem.SpawnMode mode, ref bool __result)
         {
-            // Every zone that finishes spawning gets its road terrain, in any spawn
-            // mode and whether the network was generated this session or loaded
-            // from the save. Zones first created as ghost zones come back later in
-            // Client mode; returning early there left them with the road in the data
-            // and nothing on the ground. A zone whose terrain compiler is already
-            // stamped with the current network version is skipped, so a reload
-            // does not overwrite the player's terrain edits in the road (see
-            // RoadTerrainModifier.CarriesCurrentRoads). On a real client of a
-            // dedicated server the TerrainComp is not owned locally and the
-            // modifier skips the zone.
-            if (__result && RoadNetworkGenerator.RoadsAvailable)
-            {
-                List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-                if (roadPoints.Count > 0)
-                    RoadTerrainModifier.ApplyRoadTerrainMods(zoneID, roadPoints);
-            }
+            // Every zone that comes alive gets its road terrain, whether the
+            // network was generated this session or loaded from the save, and
+            // whether the zone spawns Full (first time) or Client (generated
+            // earlier, as a ghost zone or in another session). Ghost spawns
+            // are skipped: their zone root is destroyed on the spot, and a
+            // terrain compiler made for it would only duplicate the one the
+            // real spawn makes. A zone already stamped with the current network
+            // version is left alone, so a reload does not overwrite the
+            // player's terrain edits in the road. See RoadTerrainModifier.
+            if (!__result || mode == ZoneSystem.SpawnMode.Ghost || !RoadNetworkGenerator.RoadsAvailable)
+                return;
+
+            List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+            if (roadPoints.Count > 0)
+                RoadTerrainModifier.OnZoneSpawned(zoneID, roadPoints);
         }
     }
 

@@ -125,14 +125,16 @@ public class Heightmap
     public static Heightmap? FindHeightmap(UnityEngine.Vector3 point) => Registered;
     public static System.Collections.Generic.List<Heightmap> GetAllHeightmaps() =>
         Registered == null ? new() : new() { Registered };
-    public TerrainComp? GetAndCreateTerrainCompiler() => m_terrainComp;
+    /// <summary>Like the game: the zone's live compiler, or a new one (with a new ZDO) if it has none.</summary>
+    public TerrainComp GetAndCreateTerrainCompiler() => m_terrainComp ??= new TerrainComp(this, 64);
     public void Poke(bool delayed) => PokeCount++;
 
-    public static Heightmap CreateForZone(Vector2i zoneID, int width = 64)
+    public static Heightmap CreateForZone(Vector2i zoneID, int width = 64, bool withCompiler = true)
     {
         var hm = new Heightmap { m_scale = ZoneSystem.ZoneSize / width };
         hm.transform.position = ZoneSystem.GetZonePos(zoneID);
-        hm.m_terrainComp = new TerrainComp(hm, width);
+        if (withCompiler)
+            hm.m_terrainComp = new TerrainComp(hm, width);
         return hm;
     }
 }
@@ -143,11 +145,15 @@ public class Transform
     public UnityEngine.Vector3 position;
 }
 
-/// <summary>Shim for ZNetView: the terrain compiler is always ours here, with one ZDO behind it.</summary>
+/// <summary>Shim for ZNetView: one ZDO behind it, ours unless a test says otherwise.</summary>
 public class ZNetView
 {
-    public ZDO Zdo = new(default, 0);
-    public bool IsOwner() => true;
+    public ZDO Zdo;
+    public ZNetView(ZDO zdo) { Zdo = zdo; }
+    public bool IsValid() => Zdo != null;
+    public bool IsOwner() => Zdo.IsOwner();
+    public bool HasOwner() => Zdo.HasOwner();
+    public void ClaimOwnership() { if (!IsOwner()) Zdo.SetOwner(ZDOMan.instance?.m_sessionID ?? 1); }
     public ZDO GetZDO() => Zdo;
 }
 
@@ -184,8 +190,11 @@ public class ZDO
     public int GetPrefab() => m_prefab;
     public void SetOwner(long owner) => m_owner = owner;
     public long GetOwner() => m_owner;
-    public bool IsOwner() => ZDOMan.instance != null && m_owner == ZDOMan.instance.m_sessionID;
+    public bool HasOwner() => m_owner != 0;
+    /// <summary>Ours when it carries our session id; without a ZDOMan every ZDO counts as ours.</summary>
+    public bool IsOwner() => ZDOMan.instance == null || m_owner == ZDOMan.instance.m_sessionID;
     public UnityEngine.Vector3 GetPosition() => m_position;
+    public Vector2i GetSector() => ZoneSystem.GetZone(m_position);
     public void SetPosition(UnityEngine.Vector3 position) => m_position = position;
 
     public void Set(int hash, int value) => m_ints[hash] = value;
@@ -221,6 +230,14 @@ public class ZDOMan
         return true;
     }
 
+    /// <summary>The ZDOs whose position lies in the sector (zone).</summary>
+    public void FindObjects(Vector2i sector, System.Collections.Generic.List<ZDO> objects)
+    {
+        foreach (var zdo in Zdos)
+            if (zdo.GetSector() == sector)
+                objects.Add(zdo);
+    }
+
     public int CountWithPrefab(string prefab)
     {
         var found = new System.Collections.Generic.List<ZDO>();
@@ -236,9 +253,11 @@ public class ZDOMan
 /// </summary>
 public class TerrainComp
 {
+    public const string PrefabName = "_TerrainCompiler";
+
     public int m_width;
     public Heightmap m_hmap;
-    public ZNetView m_nview = new();
+    public ZNetView m_nview;
     public float[] m_levelDelta;
     public float[] m_smoothDelta;
     public bool[] m_modifiedHeight;
@@ -246,10 +265,28 @@ public class TerrainComp
     public bool[] m_modifiedPaint;
     public int SaveCount;
 
+    /// <summary>The zone's live compiler: the one on the registered heightmap, if that heightmap has one.</summary>
+    public static TerrainComp? FindTerrainCompiler(UnityEngine.Vector3 pos)
+    {
+        var hm = Heightmap.Registered;
+        if (hm?.m_terrainComp == null)
+            return null;
+        return UnityEngine.Mathf.Abs(hm.transform.position.x - pos.x) < 32f && UnityEngine.Mathf.Abs(hm.transform.position.z - pos.z) < 32f
+            ? hm.m_terrainComp : null;
+    }
+
+    /// <summary>A new compiler for the heightmap's zone with its own ZDO, registered with the ZDOMan when there is one and owned by us.</summary>
     public TerrainComp(Heightmap hmap, int width)
     {
         m_hmap = hmap;
         m_width = width;
+        int prefab = PrefabName.GetStableHashCode();
+        ZDO zdo = ZDOMan.instance != null
+            ? ZDOMan.instance.CreateNewZDO(hmap.transform.position, prefab)
+            : new ZDO(hmap.transform.position, prefab);
+        zdo.Persistent = true;
+        zdo.SetOwner(ZDOMan.instance?.m_sessionID ?? 1);
+        m_nview = new ZNetView(zdo);
         int n = (width + 1) * (width + 1);
         m_levelDelta = new float[n];
         m_smoothDelta = new float[n];

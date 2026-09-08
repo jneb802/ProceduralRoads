@@ -20,9 +20,73 @@ public static class RoadTerrainModifier
     /// </summary>
     private static readonly int AppliedVersionHash = "ProceduralRoads_AppliedVersion".GetStableHashCode();
 
+    /// <summary>Prefab hash of the game's terrain compiler object (one per zone).</summary>
+    private static readonly int TerrainCompilerPrefabHash = "_TerrainCompiler".GetStableHashCode();
+
     public static void ResetDebugCounters()
     {
         s_coordLogCount = 0;
+    }
+
+    /// <summary>
+    /// A zone finished spawning (Full or Client mode) and has road points.
+    /// The game keeps one terrain compiler per zone and creates the saved
+    /// one from its ZDO only after the zone is loaded, so a compiler asked
+    /// for at this moment would be a second one: the two then destroy each
+    /// other on every load. If the zone has a saved compiler not yet alive,
+    /// leave the roads to OnTerrainCompilerReady; otherwise write them now,
+    /// creating the zone's compiler if it has none.
+    /// </summary>
+    public static void OnZoneSpawned(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
+    {
+        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
+        if (TerrainComp.FindTerrainCompiler(zonePos) == null && HasSavedTerrainCompiler(zoneID))
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Zone {zoneID}: saved terrain compiler not alive yet, road terrain applied when it is");
+            return;
+        }
+        ApplyRoadTerrainMods(zoneID, roadPoints);
+    }
+
+    /// <summary>
+    /// A terrain compiler came alive (created fresh, from the save, or under
+    /// ghost init): if its zone has road points and it is not stamped with
+    /// the current network version, write the roads into it. An unowned
+    /// compiler in our area is claimed, as the game itself would shortly;
+    /// one owned by another peer is theirs to write.
+    /// </summary>
+    public static void OnTerrainCompilerReady(TerrainComp terrainComp)
+    {
+        if (terrainComp == null || terrainComp.m_hmap == null || terrainComp.m_nview == null || !terrainComp.m_nview.IsValid())
+            return;
+
+        Vector2i zoneID = ZoneSystem.GetZone(terrainComp.m_hmap.transform.position);
+        List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+        if (roadPoints.Count == 0 || CarriesCurrentRoads(terrainComp))
+            return;
+
+        if (!terrainComp.m_nview.IsOwner())
+        {
+            if (terrainComp.m_nview.HasOwner())
+                return;
+            terrainComp.m_nview.ClaimOwnership();
+        }
+
+        ApplyRoadTerrainModsWithContext(zoneID, roadPoints, terrainComp.m_hmap, terrainComp);
+    }
+
+    /// <summary>Whether the zone's saved objects include a terrain compiler.</summary>
+    public static bool HasSavedTerrainCompiler(Vector2i zoneID)
+    {
+        if (ZDOMan.instance == null)
+            return false;
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zoneID, zdos);
+        foreach (ZDO zdo in zdos)
+            if (zdo.GetPrefab() == TerrainCompilerPrefabHash)
+                return true;
+        return false;
     }
 
     /// <summary>
@@ -87,8 +151,16 @@ public static class RoadTerrainModifier
             var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
             if (roadPoints.Count == 0) continue;
 
+            bool existed = TerrainComp.FindTerrainCompiler(heightmap.transform.position) != null;
             TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
             if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
+
+            // A compiler created just now was written by OnTerrainCompilerReady.
+            if (!existed && CarriesCurrentRoads(terrainComp))
+            {
+                zonesWithRoads++;
+                continue;
+            }
 
             ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
             zonesWithRoads++;

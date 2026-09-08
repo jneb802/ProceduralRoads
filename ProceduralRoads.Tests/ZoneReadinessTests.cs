@@ -22,13 +22,12 @@ public class ZoneReadinessTests
         WorldGenerator.instance = world;
         ZDOMan.instance = new ZDOMan();
         ZoneSystem.instance = new ZoneSystem();
-        RoadSpatialGrid.Clear();
+        RoadNetworkGenerator.Reset(); // clears the grid too: build the network after it
         var path = new List<Vector2>();
         for (float x = -40f; x <= 40f; x += 8f)
             path.Add(new Vector2(x, 0f));
         RoadSpatialGrid.AddRoadPath(path, 4f, world);
         RoadSpatialGrid.FinalizeRoadNetwork();
-        RoadNetworkGenerator.Reset();
         RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
         RoadTerrainModifier.ResetDebugCounters();
         RoadTimings.Reset();

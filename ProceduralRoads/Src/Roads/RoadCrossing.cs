@@ -262,7 +262,10 @@ public static class RoadCrossingDetector
             ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
             : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
         if (!fords) ford = false;
-        if (!bridges) ford = true;
+        // Without bridges, water a ford may not cross is not a crossing: a
+        // segment dipping into a deeper channel is left as it is today.
+        if (!ford && !bridges)
+            return null;
         FordStyle style = FordStyle.None;
         if (ford)
         {

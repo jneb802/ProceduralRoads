@@ -56,6 +56,18 @@ public static class ConsoleCommands
             allowInDevBuild: true);
 
         new Terminal.ConsoleCommand(
+            "road_zone_state",
+            "Capture readiness of the zones around a point: road_zone_state [x z] [radius=64]. ready=true when every zone is loaded, " +
+            "every zone with road points carries the current network in a live terrain compiler, and no heightmap rebuild is queued; " +
+            "otherwise pending=(zone):reason;... Poll it with valheimCLI's cli_until.",
+            (args) => ZoneStateCommand(args),
+            isCheat: false,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
             (args) => DebugRoadPoints(args),
@@ -435,6 +447,28 @@ public static class ConsoleCommands
     /// Generate roads for an existing world that was created before the mod was installed.
     /// </summary>
     /// <summary>road_timings [reset [runId] | json [path]]: see RoadTimings.</summary>
+    private static void ZoneStateCommand(Terminal.ConsoleEventArgs args)
+    {
+        Vector3 center;
+        float radius = 64f;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+        {
+            center = new Vector3(x, 0f, z);
+            if (args.Length >= 4) float.TryParse(args[3], out radius);
+        }
+        else if (Player.m_localPlayer != null)
+        {
+            center = Player.m_localPlayer.transform.position;
+            if (args.Length >= 2) float.TryParse(args[1], out radius);
+        }
+        else
+        {
+            args.Context.AddString("ROAD_READY ready=false reason=no-player; use road_zone_state <x> <z> [radius]");
+            return;
+        }
+        args.Context.AddString(RoadTerrainModifier.DescribeZoneReadiness(center, Mathf.Clamp(radius, 1f, 200f)));
+    }
+
     private static void TimingsCommand(Terminal.ConsoleEventArgs args)
     {
         string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "";

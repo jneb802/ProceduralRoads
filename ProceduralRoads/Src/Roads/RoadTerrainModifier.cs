@@ -30,10 +30,74 @@ public static class RoadTerrainModifier
     /// </summary>
     private static readonly HashSet<Vector2i> s_pendingForcedZones = new HashSet<Vector2i>();
 
+    /// <summary>
+    /// Heightmaps whose rebuild a road write queued (Poke(true) only sets the
+    /// game's late-update flag; Regenerate runs later). Heightmap_Patch times
+    /// that Regenerate and takes the entry, so terrain.rebuild is the real
+    /// mesh and collider rebuild, and road_zone_state can say a zone's
+    /// rebuild is still pending.
+    /// </summary>
+    private static readonly HashSet<Heightmap> s_pendingRebuilds = new HashSet<Heightmap>();
+
     public static void ResetDebugCounters()
     {
         s_coordLogCount = 0;
         s_pendingForcedZones.Clear();
+        s_pendingRebuilds.Clear();
+    }
+
+    /// <summary>Heightmap_Patch: was this heightmap's queued rebuild ours? Taken once.</summary>
+    public static bool TakePendingRebuild(Heightmap heightmap) => s_pendingRebuilds.Remove(heightmap);
+
+    public static int PendingRebuilds => s_pendingRebuilds.Count;
+
+    /// <summary>
+    /// Readiness of the zones within a radius of a point for a capture: every
+    /// zone loaded, every zone with road points stamped with the current
+    /// network (its terrain compiler alive and written), no heightmap rebuild
+    /// still queued. Pending zones are listed with their reason.
+    /// </summary>
+    public static string DescribeZoneReadiness(Vector3 center, float radius)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+            return "ROAD_READY ready=false reason=no-network";
+        if (ZoneSystem.instance == null)
+            return "ROAD_READY ready=false reason=no-world";
+
+        Vector2i min = ZoneSystem.GetZone(new Vector3(center.x - radius, 0f, center.z - radius));
+        Vector2i max = ZoneSystem.GetZone(new Vector3(center.x + radius, 0f, center.z + radius));
+        int zones = 0, withRoads = 0, stamped = 0;
+        var pending = new List<string>();
+        for (int zx = min.x; zx <= max.x; zx++)
+        {
+            for (int zy = min.y; zy <= max.y; zy++)
+            {
+                var zone = new Vector2i(zx, zy);
+                zones++;
+                if (!ZoneSystem.instance.IsZoneLoaded(zone))
+                {
+                    pending.Add($"({zx},{zy}):not-loaded");
+                    continue;
+                }
+                Vector3 zonePos = ZoneSystem.GetZonePos(zone);
+                Heightmap? heightmap = Heightmap.FindHeightmap(zonePos);
+                if (heightmap != null && heightmap.HaveQueuedRebuild())
+                    pending.Add($"({zx},{zy}):rebuild-queued");
+                if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0)
+                    continue;
+                withRoads++;
+                TerrainComp? compiler = TerrainComp.FindTerrainCompiler(zonePos);
+                if (compiler == null)
+                    pending.Add($"({zx},{zy}):no-compiler");
+                else if (!CarriesCurrentRoads(compiler))
+                    pending.Add($"({zx},{zy}):not-stamped");
+                else
+                    stamped++;
+            }
+        }
+        bool ready = pending.Count == 0;
+        return $"ROAD_READY ready={(ready ? "true" : "false")} zones={zones} with_roads={withRoads} stamped={stamped} version={RoadSpatialGrid.RoadNetworkVersion}" +
+               (ready ? "" : " pending=" + string.Join(";", pending));
     }
 
     /// <summary>
@@ -458,10 +522,11 @@ public static class RoadTerrainModifier
             context.TerrainComp.m_nview?.GetZDO()?.Set(AppliedVersionHash, RoadSpatialGrid.RoadNetworkVersion);
             using (RoadTimings.Stage("terrain.save"))
                 context.TerrainComp.Save();
-            // Poke(true) rebuilds the heightmap mesh and collider on the spot:
-            // the visible terrain change and, measured, its cost.
-            using (RoadTimings.Stage("terrain.rebuild"))
-                context.Heightmap.Poke(true);
+            // Poke(true) only queues the rebuild for the game's late update;
+            // Heightmap_Patch times the Regenerate that follows (terrain.rebuild).
+            context.Heightmap.Poke(true);
+            s_pendingRebuilds.Add(context.Heightmap);
+            RoadTimings.Count("terrain.rebuild_queued");
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
         }

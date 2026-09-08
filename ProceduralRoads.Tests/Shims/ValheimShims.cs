@@ -76,13 +76,18 @@ public class Heightmap
     public float m_scale = 1f;
     public TerrainComp? m_terrainComp;
     public int PokeCount;
+    private bool m_doLateUpdate;
 
     public static Heightmap? FindHeightmap(UnityEngine.Vector3 point) => Registered;
     public static System.Collections.Generic.List<Heightmap> GetAllHeightmaps() =>
         Registered == null ? new() : new() { Registered };
     /// <summary>Like the game: the zone's live compiler, or a new one (with a new ZDO) if it has none.</summary>
     public TerrainComp GetAndCreateTerrainCompiler() => m_terrainComp ??= new TerrainComp(this, 64);
-    public void Poke(bool delayed) => PokeCount++;
+    /// <summary>Like the game: delayed queues a rebuild for the late update, otherwise it runs now.</summary>
+    public void Poke(bool delayed) { PokeCount++; if (delayed) m_doLateUpdate = true; }
+    public bool HaveQueuedRebuild() => m_doLateUpdate;
+    /// <summary>The game's late update: run the queued rebuild.</summary>
+    public void Regenerate() => m_doLateUpdate = false;
 
     public static Heightmap CreateForZone(Vector2i zoneID, int width = 64, bool withCompiler = true)
     {
@@ -298,6 +303,10 @@ public class ZoneSystem
     public const float ZoneSize = 64f;
 
     public static ZoneSystem? instance;
+
+    /// <summary>Zones the test declares loaded; every zone counts as loaded when null.</summary>
+    public System.Collections.Generic.HashSet<Vector2i>? LoadedZones;
+    public bool IsZoneLoaded(Vector2i zone) => LoadedZones == null || LoadedZones.Contains(zone);
 
     public class ZoneLocation
     {

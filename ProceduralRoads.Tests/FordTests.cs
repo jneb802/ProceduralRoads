@@ -430,9 +430,9 @@ public class FordTests
             Assert.Equal(saved.Direction, loaded.Direction);
 
             // A network saved without crossings loads back with none.
-            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>());
+            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>(), new HashSet<Vector2i>());
             var none = new List<RoadCrossing> { saved };
-            Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2 position, string label)>(), none));
+            Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2 position, string label)>(), none, new HashSet<Vector2i>()));
             Assert.Empty(none);
         }
         finally

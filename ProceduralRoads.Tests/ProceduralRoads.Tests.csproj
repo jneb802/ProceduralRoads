@@ -30,6 +30,8 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkPersistence.cs" Link="ModSrc/RoadNetworkPersistence.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadCrossing.cs" Link="ModSrc/RoadCrossing.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeLayout.cs" Link="ModSrc/BridgeLayout.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgePlans.cs" Link="ModSrc/BridgePlans.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadEndReport.cs" Link="ModSrc/RoadEndReport.cs"

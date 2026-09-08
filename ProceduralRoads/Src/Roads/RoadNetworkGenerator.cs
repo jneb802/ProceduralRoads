@@ -153,8 +153,8 @@ public static class RoadNetworkGenerator
     public static bool IsLocationsReady =>
         m_locationsReady || (ZoneSystem.instance != null && ZoneSystem.instance.LocationsGenerated);
 
-    /// <summary>River crossings of the generated roads (fords prototype):
-    /// empty unless the network was generated with fords on.</summary>
+    /// <summary>River crossings of the generated roads (fords and bridges
+    /// prototypes): empty unless the network was generated with either on.</summary>
     public static IReadOnlyList<RoadCrossing> GetRoadCrossings() => m_roadCrossings;
     public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
@@ -183,6 +183,9 @@ public static class RoadNetworkGenerator
         // exist before the network does; give them their roads now.
         int zones = RoadTerrainModifier.ApplyToLoadedZones();
         Log.LogDebug($"Applied road terrain to {zones} zone(s) loaded before generation");
+        int bridgeZones = BridgePlacement.SpawnInLoadedZones();
+        if (bridgeZones > 0)
+            Log.LogDebug($"Spawned bridges into {bridgeZones} zone(s) loaded before generation");
         return true;
     }
 
@@ -368,8 +371,8 @@ public static class RoadNetworkGenerator
         // crossings and paint the land and each crossing on its own; without
         // fords (or on a road that crossed no river) the whole path is one
         // road as before.
-        List<RoadCrossing> crossings = m_pathfinder.Fords
-            ? RoadCrossingDetector.Detect(path, WorldGenerator.instance)
+        List<RoadCrossing> crossings = m_pathfinder.Fords || m_pathfinder.Bridges
+            ? RoadCrossingDetector.Detect(path, WorldGenerator.instance, m_pathfinder.Bridges)
             : new List<RoadCrossing>();
         AddRoadPathWithCrossings(path, crossings, width);
         m_roadCrossings.AddRange(crossings);
@@ -416,14 +419,19 @@ public static class RoadNetworkGenerator
             if (land.Count >= 2)
                 RoadSpatialGrid.AddRoadPath(land, width, WorldGenerator.instance);
 
-            List<Vector2> ford = new() { crossing.FromBank };
-            for (int k = crossing.FromIndex + 1; k < crossing.ToIndex; k++)
-                ford.Add(path[k]);
-            ford.Add(crossing.ToBank);
-            if (crossing.Style == FordStyle.Wade)
-                RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, followTerrain: true);
-            else
-                RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, minHeight: RoadPathfinder.LandingFloor);
+            // A bridge or a spanned ford is left to its pieces: nothing is
+            // leveled or painted over the water.
+            if (crossing.Kind == CrossingKind.Ford && crossing.Style != FordStyle.Span)
+            {
+                List<Vector2> ford = new() { crossing.FromBank };
+                for (int k = crossing.FromIndex + 1; k < crossing.ToIndex; k++)
+                    ford.Add(path[k]);
+                ford.Add(crossing.ToBank);
+                if (crossing.Style == FordStyle.Wade)
+                    RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, followTerrain: true);
+                else
+                    RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, minHeight: RoadPathfinder.LandingFloor);
+            }
 
             resumeAt = crossing.ToBank;
             cursor = crossing.ToIndex;
@@ -774,6 +782,7 @@ public static class RoadNetworkGenerator
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
         m_roadCrossings.Clear();
+        BridgePlans.Reset();
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
     }
@@ -885,7 +894,20 @@ public static class RoadNetworkGenerator
             return;
         }
 
-        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadCrossings);
+        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadCrossings, BridgePlans.SpawnedZones);
+    }
+
+    /// <summary>
+    /// Save only which zones have their bridge pieces (bridges prototype).
+    /// For a session whose network was loaded, not generated: the network
+    /// itself is unchanged, but zones spawned this session must be
+    /// remembered, or a bridge whose pieces were all destroyed comes back.
+    /// </summary>
+    public static void SaveBridgeZones()
+    {
+        if (!RoadsAvailable)
+            return;
+        RoadNetworkPersistence.SaveBridgeZones(BridgePlans.SpawnedZones);
     }
 
     /// <summary>
@@ -895,7 +917,11 @@ public static class RoadNetworkGenerator
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData()
     {
-        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings);
+        var bridgeZones = new HashSet<Vector2i>();
+        bool loaded = RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings, bridgeZones);
+        if (loaded)
+            BridgePlans.MarkSpawned(bridgeZones);
+        return loaded;
     }
 
     #endregion

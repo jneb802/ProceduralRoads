@@ -111,11 +111,26 @@ public static class RoadSpatialGrid
         Log.LogDebug($"  Path length: {totalLength:F0}m, smoothing window: {RoadConstants.HeightSmoothingWindow} points");
         Log.LogDebug($"  Overlap: {overlapCount}/{densePoints.Count} points overlap existing roads");
 
+        // Endpoint ramps: near each end of the road the final height blends
+        // from the natural terrain (raw) toward the smoothed road height, so
+        // roads meet locations and terrain without a smoothed ledge.
+        float[] distanceFromStart = new float[densePoints.Count];
+        for (int i = 1; i < densePoints.Count; i++)
+            distanceFromStart[i] = distanceFromStart[i - 1] + Vector2.Distance(densePoints[i - 1], densePoints[i]);
+        float pathTotal = densePoints.Count > 0 ? distanceFromStart[densePoints.Count - 1] : 0f;
+
         Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
         for (int i = 0; i < densePoints.Count; i++)
         {
-            AddRoadPoint(tempPoints, densePoints[i], width, smoothedHeights[i]);
-            m_debugInfo[densePoints[i]] = debugInfos[i];
+            float distFromNearestEnd = Mathf.Min(distanceFromStart[i], pathTotal - distanceFromStart[i]);
+            float rampBlend = RoadEndpointRamp.Blend(distFromNearestEnd);
+            float finalHeight = Mathf.Lerp(denseHeights[i], smoothedHeights[i], rampBlend);
+
+            AddRoadPoint(tempPoints, densePoints[i], width, finalHeight);
+
+            RoadPointDebugInfo debugInfo = debugInfos[i];
+            debugInfo.SmoothedHeight = finalHeight;
+            m_debugInfo[densePoints[i]] = debugInfo;
         }
 
         MergePoints(tempPoints);

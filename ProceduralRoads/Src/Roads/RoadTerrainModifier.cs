@@ -23,9 +23,17 @@ public static class RoadTerrainModifier
     /// <summary>Prefab hash of the game's terrain compiler object (one per zone).</summary>
     private static readonly int TerrainCompilerPrefabHash = "_TerrainCompiler".GetStableHashCode();
 
+    /// <summary>
+    /// Zones whose explicit (forced) application was requested while their
+    /// saved terrain compiler was not alive yet; written, stamp or no stamp,
+    /// when that compiler comes alive. Cleared with the world.
+    /// </summary>
+    private static readonly HashSet<Vector2i> s_pendingForcedZones = new HashSet<Vector2i>();
+
     public static void ResetDebugCounters()
     {
         s_coordLogCount = 0;
+        s_pendingForcedZones.Clear();
     }
 
     /// <summary>
@@ -63,7 +71,8 @@ public static class RoadTerrainModifier
 
         Vector2i zoneID = ZoneSystem.GetZone(terrainComp.m_hmap.transform.position);
         List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-        if (roadPoints.Count == 0 || CarriesCurrentRoads(terrainComp))
+        bool forced = s_pendingForcedZones.Remove(zoneID);
+        if (roadPoints.Count == 0 || (!forced && CarriesCurrentRoads(terrainComp)))
             return;
 
         if (!terrainComp.m_nview.IsOwner())
@@ -152,6 +161,16 @@ public static class RoadTerrainModifier
             if (roadPoints.Count == 0) continue;
 
             bool existed = TerrainComp.FindTerrainCompiler(heightmap.transform.position) != null;
+            if (!existed && HasSavedTerrainCompiler(zoneID))
+            {
+                // Same as OnZoneSpawned: asking for a compiler now would make a
+                // second one; the saved one gets this write when it comes alive.
+                s_pendingForcedZones.Add(zoneID);
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                    $"Zone {zoneID}: saved terrain compiler not alive yet, road terrain applied when it is");
+                zonesWithRoads++;
+                continue;
+            }
             TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
             if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
 

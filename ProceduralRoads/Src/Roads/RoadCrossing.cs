@@ -185,6 +185,17 @@ public static class RoadCrossingDetector
         Vector2 center = (from + to) * 0.5f;
         bool swamp = world.GetBiome(center.x, center.y) == Heightmap.Biome.Swamp;
 
+        // Only water a ford may cross is a crossing: knee-deep and unsailable
+        // (in a swamp, wading depth with no sailable stretch of a boat's
+        // length). A road segment over deeper water, an ordinary move whose
+        // interior dips into a channel between two dry cells, is left as it
+        // is today rather than raised into a causeway across a sailable river.
+        bool fordable = swamp
+            ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
+            : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth;
+        if (!fordable)
+            return null;
+
         // A ford, in one of the styles the site allows, chosen per site so
         // roads vary: wading only where the water is ankle deep (always in a
         // swamp), raising always.

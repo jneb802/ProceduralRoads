@@ -17,13 +17,17 @@ public static class RoadSpatialGrid
         public float w;
         public float w2;
         public float h;
+        /// <summary>Paint only: the terrain is not leveled toward this point
+        /// (a waded ford keeps the riverbed as it is).</summary>
+        public bool paintOnly;
 
-        public RoadPoint(Vector2 position, float width, float height)
+        public RoadPoint(Vector2 position, float width, float height, bool paintOnly = false)
         {
             p = position;
             w = width;
             w2 = width * width;
             h = height;
+            this.paintOnly = paintOnly;
         }
     }
 
@@ -82,7 +86,7 @@ public static class RoadSpatialGrid
     }
 
     /// <summary>followTerrain: paint only; every point keeps the raw terrain
-    /// height, so leveling toward it changes nothing (a WADED ford).
+    /// height and the terrain is not leveled toward it at all (a WADED ford).
     /// minHeight: no stored point below it (a RAISED ford's surface).</summary>
     public static void AddRoadPath(List<Vector2> path, float width, WorldGenerator worldGen,
         bool followTerrain = false, float minHeight = float.NegativeInfinity)
@@ -132,7 +136,7 @@ public static class RoadSpatialGrid
                 ? denseHeights[i]
                 : Mathf.Max(Mathf.Lerp(denseHeights[i], smoothedHeights[i], rampBlend), minHeight);
 
-            AddRoadPoint(tempPoints, densePoints[i], width, finalHeight);
+            AddRoadPoint(tempPoints, densePoints[i], width, finalHeight, followTerrain);
 
             RoadPointDebugInfo debugInfo = debugInfos[i];
             debugInfo.SmoothedHeight = finalHeight;
@@ -453,7 +457,7 @@ public static class RoadSpatialGrid
         }
     }
 
-    private static void AddRoadPoint(Dictionary<Vector2i, List<RoadPoint>> roadPoints, Vector2 p, float width, float height)
+    private static void AddRoadPoint(Dictionary<Vector2i, List<RoadPoint>> roadPoints, Vector2 p, float width, float height, bool paintOnly)
     {
         Vector2i grid = GetRoadGrid(p.x, p.y);
         int radius = Mathf.CeilToInt(width / GridSize);
@@ -470,7 +474,7 @@ public static class RoadSpatialGrid
                         list = new List<RoadPoint>();
                         roadPoints.Add(cellGrid, list);
                     }
-                    list.Add(new RoadPoint(p, width, height));
+                    list.Add(new RoadPoint(p, width, height, paintOnly));
                 }
             }
         }
@@ -845,7 +849,8 @@ public static class RoadSpatialGrid
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             
-            writer.Write(1);
+            // Version 2 adds the paint-only flag per point (waded fords).
+            writer.Write(2);
             
             writer.Write(m_roadPoints.Count);
             
@@ -861,6 +866,7 @@ public static class RoadSpatialGrid
                     writer.Write(rp.p.y);
                     writer.Write(rp.w);
                     writer.Write(rp.h);
+                    writer.Write(rp.paintOnly);
                 }
             }
             
@@ -887,7 +893,7 @@ public static class RoadSpatialGrid
             using var reader = new BinaryReader(ms);
             
             int version = reader.ReadInt32();
-            if (version != 1)
+            if (version != 1 && version != 2)
             {
                 Log.LogWarning($"Unknown road data version: {version}");
                 return false;
@@ -922,7 +928,8 @@ public static class RoadSpatialGrid
                     float py = reader.ReadSingle();
                     float w = reader.ReadSingle();
                     float h = reader.ReadSingle();
-                    points[i] = new RoadPoint(new Vector2(px, py), w, h);
+                    bool paintOnly = version >= 2 && reader.ReadBoolean();
+                    points[i] = new RoadPoint(new Vector2(px, py), w, h, paintOnly);
                 }
                 
                 loadedPoints[new Vector2i(gridX, gridY)] = points;

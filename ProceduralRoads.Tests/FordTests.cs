@@ -272,6 +272,70 @@ public class FordTests
         finally { TearDownGeneration(); }
     }
 
+    // ---- review regressions ----
+
+    /// <summary>A riverbed sloping across the road: wading must leave it alone.</summary>
+    private sealed class SlopedBedWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy) => 29.5f + wy * 0.2f;
+    }
+
+    [Fact]
+    public void AWadedFordPaintsButDoesNotLevelTheBed()
+    {
+        var world = new SlopedBedWorld();
+        WorldGenerator.instance = world;
+        RoadSpatialGrid.Clear();
+        try
+        {
+            RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-25f, 0f), new(25f, 0f) }, 4f, world, followTerrain: true);
+            var zone = new Vector2i(0, 0);
+            Heightmap hm = Heightmap.CreateForZone(zone);
+            var points = RoadSpatialGrid.GetRoadPointsInZone(zone);
+            Assert.NotEmpty(points);
+            Assert.All(points, p => Assert.True(p.paintOnly));
+            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, hm.m_terrainComp!);
+
+            TerrainComp tc = hm.m_terrainComp!;
+            Assert.DoesNotContain(tc.m_modifiedHeight, m => m);
+            Assert.All(tc.m_levelDelta, d => Assert.True(Mathf.Abs(d) < 0.001f, $"wade changed the terrain by {d:F3} m"));
+            Assert.Contains(tc.m_modifiedPaint, m => m);
+
+            // The flag survives the network's save format.
+            byte[] data = RoadSpatialGrid.SerializeAllRoadPoints()!;
+            RoadSpatialGrid.Clear();
+            Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(data));
+            Assert.All(RoadSpatialGrid.GetRoadPointsInZone(zone), p => Assert.True(p.paintOnly));
+        }
+        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+    }
+
+    /// <summary>A knee-deep gully with a 4 m deep channel hidden between the
+    /// 8 m cell samples at x = 0 and x = 8.</summary>
+    private sealed class HiddenChannelWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 100f || Mathf.Abs(wy) > 100f) return 20f;
+            if (Mathf.Abs(wx) >= 12f) return 33f;
+            return Mathf.Abs(wx - 4f) < 2f ? 26f : 29.5f;
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy) =>
+            GetHeight(wx, wy) < RoadConstants.SeaLevel - 2f ? Heightmap.Biome.Ocean : Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
+        {
+            weight = Mathf.Abs(wx) < 12f ? 1f : 0f;
+            width = 24f;
+        }
+    }
+
+    [Fact]
+    public void AChannelHiddenBetweenCellSamplesIsNotForded()
+    {
+        var world = new HiddenChannelWorld();
+        Assert.Null(Pathfinder(world, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
+    }
+
     // ---- persistence ----
 
     [Fact]

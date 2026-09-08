@@ -269,6 +269,10 @@ public class RoadPathfinder
             if (distance > RoadConstants.MaxRiverCrossingCells * CellSize)
                 return false;
 
+            // The cells are 8 m apart and a channel can hide between them:
+            // the whole jump is sampled every 2 m before its depth is trusted.
+            deepest = Mathf.Min(deepest, DeepestAlong(fromWorld, world));
+
             // Deeper than wading: no ford here.
             if (deepest < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth)
                 return false;
@@ -288,6 +292,20 @@ public class RoadPathfinder
         }
 
         return false;
+    }
+
+    /// <summary>The lowest ground on the line between two points, sampled every 2 m.</summary>
+    private float DeepestAlong(Vector2 a, Vector2 b)
+    {
+        float length = Vector2.Distance(a, b);
+        int samples = Mathf.Max(1, Mathf.CeilToInt(length / 2f));
+        float deepest = float.MaxValue;
+        for (int i = 0; i <= samples; i++)
+        {
+            float t = (float)i / samples;
+            deepest = Mathf.Min(deepest, m_worldGen.GetHeight(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+        }
+        return deepest;
     }
 
     /// <summary>Whether a finished road already runs through this point.</summary>

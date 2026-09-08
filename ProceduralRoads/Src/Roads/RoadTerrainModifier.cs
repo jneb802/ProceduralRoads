@@ -334,6 +334,9 @@ public static class RoadTerrainModifier
 
         foreach (RoadSpatialGrid.RoadPoint rp in roadPoints)
         {
+            // A paint-only point (a waded ford) leaves the ground as it is.
+            if (rp.paintOnly)
+                continue;
             float distSq = (rp.p - vertexPos).sqrMagnitude;
             float influenceRadius = (rp.w * 0.5f) + RoadConstants.TerrainBlendMargin;
             float influenceRadiusSq = influenceRadius * influenceRadius;

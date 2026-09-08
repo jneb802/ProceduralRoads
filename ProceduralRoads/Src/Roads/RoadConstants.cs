@@ -42,8 +42,8 @@ public static class RoadConstants
     // Banks, landings and a raised ford's surface stand BankClearance above
     // the shallow-water line. Swamp roads wade their shallows down to
     // DeepWaterHeight at SwampShallowWaterPenalty per cell. A jump whose
-    // both ends already carry road is an existing crossing and costs
-    // CrossingReuseDiscount of its price, so later roads share it.
+    // both ends already carry road is an existing crossing: it costs what
+    // walking that stretch of road costs, so later roads share it.
     public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;
@@ -53,7 +53,6 @@ public static class RoadConstants
     public const float BankClearance = 0.75f;
     public const float DefaultFordStyleWeight = 1f;
     public const float DefaultSwampShallowWaterPenalty = 500f;
-    public const float CrossingReuseDiscount = 0.2f;
 
     // Road cross-section (see RoadProfile): flat core fully leveled and
     // solidly painted; paint fades out strictly inside the leveled footprint

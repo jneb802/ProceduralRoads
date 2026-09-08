@@ -361,13 +361,23 @@ public static class RoadTerrainModifier
         
         foreach (RoadSpatialGrid.RoadPoint roadPoint in roadPoints)
         {
-            Vector2i cell = new Vector2i(
-                Mathf.RoundToInt(roadPoint.p.x / RoadConstants.PaintDedupeInterval),
-                Mathf.RoundToInt(roadPoint.p.y / RoadConstants.PaintDedupeInterval));
-            
-            if (paintedCells.Contains(cell))
-                continue;
-            paintedCells.Add(cell);
+            // Points closer together than PaintDedupeInterval paint the same
+            // texels and are skipped, but only while a point's paint reaches
+            // the neighbouring texels; a 2 m road paints 0.85 m out on 1 m
+            // texels, so each point paints its own texel only and skipping any
+            // of them leaves the texels between bare (a gap every 1.5 m, on
+            // master too). Then every point paints.
+            float paintReach = roadPoint.w * 0.5f * RoadConstants.RoadPaintOuterRatio;
+            if (paintReach >= scale)
+            {
+                float dedupeInterval = Mathf.Min(RoadConstants.PaintDedupeInterval, paintReach);
+                Vector2i cell = new Vector2i(
+                    Mathf.RoundToInt(roadPoint.p.x / dedupeInterval),
+                    Mathf.RoundToInt(roadPoint.p.y / dedupeInterval));
+                if (paintedCells.Contains(cell))
+                    continue;
+                paintedCells.Add(cell);
+            }
             
             Vector3 worldPos = new Vector3(roadPoint.p.x - 0.5f, 0f, roadPoint.p.y - 0.5f);
             Vector3 localPos = worldPos - terrainPos;

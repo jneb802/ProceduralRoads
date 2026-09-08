@@ -161,7 +161,9 @@ public static class RoadNetworkGenerator
         GenerateRoads();
         // Zones generated during the loading screen (around the login position)
         // exist before the network does; give them their roads now.
-        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        int zones;
+        using (RoadTimings.Stage("terrain.apply_loaded", "load"))
+            zones = RoadTerrainModifier.ApplyToLoadedZones();
         Log.LogDebug($"Applied road terrain to {zones} zone(s) loaded before generation");
         return true;
     }
@@ -226,14 +228,20 @@ public static class RoadNetworkGenerator
         RegisterConfiguredLocations();
 
         DateTime startTime = DateTime.Now;
+        using RoadTimings.Scope total = RoadTimings.Stage("gen.total", "global");
+        RoadTimings.Mark("gen.start");
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
         m_roadsGeneratedCount = 0;
 
-        var locations = GatherLocationData();
+        LocationData? locations;
+        using (RoadTimings.Stage("gen.locations"))
+            locations = GatherLocationData();
         if (locations == null)
             return;
 
-        var islands = IslandDetector.DetectIslands();
+        List<Island> islands;
+        using (RoadTimings.Stage("gen.islands"))
+            islands = IslandDetector.DetectIslands();
         
         var sortedIslands = islands.OrderByDescending(i => i.ApproxArea).ToList();
         
@@ -269,7 +277,10 @@ public static class RoadNetworkGenerator
         TimeSpan elapsed = DateTime.Now - startTime;
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
 
-        RoadSpatialGrid.FinalizeRoadNetwork();
+        using (RoadTimings.Stage("gen.finalize"))
+            RoadSpatialGrid.FinalizeRoadNetwork();
+        RoadTimings.Count("gen.roads", m_roadsGeneratedCount);
+        RoadTimings.Mark("gen.done");
         
         m_roadsGenerated = true;
         m_pathfinder = null;
@@ -318,12 +329,18 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        List<Vector2>? path = m_pathfinder.FindPath(startCenter, endCenter);
+        List<Vector2>? path;
+        using (RoadTimings.Stage("gen.pathfind", label))
+            path = m_pathfinder.FindPath(startCenter, endCenter);
 
-        UnityEngine.Canvas.ForceUpdateCanvases();
+        // Measured on purpose: the plan suspects this per-road call costs
+        // more than it gives (see road_timings).
+        using (RoadTimings.Stage("gen.canvas_update"))
+            UnityEngine.Canvas.ForceUpdateCanvases();
 
         if (path == null || path.Count < 2)
         {
+            RoadTimings.Count("gen.pathfind_failed");
             if (label != null)
                 Log.LogWarning($"Could not find path: {label}");
             return false;
@@ -338,7 +355,8 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+        using (RoadTimings.Stage("gen.road_add", label))
+            RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
         m_roadsGeneratedCount++;
 
         if (path.Count > 0)
@@ -630,15 +648,21 @@ public static class RoadNetworkGenerator
         }
 
         RegisterConfiguredLocations();
+        using RoadTimings.Scope total = RoadTimings.Stage("gen.total", "island");
+        RoadTimings.Mark("gen.start");
 
-        var locations = GatherLocationData();
+        LocationData? locations;
+        using (RoadTimings.Stage("gen.locations"))
+            locations = GatherLocationData();
         if (locations == null)
         {
             summary = "No location data available";
             return false;
         }
 
-        var islands = IslandDetector.DetectIslands();
+        List<Island> islands;
+        using (RoadTimings.Stage("gen.islands"))
+            islands = IslandDetector.DetectIslands();
         Island? island = islands.FirstOrDefault(i => i.ContainsPoint(worldPos));
         if (island == null)
         {
@@ -667,7 +691,10 @@ public static class RoadNetworkGenerator
         else
             GenerateIslandRoads(island, selected);
 
-        RoadSpatialGrid.FinalizeRoadNetwork();
+        using (RoadTimings.Stage("gen.finalize"))
+            RoadSpatialGrid.FinalizeRoadNetwork();
+        RoadTimings.Count("gen.roads", m_roadsGeneratedCount);
+        RoadTimings.Mark("gen.done");
         m_roadsGenerated = true;
         m_pathfinder = null;
         // Same as after global generation: without the metadata object the

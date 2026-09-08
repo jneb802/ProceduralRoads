@@ -50,6 +50,7 @@ public static class RoadTerrainModifier
         Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
         if (TerrainComp.FindTerrainCompiler(zonePos) == null && HasSavedTerrainCompiler(zoneID))
         {
+            RoadTimings.Wait("zone spawn: saved terrain compiler not alive yet");
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: saved terrain compiler not alive yet, road terrain applied when it is");
             return;
@@ -78,10 +79,14 @@ public static class RoadTerrainModifier
         if (!terrainComp.m_nview.IsOwner())
         {
             if (terrainComp.m_nview.HasOwner())
+            {
+                RoadTimings.Wait("compiler ready: owned by another peer");
                 return;
+            }
             terrainComp.m_nview.ClaimOwnership();
         }
 
+        RoadTimings.Count(forced ? "terrain.ready_writes_forced" : "terrain.ready_writes");
         ApplyRoadTerrainModsWithContext(zoneID, roadPoints, terrainComp.m_hmap, terrainComp);
     }
 
@@ -111,14 +116,32 @@ public static class RoadTerrainModifier
 
         if (!force && CarriesCurrentRoads(context.Value.TerrainComp))
         {
+            RoadTimings.Count("terrain.skipped_stamped");
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: terrain already carries road network version {RoadSpatialGrid.RoadNetworkVersion}, skipping");
             return;
         }
 
-        ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
-        ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
-        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
+        WriteRoads(zoneID, roadPoints, context.Value);
+    }
+
+    /// <summary>The write itself: heights, paint, then save; timed per zone.</summary>
+    private static void WriteRoads(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
+    {
+        using (RoadTimings.Stage("terrain.zone", zoneID.ToString()))
+        {
+            ModificationStats stats;
+            using (RoadTimings.Stage("terrain.heights"))
+                stats = ModifyVertexHeights(zoneID, roadPoints, context);
+            using (RoadTimings.Stage("terrain.paint"))
+                ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
+            FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context);
+            RoadTimings.Count("terrain.zones_written");
+            RoadTimings.Count("terrain.road_points", roadPoints.Count);
+            RoadTimings.Count("terrain.vertices_checked", stats.VerticesChecked);
+            RoadTimings.Count("terrain.vertices_modified", stats.VerticesModified);
+            RoadTimings.Count("terrain.paint_cells", stats.PaintedCells.Count);
+        }
     }
 
     /// <summary>
@@ -165,14 +188,23 @@ public static class RoadTerrainModifier
             {
                 // Same as OnZoneSpawned: asking for a compiler now would make a
                 // second one; the saved one gets this write when it comes alive.
+                RoadTimings.Wait("apply loaded: saved terrain compiler not alive yet");
                 s_pendingForcedZones.Add(zoneID);
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                     $"Zone {zoneID}: saved terrain compiler not alive yet, road terrain applied when it is");
                 zonesWithRoads++;
                 continue;
             }
-            TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-            if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
+            TerrainComp terrainComp;
+            using (RoadTimings.Stage("terrain.get_compiler"))
+                terrainComp = heightmap.GetAndCreateTerrainCompiler();
+            if (!existed)
+                RoadTimings.Count("terrain.compilers_created");
+            if (terrainComp == null || !terrainComp.m_nview.IsOwner())
+            {
+                RoadTimings.Wait("apply loaded: compiler missing or not owned");
+                continue;
+            }
 
             // A compiler created just now was written by OnTerrainCompilerReady.
             if (!existed && CarriesCurrentRoads(terrainComp))
@@ -214,9 +246,7 @@ public static class RoadTerrainModifier
             VertexSpacing = RoadConstants.ZoneSize / terrainComp.m_width
         };
 
-        ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context);
-        ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
-        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context);
+        WriteRoads(zoneID, roadPoints, context);
     }
 
     private struct TerrainContext
@@ -231,7 +261,12 @@ public static class RoadTerrainModifier
     private static TerrainContext? GetTerrainContext(Vector2i zoneID)
     {
         Heightmap heightmap = Heightmap.FindHeightmap(ZoneSystem.GetZonePos(zoneID));
-        TerrainComp? terrainComp = heightmap?.GetAndCreateTerrainCompiler();
+        bool existed = heightmap != null && TerrainComp.FindTerrainCompiler(heightmap.transform.position) != null;
+        TerrainComp? terrainComp;
+        using (RoadTimings.Stage("terrain.get_compiler"))
+            terrainComp = heightmap?.GetAndCreateTerrainCompiler();
+        if (terrainComp != null && !existed)
+            RoadTimings.Count("terrain.compilers_created");
         int gridSize = (terrainComp?.m_width ?? 0) + 1;
 
         if (heightmap == null || terrainComp == null || !terrainComp.m_nview.IsOwner() ||
@@ -414,8 +449,12 @@ public static class RoadTerrainModifier
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
             context.TerrainComp.m_nview?.GetZDO()?.Set(AppliedVersionHash, RoadSpatialGrid.RoadNetworkVersion);
-            context.TerrainComp.Save();
-            context.Heightmap.Poke(true);
+            using (RoadTimings.Stage("terrain.save"))
+                context.TerrainComp.Save();
+            // Poke(true) rebuilds the heightmap mesh and collider on the spot:
+            // the visible terrain change and, measured, its cost.
+            using (RoadTimings.Stage("terrain.rebuild"))
+                context.Heightmap.Poke(true);
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
         }

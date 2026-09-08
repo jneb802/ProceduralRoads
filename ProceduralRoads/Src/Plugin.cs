@@ -160,6 +160,12 @@ namespace ProceduralRoads
             return result;
         }
 
+        /// <summary>Feeds every frame's length to RoadTimings (longest frame, stall count).</summary>
+        private void Update()
+        {
+            RoadTimings.Frame(Time.unscaledDeltaTime * 1000.0);
+        }
+
         private void OnDestroy()
         {
             Config.Save();

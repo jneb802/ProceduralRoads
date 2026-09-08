@@ -44,6 +44,17 @@ public static class ConsoleCommands
             allowInDevBuild: true);
 
         new Terminal.ConsoleCommand(
+            "road_timings",
+            "Stage timings and work counters since the last reset: road_timings [reset [runId] | json [path]]. " +
+            "Bare: print the summary. reset: start a new run. json: write BepInEx/ProceduralRoads/timings/<runId>.json (or the given path).",
+            (args) => TimingsCommand(args),
+            isCheat: false,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
             (args) => DebugRoadPoints(args),
@@ -422,6 +433,34 @@ public static class ConsoleCommands
     /// <summary>
     /// Generate roads for an existing world that was created before the mod was installed.
     /// </summary>
+    /// <summary>road_timings [reset [runId] | json [path]]: see RoadTimings.</summary>
+    private static void TimingsCommand(Terminal.ConsoleEventArgs args)
+    {
+        string mode = args.Length >= 2 ? args[1].ToLowerInvariant() : "";
+        switch (mode)
+        {
+            case "reset":
+                RoadTimings.Reset(args.Length >= 3 ? args[2] : null);
+                args.Context.AddString($"OK: timings reset run={(RoadTimings.RunId.Length == 0 ? "-" : RoadTimings.RunId)}");
+                return;
+            case "json":
+            {
+                string path = args.Length >= 3
+                    ? args[2]
+                    : System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "ProceduralRoads", "timings",
+                        (RoadTimings.RunId.Length == 0 ? "timings" : RoadTimings.RunId) + ".json");
+                System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path) ?? ".");
+                System.IO.File.WriteAllText(path, RoadTimings.ToJson());
+                args.Context.AddString($"OK: timings written path={path}");
+                return;
+            }
+            default:
+                foreach (string line in RoadTimings.Summary().Split('\n'))
+                    if (line.Length > 0) args.Context.AddString(line);
+                return;
+        }
+    }
+
     private static void GenerateRoadsCommand(Terminal.ConsoleEventArgs args)
     {
         // Check prerequisites
@@ -466,7 +505,9 @@ public static class ConsoleCommands
 
         // Apply roads to currently loaded zones
         args.Context.AddString("Applying to loaded zones...");
-        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
+        int zonesWithRoads;
+        using (RoadTimings.Stage("terrain.apply_loaded", "road_generate"))
+            zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
     }
 
@@ -494,7 +535,9 @@ public static class ConsoleCommands
             return;
         }
 
-        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        int zones;
+        using (RoadTimings.Stage("terrain.apply_loaded", "road_regen_island"))
+            zones = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString(summary);
         args.Context.AddString($"Applied to {zones} loaded zone(s).");
     }

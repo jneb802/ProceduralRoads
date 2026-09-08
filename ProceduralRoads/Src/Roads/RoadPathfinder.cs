@@ -83,7 +83,10 @@ public class RoadPathfinder
             Vector2i currentPos = current.pos;
 
             if (currentPos == endGrid)
+            {
+                RoadTimings.Count("gen.pathfind_iterations", iterations);
                 return ReconstructPath(cameFrom, currentPos, start, end);
+            }
 
             closedSet.Add(currentPos);
 
@@ -112,6 +115,8 @@ public class RoadPathfinder
         }
 
         string reason = openSet.Count == 0 ? "no reachable path" : "max iterations reached";
+        RoadTimings.Count("gen.pathfind_iterations", iterations);
+        RoadTimings.Wait("pathfind failed: " + reason);
         Log.LogWarning($"Pathfinding failed: {reason} after {iterations} iterations");
         return null;
     }

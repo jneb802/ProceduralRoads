@@ -12,6 +12,7 @@ public static class RoadLifecycleManager
     /// </summary>
     public static void OnZoneSystemStart(ZoneSystem zoneSystem)
     {
+        RoadTimings.Mark("load.zonesystem_start");
         RoadNetworkGenerator.Initialize();
         zoneSystem.GenerateLocationsCompleted += OnLocationsGenerated;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Subscribed to GenerateLocationsCompleted event");
@@ -22,6 +23,7 @@ public static class RoadLifecycleManager
     /// </summary>
     public static void OnZoneSystemDestroy(ZoneSystem zoneSystem)
     {
+        RoadTimings.Mark("load.world_unload");
         zoneSystem.GenerateLocationsCompleted -= OnLocationsGenerated;
         RoadNetworkGenerator.Reset();
         RoadClearAreaManager.ClearCache();
@@ -35,6 +37,7 @@ public static class RoadLifecycleManager
     /// </summary>
     private static void OnLocationsGenerated()
     {
+        RoadTimings.Mark("load.locations_ready");
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete...");
         RoadNetworkGenerator.MarkLocationsReady();
         RoadClearAreaManager.ClearCache();
@@ -47,7 +50,10 @@ public static class RoadLifecycleManager
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"WorldGenerator and locations available ({ZoneSystem.instance!.GetLocationList()!.Count} locations)...");
             
-            if (RoadNetworkGenerator.TryLoadGlobalRoadData())
+            bool loaded;
+            using (RoadTimings.Stage("load.road_data"))
+                loaded = RoadNetworkGenerator.TryLoadGlobalRoadData();
+            if (loaded)
             {
                 RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Loaded roads from global persistence");
@@ -70,6 +76,7 @@ public static class RoadLifecycleManager
     /// </summary>
     public static void OnPlayerSpawn(Vector3 spawnPoint)
     {
+        RoadTimings.Mark("load.player_spawn");
         if (!RoadNetworkGenerator.IsLocationsReady || RoadNetworkGenerator.RoadsAvailable)
             return;
 

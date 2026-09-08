@@ -95,30 +95,43 @@ public static class RoadSpatialGrid
         List<Vector2> densePoints = SplinePath(path, segmentLength);
         List<float> denseHeights = new List<float>(densePoints.Count);
         
-        foreach (var point in densePoints)
-            denseHeights.Add(BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, worldGen));
-        
-        List<float> smoothedHeights = SmoothHeights(denseHeights, RoadConstants.HeightSmoothingWindow, out var debugInfos);
-        
-        int overlapCount = DetectOverlap(densePoints, width);
-        if (overlapCount > densePoints.Count * RoadConstants.OverlapThreshold)
+        using (RoadTimings.Stage("gen.road_heights"))
         {
-            Log.LogDebug($"Road path overlaps with existing roads ({overlapCount}/{densePoints.Count} points), blending heights");
-            BlendWithExistingRoads(densePoints, smoothedHeights, width);
+            foreach (var point in densePoints)
+                denseHeights.Add(BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, worldGen));
+        }
+        RoadTimings.Count("gen.height_samples", densePoints.Count);
+        
+        List<float> smoothedHeights;
+        List<RoadPointDebugInfo> debugInfos;
+        int overlapCount;
+        using (RoadTimings.Stage("gen.road_smooth"))
+        {
+            smoothedHeights = SmoothHeights(denseHeights, RoadConstants.HeightSmoothingWindow, out debugInfos);
+            
+            overlapCount = DetectOverlap(densePoints, width);
+            if (overlapCount > densePoints.Count * RoadConstants.OverlapThreshold)
+            {
+                Log.LogDebug($"Road path overlaps with existing roads ({overlapCount}/{densePoints.Count} points), blending heights");
+                BlendWithExistingRoads(densePoints, smoothedHeights, width);
+            }
         }
         
         Log.LogDebug($"Road path: {path.Count} waypoints -> {densePoints.Count} dense points");
         Log.LogDebug($"  Path length: {totalLength:F0}m, smoothing window: {RoadConstants.HeightSmoothingWindow} points");
         Log.LogDebug($"  Overlap: {overlapCount}/{densePoints.Count} points overlap existing roads");
 
-        Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
-        for (int i = 0; i < densePoints.Count; i++)
+        using (RoadTimings.Stage("gen.road_merge"))
         {
-            AddRoadPoint(tempPoints, densePoints[i], width, smoothedHeights[i]);
-            m_debugInfo[densePoints[i]] = debugInfos[i];
-        }
+            Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
+            for (int i = 0; i < densePoints.Count; i++)
+            {
+                AddRoadPoint(tempPoints, densePoints[i], width, smoothedHeights[i]);
+                m_debugInfo[densePoints[i]] = debugInfos[i];
+            }
 
-        MergePoints(tempPoints);
+            MergePoints(tempPoints);
+        }
         
         TotalRoadPoints += densePoints.Count;
         TotalRoadLength += totalLength;

@@ -30,6 +30,38 @@ public static class RoadTerrainModifier
     }
 
     /// <summary>
+    /// Apply the current network's terrain mods to every loaded zone that has
+    /// road points. Zones generated before the network existed (the zones
+    /// around the player's login position on a fresh world, or around a
+    /// teleport target that landed mid-generation) get their roads here; zones
+    /// generated afterwards get them from the ZoneSystem.SpawnZone hook.
+    /// Idempotent: deltas are computed from the world generator height.
+    /// </summary>
+    public static int ApplyToLoadedZones()
+    {
+        var heightmaps = Heightmap.GetAllHeightmaps();
+        int zonesWithRoads = 0;
+        if (heightmaps == null)
+            return 0;
+
+        foreach (var heightmap in heightmaps)
+        {
+            if (heightmap == null) continue;
+
+            Vector2i zoneID = ZoneSystem.GetZone(heightmap.transform.position);
+            var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+            if (roadPoints.Count == 0) continue;
+
+            TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
+            if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
+
+            ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
+            zonesWithRoads++;
+        }
+        return zonesWithRoads;
+    }
+
+    /// <summary>
     /// Public entry point for applying road terrain mods to a specific zone.
     /// Used by console commands to force-update loaded zones.
     /// </summary>

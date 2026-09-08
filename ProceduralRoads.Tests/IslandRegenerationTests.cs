@@ -81,6 +81,33 @@ public class IslandRegenerationTests
     }
 
     [Fact]
+    public void LoadTimeGenerationAppliesTerrainToZonesLoadedBeforeIt()
+    {
+        SetUp();
+        try
+        {
+            // A zone that exists before generation, on the road from the start
+            // temple towards Eikthyrnir: its heightmap must carry road deltas and
+            // paint right after the load-time generation, without any zone spawn.
+            var zone = new Vector2i(2, 0);
+            Heightmap hm = Heightmap.CreateForZone(zone, 64);
+            Heightmap.Registered = hm;
+            TerrainComp tc = hm.m_terrainComp!;
+
+            Assert.True(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            Assert.True(RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0, "test zone has no road points; move it onto the road");
+            Assert.Equal(1, tc.SaveCount);
+            Assert.Contains(tc.m_modifiedHeight, m => m);
+            Assert.Contains(tc.m_modifiedPaint, m => m);
+        }
+        finally
+        {
+            Heightmap.Registered = null;
+            TearDown();
+        }
+    }
+
+    [Fact]
     public void RegenerationRefusesAPointInTheOcean()
     {
         SetUp();

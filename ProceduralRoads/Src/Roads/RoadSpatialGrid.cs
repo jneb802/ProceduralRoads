@@ -153,8 +153,9 @@ public static class RoadSpatialGrid
     /// <summary>
     /// Called after all roads are generated, and after a network is loaded from
     /// the save, to compute the network version: a hash of the world seed and
-    /// every stored road point (position, width, height) in canonical order
-    /// (cells by coordinate, points by position, width, height), each record
+    /// every stored road point (position, width, height, paint-only flag)
+    /// in canonical order (cells by coordinate, points by position, width,
+    /// height, flag), each record
     /// mixed into the running value, so it is the same after generation and
     /// after a save/load round trip (which carries exactly the stored points)
     /// and changes whenever any road moves or changes height. A sum of
@@ -192,6 +193,7 @@ public static class RoadSpatialGrid
                     Mix(ref hash, rp.p.y.GetHashCode());
                     Mix(ref hash, rp.w.GetHashCode());
                     Mix(ref hash, rp.h.GetHashCode());
+                    Mix(ref hash, rp.paintOnly ? 1 : 0);
                 }
             }
         }
@@ -218,7 +220,9 @@ public static class RoadSpatialGrid
         c = a.p.y.CompareTo(b.p.y);
         if (c != 0) return c;
         c = a.w.CompareTo(b.w);
-        return c != 0 ? c : a.h.CompareTo(b.h);
+        if (c != 0) return c;
+        c = a.h.CompareTo(b.h);
+        return c != 0 ? c : a.paintOnly.CompareTo(b.paintOnly);
     }
 
     /// <summary>FNV-1a step over the four bytes of value, then an avalanche so neighbouring records do not cancel.</summary>

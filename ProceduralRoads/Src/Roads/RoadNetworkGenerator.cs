@@ -372,8 +372,22 @@ public static class RoadNetworkGenerator
         // fords (or on a road that crossed no river) the whole path is one
         // road as before.
         List<RoadCrossing> crossings = m_pathfinder.Fords || m_pathfinder.Bridges
-            ? RoadCrossingDetector.Detect(path, WorldGenerator.instance, m_pathfinder.Bridges)
+            ? RoadCrossingDetector.Detect(path, WorldGenerator.instance, m_pathfinder.Bridges, m_pathfinder.Fords)
             : new List<RoadCrossing>();
+        // A crossing a few metres from one an earlier road made is the same
+        // site: it takes that site's banks, so this road is painted up to
+        // the one bridge built there instead of pointing at water beside it.
+        foreach (RoadCrossing crossing in crossings)
+        {
+            foreach (RoadCrossing existing in m_roadCrossings)
+            {
+                if (RoadCrossing.SameBanks(existing, crossing))
+                {
+                    crossing.SnapTo(existing);
+                    break;
+                }
+            }
+        }
         AddRoadPathWithCrossings(path, crossings, width);
         m_roadCrossings.AddRange(crossings);
         m_roadsGeneratedCount++;

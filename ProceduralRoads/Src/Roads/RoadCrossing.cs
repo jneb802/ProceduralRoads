@@ -62,11 +62,35 @@ public sealed class RoadCrossing
     /// either order) is the same site.</summary>
     public const float SharedBankRadius = 4f;
 
-    public static bool SameBanks(RoadCrossing a, RoadCrossing b)
+    public static bool SameBanks(RoadCrossing a, RoadCrossing b) => SameBanks(a, b, SharedBankRadius);
+
+    public static bool SameBanks(RoadCrossing a, RoadCrossing b, float radius)
     {
-        float r2 = SharedBankRadius * SharedBankRadius;
+        float r2 = radius * radius;
         return ((a.FromBank - b.FromBank).sqrMagnitude <= r2 && (a.ToBank - b.ToBank).sqrMagnitude <= r2)
             || ((a.FromBank - b.ToBank).sqrMagnitude <= r2 && (a.ToBank - b.FromBank).sqrMagnitude <= r2);
+    }
+
+    /// <summary>
+    /// Makes this crossing the same site as <paramref name="existing"/>: its
+    /// banks (in this crossing's own order), profile, kind and style. The
+    /// road that recorded this crossing is then painted up to the shared
+    /// banks, so it meets the one bridge built there.
+    /// </summary>
+    public void SnapTo(RoadCrossing existing)
+    {
+        bool sameOrder = (FromBank - existing.FromBank).sqrMagnitude <= (FromBank - existing.ToBank).sqrMagnitude;
+        FromBank = sameOrder ? existing.FromBank : existing.ToBank;
+        ToBank = sameOrder ? existing.ToBank : existing.FromBank;
+        Center = existing.Center;
+        Direction = ToBank - FromBank;
+        Direction.Normalize();
+        Width = existing.Width;
+        RiverbedHeight = existing.RiverbedHeight;
+        FairwayCenter = existing.FairwayCenter;
+        FairwayWidth = existing.FairwayWidth;
+        Kind = existing.Kind;
+        Style = existing.Style;
     }
 
     /// <summary>A crossing between two banks with its derived fields filled in.</summary>
@@ -127,10 +151,12 @@ public static class RoadCrossingDetector
         ConfiguredSpanWeight = Mathf.Max(0f, span);
     }
 
-    /// <summary>The crossings on a path. With <paramref name="bridges"/> a
-    /// crossing too long, deep or sailable for a ford is a bridge and a ford
-    /// may be spanned; without, every crossing is a ford.</summary>
-    public static List<RoadCrossing> Detect(List<Vector2> path, WorldGenerator world, bool bridges = false)
+    /// <summary>The crossings on a path, classified as the pathfinder
+    /// accepted them: with <paramref name="bridges"/> a jump longer than a
+    /// ford, or over water too deep or sailable for one, is a bridge and a
+    /// ford may be spanned; without <paramref name="fords"/> every crossing
+    /// is a bridge; without bridges every crossing is a ford.</summary>
+    public static List<RoadCrossing> Detect(List<Vector2> path, WorldGenerator world, bool bridges = false, bool fords = true)
     {
         List<RoadCrossing> crossings = new();
         if (path == null || path.Count < 2 || world == null)
@@ -140,7 +166,7 @@ public static class RoadCrossingDetector
         {
             if (!SegmentCrossesRiver(path[i - 1], path[i], world))
                 continue;
-            RoadCrossing? crossing = Build(path, i - 1, i, world, bridges);
+            RoadCrossing? crossing = Build(path, i - 1, i, world, bridges, fords);
             if (crossing != null)
                 crossings.Add(crossing);
         }
@@ -176,9 +202,10 @@ public static class RoadCrossingDetector
         return false;
     }
 
-    private static RoadCrossing? Build(List<Vector2> path, int fromIndex, int toIndex, WorldGenerator world, bool bridges)
+    private static RoadCrossing? Build(List<Vector2> path, int fromIndex, int toIndex, WorldGenerator world, bool bridges, bool fords)
     {
         Vector2 a = path[fromIndex], b = path[toIndex];
+        float jumpLength = Vector2.Distance(a, b);
         // The crossing spans the water, not the dry approaches: each bank is
         // the last road ground along the jump before the water, so the road
         // runs down to the water's edge and the crossing lies on the road.
@@ -228,9 +255,14 @@ public static class RoadCrossingDetector
         // is a ford in the same style mix, unless a stretch of it is sailable
         // for at least a boat's length, which keeps it a bridge. Without
         // bridges every crossing is a ford.
-        bool ford = !bridges || (swamp
+        // The class the pathfinder accepted is kept: a jump beyond the ford
+        // cap was a bridge whatever its depth, and a feature that is off
+        // never produces its kind.
+        bool ford = jumpLength <= RoadConstants.MaxRiverCrossingCells * RoadPathfinder.CellSize + 0.5f && (swamp
             ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
             : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
+        if (!fords) ford = false;
+        if (!bridges) ford = true;
         FordStyle style = FordStyle.None;
         if (ford)
         {

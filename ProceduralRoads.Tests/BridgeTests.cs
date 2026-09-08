@@ -435,7 +435,7 @@ public class BridgeTests
     public void OnlyCrossingsWithTheSameBanksShareABridge()
     {
         var a = RoadCrossing.Between(new Vector2(-40f, 0f), new Vector2(40f, 0f), 26f, new Vector2(0f, 0f), 60f);
-        var reversed = RoadCrossing.Between(new Vector2(40f, 1f), new Vector2(-40f, -1f), 26f, new Vector2(0f, 0f), 60f);
+        var reversed = RoadCrossing.Between(new Vector2(40f, 0.2f), new Vector2(-40f, -0.2f), 26f, new Vector2(0f, 0f), 60f);
         var parallel = RoadCrossing.Between(new Vector2(-40f, 6f), new Vector2(40f, 6f), 26f, new Vector2(0f, 6f), 60f);
         var angled = RoadCrossing.Between(new Vector2(-40f, 0f), new Vector2(30f, 25f), 26f, new Vector2(0f, 12f), 60f);
         Assert.Single(BridgeLayout.DistinctSites(new[] { a, reversed }));
@@ -465,12 +465,68 @@ public class BridgeTests
             Assert.Equal(2, crossings.Count);
             Assert.True(Mathf.Abs(aloneJump.a.y - crossings[0].FromBank.y) > RoadCrossing.SharedBankRadius,
                 $"the lone second road already crossed where the first does (y={aloneJump.a.y:F0})");
-            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[1]),
+            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[1], 0.001f),
                 $"second road crossed at {crossings[1].FromBank}-{crossings[1].ToBank}, the first at {crossings[0].FromBank}-{crossings[0].ToBank}");
             Assert.Single(BridgeLayout.DistinctSites(crossings));
+            // And the second road is painted up to the shared banks.
+            foreach (Vector2 bank in new[] { crossings[0].FromBank, crossings[0].ToBank })
+                Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(bank.x, 0f, bank.y), 3f).Count >= 2, $"second road does not reach the shared bank {bank}");
             Assert.Equal(BridgeLayout.Solve(crossings[0], world, 0).Count, BridgePlans.TotalPlannedPieces);
         }
         finally { TearDownGeneration(); }
+    }
+
+    // ---- review regressions ----
+
+    /// <summary>A 64 m wide knee-deep channel: longer than a ford, shallow enough for one.</summary>
+    private sealed class LongShallowWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 220f || Mathf.Abs(wy) > 120f) return 20f;
+            return Mathf.Abs(wx) < 32f ? 29.5f : 33f;
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy) =>
+            GetHeight(wx, wy) < RoadConstants.SeaLevel - 2f ? Heightmap.Biome.Ocean : Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
+        {
+            weight = Mathf.Abs(wx) < 32f ? 1f : 0f;
+            width = 64f;
+        }
+    }
+
+    [Fact]
+    public void ALongShallowCrossingStaysABridgeEvenWithFordsOff()
+    {
+        var world = new LongShallowWorld();
+        var pathfinder = new RoadPathfinder(world) { Fords = false, Bridges = true, BridgeCostFixed = 100f, BridgeCostPerMeter = 1f };
+        var path = pathfinder.FindPath(new Vector2(-64f, 0f), new Vector2(64f, 0f));
+        Assert.NotNull(path);
+        var crossing = Assert.Single(RoadCrossingDetector.Detect(path!, world, bridges: true, fords: false));
+        Assert.Equal(CrossingKind.Bridge, crossing.Kind);
+        // With fords on it is still a bridge: the jump is longer than a ford.
+        Assert.Equal(CrossingKind.Bridge, Assert.Single(RoadCrossingDetector.Detect(path!, world, bridges: true, fords: true)).Kind);
+        Assert.NotEmpty(BridgeLayout.Solve(crossing, world, 1));
+    }
+
+    [Fact]
+    public void ParallelCrossingsFourMetresApartGetSeparateBridges()
+    {
+        var a = RoadCrossing.Between(new Vector2(-40f, 0f), new Vector2(40f, 0f), 26f, new Vector2(0f, 0f), 60f, CrossingKind.Bridge);
+        var b = RoadCrossing.Between(new Vector2(-40f, 4f), new Vector2(40f, 4f), 26f, new Vector2(0f, 4f), 60f, CrossingKind.Bridge);
+        var same = RoadCrossing.Between(new Vector2(40f, 0.2f), new Vector2(-40f, -0.2f), 26f, new Vector2(0f, 0f), 60f, CrossingKind.Bridge);
+        Assert.Equal(2, BridgeLayout.DistinctSites(new[] { a, b }).Count);
+        Assert.Single(BridgeLayout.DistinctSites(new[] { a, same }));
+
+        // A crossing snapped onto a site takes its banks in its own order.
+        b.SnapTo(a);
+        Assert.Equal(a.FromBank, b.FromBank);
+        Assert.Equal(a.ToBank, b.ToBank);
+        Assert.Single(BridgeLayout.DistinctSites(new[] { a, b }));
+        var reversed = RoadCrossing.Between(new Vector2(41f, 3f), new Vector2(-41f, 3f), 26f, new Vector2(0f, 3f), 60f, CrossingKind.Bridge);
+        reversed.SnapTo(a);
+        Assert.Equal(a.ToBank, reversed.FromBank);
+        Assert.Equal(a.FromBank, reversed.ToBank);
     }
 
     // ---- plans and spawned zones ----

@@ -311,6 +311,19 @@ public static class RoadSpatialGrid
             }
             
             float smoothedHeight = sum / count;
+            if (windowStart > i - halfWindow || windowEnd < i + halfWindow)
+            {
+                // Within half a window of either end the window is one-sided,
+                // and the mean of a one-sided window on a slope is the height
+                // some way back along the road: the road arrived at its ends
+                // on a ledge (uphill) or a hump (downhill) as high as the
+                // slope times the missing half window. Fit a line through the
+                // window instead and read it at this point, which smooths the
+                // same bumps but is exact on a slope. Mid-road the window is
+                // symmetric and the line's value there is the mean, so the
+                // mean's arithmetic is kept unchanged.
+                smoothedHeight = LineFitAt(heights, windowStart, windowEnd, i, smoothedHeight);
+            }
             smoothed.Add(smoothedHeight);
             
             debugInfos.Add(new RoadPointDebugInfo
@@ -327,6 +340,34 @@ public static class RoadSpatialGrid
         }
         
         return smoothed;
+    }
+
+    /// <summary>
+    /// Least-squares line through heights[start..end] against the point index,
+    /// evaluated at index at; the mean is returned when the window has fewer
+    /// than two points.
+    /// </summary>
+    private static float LineFitAt(List<float> heights, int start, int end, int at, float mean)
+    {
+        int n = end - start + 1;
+        if (n < 2)
+            return mean;
+
+        double sx = 0, sxx = 0, sh = 0, sxh = 0;
+        for (int j = start; j <= end; j++)
+        {
+            double x = j - at;
+            double h = heights[j];
+            sx += x;
+            sxx += x * x;
+            sh += h;
+            sxh += x * h;
+        }
+
+        double det = n * sxx - sx * sx;
+        if (det <= 0)
+            return mean;
+        return (float)((sxx * sh - sx * sxh) / det);
     }
 
     private static int DetectOverlap(List<Vector2> points, float width)

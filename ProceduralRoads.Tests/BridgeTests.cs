@@ -471,6 +471,14 @@ public class BridgeTests
             // And the second road is painted up to the shared banks.
             foreach (Vector2 bank in new[] { crossings[0].FromBank, crossings[0].ToBank })
                 Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(bank.x, 0f, bank.y), 3f).Count >= 2, $"second road does not reach the shared bank {bank}");
+
+            // Sharing saves half the bridge price: a third road from twice as far
+            // away still comes to the first bridge rather than pay for its own.
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-160f, 80f), 0f, new Vector2(160f, 80f), 0f, 4f, "third"));
+            Assert.Equal(3, crossings.Count);
+            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[2], 0.001f),
+                $"third road crossed at {crossings[2].FromBank}-{crossings[2].ToBank} instead of the shared bridge");
+            Assert.Single(BridgeLayout.DistinctSites(crossings));
             Assert.Equal(BridgeLayout.Solve(crossings[0], world, 0).Count, BridgePlans.TotalPlannedPieces);
         }
         finally { TearDownGeneration(); }

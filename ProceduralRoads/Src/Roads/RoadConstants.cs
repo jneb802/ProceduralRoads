@@ -78,15 +78,12 @@ public static class RoadConstants
     // A ford may also be SPANNED (Fords/SpanWeight): a short low footbridge
     // with a step at each end, where the crossing is at least
     // FordSpanMinWidth wide; its deck stands FordSpanDeckClearance above
-    // the water and FordSpanDeckRise above the higher bank. In swamps a
-    // sailable stretch shorter than a boat is a pothole, not a fairway, so
-    // a wading-depth swamp channel with no longer sailable stretch is a
-    // ford; a swamp BRIDGE walks its banks outward over the wade shelf up
-    // to SwampBridgeDryReach to find ground above the waterline.
+    // the water and FordSpanDeckRise above the higher bank. A swamp BRIDGE
+    // walks its banks outward over the wade shelf up to SwampBridgeDryReach
+    // to find ground above the waterline.
     public const float FordSpanMinWidth = 6f;
     public const float FordSpanDeckClearance = 1f;
     public const float FordSpanDeckRise = 1f;
-    public const float SwampFordMaxFairway = 8f;
     public const float SwampBridgeDryReach = 120f;
 
     // High bridge: when the ground within HighBankReach of each bank along

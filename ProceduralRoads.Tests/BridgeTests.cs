@@ -518,6 +518,37 @@ public class BridgeTests
     }
 
     [Fact]
+    public void ASegmentOverDeepWaterIsABridgeWithBridgesOnAndNothingWithout()
+    {
+        // An ordinary move whose interior dips into a 4 m channel: with
+        // bridges on it is a (small) bridge; with bridges off it is left as
+        // it is today, not raised into a causeway over sailable water.
+        var world = new DeepDipWorld();
+        var segment = new List<Vector2> { new(-8f, 0f), new(8f, -16f) };
+        var crossing = Assert.Single(RoadCrossingDetector.Detect(segment, world, bridges: true, fords: true));
+        Assert.Equal(CrossingKind.Bridge, crossing.Kind);
+        Assert.Empty(RoadCrossingDetector.Detect(segment, world, bridges: false, fords: true));
+    }
+
+    /// <summary>A knee-deep gully with a 4 m deep channel at x = 2..6.</summary>
+    private sealed class DeepDipWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 100f || Mathf.Abs(wy) > 100f) return 20f;
+            if (Mathf.Abs(wx) >= 12f) return 33f;
+            return Mathf.Abs(wx - 4f) < 2f ? 26f : 29.5f;
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy) =>
+            GetHeight(wx, wy) < RoadConstants.SeaLevel - 2f ? Heightmap.Biome.Ocean : Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
+        {
+            weight = Mathf.Abs(wx) < 12f ? 1f : 0f;
+            width = 24f;
+        }
+    }
+
+    [Fact]
     public void ParallelCrossingsFourMetresApartGetSeparateBridges()
     {
         var a = RoadCrossing.Between(new Vector2(-40f, 0f), new Vector2(40f, 0f), 26f, new Vector2(0f, 0f), 60f, CrossingKind.Bridge);

@@ -77,8 +77,14 @@ public static class BridgeLayout
     public const float FairwayGapFraction = 0.3f;
     public const float FairwayClearance = 1f;
 
-    /// <summary>One bridge per site: crossings with the same banks (see
-    /// <see cref="RoadCrossing.SameBanks"/>) share the first one's plan.</summary>
+    /// <summary>A crossing shares a site only when its banks lie within this
+    /// distance of the site's: a deck is 2 m wide, so anything further off
+    /// would leave a road pointing at water. Crossings that were snapped onto
+    /// a site (RoadNetworkGenerator) have identical banks.</summary>
+    public const float SameSiteRadius = 0.5f;
+
+    /// <summary>One bridge per site: crossings with the same banks share the
+    /// first one's plan.</summary>
     public static List<RoadCrossing> DistinctSites(IEnumerable<RoadCrossing> crossings)
     {
         List<RoadCrossing> sites = new();
@@ -87,7 +93,7 @@ public static class BridgeLayout
             bool shared = false;
             foreach (RoadCrossing s in sites)
             {
-                if (RoadCrossing.SameBanks(s, c))
+                if (RoadCrossing.SameBanks(s, c, SameSiteRadius))
                 {
                     shared = true;
                     break;

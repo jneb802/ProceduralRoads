@@ -167,6 +167,10 @@ public static class BridgePlacement
             ZNetView instance = ZNetScene.instance.FindInstance(zdo);
             if (instance != null)
             {
+                // The scene drops a persistent object only when it owns it;
+                // a piece a client owns would survive and its marker would
+                // then block the respawn.
+                instance.ClaimOwnership();
                 ZNetScene.instance.Destroy(instance.gameObject);
             }
             else

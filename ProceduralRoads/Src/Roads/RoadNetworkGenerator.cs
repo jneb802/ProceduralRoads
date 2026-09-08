@@ -582,6 +582,68 @@ public static class RoadNetworkGenerator
 
     #region Utility Methods
 
+    /// <summary>
+    /// Clear the network and regenerate roads for the single island containing
+    /// worldPos: the same island selection, location selection and pathfinding
+    /// as the global pass, restricted to one island. A validation loop that
+    /// iterates on one site runs in seconds instead of a whole-world generation.
+    /// </summary>
+    public static bool RegenerateIslandAt(Vector3 worldPos, out string summary)
+    {
+        if (WorldGenerator.instance == null || ZoneSystem.instance == null)
+        {
+            summary = "World not ready";
+            return false;
+        }
+
+        var locations = GatherLocationData();
+        if (locations == null)
+        {
+            summary = "No location data available";
+            return false;
+        }
+
+        var islands = IslandDetector.DetectIslands();
+        Island? island = islands.FirstOrDefault(i => i.ContainsPoint(worldPos));
+        if (island == null)
+        {
+            summary = $"No island at ({worldPos.x:F0},{worldPos.z:F0})";
+            return false;
+        }
+
+        var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
+        if (islandLocations.Count == 0)
+        {
+            summary = $"Island {island.Id} has no road-eligible locations";
+            return false;
+        }
+
+        var selected = SelectLocations(islandLocations, GetMaxLocationsForIsland(island));
+
+        DateTime startTime = DateTime.Now;
+        bool locationsWereReady = m_locationsReady;
+        Reset();
+        m_locationsReady = locationsWereReady;
+        m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
+        m_roadsGeneratedCount = 0;
+
+        if (island.ContainsPoint(locations.Value.SpawnPoint))
+            GenerateIslandRoads(island, selected, locations.Value.SpawnPoint, locations.Value.SpawnRadius);
+        else
+            GenerateIslandRoads(island, selected);
+
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        m_roadsGenerated = true;
+        m_pathfinder = null;
+
+        TimeSpan elapsed = DateTime.Now - startTime;
+        summary =
+            $"Island {island.Id} ({island.ApproxArea / 1_000_000f:F1}km²): " +
+            $"{selected.Count} locations, {m_roadsGeneratedCount} roads, " +
+            $"{RoadSpatialGrid.TotalRoadLength:F0}m in {elapsed.TotalSeconds:F1}s";
+        return true;
+    }
+
     public static void Reset()
     {
         m_roadsGenerated = false;

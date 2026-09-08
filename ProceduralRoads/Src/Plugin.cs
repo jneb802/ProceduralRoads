@@ -48,6 +48,9 @@ namespace ProceduralRoads
         public static ConfigEntry<bool> GenerateRoadsOnLoad = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
+        public static ConfigEntry<bool> FordsEnabled = null!;
+        public static ConfigEntry<float> FordWadeWeight = null!;
+        public static ConfigEntry<float> FordRaiseWeight = null!;
 
         public void Awake()
         {
@@ -77,6 +80,22 @@ namespace ProceduralRoads
                 new ConfigDescription("Maximum number of locations that can be connected by roads on a single island. " +
                     "Higher values allow more roads on large islands.",
                     new AcceptableValueRange<int>(2, 30)));
+
+            FordsEnabled = Config.Bind("Fords", "Enabled", false,
+                "PROTOTYPE, off by default. Roads may ford knee-deep rivers: the pathfinder can jump a river up to 48 m wide " +
+                "whose water is no deeper than 0.8 m, between near-level banks, and swamp roads wade their shallows. " +
+                "A ford is waded (the road painted through the water at the ground's height) or raised (the road leveled " +
+                "up above the water) by the weights below. Decides where roads go when a network is generated.");
+
+            FordWadeWeight = Config.Bind("Fords", "WadeWeight", RoadConstants.DefaultFordStyleWeight,
+                new ConfigDescription("Relative odds that a ford is WADED, the road painted through the shallows at ground height " +
+                    "(offered only where the water is ankle deep, always in swamps). 0 disables the style; with equal weights each site picks evenly among the styles it allows.",
+                    new AcceptableValueRange<float>(0f, 100f)));
+
+            FordRaiseWeight = Config.Bind("Fords", "RaiseWeight", RoadConstants.DefaultFordStyleWeight,
+                new ConfigDescription("Relative odds that a ford is RAISED, the road leveled up through the shallows. " +
+                    "Always allowed, and used whenever no other style is.",
+                    new AcceptableValueRange<float>(0f, 100f)));
 
             GenerateRoadsOnLoad = Config.Bind("Debug", "GenerateRoadsOnLoad", true,
                 "Generate the road network when a world without persisted roads loads. Off, the world stays " +
@@ -133,6 +152,8 @@ namespace ProceduralRoads
             RoadNetworkGenerator.GenerateOnLoad = GenerateRoadsOnLoad.Value;
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
+            RoadPathfinder.FordsEnabled = FordsEnabled.Value;
+            RoadCrossingDetector.SetFordStyleWeights(FordWadeWeight.Value, FordRaiseWeight.Value);
             // CustomLocations is parsed at generation time to preserve API registrations
         }
 

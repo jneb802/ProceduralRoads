@@ -136,8 +136,13 @@ public static class RoadNetworkGenerator
     private static RoadPathfinder? m_pathfinder;
     private static int m_roadsGeneratedCount = 0;
     private static List<(Vector2 position, string label)> m_roadStartPoints = new();
+    private static readonly List<RoadCrossing> m_roadCrossings = new();
 
     public static bool RoadsGenerated => m_roadsGenerated;
+
+    /// <summary>River crossings of the generated roads (fords prototype):
+    /// empty unless the network was generated with fords on.</summary>
+    public static IReadOnlyList<RoadCrossing> GetRoadCrossings() => m_roadCrossings;
     public static bool IsLocationsReady => m_locationsReady;
     public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
@@ -338,7 +343,16 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+        // Fords (prototype): where the road jumped a river, the water is
+        // crossed in the ford's style, not paved like the land. Record the
+        // crossings and paint the land and each crossing on its own; without
+        // fords (or on a road that crossed no river) the whole path is one
+        // road as before.
+        List<RoadCrossing> crossings = m_pathfinder.Fords
+            ? RoadCrossingDetector.Detect(path, WorldGenerator.instance)
+            : new List<RoadCrossing>();
+        AddRoadPathWithCrossings(path, crossings, width);
+        m_roadCrossings.AddRange(crossings);
         m_roadsGeneratedCount++;
 
         if (path.Count > 0)
@@ -346,11 +360,60 @@ public static class RoadNetworkGenerator
             string pinLabel = label ?? $"Road {m_roadsGeneratedCount}";
             m_roadStartPoints.Add((path[0], pinLabel));
         }
+        if (crossings.Count > 0 && label != null)
+            Log.LogDebug($"Road {label}: {crossings.Count} river crossing(s)");
 
         if (label != null)
             Log.LogDebug($"Generated road: {label} ({path.Count} waypoints)");
 
         return true;
+    }
+
+    /// <summary>
+    /// Adds the path to the spatial grid as road: the land before a crossing
+    /// runs on to its near bank and the land after it starts at its far
+    /// bank, and the crossing itself, bank to bank along the road, is
+    /// painted in its style: waded at the ground's own height, or raised to
+    /// the bank clearance so the leveled road stands above the water.
+    /// </summary>
+    private static void AddRoadPathWithCrossings(List<Vector2> path, List<RoadCrossing> crossings, float width)
+    {
+        if (crossings.Count == 0)
+        {
+            RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+            return;
+        }
+
+        int cursor = 0;
+        Vector2? resumeAt = null;
+        foreach (RoadCrossing crossing in crossings)
+        {
+            List<Vector2> land = path.GetRange(cursor, crossing.FromIndex - cursor + 1);
+            if (resumeAt.HasValue && Vector2.Distance(resumeAt.Value, land[0]) > 0.5f)
+                land.Insert(0, resumeAt.Value);
+            if (Vector2.Distance(crossing.FromBank, land[land.Count - 1]) > 0.5f)
+                land.Add(crossing.FromBank);
+            if (land.Count >= 2)
+                RoadSpatialGrid.AddRoadPath(land, width, WorldGenerator.instance);
+
+            List<Vector2> ford = new() { crossing.FromBank };
+            for (int k = crossing.FromIndex + 1; k < crossing.ToIndex; k++)
+                ford.Add(path[k]);
+            ford.Add(crossing.ToBank);
+            if (crossing.Style == FordStyle.Wade)
+                RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, followTerrain: true);
+            else
+                RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, minHeight: RoadPathfinder.LandingFloor);
+
+            resumeAt = crossing.ToBank;
+            cursor = crossing.ToIndex;
+        }
+
+        List<Vector2> tail = path.GetRange(cursor, path.Count - cursor);
+        if (resumeAt.HasValue && Vector2.Distance(resumeAt.Value, tail[0]) > 0.5f)
+            tail.Insert(0, resumeAt.Value);
+        if (tail.Count >= 2)
+            RoadSpatialGrid.AddRoadPath(tail, width, WorldGenerator.instance);
     }
 
     /// <summary>
@@ -690,6 +753,7 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
+        m_roadCrossings.Clear();
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
     }
@@ -801,7 +865,7 @@ public static class RoadNetworkGenerator
             return;
         }
 
-        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints);
+        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadCrossings);
     }
 
     /// <summary>
@@ -811,7 +875,7 @@ public static class RoadNetworkGenerator
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData()
     {
-        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints);
+        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings);
     }
 
     #endregion

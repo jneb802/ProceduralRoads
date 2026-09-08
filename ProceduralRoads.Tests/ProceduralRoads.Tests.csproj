@@ -31,6 +31,10 @@
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadEndReport.cs" Link="ModSrc/RoadEndReport.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/RoadEndReport.cs')"/>
+        <Compile Remove="RoadEndReportTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/RoadEndReport.cs')"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadEndpointRamp.cs" Link="ModSrc/RoadEndpointRamp.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/RoadEndpointRamp.cs')"/>
         <Compile Remove="EndpointRampTests.cs"

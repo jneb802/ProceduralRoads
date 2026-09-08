@@ -57,6 +57,8 @@ public class RoadGeometryTests
     [InlineData(0f, 0.5f, 4f)]    // half a vertex off the grid
     [InlineData(45f, 0f, 4f)]     // diagonal
     [InlineData(30f, 0.3f, 4f)]   // an odd angle and a fractional offset
+    [InlineData(0f, 0f, 2f)]      // minimum width
+    [InlineData(45f, 0.3f, 2f)]   // minimum width, diagonal, off the grid
     public void CrossSectionHoldsAtAnyAngleOffsetAndWidth(float angle, float offset, float width)
     {
         try
@@ -99,12 +101,15 @@ public class RoadGeometryTests
                 }
             }
 
-            // No gaps: the vertex nearest to every road point carries paint.
+            // No gaps: the paint texel under every road point carries paint.
+            // Paint texels sit half a vertex off the height vertices (the game
+            // shifts paint by -0.5 before looking up the vertex), so texel k
+            // covers world [k, k+1) and the one under p is floor(p).
             foreach (var rp in points)
             {
                 if (Mathf.Abs((rp.p.x - origin.x) * dir.x + (rp.p.y - origin.y) * dir.y) > 24f) continue;
-                int vx = Mathf.RoundToInt(rp.p.x) + Width / 2, vz = Mathf.RoundToInt(rp.p.y) + Width / 2;
-                Assert.True(tc.m_modifiedPaint[Index(vx, vz)], $"road point ({rp.p.x:F1},{rp.p.y:F1}): nearest vertex has no paint (gap)");
+                int vx = Mathf.FloorToInt(rp.p.x) + Width / 2, vz = Mathf.FloorToInt(rp.p.y) + Width / 2;
+                Assert.True(tc.m_modifiedPaint[Index(vx, vz)], $"road point ({rp.p.x:F1},{rp.p.y:F1}): texel under it has no paint (gap)");
                 painted++;
             }
             Assert.True(leveled > 20 && painted > 20 && unpainted > 20 && untouched > 100,

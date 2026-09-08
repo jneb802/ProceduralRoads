@@ -296,7 +296,10 @@ public class RoadPathfinder
         return false;
     }
 
-    /// <summary>The lowest ground on the line between two points, sampled every 2 m.</summary>
+    /// <summary>The lowest ground on the line between two points, sampled
+    /// every 2 m at the biome-blended height the game renders (a biome edge
+    /// can move the ground metres from the raw generator height), so the
+    /// pathfinder and the crossing detector judge the same water.</summary>
     private float DeepestAlong(Vector2 a, Vector2 b)
     {
         float length = Vector2.Distance(a, b);
@@ -305,7 +308,7 @@ public class RoadPathfinder
         for (int i = 0; i <= samples; i++)
         {
             float t = (float)i / samples;
-            deepest = Mathf.Min(deepest, m_worldGen.GetHeight(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+            deepest = Mathf.Min(deepest, BiomeBlendedHeight.GetBlendedHeight(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, m_worldGen));
         }
         return deepest;
     }

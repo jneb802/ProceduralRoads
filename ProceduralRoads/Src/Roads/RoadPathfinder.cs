@@ -283,11 +283,12 @@ public class RoadPathfinder
 
             landing = check;
             // Both ends already on road (a finished road's banks): the
-            // crossing exists, so using it costs what walking that stretch
-            // of road costs, and a later road shares it rather than build
-            // another beside it.
+            // crossing exists, so using it costs a fraction of its price,
+            // and a later road detours to share it rather than build
+            // another beside it, up to what that saving buys.
             bool shared = OnExistingRoad(fromWorld) && OnExistingRoad(world);
-            crossingCost = (shared ? 0f : RoadConstants.RiverCrossingPenalty) + BaseCost * distance
+            float price = RoadConstants.RiverCrossingPenalty * (shared ? RoadConstants.SharedCrossingCostFraction : 1f);
+            crossingCost = price + BaseCost * distance
                 + RoadConstants.BankDeltaPenalty * bankDelta * bankDelta;
             return true;
         }

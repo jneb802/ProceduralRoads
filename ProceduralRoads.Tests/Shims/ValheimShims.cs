@@ -98,10 +98,91 @@ public class Transform
     public UnityEngine.Vector3 position;
 }
 
-/// <summary>Shim for ZNetView: the terrain compiler is always ours here.</summary>
+/// <summary>Shim for ZNetView: the terrain compiler is always ours here, with one ZDO behind it.</summary>
 public class ZNetView
 {
+    public ZDO Zdo = new(default, 0);
     public bool IsOwner() => true;
+    public ZDO GetZDO() => Zdo;
+}
+
+/// <summary>Mirror of Valheim's ZDOID, as far as the road code prints it.</summary>
+public struct ZDOID
+{
+    public long ID;
+    public override string ToString() => ID.ToString();
+}
+
+/// <summary>
+/// Shim for a Valheim ZDO: the typed key/value bag the road code stores its
+/// network and per-zone markers in. Only the members the mod calls.
+/// </summary>
+public class ZDO
+{
+    private static long s_nextId = 1;
+
+    public ZDOID m_uid = new() { ID = s_nextId++ };
+    public bool Persistent;
+    private int m_prefab;
+    private long m_owner;
+    private UnityEngine.Vector3 m_position;
+    private readonly System.Collections.Generic.Dictionary<int, int> m_ints = new();
+    private readonly System.Collections.Generic.Dictionary<int, byte[]> m_byteArrays = new();
+
+    public ZDO(UnityEngine.Vector3 position, int prefab)
+    {
+        m_position = position;
+        m_prefab = prefab;
+    }
+
+    public void SetPrefab(int prefab) => m_prefab = prefab;
+    public int GetPrefab() => m_prefab;
+    public void SetOwner(long owner) => m_owner = owner;
+    public long GetOwner() => m_owner;
+    public bool IsOwner() => ZDOMan.instance != null && m_owner == ZDOMan.instance.m_sessionID;
+    public UnityEngine.Vector3 GetPosition() => m_position;
+    public void SetPosition(UnityEngine.Vector3 position) => m_position = position;
+
+    public void Set(int hash, int value) => m_ints[hash] = value;
+    public int GetInt(int hash, int defaultValue = 0) => m_ints.TryGetValue(hash, out int v) ? v : defaultValue;
+    public void Set(int hash, byte[] value) => m_byteArrays[hash] = value;
+    public byte[]? GetByteArray(int hash, byte[]? defaultValue = null) =>
+        m_byteArrays.TryGetValue(hash, out var v) ? v : defaultValue;
+}
+
+/// <summary>Shim for ZDOMan: the world's ZDOs as a list. Tests create one per world.</summary>
+public class ZDOMan
+{
+    public static ZDOMan? instance;
+
+    public long m_sessionID = 1;
+    public readonly System.Collections.Generic.List<ZDO> Zdos = new();
+
+    public ZDO CreateNewZDO(UnityEngine.Vector3 position, int prefabHash)
+    {
+        var zdo = new ZDO(position, prefabHash);
+        Zdos.Add(zdo);
+        return zdo;
+    }
+
+    /// <summary>Adds every ZDO of the prefab to the list; the real one pages, this one finishes in a single call.</summary>
+    public bool GetAllZDOsWithPrefabIterative(string prefab, System.Collections.Generic.List<ZDO> zdos, ref int index)
+    {
+        int hash = prefab.GetStableHashCode();
+        foreach (var zdo in Zdos)
+            if (zdo.GetPrefab() == hash)
+                zdos.Add(zdo);
+        index = Zdos.Count;
+        return true;
+    }
+
+    public int CountWithPrefab(string prefab)
+    {
+        var found = new System.Collections.Generic.List<ZDO>();
+        int index = 0;
+        GetAllZDOsWithPrefabIterative(prefab, found, ref index);
+        return found.Count;
+    }
 }
 
 /// <summary>

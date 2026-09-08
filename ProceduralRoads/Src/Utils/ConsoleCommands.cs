@@ -466,33 +466,8 @@ public static class ConsoleCommands
 
         // Apply roads to currently loaded zones
         args.Context.AddString("Applying to loaded zones...");
-        int zonesWithRoads = ApplyRoadsToLoadedZones();
+        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
-    }
-
-    /// <summary>Apply the current network's terrain mods to every loaded zone that has road points.</summary>
-    private static int ApplyRoadsToLoadedZones()
-    {
-        var heightmaps = Heightmap.GetAllHeightmaps();
-        int zonesWithRoads = 0;
-        if (heightmaps == null)
-            return 0;
-
-        foreach (var heightmap in heightmaps)
-        {
-            if (heightmap == null) continue;
-
-            Vector2i zoneID = ZoneSystem.GetZone(heightmap.transform.position);
-            var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-            if (roadPoints.Count == 0) continue;
-
-            TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-            if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
-
-            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
-            zonesWithRoads++;
-        }
-        return zonesWithRoads;
     }
 
     private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
@@ -519,7 +494,7 @@ public static class ConsoleCommands
             return;
         }
 
-        int zones = ApplyRoadsToLoadedZones();
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString(summary);
         args.Context.AddString($"Applied to {zones} loaded zone(s).");
     }

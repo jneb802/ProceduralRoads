@@ -63,6 +63,76 @@ public class Heightmap
         Ocean = 256,
         Mistlands = 512,
     }
+
+    // --- terrain-modifier surface (RoadTerrainModifier) ---
+    // A zone heightmap: m_width vertices per side plus one, m_scale metres
+    // per vertex, centred on transform.position. Tests build one per zone
+    // with a TerrainComp whose arrays start zeroed, exactly like a fresh
+    // _TerrainCompiler in the game.
+    public static UnityEngine.Color m_paintMaskPaved = new(0f, 0f, 1f, 1f);
+    public static Heightmap? Registered;
+
+    public Transform transform = new();
+    public float m_scale = 1f;
+    public TerrainComp? m_terrainComp;
+    public int PokeCount;
+
+    public static Heightmap? FindHeightmap(UnityEngine.Vector3 point) => Registered;
+    public static System.Collections.Generic.List<Heightmap> GetAllHeightmaps() =>
+        Registered == null ? new() : new() { Registered };
+    public TerrainComp? GetAndCreateTerrainCompiler() => m_terrainComp;
+    public void Poke(bool delayed) => PokeCount++;
+
+    public static Heightmap CreateForZone(Vector2i zoneID, int width = 64)
+    {
+        var hm = new Heightmap { m_scale = ZoneSystem.ZoneSize / width };
+        hm.transform.position = ZoneSystem.GetZonePos(zoneID);
+        hm.m_terrainComp = new TerrainComp(hm, width);
+        return hm;
+    }
+}
+
+/// <summary>Shim for UnityEngine.Transform: only the position is read.</summary>
+public class Transform
+{
+    public UnityEngine.Vector3 position;
+}
+
+/// <summary>Shim for ZNetView: the terrain compiler is always ours here.</summary>
+public class ZNetView
+{
+    public bool IsOwner() => true;
+}
+
+/// <summary>
+/// Shim for Valheim's TerrainComp (_TerrainCompiler): the per-vertex arrays
+/// the road code writes. (m_width + 1)^2 vertices, row-major, y outer.
+/// </summary>
+public class TerrainComp
+{
+    public int m_width;
+    public Heightmap m_hmap;
+    public ZNetView m_nview = new();
+    public float[] m_levelDelta;
+    public float[] m_smoothDelta;
+    public bool[] m_modifiedHeight;
+    public UnityEngine.Color[] m_paintMask;
+    public bool[] m_modifiedPaint;
+    public int SaveCount;
+
+    public TerrainComp(Heightmap hmap, int width)
+    {
+        m_hmap = hmap;
+        m_width = width;
+        int n = (width + 1) * (width + 1);
+        m_levelDelta = new float[n];
+        m_smoothDelta = new float[n];
+        m_modifiedHeight = new bool[n];
+        m_paintMask = new UnityEngine.Color[n];
+        m_modifiedPaint = new bool[n];
+    }
+
+    public void Save() => SaveCount++;
 }
 
 /// <summary>

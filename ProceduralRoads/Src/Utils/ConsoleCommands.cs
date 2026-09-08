@@ -44,6 +44,16 @@ public static class ConsoleCommands
             allowInDevBuild: true);
 
         new Terminal.ConsoleCommand(
+            "road_crossings",
+            "Fords prototype: list the river crossings of the road network nearest to you (road_crossings [count=10]).",
+            (args) => CrossingsCommand(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_ends",
             "For every location with a road end, compare the end's road height with the natural terrain at the end and the mean natural height on a ring: road_ends [ring=8] [top=20]. Writes ProceduralRoads.ends.csv to the config folder; the console shows the worst.",
             (args) => ReportRoadEnds(args),
@@ -511,6 +521,34 @@ public static class ConsoleCommands
         args.Context.AddString("Applying to loaded zones...");
         int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
+    }
+
+    /// <summary>road_crossings [count] lists the river crossings nearest the player.</summary>
+    private static void CrossingsCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+        {
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
+        }
+
+        IReadOnlyList<RoadCrossing> crossings = RoadNetworkGenerator.GetRoadCrossings();
+        args.Context.AddString($"Fords {(RoadPathfinder.FordsEnabled ? "on" : "off")} in config; {crossings.Count} river crossing(s) on the roads.");
+        if (crossings.Count == 0)
+            return;
+
+        int count = 10;
+        if (args.Length > 1 && int.TryParse(args[1], out int requested))
+            count = requested;
+        Vector3 here = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+        Vector2 here2 = new Vector2(here.x, here.z);
+        foreach (RoadCrossing site in crossings.OrderBy(c => Vector2.Distance(c.Center, here2)).Take(count))
+        {
+            args.Context.AddString(
+                $"  ({site.Center.x:F0},{site.Center.y:F0}) {Vector2.Distance(site.Center, here2):F0} m away: {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")}, {site.Width:F0} m wide " +
+                $"from ({site.FromBank.x:F1},{site.FromBank.y:F1}) to ({site.ToBank.x:F1},{site.ToBank.y:F1}), " +
+                $"bed {site.WaterLevel - site.RiverbedHeight:F1} m deep, fairway {site.FairwayWidth:F0} m");
+        }
     }
 
     private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)

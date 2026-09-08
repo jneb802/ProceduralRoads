@@ -43,6 +43,14 @@ public struct Vector2
 
     public static float SqrMagnitude(Vector2 a) => a.x * a.x + a.y * a.y;
 
+    public static float Dot(Vector2 a, Vector2 b) => a.x * b.x + a.y * b.y;
+
+    public static Vector2 Lerp(Vector2 a, Vector2 b, float t)
+    {
+        t = Mathf.Clamp01(t);
+        return new Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+    }
+
     public static Vector2 operator +(Vector2 a, Vector2 b) => new(a.x + b.x, a.y + b.y);
     public static Vector2 operator -(Vector2 a, Vector2 b) => new(a.x - b.x, a.y - b.y);
     public static Vector2 operator -(Vector2 a) => new(-a.x, -a.y);
@@ -168,6 +176,7 @@ public static class Mathf
     public static float Cos(float f) => (float)System.Math.Cos(f);
     public static float Sin(float f) => (float)System.Math.Sin(f);
     public static float Pow(float f, float p) => (float)System.Math.Pow(f, p);
+    public static float Atan2(float y, float x) => (float)System.Math.Atan2(y, x);
     public static float Round(float f) => (float)System.Math.Round(f);
     public static float Floor(float f) => (float)System.Math.Floor(f);
     public static int RoundToInt(float f) => (int)System.Math.Round(f);

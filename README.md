@@ -23,6 +23,8 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | RoadWidth | 4 | Road width in meters (2-10) |
 | IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
+| Fords/Enabled | false | **Prototype.** Let roads ford knee-deep rivers (see below) |
+| Fords/WadeWeight, RaiseWeight | 1 each | Relative odds of each ford style where a site allows it (0 disables a style) |
 
 ### Custom Locations via Config
 
@@ -31,6 +33,22 @@ Use the `CustomLocations` setting to add locations from other mods (e.g., Expand
 ```
 CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp
 ```
+
+### Fords (prototype, off by default)
+
+With `Fords/Enabled = true` a road may cross a knee-deep river instead of
+stopping at it. The pathfinder can jump a river in a straight line from dry
+ground to dry ground, up to 48 m, when the water under the jump is no
+deeper than 0.8 m and the banks are near level; swamp roads wade their
+shallows. Each ford is *waded* (the road is painted through the water at
+the ground's own height, only where the water is ankle deep or in a swamp)
+or *raised* (the road is leveled up so it stands 0.75 m above the
+shallow-water line), picked per site by the `Fords/*` weights. Roads that
+already ford a river are shared by later roads instead of each finding its
+own crossing. Deeper or wider water still blocks; bridges are a separate
+feature. The setting decides how a network is generated; the crossings are
+stored with it. `road_crossings` in the console lists the crossings
+nearest to you.
 
 ## API for Mod Authors
 

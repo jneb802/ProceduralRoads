@@ -29,6 +29,32 @@ public static class RoadConstants
     public const float DefaultTerrainVariancePenalty = 1000f;
     public const float DefaultTerrainVarianceThreshold = 5f;
 
+    // River fords (prototype, off by default: config Fords/Enabled). With
+    // fords on, the pathfinder may jump a river core in a straight line to
+    // dry ground within MaxRiverCrossingCells (measured in metres, so a
+    // diagonal scan does not stretch it) when the water under the jump is
+    // no deeper than FordWadeDepth, at RiverCrossingPenalty on top of the
+    // distance; banks may differ in height by MaxFordBankDelta, and a step
+    // pays BankDeltaPenalty * delta^2 on top, so near-level banks are
+    // preferred. The ford is WADED (painted at ground height, only where
+    // the water is at most FordWadeMaxDepth deep, always in a swamp) or
+    // RAISED (leveled up to the bank clearance), by the Fords/* weights.
+    // Banks, landings and a raised ford's surface stand BankClearance above
+    // the shallow-water line. Swamp roads wade their shallows down to
+    // DeepWaterHeight at SwampShallowWaterPenalty per cell. A jump whose
+    // both ends already carry road is an existing crossing and costs
+    // CrossingReuseDiscount of its price, so later roads share it.
+    public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
+    public const float RiverCrossingPenalty = 5000f;
+    public const float FordWadeDepth = 0.8f;
+    public const float FordWadeMaxDepth = 0.5f;
+    public const float MaxFordBankDelta = 4f;
+    public const float BankDeltaPenalty = 1250f;
+    public const float BankClearance = 0.75f;
+    public const float DefaultFordStyleWeight = 1f;
+    public const float DefaultSwampShallowWaterPenalty = 500f;
+    public const float CrossingReuseDiscount = 0.2f;
+
     // Road cross-section (see RoadProfile): flat core fully leveled and
     // solidly painted; paint fades out strictly inside the leveled footprint
     // so roads keep an unpainted, smoothed verge; leveling eases to natural

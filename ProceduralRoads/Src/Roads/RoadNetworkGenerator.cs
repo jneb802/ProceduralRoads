@@ -155,6 +155,26 @@ public static class RoadNetworkGenerator
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
 
     /// <summary>
+    /// Whether a world without persisted roads generates its network when the
+    /// player spawns. Off ([Debug] GenerateRoadsOnLoad = false), the world stays
+    /// road-free until road_generate or road_regen_island asks; a validation
+    /// loop on one site then pays seconds, not a whole-world generation.
+    /// </summary>
+    public static bool GenerateOnLoad = true;
+
+    /// <summary>Load-time entry: generate unless GenerateOnLoad is off. Returns whether it generated.</summary>
+    public static bool GenerateRoadsOnLoad()
+    {
+        if (!GenerateOnLoad)
+        {
+            Log.LogInfo("GenerateRoadsOnLoad is off: no roads until road_generate or road_regen_island");
+            return false;
+        }
+        GenerateRoads();
+        return true;
+    }
+
+    /// <summary>
     /// Get the start points of all generated roads for visualization.
     /// </summary>
     public static IReadOnlyList<(Vector2 position, string label)> GetRoadStartPoints() => m_roadStartPoints;

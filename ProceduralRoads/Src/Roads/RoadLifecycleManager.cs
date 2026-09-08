@@ -55,7 +55,7 @@ public static class RoadLifecycleManager
             else
             {
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No persisted roads found, generating...");
-                RoadNetworkGenerator.GenerateRoads();
+                RoadNetworkGenerator.GenerateRoadsOnLoad();
             }
         }
         else
@@ -84,7 +84,7 @@ public static class RoadLifecycleManager
         else
         {
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No global road data, generating...");
-            RoadNetworkGenerator.GenerateRoads();
+            RoadNetworkGenerator.GenerateRoadsOnLoad();
         }
     }
 

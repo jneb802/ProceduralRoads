@@ -44,9 +44,8 @@ public static class RoadConstants
     // DeepWaterHeight at SwampShallowWaterPenalty per cell. A jump whose
     // both ends already carry road is an existing crossing: it costs
     // SharedCrossingCostFraction of the crossing price, so a later road
-    // detours to share it when the detour costs less than the saving (for
-    // a bridge, roughly 2-3 km of ordinary ground) and builds its own
-    // beyond that.
+    // detours to share it when the detour costs less than the saving and
+    // makes its own crossing beyond that.
     public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;

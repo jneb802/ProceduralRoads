@@ -45,8 +45,7 @@ the ground's own height, only where the water is ankle deep or in a swamp)
 or *raised* (the road is leveled up so it stands 0.75 m above the
 shallow-water line), picked per site by the `Fords/*` weights. Roads that
 already ford a river are shared by later roads instead of each finding its
-own crossing. Deeper or wider water still blocks; bridges are a separate
-feature. The setting decides how a network is generated; the crossings are
+own crossing. Deeper or wider water still blocks. The setting decides how a network is generated; the crossings are
 stored with it. `road_crossings` in the console lists the crossings
 nearest to you.
 

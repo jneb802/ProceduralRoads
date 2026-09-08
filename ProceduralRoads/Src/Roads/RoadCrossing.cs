@@ -3,9 +3,9 @@ using UnityEngine;
 
 namespace ProceduralRoads;
 
-/// <summary>What spans the water at a crossing. Only fords exist so far:
+/// <summary>What the road does at a crossing. Only fords exist so far:
 /// knee-deep, unsailable water the road goes through.</summary>
-public enum CrossingKind { Bridge, Ford }
+public enum CrossingKind { Ford }
 
 /// <summary>How a ford treats the shallows: WADE paints the ground and
 /// leaves it at its height (the road goes through the water), RAISE levels

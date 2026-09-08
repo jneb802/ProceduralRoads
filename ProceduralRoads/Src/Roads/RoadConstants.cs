@@ -35,6 +35,13 @@ public static class RoadConstants
     // terrain over TerrainBlendMargin beyond the half-width.
     public const float RoadFlatCoreRatio = 0.6f;
     public const float RoadPaintOuterRatio = 0.85f;
+
+    // Terrain leveling fits a line along the road through the nearby road
+    // points (see RoadTerrainModifier.CalculateBlendedHeight): the spread of
+    // the prior that holds an undetermined gradient at zero, and the steepest
+    // gradient the fit may report (metres per metre).
+    public const float HeightFitRidgeMetres = 0.02f;
+    public const float HeightFitMaxGradient = 1.5f;
     
     public const float SpatialGridSize = 64f;
     public const float DefaultRoadWidth = 4f;

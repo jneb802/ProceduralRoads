@@ -27,6 +27,7 @@ public class RoadEndReportTests
             });
         }
         ZoneSystem.instance = zones;
+        ZDOMan.instance = new ZDOMan();
         RoadNetworkGenerator.Reset();
         return world;
     }
@@ -34,6 +35,7 @@ public class RoadEndReportTests
     private static void TearDown()
     {
         RoadNetworkGenerator.Reset();
+        ZDOMan.instance = null;
         ZoneSystem.instance = null;
         WorldGenerator.instance = null;
     }

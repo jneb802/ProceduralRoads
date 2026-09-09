@@ -97,7 +97,7 @@ public class IslandRegenerationTests
             // A zone that exists before generation, on the road from the start
             // temple towards Eikthyrnir: its heightmap must carry road deltas and
             // paint right after the load-time generation, without any zone spawn.
-            var zone = new Vector2i(2, 0);
+            var zone = new Vector2s(2, 0);
             Heightmap hm = Heightmap.CreateForZone(zone, 64);
             Heightmap.Registered = hm;
             TerrainComp tc = hm.m_terrainComp!;

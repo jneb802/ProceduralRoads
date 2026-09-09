@@ -73,7 +73,7 @@ public class ReviewRegressionTests
         RoadSpatialGrid.Clear();
         try
         {
-            var zone = new Vector2i(0, 0);
+            var zone = new Vector2s(0, 0);
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-8, 0), new(8, 0) }, 4, WorldGenerator.instance);
             RoadSpatialGrid.FinalizeRoadNetwork();
             ZDOMan.instance.CreateNewZDO(ZoneSystem.GetZonePos(zone), TerrainComp.PrefabName.GetStableHashCode());

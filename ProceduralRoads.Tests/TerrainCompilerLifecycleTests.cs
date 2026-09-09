@@ -13,7 +13,7 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public class TerrainCompilerLifecycleTests
 {
-    private static readonly Vector2i Zone = new(0, 0);
+    private static readonly Vector2s Zone = new(0, 0);
 
     private static (SyntheticWorld world, List<RoadSpatialGrid.RoadPoint> points) SetUp()
     {
@@ -140,7 +140,7 @@ public class TerrainCompilerLifecycleTests
         SetUp();
         try
         {
-            Heightmap hm = Heightmap.CreateForZone(new Vector2i(5, 5), 64);
+            Heightmap hm = Heightmap.CreateForZone(new Vector2s(5, 5), 64);
             Heightmap.Registered = hm;
             RoadTerrainModifier.OnTerrainCompilerReady(hm.m_terrainComp!);
             Assert.Equal(0, hm.m_terrainComp!.SaveCount);

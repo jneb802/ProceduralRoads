@@ -14,7 +14,7 @@ namespace ProceduralRoads.Tests;
 public class TerrainReapplicationTests
 {
     private const int Width = 64;
-    private static readonly Vector2i Zone = new(0, 0);
+    private static readonly Vector2s Zone = new(0, 0);
 
     private static List<Vector2> StraightPath(float y)
     {

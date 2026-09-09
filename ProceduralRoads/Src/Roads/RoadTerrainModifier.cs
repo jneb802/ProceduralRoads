@@ -28,7 +28,7 @@ public static class RoadTerrainModifier
     /// saved terrain compiler was not alive yet; written, stamp or no stamp,
     /// when that compiler comes alive. Cleared with the world.
     /// </summary>
-    private static readonly HashSet<Vector2i> s_pendingForcedZones = new HashSet<Vector2i>();
+    private static readonly HashSet<Vector2s> s_pendingForcedZones = new HashSet<Vector2s>();
 
     public static void ResetDebugCounters()
     {
@@ -45,7 +45,7 @@ public static class RoadTerrainModifier
     /// leave the roads to OnTerrainCompilerReady; otherwise write them now,
     /// creating the zone's compiler if it has none.
     /// </summary>
-    public static void OnZoneSpawned(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
+    public static void OnZoneSpawned(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
     {
         Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
         if (TerrainComp.FindTerrainCompiler(zonePos) == null && HasSavedTerrainCompiler(zoneID))
@@ -69,7 +69,7 @@ public static class RoadTerrainModifier
         if (terrainComp == null || terrainComp.m_hmap == null || terrainComp.m_nview == null || !terrainComp.m_nview.IsValid())
             return;
 
-        Vector2i zoneID = ZoneSystem.GetZone(terrainComp.m_hmap.transform.position);
+        Vector2s zoneID = ZoneSystem.GetZone(terrainComp.m_hmap.transform.position);
         List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
         bool forced = s_pendingForcedZones.Remove(zoneID);
         if (roadPoints.Count == 0 || (!forced && CarriesCurrentRoads(terrainComp)))
@@ -86,12 +86,14 @@ public static class RoadTerrainModifier
     }
 
     /// <summary>Whether the zone's saved objects include a terrain compiler.</summary>
-    public static bool HasSavedTerrainCompiler(Vector2i zoneID)
+    public static bool HasSavedTerrainCompiler(Vector2s zoneID)
     {
         if (ZDOMan.instance == null)
             return false;
         var zdos = new List<ZDO>();
-        ZDOMan.instance.FindObjects(zoneID, zdos);
+        // Valheim 1.0 asks callers to carry the set of sectors already
+        // visited; this is a single-zone lookup, so it starts empty.
+        ZDOMan.instance.FindObjects(zoneID, zdos, new HashSet<ZoneSystem.SectorIndex>());
         foreach (ZDO zdo in zdos)
             if (zdo.GetPrefab() == TerrainCompilerPrefabHash)
                 return true;
@@ -156,7 +158,7 @@ public static class RoadTerrainModifier
         {
             if (heightmap == null) continue;
 
-            Vector2i zoneID = ZoneSystem.GetZone(heightmap.transform.position);
+            Vector2s zoneID = ZoneSystem.GetZone(heightmap.transform.position);
             var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
             if (roadPoints.Count == 0) continue;
 

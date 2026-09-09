@@ -127,9 +127,12 @@ public class Heightmap
         Registered == null ? new() : new() { Registered };
     /// <summary>Like the game: the zone's live compiler, or a new one (with a new ZDO) if it has none.</summary>
     public TerrainComp GetAndCreateTerrainCompiler() => m_terrainComp ??= new TerrainComp(this, 64);
-    public void Poke(bool delayed) => PokeCount++;
+    /// <summary>Valheim 1.0: the argument selects which late pass rebuilds
+    /// (1 = LateUpdate, 2 = CustomLateUpdate), it is not a frame count.</summary>
+    public void Poke(int delayed = 0, bool paintOnly = false) { PokeCount++; LastPokeDelayed = delayed; }
+    public int LastPokeDelayed;
 
-    public static Heightmap CreateForZone(Vector2i zoneID, int width = 64, bool withCompiler = true)
+    public static Heightmap CreateForZone(Vector2s zoneID, int width = 64, bool withCompiler = true)
     {
         var hm = new Heightmap { m_scale = ZoneSystem.ZoneSize / width };
         hm.transform.position = ZoneSystem.GetZonePos(zoneID);
@@ -194,7 +197,7 @@ public class ZDO
     /// <summary>Ours when it carries our session id; without a ZDOMan every ZDO counts as ours.</summary>
     public bool IsOwner() => ZDOMan.instance == null || m_owner == ZDOMan.instance.m_sessionID;
     public UnityEngine.Vector3 GetPosition() => m_position;
-    public Vector2i GetSector() => ZoneSystem.GetZone(m_position);
+    public Vector2s GetSector() => ZoneSystem.GetZone(m_position);
     public void SetPosition(UnityEngine.Vector3 position) => m_position = position;
 
     public void Set(int hash, int value) => m_ints[hash] = value;
@@ -231,8 +234,14 @@ public class ZDOMan
     }
 
     /// <summary>The ZDOs whose position lies in the sector (zone).</summary>
-    public void FindObjects(Vector2i sector, System.Collections.Generic.List<ZDO> objects)
+    /// <summary>
+    /// Valheim 1.0 added the set of sectors the caller has already visited.
+    /// The shim records it and otherwise answers as before.
+    /// </summary>
+    public void FindObjects(Vector2s sector, System.Collections.Generic.List<ZDO> objects,
+        System.Collections.Generic.HashSet<ZoneSystem.SectorIndex>? visitedSectorIndices = null)
     {
+        visitedSectorIndices?.Add(new ZoneSystem.SectorIndex(sector));
         foreach (var zdo in Zdos)
             if (zdo.GetSector() == sector)
                 objects.Add(zdo);
@@ -341,6 +350,16 @@ public class WorldGenerator
 public class ZoneSystem
 {
     public const float ZoneSize = 64f;
+
+    /// <summary>Valheim 1.0's index of a zone within the sector tables.</summary>
+    public readonly struct SectorIndex : System.IEquatable<SectorIndex>
+    {
+        public readonly Vector2s Sector;
+        public SectorIndex(Vector2s sector) => Sector = sector;
+        public bool Equals(SectorIndex other) => Sector == other.Sector;
+        public override bool Equals(object? o) => o is SectorIndex s && Equals(s);
+        public override int GetHashCode() => Sector.GetHashCode();
+    }
 
     public static ZoneSystem? instance;
 

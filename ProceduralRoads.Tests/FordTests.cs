@@ -296,7 +296,7 @@ public class FordTests
         try
         {
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-25f, 0f), new(25f, 0f) }, 4f, world, followTerrain: true);
-            var zone = new Vector2i(0, 0);
+            var zone = new Vector2s(0, 0);
             Heightmap hm = Heightmap.CreateForZone(zone);
             var points = RoadSpatialGrid.GetRoadPointsInZone(zone);
             Assert.NotEmpty(points);
@@ -336,10 +336,10 @@ public class FordTests
             // Same points and heights, leveling on.
             RoadSpatialGrid.Clear();
             RoadSpatialGrid.AddRoadPath(path, 4f, world, followTerrain: false, minHeight: float.NegativeInfinity);
-            var points = RoadSpatialGrid.GetRoadPointsInZone(new Vector2i(0, 0));
+            var points = RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0, 0));
             RoadSpatialGrid.Clear();
             RoadSpatialGrid.AddRoadPath(path, 4f, world, followTerrain: true);
-            var wadedPoints = RoadSpatialGrid.GetRoadPointsInZone(new Vector2i(0, 0));
+            var wadedPoints = RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0, 0));
             Assert.Equal(wadedPoints.Count, points.Count);
 
             RoadSpatialGrid.Clear();
@@ -430,9 +430,9 @@ public class FordTests
             Assert.Equal(saved.Direction, loaded.Direction);
 
             // A network saved without crossings loads back with none.
-            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>(), new HashSet<Vector2i>());
+            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
             var none = new List<RoadCrossing> { saved };
-            Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2 position, string label)>(), none, new HashSet<Vector2i>()));
+            Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2 position, string label)>(), none, new HashSet<Vector2s>()));
             Assert.Empty(none);
         }
         finally

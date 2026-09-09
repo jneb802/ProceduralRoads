@@ -943,7 +943,7 @@ public static class RoadNetworkGenerator
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData()
     {
-        var bridgeZones = new HashSet<Vector2i>();
+        var bridgeZones = new HashSet<Vector2s>();
         bool loaded = RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings, bridgeZones);
         if (loaded)
             BridgePlans.MarkSpawned(bridgeZones);

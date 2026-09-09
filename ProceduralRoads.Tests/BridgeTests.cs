@@ -689,10 +689,10 @@ public class BridgeTests
             Assert.Equal(plan.Count, BridgePlans.TotalPlannedPieces);
             Assert.True(BridgePlans.PlannedZoneCount >= 1);
 
-            Vector2i zone = ZoneSystem.GetZone(plan[0].Position);
+            Vector2s zone = ZoneSystem.GetZone(plan[0].Position);
             Assert.True(BridgePlans.PlannedPieceCount(zone) > 0);
             Assert.Equal(plan.Count(p => ZoneSystem.GetZone(p.Position) == zone), BridgePlans.PlannedPieceCount(zone));
-            Assert.Null(BridgePlans.PlanFor(new Vector2i(500, 500)));
+            Assert.Null(BridgePlans.PlanFor(new Vector2s(500, 500)));
 
             Assert.False(BridgePlans.IsSpawned(zone));
             BridgePlans.MarkSpawned(zone);
@@ -724,7 +724,7 @@ public class BridgeTests
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
             RoadSpatialGrid.FinalizeRoadNetwork();
             RoadNetworkPersistence.EnsureMetadataInstance();
-            var zoneA = new Vector2i(12, 0);
+            var zoneA = new Vector2s(12, 0);
             BridgePlans.MarkSpawned(zoneA);
             typeof(RoadNetworkGenerator).GetField("m_roadsGenerated", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, true);
             RoadNetworkGenerator.SaveGlobalRoadData();
@@ -736,7 +736,7 @@ public class BridgeTests
             RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
             Assert.True(BridgePlans.IsSpawned(zoneA));
             Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
-            var zoneB = new Vector2i(13, 0);
+            var zoneB = new Vector2s(13, 0);
             BridgePlans.MarkSpawned(zoneB);
             RoadNetworkGenerator.SaveBridgeZones();
 
@@ -772,7 +772,7 @@ public class BridgeTests
         try
         {
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
-            var zone = new Vector2i(12, 0);
+            var zone = new Vector2s(12, 0);
             BridgePlans.MarkSpawned(zone);
 
             // Nothing to regenerate here: an ocean point, then an island with no locations.
@@ -837,14 +837,14 @@ public class BridgeTests
                 RoadCrossing.Between(new Vector2(-42.5f, 0f), new Vector2(42.5f, 0f), 26f, new Vector2(0.5f, 0f), 79f),
                 RoadCrossing.Between(new Vector2(100f, 50f), new Vector2(100f, 62f), 28.5f, new Vector2(100f, 56f), 0f),
             };
-            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), saved, new HashSet<Vector2i> { new(3, 4) });
+            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), saved, new HashSet<Vector2s> { new(3, 4) });
 
             RoadSpatialGrid.Clear();
             var loaded = new List<RoadCrossing> { saved[0] }; // stale content is replaced
-            var zones = new HashSet<Vector2i>();
+            var zones = new HashSet<Vector2s>();
             Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2 position, string label)>(), loaded, zones));
             Assert.Equal(2, loaded.Count);
-            Assert.Equal(new HashSet<Vector2i> { new(3, 4) }, zones);
+            Assert.Equal(new HashSet<Vector2s> { new(3, 4) }, zones);
             for (int i = 0; i < 2; i++)
             {
                 Assert.Equal(saved[i].FromBank, loaded[i].FromBank);
@@ -859,7 +859,7 @@ public class BridgeTests
 
             // A network saved without crossings loads back with none.
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-40f, 0f), new(40f, 0f) }, 4f, world);
-            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>(), new HashSet<Vector2i>());
+            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
             Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2 position, string label)>(), loaded, zones));
             Assert.Empty(loaded);
             Assert.Empty(zones);

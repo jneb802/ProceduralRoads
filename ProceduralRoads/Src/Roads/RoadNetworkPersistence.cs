@@ -106,7 +106,7 @@ public static class RoadNetworkPersistence
     public static void SaveGlobalRoadData(
         IReadOnlyList<(Vector2 position, string label)> roadStartPoints,
         IReadOnlyList<RoadCrossing> roadCrossings,
-        IReadOnlyCollection<Vector2i> bridgeZones)
+        IReadOnlyCollection<Vector2s> bridgeZones)
     {
         Log.LogDebug($"[SAVE] SaveGlobalRoadData called");
 
@@ -157,7 +157,7 @@ public static class RoadNetworkPersistence
     /// Save only the zones that have their bridge pieces, on a network that
     /// was loaded rather than generated this session.
     /// </summary>
-    public static void SaveBridgeZones(IReadOnlyCollection<Vector2i> bridgeZones)
+    public static void SaveBridgeZones(IReadOnlyCollection<Vector2s> bridgeZones)
     {
         ZDO? metadataZdo = GetMetadataZDO();
         if (metadataZdo == null)
@@ -170,7 +170,7 @@ public static class RoadNetworkPersistence
         WriteBridgeZones(metadataZdo, bridgeZones);
     }
 
-    private static void WriteBridgeZones(ZDO metadataZdo, IReadOnlyCollection<Vector2i> bridgeZones)
+    private static void WriteBridgeZones(ZDO metadataZdo, IReadOnlyCollection<Vector2s> bridgeZones)
     {
         byte[] data = SerializeBridgeZones(bridgeZones);
         metadataZdo.Set(BridgeZonesHash, data);
@@ -185,7 +185,7 @@ public static class RoadNetworkPersistence
     public static bool TryLoadGlobalRoadData(
         List<(Vector2 position, string label)> roadStartPoints,
         List<RoadCrossing> roadCrossings,
-        HashSet<Vector2i> bridgeZones)
+        HashSet<Vector2s> bridgeZones)
     {
         Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
 
@@ -435,7 +435,7 @@ public static class RoadNetworkPersistence
         return ms.ToArray();
     }
 
-    private static void TryLoadBridgeZones(ZDO metadataZdo, HashSet<Vector2i> bridgeZones)
+    private static void TryLoadBridgeZones(ZDO metadataZdo, HashSet<Vector2s> bridgeZones)
     {
         bridgeZones.Clear();
         byte[]? data = metadataZdo.GetByteArray(BridgeZonesHash, null);
@@ -458,7 +458,7 @@ public static class RoadNetworkPersistence
                 return;
             }
             for (int i = 0; i < count; i++)
-                bridgeZones.Add(new Vector2i(reader.ReadInt32(), reader.ReadInt32()));
+                bridgeZones.Add(new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32()));
             Log.LogDebug($"Loaded {bridgeZones.Count} bridge zones from ZDO");
         }
         catch (Exception ex)
@@ -468,17 +468,21 @@ public static class RoadNetworkPersistence
         }
     }
 
-    /// <summary>Format: [version=1][count] then [x][y] per zone.</summary>
-    private static byte[] SerializeBridgeZones(IReadOnlyCollection<Vector2i> zones)
+    /// <summary>
+    /// Format: [version=1][count] then [x][y] per zone, each a 32-bit int.
+    /// Valheim 1.0 made a zone id a pair of shorts; the casts here keep the
+    /// saved bytes as they were, so worlds written before 1.0 still read.
+    /// </summary>
+    private static byte[] SerializeBridgeZones(IReadOnlyCollection<Vector2s> zones)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
         writer.Write(1);
         writer.Write(zones.Count);
-        foreach (Vector2i zone in zones)
+        foreach (Vector2s zone in zones)
         {
-            writer.Write(zone.x);
-            writer.Write(zone.y);
+            writer.Write((int)zone.x);
+            writer.Write((int)zone.y);
         }
         return ms.ToArray();
     }

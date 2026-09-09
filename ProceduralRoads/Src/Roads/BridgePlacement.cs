@@ -32,7 +32,7 @@ public static class BridgePlacement
     /// generation, the way the game generates its own zones, otherwise as
     /// live objects.
     /// </summary>
-    public static int OnZoneSpawned(Vector2i zoneID, ZoneSystem.SpawnMode mode) =>
+    public static int OnZoneSpawned(Vector2s zoneID, ZoneSystem.SpawnMode mode) =>
         SpawnInZone(zoneID, mode == ZoneSystem.SpawnMode.Ghost);
 
     /// <summary>
@@ -68,7 +68,7 @@ public static class BridgePlacement
         return (destroyed, SpawnInLoadedZones());
     }
 
-    private static int SpawnInZone(Vector2i zoneID, bool ghost)
+    private static int SpawnInZone(Vector2s zoneID, bool ghost)
     {
         if (!IsServer || ZNetScene.instance == null || ZDOMan.instance == null)
             return 0;
@@ -87,10 +87,10 @@ public static class BridgePlacement
 
     /// <summary>Whether the zone's saved objects already include our pieces
     /// (a zone spawned by a build that did not keep the spawned set).</summary>
-    private static bool HasMarkedPieces(Vector2i zoneID)
+    private static bool HasMarkedPieces(Vector2s zoneID)
     {
         List<ZDO> zdos = new();
-        ZDOMan.instance.FindObjects(zoneID, zdos);
+        ZDOMan.instance.FindObjects(zoneID, zdos, new HashSet<ZoneSystem.SectorIndex>());
         foreach (ZDO zdo in zdos)
         {
             if (zdo.GetInt(MarkerHash) == 1)
@@ -189,7 +189,7 @@ public static class BridgePlacement
     /// Clear-areas around the plan so vegetation does not spawn through the
     /// deck (a bridge zone often carries no painted road points of its own).
     /// </summary>
-    public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2i zoneID)
+    public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2s zoneID)
     {
         List<ZoneSystem.ClearArea> areas = new();
         List<BridgePiece>? pieces = BridgePlans.PlanFor(zoneID);

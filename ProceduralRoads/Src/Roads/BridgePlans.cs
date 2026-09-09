@@ -17,11 +17,11 @@ public static class BridgePlans
 {
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
 
-    private static Dictionary<Vector2i, List<BridgePiece>>? s_plansByZone;
-    private static readonly HashSet<Vector2i> s_spawnedZones = new();
+    private static Dictionary<Vector2s, List<BridgePiece>>? s_plansByZone;
+    private static readonly HashSet<Vector2s> s_spawnedZones = new();
 
     /// <summary>Zones that have received their bridge pieces.</summary>
-    public static IReadOnlyCollection<Vector2i> SpawnedZones => s_spawnedZones;
+    public static IReadOnlyCollection<Vector2s> SpawnedZones => s_spawnedZones;
 
     /// <summary>Forget the plans and the spawned zones: the network is gone.</summary>
     public static void Reset()
@@ -36,24 +36,24 @@ public static class BridgePlans
     /// <summary>Forget which zones have pieces (they are being destroyed).</summary>
     public static void ForgetSpawned() => s_spawnedZones.Clear();
 
-    public static bool IsSpawned(Vector2i zone) => s_spawnedZones.Contains(zone);
+    public static bool IsSpawned(Vector2s zone) => s_spawnedZones.Contains(zone);
 
-    public static void MarkSpawned(Vector2i zone) => s_spawnedZones.Add(zone);
+    public static void MarkSpawned(Vector2s zone) => s_spawnedZones.Add(zone);
 
-    public static void MarkSpawned(IEnumerable<Vector2i> zones)
+    public static void MarkSpawned(IEnumerable<Vector2s> zones)
     {
-        foreach (Vector2i zone in zones)
+        foreach (Vector2s zone in zones)
             s_spawnedZones.Add(zone);
     }
 
     /// <summary>The pieces planned for a zone, or null when it has none.</summary>
-    public static List<BridgePiece>? PlanFor(Vector2i zone)
+    public static List<BridgePiece>? PlanFor(Vector2s zone)
     {
         EnsurePlans();
         return s_plansByZone != null && s_plansByZone.TryGetValue(zone, out List<BridgePiece>? list) ? list : null;
     }
 
-    public static int PlannedPieceCount(Vector2i zone) => PlanFor(zone)?.Count ?? 0;
+    public static int PlannedPieceCount(Vector2s zone) => PlanFor(zone)?.Count ?? 0;
 
     public static int TotalPlannedPieces
     {
@@ -86,13 +86,13 @@ public static class BridgePlans
         if (s_plansByZone != null || WorldGenerator.instance == null)
             return;
 
-        s_plansByZone = new Dictionary<Vector2i, List<BridgePiece>>();
+        s_plansByZone = new Dictionary<Vector2s, List<BridgePiece>>();
         int seed = WorldGenerator.instance.GetSeed();
         foreach (RoadCrossing crossing in BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings()))
         {
             foreach (BridgePiece piece in BridgeLayout.Solve(crossing, WorldGenerator.instance, seed))
             {
-                Vector2i zone = ZoneSystem.GetZone(piece.Position);
+                Vector2s zone = ZoneSystem.GetZone(piece.Position);
                 if (!s_plansByZone.TryGetValue(zone, out List<BridgePiece>? list))
                 {
                     list = new List<BridgePiece>();

@@ -18,7 +18,7 @@ public static class RoadTerrainModifier
     /// <summary>
     /// Apply terrain mods for road points in a zone.
     /// </summary>
-    public static void ApplyRoadTerrainMods(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
+    public static void ApplyRoadTerrainMods(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
     {
         TerrainContext? context = GetTerrainContext(zoneID);
         if (context == null)
@@ -33,7 +33,7 @@ public static class RoadTerrainModifier
     /// Public entry point for applying road terrain mods to a specific zone.
     /// Used by console commands to force-update loaded zones.
     /// </summary>
-    public static void ApplyRoadTerrainModsWithContext(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, 
+    public static void ApplyRoadTerrainModsWithContext(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints,
         Heightmap heightmap, TerrainComp terrainComp)
     {
         if (roadPoints == null || roadPoints.Count == 0)
@@ -69,7 +69,7 @@ public static class RoadTerrainModifier
         public float VertexSpacing;
     }
 
-    private static TerrainContext? GetTerrainContext(Vector2i zoneID)
+    private static TerrainContext? GetTerrainContext(Vector2s zoneID)
     {
         Heightmap heightmap = Heightmap.FindHeightmap(ZoneSystem.GetZonePos(zoneID));
         TerrainComp? terrainComp = heightmap?.GetAndCreateTerrainCompiler();
@@ -96,7 +96,7 @@ public static class RoadTerrainModifier
         public HashSet<Vector2i> PaintedCells;
     }
 
-    private static ModificationStats ModifyVertexHeights(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
+    private static ModificationStats ModifyVertexHeights(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
     {
         ModificationStats stats = new ModificationStats { PaintedCells = new HashSet<Vector2i>() };
 
@@ -248,7 +248,7 @@ public static class RoadTerrainModifier
         }
     }
 
-    private static void FinalizeTerrainMods(Vector2i zoneID, int roadPointCount, ModificationStats stats, TerrainContext context)
+    private static void FinalizeTerrainMods(Vector2s zoneID, int roadPointCount, ModificationStats stats, TerrainContext context)
     {
         int paintOps = stats.PaintedCells.Count;
         
@@ -266,7 +266,7 @@ public static class RoadTerrainModifier
         }
     }
 
-    private static void LogCoordinateDebug(Vector2i zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
+    private static void LogCoordinateDebug(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
     {
         if (s_coordLogCount >= RoadConstants.MaxCoordDebugLogs)
             return;

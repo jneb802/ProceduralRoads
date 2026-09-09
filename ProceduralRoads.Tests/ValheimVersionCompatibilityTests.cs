@@ -131,4 +131,59 @@ public class ValheimVersionCompatibilityTests
         }
         finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
     }
+
+    [Fact]
+    public void AWorldReadFromDiskIsReadyEvenThoughNoEventArrives()
+    {
+        // The 1.0 break that a compiling build hides. ZoneSystem.Load writes
+        // m_locationsGenerated straight from the save, so the property setter --
+        // the only thing that raises GenerateLocationsCompleted -- never runs.
+        // A mod that treats "the event fired" as the definition of "locations are
+        // ready" waits forever, and an existing world silently gets no roads.
+        RoadNetworkGenerator.Reset();
+        var zones = new ZoneSystem();
+        ZoneSystem.instance = zones;
+        try
+        {
+            bool eventFired = false;
+            zones.GenerateLocationsCompleted += () => eventFired = true;
+
+            zones.LoadLocationsGeneratedFromSave(true);   // what loading a world does
+
+            Assert.False(eventFired, "1.0 does not raise the event when a world is loaded");
+            Assert.True(RoadNetworkGenerator.IsLocationsReady,
+                "the world's locations are in place, so roads must be allowed to load or build");
+        }
+        finally { ZoneSystem.instance = null; RoadNetworkGenerator.Reset(); }
+    }
+
+    [Fact]
+    public void AFreshlyGeneratedWorldStillAnnouncesItsLocations()
+    {
+        // The other half: on a new world the setter does run, the event is raised
+        // for whoever subscribed, and the mod is told the ordinary way.
+        RoadNetworkGenerator.Reset();
+        var zones = new ZoneSystem();
+        ZoneSystem.instance = zones;
+        try
+        {
+            int fired = 0;
+            zones.GenerateLocationsCompleted += () => fired++;
+            Assert.Equal(0, fired);
+
+            zones.LocationsGenerated = true;              // what generating a world does
+
+            Assert.Equal(1, fired);
+            Assert.True(RoadNetworkGenerator.IsLocationsReady);
+
+            // 1.0 drops the handlers once it has fired, and fires immediately for
+            // anyone who subscribes afterwards. Both halves matter to a mod that
+            // subscribes from a patch whose order it does not control.
+            int late = 0;
+            zones.GenerateLocationsCompleted += () => late++;
+            Assert.Equal(1, late);
+            Assert.Equal(1, fired);
+        }
+        finally { ZoneSystem.instance = null; RoadNetworkGenerator.Reset(); }
+    }
 }

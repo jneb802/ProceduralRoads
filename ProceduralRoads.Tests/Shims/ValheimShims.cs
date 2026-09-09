@@ -177,6 +177,49 @@ public class ZoneSystem
 
     public System.Collections.Generic.List<LocationInstance> GetLocationList() => Locations;
 
+    // ---- locations-generated, as Valheim 1.0 actually behaves ----
+    //
+    // 1.0 kept the LocationsGenerated property and the GenerateLocationsCompleted
+    // event, but changed who writes the backing field. The setter still raises the
+    // event (once, then drops the handlers), and subscribing after the fact fires
+    // immediately -- but ZoneSystem.Load now writes m_locationsGenerated DIRECTLY
+    // from the save package, bypassing the setter. So a world read from disk never
+    // raises the event, however early a handler subscribed. Before 1.0 the setter
+    // was the only writer and every path raised it.
+    //
+    // The shim models all three doors so a test can tell them apart.
+
+    private bool m_locationsGenerated;
+    private System.Action? m_generateLocationsCompleted;
+
+    public bool LocationsGenerated
+    {
+        get => m_locationsGenerated;
+        set
+        {
+            m_locationsGenerated = value;
+            if (!m_locationsGenerated) return;
+            m_generateLocationsCompleted?.Invoke();
+            m_generateLocationsCompleted = null;
+        }
+    }
+
+    public event System.Action GenerateLocationsCompleted
+    {
+        add
+        {
+            if (m_locationsGenerated) { value?.Invoke(); return; }
+            m_generateLocationsCompleted += value;
+        }
+        remove => m_generateLocationsCompleted -= value;
+    }
+
+    /// <summary>
+    /// What ZoneSystem.Load does in 1.0: set the flag straight from the save and
+    /// raise nothing. This is the door the mod used to be told about and is not.
+    /// </summary>
+    public void LoadLocationsGeneratedFromSave(bool generated) => m_locationsGenerated = generated;
+
     // Valheim 1.0 types a zone id as Vector2s, not Vector2i.
     public static Vector2s GetZone(UnityEngine.Vector3 point) =>
         new(UnityEngine.Mathf.FloorToInt((point.x + ZoneSize / 2f) / ZoneSize),

@@ -8,8 +8,8 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadClearAreaManager
 {
-    private static readonly Dictionary<Vector2i, List<ZoneSystem.ClearArea>> s_roadClearAreasCache = 
-        new Dictionary<Vector2i, List<ZoneSystem.ClearArea>>();
+    private static readonly Dictionary<Vector2s, List<ZoneSystem.ClearArea>> s_roadClearAreasCache =
+        new Dictionary<Vector2s, List<ZoneSystem.ClearArea>>();
 
     public static void ClearCache()
     {
@@ -19,7 +19,7 @@ public static class RoadClearAreaManager
     /// <summary>
     /// Gets or creates road clear areas for a zone. Used to prevent vegetation spawning on roads.
     /// </summary>
-    public static List<ZoneSystem.ClearArea> GetOrCreateClearAreas(Vector2i zoneID)
+    public static List<ZoneSystem.ClearArea> GetOrCreateClearAreas(Vector2s zoneID)
     {
         if (!s_roadClearAreasCache.TryGetValue(zoneID, out List<ZoneSystem.ClearArea> roadClearAreas))
         {
@@ -30,7 +30,7 @@ public static class RoadClearAreaManager
         return roadClearAreas;
     }
 
-    private static List<ZoneSystem.ClearArea> CreateRoadClearAreas(Vector2i zoneID)
+    private static List<ZoneSystem.ClearArea> CreateRoadClearAreas(Vector2s zoneID)
     {
         List<ZoneSystem.ClearArea> clearAreas = new List<ZoneSystem.ClearArea>();
         List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);

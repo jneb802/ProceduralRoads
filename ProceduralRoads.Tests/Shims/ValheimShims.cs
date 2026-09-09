@@ -47,6 +47,51 @@ public struct Vector2i
     public override string ToString() => $"({x}, {y})";
 }
 
+/// <summary>
+/// Mirror of Valheim 1.0's global Vector2s, which replaced Vector2i as the
+/// type of a zone id. The fields really are short in the game: a zone id is
+/// small and the game packs a lot of them, so the mod must not assume it can
+/// put an arbitrary int in one. The int constructor narrows exactly as the
+/// game's does, which is why the mod's own grid coordinates stay Vector2i.
+/// </summary>
+public struct Vector2s
+{
+    public short x;
+    public short y;
+
+    public Vector2s(short x, short y)
+    {
+        this.x = x;
+        this.y = y;
+    }
+
+    public Vector2s(int x, int y)
+    {
+        this.x = (short)x;
+        this.y = (short)y;
+    }
+
+    public Vector2s(Vector2i v)
+    {
+        x = (short)v.x;
+        y = (short)v.y;
+    }
+
+    public override bool Equals(object? other) =>
+        other is Vector2s v && v.x == x && v.y == y;
+
+    public override int GetHashCode() => x.GetHashCode() ^ (y.GetHashCode() << 16);
+
+    public static Vector2s operator +(Vector2s a, Vector2s b) =>
+        new Vector2s((short)(a.x + b.x), (short)(a.y + b.y));
+    public static Vector2s operator -(Vector2s a, Vector2s b) =>
+        new Vector2s((short)(a.x - b.x), (short)(a.y - b.y));
+    public static bool operator ==(Vector2s a, Vector2s b) => a.x == b.x && a.y == b.y;
+    public static bool operator !=(Vector2s a, Vector2s b) => !(a == b);
+
+    public override string ToString() => $"({x}, {y})";
+}
+
 public class Heightmap
 {
     [System.Flags]
@@ -132,10 +177,54 @@ public class ZoneSystem
 
     public System.Collections.Generic.List<LocationInstance> GetLocationList() => Locations;
 
-    public static Vector2i GetZone(UnityEngine.Vector3 point) =>
+    // ---- locations-generated, as Valheim 1.0 actually behaves ----
+    //
+    // 1.0 kept the LocationsGenerated property and the GenerateLocationsCompleted
+    // event, but changed who writes the backing field. The setter still raises the
+    // event (once, then drops the handlers), and subscribing after the fact fires
+    // immediately -- but ZoneSystem.Load now writes m_locationsGenerated DIRECTLY
+    // from the save package, bypassing the setter. So a world read from disk never
+    // raises the event, however early a handler subscribed. Before 1.0 the setter
+    // was the only writer and every path raised it.
+    //
+    // The shim models all three doors so a test can tell them apart.
+
+    private bool m_locationsGenerated;
+    private System.Action? m_generateLocationsCompleted;
+
+    public bool LocationsGenerated
+    {
+        get => m_locationsGenerated;
+        set
+        {
+            m_locationsGenerated = value;
+            if (!m_locationsGenerated) return;
+            m_generateLocationsCompleted?.Invoke();
+            m_generateLocationsCompleted = null;
+        }
+    }
+
+    public event System.Action GenerateLocationsCompleted
+    {
+        add
+        {
+            if (m_locationsGenerated) { value?.Invoke(); return; }
+            m_generateLocationsCompleted += value;
+        }
+        remove => m_generateLocationsCompleted -= value;
+    }
+
+    /// <summary>
+    /// What ZoneSystem.Load does in 1.0: set the flag straight from the save and
+    /// raise nothing. This is the door the mod used to be told about and is not.
+    /// </summary>
+    public void LoadLocationsGeneratedFromSave(bool generated) => m_locationsGenerated = generated;
+
+    // Valheim 1.0 types a zone id as Vector2s, not Vector2i.
+    public static Vector2s GetZone(UnityEngine.Vector3 point) =>
         new(UnityEngine.Mathf.FloorToInt((point.x + ZoneSize / 2f) / ZoneSize),
             UnityEngine.Mathf.FloorToInt((point.z + ZoneSize / 2f) / ZoneSize));
 
-    public static UnityEngine.Vector3 GetZonePos(Vector2i id) =>
+    public static UnityEngine.Vector3 GetZonePos(Vector2s id) =>
         new(id.x * ZoneSize, 0f, id.y * ZoneSize);
 }

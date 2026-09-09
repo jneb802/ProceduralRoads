@@ -183,9 +183,11 @@ public class LoadDecisionTests : System.IDisposable
     [Fact]
     public void PlayerSpawnIsTheBackstopWhenTheWorldLoadHookDoesNot()
     {
-        // Not every path goes through ZNet's server world load. A player
-        // cannot spawn into a world whose data has not been read, so spawning
-        // is the last honest moment to decide.
+        // Not every path goes through ZNet's server world load, so spawning is
+        // the last chance to decide. This covers the host: the test hands the
+        // world's ZDOs over before spawning, which is what a host has by then.
+        // It says nothing about a client, where the road metadata may not have
+        // replicated yet -- that case is not covered here or anywhere.
         ZoneSystem zones = SetUp(savedNetworkExists: true);
 
         zones.LocationsGenerated = true;

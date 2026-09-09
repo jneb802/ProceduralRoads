@@ -47,11 +47,9 @@ namespace ProceduralRoads
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
-        public static ConfigEntry<bool> FordsEnabled = null!;
         public static ConfigEntry<float> FordWadeWeight = null!;
         public static ConfigEntry<float> FordRaiseWeight = null!;
         public static ConfigEntry<float> FordSpanWeight = null!;
-        public static ConfigEntry<bool> BridgesEnabled = null!;
         public static ConfigEntry<float> BridgeCostFixed = null!;
         public static ConfigEntry<float> BridgeCostPerMeter = null!;
 
@@ -84,12 +82,6 @@ namespace ProceduralRoads
                     "Higher values allow more roads on large islands.",
                     new AcceptableValueRange<int>(2, 30)));
 
-            FordsEnabled = Config.Bind("Fords", "Enabled", false,
-                "PROTOTYPE, off by default. Roads may ford knee-deep rivers: the pathfinder can jump a river up to 48 m wide " +
-                "whose water is no deeper than 0.8 m, between near-level banks, and swamp roads wade their shallows. " +
-                "A ford is waded (the road painted through the water at the ground's height) or raised (the road leveled " +
-                "up above the water) by the weights below. Decides where roads go when a network is generated.");
-
             FordWadeWeight = Config.Bind("Fords", "WadeWeight", RoadConstants.DefaultFordStyleWeight,
                 new ConfigDescription("Relative odds that a ford is WADED, the road painted through the shallows at ground height " +
                     "(offered only where the water is ankle deep, always in swamps). 0 disables the style; with equal weights each site picks evenly among the styles it allows.",
@@ -101,20 +93,12 @@ namespace ProceduralRoads
                     new AcceptableValueRange<float>(0f, 100f)));
 
             FordSpanWeight = Config.Bind("Fords", "SpanWeight", RoadConstants.DefaultFordStyleWeight,
-                new ConfigDescription("With Bridges/Enabled: relative odds that a ford is SPANNED by a short low footbridge with a step at each end " +
+                new ConfigDescription("Relative odds that a ford is SPANNED by a short low footbridge with a step at each end " +
                     "(offered only where the crossing is at least 6 m wide).",
                     new AcceptableValueRange<float>(0f, 100f)));
 
-            BridgesEnabled = Config.Bind("Bridges", "Enabled", false,
-                "PROTOTYPE, off by default. Roads may cross rivers too long or too deep to ford on wooden bridges: the pathfinder can jump " +
-                "a river (up to 128 m, between near-level banks) at the cost below, the water is left unpaved, and a ruined wooden " +
-                "bridge built from vanilla pieces (post pairs and crossbeams down to the riverbed, a plank deck, a stair at each end, " +
-                "a gap left open over the deepest water so boats still pass) is spawned when the zone generates. Decides where roads go when a network is " +
-                "generated; a world generated with bridges keeps them. Bridges are dear, so they show up mostly where a river has no " +
-                "way around; raise PathfindingMaxIterations to let the pathfinder find them on large islands.");
-
             BridgeCostFixed = Config.Bind("Bridges", "CostFixed", RoadConstants.DefaultBridgeCostFixed,
-                new ConfigDescription("Pathfinding cost of a bridge, fixed part (with Bridges/Enabled). " +
+                new ConfigDescription("Pathfinding cost of a bridge, fixed part. " +
                     "For scale: easy ground costs about 1 per metre of road, rough or steep ground 1000-2000 per 8 m cell. " +
                     "Lower = more bridges, higher = roads go around instead.",
                     new AcceptableValueRange<float>(0f, 1000000f)));
@@ -175,9 +159,7 @@ namespace ProceduralRoads
             RoadNetworkGenerator.GenerateOnLoad = DebugSwitches.Flag("GENERATE_ROADS_ON_LOAD", true);
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
-            RoadPathfinder.FordsEnabled = FordsEnabled.Value;
             RoadCrossingDetector.SetFordStyleWeights(FordWadeWeight.Value, FordRaiseWeight.Value, FordSpanWeight.Value);
-            RoadPathfinder.BridgesEnabled = BridgesEnabled.Value;
             RoadPathfinder.ConfiguredBridgeCostFixed = BridgeCostFixed.Value;
             RoadPathfinder.ConfiguredBridgeCostPerMeter = BridgeCostPerMeter.Value;
             // CustomLocations is parsed at generation time to preserve API registrations

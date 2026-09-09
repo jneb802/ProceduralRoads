@@ -554,7 +554,7 @@ public static class ConsoleCommands
         }
 
         IReadOnlyList<RoadCrossing> crossings = RoadNetworkGenerator.GetRoadCrossings();
-        args.Context.AddString($"Fords {(RoadPathfinder.FordsEnabled ? "on" : "off")}, bridges {(RoadPathfinder.BridgesEnabled ? "on" : "off")} in config; {crossings.Count} river crossing(s) on the roads.");
+        args.Context.AddString($"{crossings.Count} river crossing(s) on the roads.");
         if (crossings.Count == 0)
             return;
 
@@ -592,7 +592,7 @@ public static class ConsoleCommands
 
         List<RoadCrossing> sites = BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings());
         args.Context.AddString(
-            $"Bridges {(RoadPathfinder.BridgesEnabled ? "on" : "off")} in config; {sites.Count} crossing site(s), " +
+            $"{sites.Count} crossing site(s), " +
             $"{BridgePlans.TotalPlannedPieces} pieces planned across {BridgePlans.PlannedZoneCount} zone(s), {BridgePlans.SpawnedZones.Count} zone(s) spawned. road_crossings lists them.");
     }
 

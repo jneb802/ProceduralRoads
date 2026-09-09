@@ -23,9 +23,7 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | RoadWidth | 4 | Road width in meters (2-10) |
 | IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
-| Fords/Enabled | false | **Prototype.** Let roads ford knee-deep rivers (see below) |
-| Fords/WadeWeight, RaiseWeight, SpanWeight | 1 each | Relative odds of each ford style where a site allows it (0 disables a style); spans need Bridges/Enabled |
-| Bridges/Enabled | false | **Prototype.** Let roads cross deeper or wider rivers on ruined wooden bridges (see below) |
+| Fords/WadeWeight, RaiseWeight, SpanWeight | 1 each | Relative odds of each ford style where a site allows it (0 disables a style) |
 | Bridges/CostFixed | 60000 | Pathfinding cost of a bridge, fixed part; lower = more bridges |
 | Bridges/CostPerMeter | 600 | Pathfinding cost of a bridge per metre of span |
 
@@ -37,9 +35,9 @@ Use the `CustomLocations` setting to add locations from other mods (e.g., Expand
 CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp
 ```
 
-### Fords (prototype, off by default)
+### Fords
 
-With `Fords/Enabled = true` a road may cross a knee-deep river instead of
+A road may cross a knee-deep river instead of
 stopping at it. The pathfinder can jump a river in a straight line from dry
 ground to dry ground, up to 48 m, when the water under the jump is no
 deeper than 0.8 m and the banks are near level; swamp roads wade their
@@ -48,14 +46,13 @@ the ground's own height, only where the water is ankle deep or in a swamp)
 or *raised* (the road is leveled up so it stands 0.75 m above the
 shallow-water line), picked per site by the `Fords/*` weights. Roads that
 already ford a river are shared by later roads instead of each finding its
-own crossing. Deeper or wider water still blocks. The setting decides how a network is generated; the crossings are
-stored with it. `road_crossings` in the console lists the crossings
-nearest to you.
+own crossing. Water too deep or too wide to ford is bridged instead (below).
+Crossings are decided when a network is generated and stored with it.
+`road_crossings` in the console lists the crossings nearest to you.
 
-### Bridges (prototype, off by default)
+### Bridges
 
-With `Bridges/Enabled = true` a road may also cross water too wide or too
-deep to ford, up to 128 m from dry ground to dry ground and only between
+A road may also cross water too wide or too deep to ford, up to 128 m from dry ground to dry ground and only between
 near-level banks, at the configured cost; the cost is high, so a bridge
 appears where the way around is long or there is none. The water under the
 jump is never leveled or painted: the road runs down to the water's edge on

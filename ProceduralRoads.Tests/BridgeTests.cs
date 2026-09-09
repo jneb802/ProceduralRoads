@@ -7,7 +7,7 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// Bridges prototype (config Bridges/Enabled, off by default). With bridges
+/// Bridges. With bridges
 /// off nothing changes. With bridges on the pathfinder jumps a river where
 /// there is no cheaper way around, the crossing is detected and left
 /// unpaved, the wooden bridge planned at it stands on its own support and
@@ -113,10 +113,9 @@ public class BridgeTests
     // ---- pathfinder ----
 
     [Fact]
-    public void BridgesAreOffUnlessConfigured()
+    public void BridgesAreOn()
     {
-        Assert.False(RoadPathfinder.BridgesEnabled);
-        Assert.False(new RoadPathfinder(new SyntheticWorld()).Bridges);
+        Assert.True(new RoadPathfinder(new SyntheticWorld()).Bridges);
     }
 
     [Fact]
@@ -892,7 +891,6 @@ public class BridgeTests
         ZoneSystem.instance = zones;
         ZDOMan.instance = new ZDOMan();
         RoadNetworkGenerator.Reset();
-        RoadPathfinder.BridgesEnabled = true;
         try
         {
             RoadNetworkGenerator.GenerateRoads(force: true);
@@ -910,7 +908,6 @@ public class BridgeTests
         }
         finally
         {
-            RoadPathfinder.BridgesEnabled = false;
             RoadNetworkGenerator.Reset();
             ZDOMan.instance = null;
             ZoneSystem.instance = null;

@@ -29,7 +29,7 @@ public static class RoadConstants
     public const float DefaultTerrainVariancePenalty = 1000f;
     public const float DefaultTerrainVarianceThreshold = 5f;
 
-    // River fords (prototype, off by default: config Fords/Enabled). With
+    // River fords. With
     // fords on, the pathfinder may jump a river core in a straight line to
     // dry ground within MaxRiverCrossingCells (measured in metres, so a
     // diagonal scan does not stretch it) when the water under the jump is
@@ -61,7 +61,7 @@ public static class RoadConstants
     public const float DefaultSwampShallowWaterPenalty = 500f;
     public const float SharedCrossingCostFraction = 0.5f;
 
-    // Bridges (prototype, off by default: config Bridges/Enabled). A jump
+    // Bridges. A jump
     // longer than a ford or over water deeper than wading is a BRIDGE, up
     // to MaxBridgeCrossingCells (measured in metres), at BridgeCostFixed +
     // BridgeCostPerMeter per metre (config Bridges/CostFixed and

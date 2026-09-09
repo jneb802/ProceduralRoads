@@ -7,7 +7,7 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// Fords prototype (config Fords/Enabled, off by default). With fords off
+/// Fords. With fords off
 /// nothing changes. With fords on the pathfinder jumps a knee-deep river,
 /// the crossing is detected on the finished road and painted in its style,
 /// later roads share an earlier road's crossing, and the crossings survive
@@ -55,8 +55,14 @@ public class FordTests
             GetHeight(wx, wy) < RoadConstants.SeaLevel - 2f ? Heightmap.Biome.Ocean : Land;
     }
 
+    /// <summary>
+    /// A pathfinder that may ford but never bridge. These tests are about what
+    /// a ford can and cannot do, so a river too deep or too wide to ford has to
+    /// stay impassable here; bridges, which now ship on, would otherwise carry
+    /// the road across and hide what is being measured. BridgeTests covers them.
+    /// </summary>
     private static RoadPathfinder Pathfinder(WorldGenerator world, bool fords) =>
-        new RoadPathfinder(world) { Fords = fords };
+        new RoadPathfinder(world) { Fords = fords, Bridges = false };
 
     /// <summary>The one long segment of a path whose middle lies over river core.</summary>
     private static (Vector2 a, Vector2 b)? FindJump(List<Vector2> path, WorldGenerator world)
@@ -86,10 +92,9 @@ public class FordTests
     // ---- pathfinder ----
 
     [Fact]
-    public void FordsAreOffUnlessConfigured()
+    public void FordsAreOn()
     {
-        Assert.False(RoadPathfinder.FordsEnabled);
-        Assert.False(new RoadPathfinder(new SyntheticWorld()).Fords);
+        Assert.True(new RoadPathfinder(new SyntheticWorld()).Fords);
     }
 
     [Fact]

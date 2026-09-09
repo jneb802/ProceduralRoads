@@ -25,25 +25,23 @@ public class RoadPathfinder
     public float SwampShallowWaterPenalty = RoadConstants.DefaultSwampShallowWaterPenalty;
 
     /// <summary>
-    /// Fords (prototype; config "Fords/Enabled", off by default): whether a
-    /// road may jump a knee-deep river, and wade swamp shallows. Applied at
-    /// config read like MaxIterations; a pathfinder instance copies it when
-    /// made. Off, the pathfinder behaves exactly as before.
+    /// Whether a road may jump a knee-deep river, and wade swamp shallows.
+    /// On: a road that meets a river it can ford does so rather than going
+    /// around. Held per instance so a test can pathfind without it.
     /// </summary>
-    public static bool FordsEnabled = false;
-
-    public bool Fords = FordsEnabled;
+    public bool Fords = true;
 
     /// <summary>
-    /// Bridges (prototype; config "Bridges/Enabled", off by default): whether
-    /// a road may jump a river too long or too deep to ford, on a bridge.
-    /// The cost levers are "Bridges/CostFixed" and "Bridges/CostPerMeter".
+    /// Whether a road may jump a river too long or too deep to ford, on a
+    /// bridge. The cost levers are "Bridges/CostFixed" and
+    /// "Bridges/CostPerMeter"; how dear a bridge is decides how often one
+    /// appears, which is the lever a player actually wants.
     /// </summary>
-    public static bool BridgesEnabled = false;
+    public bool Bridges = true;
+
     public static float ConfiguredBridgeCostFixed = RoadConstants.DefaultBridgeCostFixed;
     public static float ConfiguredBridgeCostPerMeter = RoadConstants.DefaultBridgeCostPerMeter;
 
-    public bool Bridges = BridgesEnabled;
     public float BridgeCostFixed = ConfiguredBridgeCostFixed;
     public float BridgeCostPerMeter = ConfiguredBridgeCostPerMeter;
 

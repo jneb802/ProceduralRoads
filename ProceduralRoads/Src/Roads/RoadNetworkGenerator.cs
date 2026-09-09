@@ -156,9 +156,11 @@ public static class RoadNetworkGenerator
 
     /// <summary>
     /// Whether a world without persisted roads generates its network when the
-    /// player spawns. Off ([Debug] GenerateRoadsOnLoad = false), the world stays
-    /// road-free until road_generate or road_regen_island asks; a validation
-    /// loop on one site then pays seconds, not a whole-world generation.
+    /// player spawns. Off (PROCEDURALROADS_GENERATE_ROADS_ON_LOAD=0), the world
+    /// stays road-free until road_generate or road_regen_island asks; a
+    /// validation loop on one site then pays seconds, not a whole-world
+    /// generation. There is no config key for this: it is a switch for
+    /// developing the mod, and a config key cannot be taken back once written.
     /// </summary>
     public static bool GenerateOnLoad = true;
 
@@ -167,7 +169,8 @@ public static class RoadNetworkGenerator
     {
         if (!GenerateOnLoad)
         {
-            Log.LogInfo("GenerateRoadsOnLoad is off: no roads until road_generate or road_regen_island");
+            Log.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +
+                        "no roads until road_generate or road_regen_island");
             return false;
         }
         GenerateRoads();

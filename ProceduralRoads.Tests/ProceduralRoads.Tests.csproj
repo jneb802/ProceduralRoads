@@ -29,6 +29,7 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkPersistence.cs" Link="ModSrc/RoadNetworkPersistence.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRoute.cs" Link="ModSrc/RoadRoute.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/RoadRoute.cs')"/>
     </ItemGroup>

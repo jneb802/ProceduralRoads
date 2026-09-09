@@ -21,6 +21,15 @@ namespace ProceduralRoads.Tests;
 /// data read -- and is taken by whichever arrives last. These tests hold that
 /// in both arrival orders, which is not academic: a saved world raises the
 /// locations event during its own load, a fresh one long afterwards.
+///
+/// Valheim 1.0 added a third case that looks like neither. Its chunked loader
+/// (ZoneSystem.Load) writes the LocationsGenerated field directly instead of
+/// through the property setter, so the event is not raised early -- it is not
+/// raised at all. The other two doors survive on 1.0 and still raise it: a new
+/// world's location coroutine, and ZoneSystem.LoadOld, which is what 1.0 runs
+/// the first time a player opens a world saved before they updated. The last
+/// two tests cover the silent door, and hold that it still does not excuse the
+/// world-data gate.
 /// </summary>
 public class LoadDecisionTests : System.IDisposable
 {
@@ -232,5 +241,47 @@ public class LoadDecisionTests : System.IDisposable
             .GetField("m_worldDataLoaded", BindingFlags.NonPublic | BindingFlags.Static)!
             .GetValue(null)!;
         Assert.False(stillLoaded, "the next world would decide before its own data was read");
+    }
+
+    [Fact]
+    public void TheChunkedLoaderSetsTheFlagWithoutAnEventAndTheSavedNetworkStillLoads()
+    {
+        // Valheim 1.0's chunked loader does not go through the property setter
+        // that raises GenerateLocationsCompleted -- ZoneSystem.Load writes
+        // m_locationsGenerated straight from the save. Subscribing early does
+        // not help: the handler is already waiting and is never called. If the
+        // decision waited on the event, an existing world would sit here for
+        // ever and the player would find their roads gone.
+        ZoneSystem zones = SetUp(savedNetworkExists: true);
+
+        bool eventFired = false;
+        zones.GenerateLocationsCompleted += () => eventFired = true;
+
+        zones.LoadLocationsGeneratedFromSave(true);   // the 1.0 load path
+        Assert.False(eventFired, "1.0 raises nothing when a world is read from disk");
+        Assert.False(RoadNetworkGenerator.RoadsAvailable, "decided before the world's data was read");
+
+        WorldDataArrives();
+
+        Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO, "the saved network was not loaded");
+        Assert.False(RoadNetworkGenerator.RoadsGenerated, "a network was generated over the saved one");
+    }
+
+    [Fact]
+    public void TheFlagArrivingWithoutTheWorldsDataDecidesNothing()
+    {
+        // The gate that must survive the 1.0 fix. Locations being in place says
+        // nothing about whether the world's ZDOs have been read, and the saved
+        // network lives in a ZDO -- so deciding on the flag alone would look for
+        // it before anything was in memory, find nothing, and build over it.
+        // This is the same trap as TheLocationsEventAloneDecidesNothing, reached
+        // through 1.0's door instead of the legacy one.
+        ZoneSystem zones = SetUp(savedNetworkExists: true);
+
+        zones.LoadLocationsGeneratedFromSave(true);
+
+        Assert.False(RoadNetworkGenerator.RoadsGenerated,
+            "a network was generated before the world's data had been read");
+        Assert.False(RoadNetworkGenerator.RoadsAvailable);
     }
 }

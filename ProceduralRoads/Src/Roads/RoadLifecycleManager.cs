@@ -67,12 +67,37 @@ public static class RoadLifecycleManager
 
     /// <summary>
     /// Load the saved network, or build one - whichever this world needs, once,
-    /// and only when both halves are ready.
+    /// and only when both halves are ready: the locations in place, and the
+    /// world's own data read. Each caller says it is ready and whichever
+    /// arrives last does the work, because the order is not ours to choose.
     ///
-    /// Both of the two things this waits on can arrive in either order: a saved
-    /// world raises the locations event during its own load, a fresh one raises
-    /// it long afterwards. So each caller says it is ready and the last one to
-    /// arrive does the work.
+    /// The two halves are separate on purpose, and the locations half has
+    /// three doors into it. On Valheim 1.0, read from the assembly:
+    ///
+    ///   - A NEW world generates its locations in a coroutine that sets
+    ///     ZoneSystem.LocationsGenerated through the property setter, and the
+    ///     setter raises GenerateLocationsCompleted. The event arrives, late.
+    ///   - An OLD-FORMAT save goes through ZoneSystem.LoadOld, which also uses
+    ///     the setter, so the event arrives -- but DURING the load, before
+    ///     ZDOMan.LoadChunks on the next line of ZNet.LoadWorld has run. Early,
+    ///     with nothing yet in memory to find. This is not a pre-1.0 path: it
+    ///     is what 1.0 runs the first time a player opens a world they saved
+    ///     before updating.
+    ///   - A 1.0-FORMAT save goes through ZoneSystem.Load, which writes the
+    ///     backing field straight from the save and skips the setter. No event
+    ///     is raised at all, however early we subscribed.
+    ///
+    /// So the event cannot be dropped in favour of asking the game, and asking
+    /// the game cannot be dropped in favour of the event: two of the three
+    /// doors only announce themselves, and the third only ever shows its state.
+    ///
+    /// RoadNetworkGenerator.IsLocationsReady covers both: it accepts either
+    /// having been told or the game simply being in that state. What it must
+    /// never do is stand in for the other half. Locations being in place says
+    /// nothing about whether the world's ZDOs are in memory, and the saved
+    /// network lives in a ZDO -- so the world-data gate below stays, or an
+    /// existing world would build a second network over the one it saved and
+    /// no one would be told.
     /// </summary>
     private static void DecideOnce(string trigger)
     {

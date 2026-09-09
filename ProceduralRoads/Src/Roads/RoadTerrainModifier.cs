@@ -255,7 +255,10 @@ public static class RoadTerrainModifier
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
             context.TerrainComp.Save();
-            context.Heightmap.Poke(true);
+            // Valheim 1.0 turned Poke's flag into a frame count: any value
+            // above zero defers the rebuild the way `true` used to. paintOnly
+            // stays false because this changed heights as well as paint.
+            context.Heightmap.Poke(1);
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
         }

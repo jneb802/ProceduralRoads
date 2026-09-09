@@ -47,6 +47,51 @@ public struct Vector2i
     public override string ToString() => $"({x}, {y})";
 }
 
+/// <summary>
+/// Mirror of Valheim 1.0's global Vector2s, which replaced Vector2i as the
+/// type of a zone id. The fields really are short in the game: a zone id is
+/// small and the game packs a lot of them, so the mod must not assume it can
+/// put an arbitrary int in one. The int constructor narrows exactly as the
+/// game's does, which is why the mod's own grid coordinates stay Vector2i.
+/// </summary>
+public struct Vector2s
+{
+    public short x;
+    public short y;
+
+    public Vector2s(short x, short y)
+    {
+        this.x = x;
+        this.y = y;
+    }
+
+    public Vector2s(int x, int y)
+    {
+        this.x = (short)x;
+        this.y = (short)y;
+    }
+
+    public Vector2s(Vector2i v)
+    {
+        x = (short)v.x;
+        y = (short)v.y;
+    }
+
+    public override bool Equals(object? other) =>
+        other is Vector2s v && v.x == x && v.y == y;
+
+    public override int GetHashCode() => x.GetHashCode() ^ (y.GetHashCode() << 16);
+
+    public static Vector2s operator +(Vector2s a, Vector2s b) =>
+        new Vector2s((short)(a.x + b.x), (short)(a.y + b.y));
+    public static Vector2s operator -(Vector2s a, Vector2s b) =>
+        new Vector2s((short)(a.x - b.x), (short)(a.y - b.y));
+    public static bool operator ==(Vector2s a, Vector2s b) => a.x == b.x && a.y == b.y;
+    public static bool operator !=(Vector2s a, Vector2s b) => !(a == b);
+
+    public override string ToString() => $"({x}, {y})";
+}
+
 public class Heightmap
 {
     [System.Flags]
@@ -132,10 +177,11 @@ public class ZoneSystem
 
     public System.Collections.Generic.List<LocationInstance> GetLocationList() => Locations;
 
-    public static Vector2i GetZone(UnityEngine.Vector3 point) =>
+    // Valheim 1.0 types a zone id as Vector2s, not Vector2i.
+    public static Vector2s GetZone(UnityEngine.Vector3 point) =>
         new(UnityEngine.Mathf.FloorToInt((point.x + ZoneSize / 2f) / ZoneSize),
             UnityEngine.Mathf.FloorToInt((point.z + ZoneSize / 2f) / ZoneSize));
 
-    public static UnityEngine.Vector3 GetZonePos(Vector2i id) =>
+    public static UnityEngine.Vector3 GetZonePos(Vector2s id) =>
         new(id.x * ZoneSize, 0f, id.y * ZoneSize);
 }

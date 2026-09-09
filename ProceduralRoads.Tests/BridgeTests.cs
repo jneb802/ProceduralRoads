@@ -486,6 +486,109 @@ public class BridgeTests
 
     // ---- review regressions ----
 
+    /// <summary>Two 4 m deep channels with a low spit between them.</summary>
+    private sealed class TwinChannelWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 300f || Mathf.Abs(wy) > 300f) return 20f;
+            float ax = Mathf.Abs(wx);
+            if (ax < 20f) return 30.6f;
+            if (ax < 60f) return 25f;
+            if (ax < 66f) return 33f;
+            return 44f;
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy) =>
+            GetHeight(wx, wy) < RoadConstants.SeaLevel - 2f ? Heightmap.Biome.Ocean : Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
+        {
+            float ax = Mathf.Abs(wx);
+            weight = ax >= 20f && ax < 60f ? 1f : 0f;
+            width = weight > 0f ? 80f : 0f;
+        }
+    }
+
+    private static List<Vector2> StraightPath(float from, float to, float step)
+    {
+        List<Vector2> path = new();
+        for (float x = from; x <= to; x += step)
+            path.Add(new Vector2(x, 0f));
+        return path;
+    }
+
+    private static void PaintWithCrossings(List<Vector2> path, List<RoadCrossing> crossings) =>
+        typeof(RoadNetworkGenerator)
+            .GetMethod("AddRoadPathWithCrossings", BindingFlags.NonPublic | BindingFlags.Static)!
+            .Invoke(null, new object[] { path, crossings, 4f });
+
+    private static RoadCrossing BridgeSpanning(float fromBank, float toBank, int fromIndex, int toIndex)
+    {
+        RoadCrossing crossing = RoadCrossing.Between(
+            new Vector2(fromBank, 0f), new Vector2(toBank, 0f), 25f,
+            new Vector2((fromBank + toBank) * 0.5f, 0f), Mathf.Abs(toBank - fromBank) * 0.75f,
+            CrossingKind.Bridge);
+        crossing.FromIndex = fromIndex;
+        crossing.ToIndex = toIndex;
+        return crossing;
+    }
+
+    [Fact]
+    public void TwoCrossingsWhoseSpansOverlapAreStillPainted()
+    {
+        // A bridge's banks walk outward to the bank tops, and a swamp bridge's
+        // walk on to dry ground, so one crossing's span on the path can reach
+        // past the start of the next one. Painting must not assume the spans
+        // are disjoint: it threw, and a whole world's generation was lost.
+        var world = new TwinChannelWorld();
+        WorldGenerator.instance = world;
+        RoadNetworkGenerator.Reset();
+        try
+        {
+            List<Vector2> path = StraightPath(-160f, 160f, 8f);
+            PaintWithCrossings(path, new List<RoadCrossing>
+            {
+                BridgeSpanning(-72f, 8f, 11, 21),
+                BridgeSpanning(-8f, 72f, 19, 29),
+            });
+
+            foreach (float x in new[] { -140f, 140f })
+                Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 8f).Count > 0,
+                    $"no road painted at x={x}");
+
+            foreach (float x in new[] { -40f, 40f })
+            {
+                RoadSpatialGrid.GetRoadWeight(x, 0f, out float weight, out _);
+                Assert.Equal(0f, weight);
+            }
+        }
+        finally { TearDownGeneration(); }
+    }
+
+    [Fact]
+    public void ACrossingSwallowedByAWiderOneIsSkipped()
+    {
+        var world = new TwinChannelWorld();
+        WorldGenerator.instance = world;
+        RoadNetworkGenerator.Reset();
+        try
+        {
+            List<Vector2> path = StraightPath(-160f, 160f, 8f);
+            PaintWithCrossings(path, new List<RoadCrossing>
+            {
+                BridgeSpanning(-72f, 72f, 11, 29),
+                BridgeSpanning(-8f, 8f, 19, 21),
+            });
+
+            foreach (float x in new[] { -140f, 140f })
+                Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 8f).Count > 0,
+                    $"no road painted at x={x}");
+            RoadSpatialGrid.GetRoadWeight(0f, 0f, out float weight, out _);
+            Assert.Equal(0f, weight);
+        }
+        finally { TearDownGeneration(); }
+    }
+
+
     /// <summary>A 64 m wide knee-deep channel: longer than a ford, shallow enough for one.</summary>
     private sealed class LongShallowWorld : WorldGenerator
     {

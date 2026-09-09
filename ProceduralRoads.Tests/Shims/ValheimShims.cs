@@ -375,6 +375,9 @@ public class ZoneSystem
     // raises the event, however early a handler subscribed. Before 1.0 the setter
     // was the only writer and every path raised it.
     //
+    // The ordering that matters is the game's own: loading a world sets this from
+    // the save DURING the load, before the world's ZDOs are read.
+    //
     // The shim models all three doors so a test can tell them apart.
 
     private bool m_locationsGenerated;

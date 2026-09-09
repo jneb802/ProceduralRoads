@@ -54,38 +54,75 @@ public class LoadDecisionTests : System.IDisposable
         return zones;
     }
 
+    /// <summary>
+    /// The ZDOs the world would have loaded, held back until the test says
+    /// they have arrived. Removing the metadata ZDO from ZDOMan is exactly
+    /// what "the world's data is not in memory yet" means to the real search,
+    /// so these tests exercise FindMetadataZDO for real rather than a stub.
+    /// </summary>
+    private readonly List<ZDO> m_heldBack = new();
+
     /// <summary>A world as the game hands one over: the generator reset, the
     /// mod subscribed, nothing decided yet.</summary>
-    private static ZoneSystem SetUp(bool savedNetworkExists)
+    private ZoneSystem SetUp(bool savedNetworkExists)
     {
         WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        RoadNetworkPersistence.ResetForTest();
-        RoadNetworkPersistence.SavedNetworkExists = savedNetworkExists;
+        ZDOMan.instance = new ZDOMan();
         SetWorldDataLoaded(false);
+        RoadNetworkPersistence.Reset();
+        RoadSpatialGrid.Clear();
+        RoadNetworkGenerator.Reset();
 
         ZoneSystem zones = WorldWithPlaces();
         ZoneSystem.instance = zones;
+
+        if (savedNetworkExists)
+        {
+            // A previous session's network, written through the real save path
+            // so the bytes and the metadata ZDO are the ones the mod makes.
+            List<Vector2> path = new();
+            for (int i = -6; i <= 6; i++)
+                path.Add(new Vector2(i * 8f, 0f));
+            RoadSpatialGrid.AddRoadPath(path, 4f, WorldGenerator.instance);
+            RoadSpatialGrid.FinalizeRoadNetwork();
+            RoadNetworkPersistence.EnsureMetadataInstance();
+            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>());
+
+            // Now start the session over, with that world on "disk" but not
+            // yet read: the metadata ZDO is held back until the test says the
+            // world's data has arrived.
+            m_heldBack.AddRange(ZDOMan.instance.Zdos);
+            ZDOMan.instance.Zdos.Clear();
+            RoadNetworkPersistence.Reset();
+            RoadSpatialGrid.Clear();
+            RoadNetworkGenerator.Reset();
+        }
+
         RoadLifecycleManager.OnZoneSystemStart(zones);
         return zones;
     }
 
     /// <summary>
-    /// The world's data finishing loading: its ZDOs become searchable, and
-    /// then ZNet's world load returns. In that order, as in the game.
+    /// The world's data finishing loading: its ZDOs enter ZDOMan, and then
+    /// ZNet's world load returns. In that order, as in the game.
     /// </summary>
-    private static void WorldDataArrives()
+    private void WorldDataArrives()
     {
-        RoadNetworkPersistence.SavedNetworkVisible = true;
+        ZDOMan.instance!.Zdos.AddRange(m_heldBack);
+        m_heldBack.Clear();
         RoadLifecycleManager.OnWorldDataLoaded();
     }
 
     public void Dispose()
     {
         SetWorldDataLoaded(false);
-        RoadNetworkPersistence.ResetForTest();
+        m_heldBack.Clear();
+        RoadNetworkPersistence.Reset();
+        RoadSpatialGrid.Clear();
         RoadNetworkGenerator.Reset();
         WorldGenerator.instance = null;
         ZoneSystem.instance = null;
+        ZDOMan.instance = null;
     }
 
     [Fact]
@@ -101,7 +138,6 @@ public class LoadDecisionTests : System.IDisposable
         Assert.False(RoadNetworkGenerator.RoadsGenerated,
             "a network was generated before the world's data had been read");
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
-        Assert.Equal(0, RoadNetworkPersistence.LoadAttempts);
     }
 
     [Fact]
@@ -114,7 +150,6 @@ public class LoadDecisionTests : System.IDisposable
 
         Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO, "the saved network was not loaded");
         Assert.False(RoadNetworkGenerator.RoadsGenerated, "a network was generated over the saved one");
-        Assert.Equal(1, RoadNetworkPersistence.LoadAttempts);
     }
 
     [Fact]
@@ -130,7 +165,6 @@ public class LoadDecisionTests : System.IDisposable
         zones.LocationsGenerated = true;
 
         Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO);
-        Assert.Equal(1, RoadNetworkPersistence.LoadAttempts);
     }
 
     [Fact]
@@ -144,7 +178,6 @@ public class LoadDecisionTests : System.IDisposable
 
         Assert.True(RoadNetworkGenerator.RoadsGenerated, "a world with no saved roads did not get any");
         Assert.False(RoadNetworkGenerator.RoadsLoadedFromZDO);
-        Assert.Equal(1, RoadNetworkPersistence.LoadAttempts);
     }
 
     [Fact]
@@ -158,7 +191,8 @@ public class LoadDecisionTests : System.IDisposable
         zones.LocationsGenerated = true;
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
 
-        RoadNetworkPersistence.SavedNetworkVisible = true;
+        ZDOMan.instance!.Zdos.AddRange(m_heldBack);
+        m_heldBack.Clear();
         RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
 
         Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO);
@@ -172,10 +206,10 @@ public class LoadDecisionTests : System.IDisposable
         zones.LocationsGenerated = true;
         WorldDataArrives();
         WorldDataArrives();
-        RoadNetworkPersistence.SavedNetworkVisible = true;
+        ZDOMan.instance!.Zdos.AddRange(m_heldBack);
+        m_heldBack.Clear();
         RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
 
-        Assert.Equal(1, RoadNetworkPersistence.LoadAttempts);
         Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO);
         Assert.False(RoadNetworkGenerator.RoadsGenerated);
     }

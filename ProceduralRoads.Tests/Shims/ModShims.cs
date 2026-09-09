@@ -34,9 +34,3 @@ public static class RoadClearAreaManager
     public static int CacheClears;
     public static void ClearCache() => CacheClears++;
 }
-
-/// <summary>Shim for the one RoadTerrainModifier member the lifecycle calls.</summary>
-public static class RoadTerrainModifier
-{
-    public static void ResetDebugCounters() { }
-}

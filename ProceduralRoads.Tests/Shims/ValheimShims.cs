@@ -233,15 +233,16 @@ public class ZDOMan
         return true;
     }
 
-    /// <summary>The ZDOs whose position lies in the sector (zone).</summary>
     /// <summary>
-    /// Valheim 1.0 added the set of sectors the caller has already visited.
-    /// The shim records it and otherwise answers as before.
+    /// The ZDOs whose position lies in the sector (zone). Valheim 1.0 added the
+    /// set of sectors the caller has already visited; it is required here, as it
+    /// is in the game, so a caller that forgets it fails to compile rather than
+    /// silently passing null. The shim records it and otherwise answers as before.
     /// </summary>
     public void FindObjects(Vector2s sector, System.Collections.Generic.List<ZDO> objects,
-        System.Collections.Generic.HashSet<ZoneSystem.SectorIndex>? visitedSectorIndices = null)
+        System.Collections.Generic.HashSet<ZoneSystem.SectorIndex> visitedSectorIndices)
     {
-        visitedSectorIndices?.Add(new ZoneSystem.SectorIndex(sector));
+        visitedSectorIndices.Add(new ZoneSystem.SectorIndex(sector));
         foreach (var zdo in Zdos)
             if (zdo.GetSector() == sector)
                 objects.Add(zdo);

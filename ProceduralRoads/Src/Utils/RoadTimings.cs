@@ -52,7 +52,7 @@ public static class RoadTimings
 
     /// <summary>
     /// Off by default: a player's game records nothing (one branch per probe).
-    /// [Debug] Timings = true in the config, or road_timings reset / run,
+    /// PROCEDURALROADS_TIMINGS=1 in the environment, or road_timings reset / run,
     /// switches recording on for the session.
     /// </summary>
     public static bool Enabled { get; set; }

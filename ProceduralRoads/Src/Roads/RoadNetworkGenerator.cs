@@ -136,6 +136,7 @@ public static class RoadNetworkGenerator
     private static RoadPathfinder? m_pathfinder;
     private static int m_roadsGeneratedCount = 0;
     private static List<(Vector2 position, string label)> m_roadStartPoints = new();
+    private static List<RoadRoute> m_roadRoutes = new List<RoadRoute>();
 
     public static bool RoadsGenerated => m_roadsGenerated;
     public static bool IsLocationsReady => m_locationsReady;
@@ -146,6 +147,62 @@ public static class RoadNetworkGenerator
     /// Get the start points of all generated roads for visualization.
     /// </summary>
     public static IReadOnlyList<(Vector2 position, string label)> GetRoadStartPoints() => m_roadStartPoints;
+
+    /// <summary>
+    /// Get ordered centerlines for generated roads.
+    /// </summary>
+    public static IReadOnlyList<RoadRoute> GetRoadRoutes() => m_roadRoutes;
+
+    public static string GetRoadRouteLabel(int routeIndex)
+    {
+        if (routeIndex < 0 || routeIndex >= m_roadRoutes.Count)
+        {
+            return "";
+        }
+
+        return m_roadRoutes[routeIndex].Label;
+    }
+
+    public static List<Vector3> GetRoadRouteWaypoints(int routeIndex, float spacing, bool reverse)
+    {
+        if (routeIndex < 0 || routeIndex >= m_roadRoutes.Count)
+        {
+            return new List<Vector3>();
+        }
+
+        return m_roadRoutes[routeIndex].Resample(spacing, reverse);
+    }
+
+    public static int FindNearestRoadRouteIndex(Vector3 position, float radius)
+    {
+        float radiusSquared = radius * radius;
+        float bestDistanceSquared = float.MaxValue;
+        int bestIndex = -1;
+        Vector2 position2D = new Vector2(position.x, position.z);
+
+        for (int routeIndex = 0; routeIndex < m_roadRoutes.Count; routeIndex++)
+        {
+            RoadRoute route = m_roadRoutes[routeIndex];
+            for (int pointIndex = 0; pointIndex < route.Points.Count; pointIndex++)
+            {
+                Vector3 point = route.Points[pointIndex];
+                Vector2 point2D = new Vector2(point.x, point.z);
+                float distanceSquared = (point2D - position2D).sqrMagnitude;
+                if (distanceSquared < bestDistanceSquared)
+                {
+                    bestDistanceSquared = distanceSquared;
+                    bestIndex = routeIndex;
+                }
+            }
+        }
+
+        if (bestIndex < 0 || bestDistanceSquared > radiusSquared)
+        {
+            return -1;
+        }
+
+        return bestIndex;
+    }
 
     public static void Initialize() => Reset();
 
@@ -179,7 +236,7 @@ public static class RoadNetworkGenerator
             return;
         }
         
-        if (force && m_roadsGenerated)
+        if (force && (m_roadsGenerated || m_roadsLoadedFromZDO || RoadSpatialGrid.IsInitialized))
         {
             Log.LogDebug("Force regenerating roads...");
             Reset();
@@ -312,6 +369,8 @@ public static class RoadNetworkGenerator
         {
             string pinLabel = label ?? $"Road {m_roadsGeneratedCount}";
             m_roadStartPoints.Add((path[0], pinLabel));
+            RoadRoute route = RoadRoute.FromWaypoints(m_roadRoutes.Count, pinLabel, width, path, WorldGenerator.instance);
+            m_roadRoutes.Add(route);
         }
 
         if (label != null)
@@ -590,6 +649,7 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
+        m_roadRoutes.Clear();
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
     }
@@ -701,7 +761,7 @@ public static class RoadNetworkGenerator
             return;
         }
 
-        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints);
+        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadRoutes);
     }
 
     /// <summary>
@@ -711,7 +771,7 @@ public static class RoadNetworkGenerator
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData()
     {
-        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints);
+        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadRoutes);
     }
 
     #endregion

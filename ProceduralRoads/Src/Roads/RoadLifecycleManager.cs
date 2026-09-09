@@ -25,6 +25,7 @@ public static class RoadLifecycleManager
         zoneSystem.GenerateLocationsCompleted -= OnLocationsGenerated;
         RoadNetworkGenerator.Reset();
         RoadClearAreaManager.ClearCache();
+        RoadVegetationCleaner.Reset();
         RoadTerrainModifier.ResetDebugCounters();
 
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road data cleared on world unload");
@@ -38,6 +39,7 @@ public static class RoadLifecycleManager
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete...");
         RoadNetworkGenerator.MarkLocationsReady();
         RoadClearAreaManager.ClearCache();
+        RoadVegetationCleaner.Reset();
 
         bool hasWorldGen = WorldGenerator.instance != null;
         bool hasLocations = ZoneSystem.instance?.GetLocationList()?.Count > 0;

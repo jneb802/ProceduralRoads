@@ -40,15 +40,17 @@ public static class ZoneSystem_Patch
         [HarmonyPostfix]
         public static void Postfix(ZoneSystem __instance, Vector2i zoneID, ZoneSystem.SpawnMode mode, ref bool __result)
         {
-            if (mode == ZoneSystem.SpawnMode.Client)
+            if (!__result || !RoadNetworkGenerator.RoadsGenerated)
                 return;
 
-            if (__result && RoadNetworkGenerator.RoadsGenerated)
-            {
-                List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-                if (roadPoints.Count > 0)
-                    RoadTerrainModifier.ApplyRoadTerrainMods(zoneID, roadPoints);
-            }
+            List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+            if (roadPoints.Count == 0)
+                return;
+
+            if (mode == ZoneSystem.SpawnMode.Client)
+                RoadVegetationCleaner.RemoveOverlappingVegetation(zoneID, roadPoints);
+            else
+                RoadTerrainModifier.ApplyRoadTerrainMods(zoneID, roadPoints);
         }
     }
 

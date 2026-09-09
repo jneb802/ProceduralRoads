@@ -32,6 +32,11 @@ public static class RoadNetworkPersistence
     private static readonly int RoadStartPointsHash = "ProceduralRoads_StartPoints".GetStableHashCode();
 
     /// <summary>
+    /// Hash key for storing ordered road routes on the ZDO.
+    /// </summary>
+    private static readonly int RoadRoutesHash = "ProceduralRoads_Routes".GetStableHashCode();
+
+    /// <summary>
     /// Hash key for storing global road network data on the ZDO.
     /// </summary>
     private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
@@ -93,7 +98,9 @@ public static class RoadNetworkPersistence
     /// <summary>
     /// Save the entire road network to a dedicated ZDO for persistence across world reloads.
     /// </summary>
-    public static void SaveGlobalRoadData(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
+    public static void SaveGlobalRoadData(
+        IReadOnlyList<(Vector2 position, string label)> roadStartPoints,
+        IReadOnlyList<RoadRoute> roadRoutes)
     {
         Log.LogDebug($"[SAVE] SaveGlobalRoadData called");
 
@@ -131,6 +138,13 @@ public static class RoadNetworkPersistence
             metadataZdo.Set(RoadStartPointsHash, startPointsData);
             Log.LogDebug($"[SAVE] Saved {roadStartPoints.Count} road start points ({startPointsData.Length} bytes)");
         }
+
+        byte[] routesData = SerializeRoadRoutes(roadRoutes);
+        if (routesData.Length > 0)
+        {
+            metadataZdo.Set(RoadRoutesHash, routesData);
+            Log.LogDebug($"[SAVE] Saved {roadRoutes.Count} road routes ({routesData.Length} bytes)");
+        }
     }
 
     /// <summary>
@@ -138,7 +152,9 @@ public static class RoadNetworkPersistence
     /// </summary>
     /// <param name="roadStartPoints">List to populate with loaded start points</param>
     /// <returns>True if road data was found and loaded</returns>
-    public static bool TryLoadGlobalRoadData(List<(Vector2 position, string label)> roadStartPoints)
+    public static bool TryLoadGlobalRoadData(
+        List<(Vector2 position, string label)> roadStartPoints,
+        List<RoadRoute> roadRoutes)
     {
         Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
 
@@ -171,11 +187,42 @@ public static class RoadNetworkPersistence
             Log.LogDebug($"[LOAD] Successfully loaded: {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
 
             TryLoadRoadMetadata(roadStartPoints);
+            TryLoadRoadRoutes(roadRoutes);
 
             return true;
         }
 
         Log.LogWarning("[LOAD] DeserializeAllRoadPoints returned false!");
+        return false;
+    }
+
+    public static bool TryLoadRoadRoutes(List<RoadRoute> roadRoutes)
+    {
+        if (ZDOMan.instance == null)
+        {
+            return false;
+        }
+
+        ZDO? metadataZdo = FindMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogDebug("No road metadata ZDO found");
+            return false;
+        }
+
+        byte[]? data = metadataZdo.GetByteArray(RoadRoutesHash, null);
+        if (data == null || data.Length == 0)
+        {
+            Log.LogDebug("Metadata ZDO found but no route data");
+            return false;
+        }
+
+        if (DeserializeRoadRoutes(data, roadRoutes))
+        {
+            Log.LogDebug($"Loaded {roadRoutes.Count} road routes from ZDO");
+            return true;
+        }
+
         return false;
     }
 
@@ -338,6 +385,103 @@ public static class RoadNetworkPersistence
         catch (Exception ex)
         {
             Log.LogWarning($"Failed to deserialize road start points: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static byte[] SerializeRoadRoutes(IReadOnlyList<RoadRoute> roadRoutes)
+    {
+        using MemoryStream ms = new MemoryStream();
+        using BinaryWriter writer = new BinaryWriter(ms);
+
+        writer.Write(1);
+        writer.Write(roadRoutes.Count);
+
+        for (int i = 0; i < roadRoutes.Count; i++)
+        {
+            RoadRoute route = roadRoutes[i];
+            writer.Write(route.Index);
+            writer.Write(route.Width);
+
+            byte[] labelBytes = Encoding.UTF8.GetBytes(route.Label ?? "");
+            writer.Write(labelBytes.Length);
+            writer.Write(labelBytes);
+
+            writer.Write(route.Points.Count);
+            for (int pointIndex = 0; pointIndex < route.Points.Count; pointIndex++)
+            {
+                Vector3 point = route.Points[pointIndex];
+                writer.Write(point.x);
+                writer.Write(point.y);
+                writer.Write(point.z);
+            }
+        }
+
+        return ms.ToArray();
+    }
+
+    private static bool DeserializeRoadRoutes(byte[] data, List<RoadRoute> roadRoutes)
+    {
+        try
+        {
+            using MemoryStream ms = new MemoryStream(data);
+            using BinaryReader reader = new BinaryReader(ms);
+
+            int version = reader.ReadInt32();
+            if (version != 1)
+            {
+                Log.LogWarning($"Unknown route data version: {version}");
+                return false;
+            }
+
+            int count = reader.ReadInt32();
+            if (count < 0 || count > 10000)
+            {
+                Log.LogWarning($"Invalid road route count: {count}");
+                return false;
+            }
+
+            roadRoutes.Clear();
+
+            for (int i = 0; i < count; i++)
+            {
+                int index = reader.ReadInt32();
+                float width = reader.ReadSingle();
+                int labelLen = reader.ReadInt32();
+
+                if (labelLen < 0 || labelLen > 1000)
+                {
+                    Log.LogWarning($"Invalid route label length: {labelLen}");
+                    return false;
+                }
+
+                byte[] labelBytes = reader.ReadBytes(labelLen);
+                string label = Encoding.UTF8.GetString(labelBytes);
+
+                int pointCount = reader.ReadInt32();
+                if (pointCount < 0 || pointCount > 100000)
+                {
+                    Log.LogWarning($"Invalid route point count: {pointCount}");
+                    return false;
+                }
+
+                List<Vector3> points = new List<Vector3>(pointCount);
+                for (int pointIndex = 0; pointIndex < pointCount; pointIndex++)
+                {
+                    float x = reader.ReadSingle();
+                    float y = reader.ReadSingle();
+                    float z = reader.ReadSingle();
+                    points.Add(new Vector3(x, y, z));
+                }
+
+                roadRoutes.Add(new RoadRoute(index, label, width, points));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"Failed to deserialize road routes: {ex.Message}");
             return false;
         }
     }

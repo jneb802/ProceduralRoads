@@ -42,9 +42,14 @@ public static class RoadConstants
     public const float MinHeightDeltaThreshold = 0.01f;
     public const float MinBlendForModification = 0.5f;
     
-    public const float VegetationClearMultiplier = 0.6f;
-    public const float VegetationClearSampleInterval = 4f;
+    public const float VegetationClearMargin = 1.5f;
+    public const float VegetationClearSampleInterval = 2f;
     
     public const int MaxCoordDebugLogs = 3;
     public const int MaxVertexModificationLogs = 3;
+
+    public static float GetVegetationClearRadius(float roadWidth)
+    {
+        return roadWidth * 0.5f + VegetationClearMargin;
+    }
 }

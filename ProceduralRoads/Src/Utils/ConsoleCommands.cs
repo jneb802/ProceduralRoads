@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using BepInEx.Logging;
@@ -70,6 +71,36 @@ public static class ConsoleCommands
             "road_pins",
             "Place map pins at the start point of each generated road.",
             (args) => ShowRoadStartPins(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_routes",
+            "List generated road routes for actor pathing.",
+            (args) => ListRoadRoutes(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_route_nearest",
+            "Find the road route nearest to the player. Usage: road_route_nearest [radius=200]",
+            (args) => FindNearestRoadRoute(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_route_export",
+            "Export a route for valheimCLI. Usage: road_route_export <index|nearest> [spacing=6] [walk|run|sprint] [reverse] [points|commands]",
+            (args) => ExportRoadRoute(args),
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
@@ -256,6 +287,179 @@ public static class ConsoleCommands
         }
 
         args.Context.AddString($"Added {pinCount} road start pins. Use 'road_clearpins' to remove them.");
+    }
+
+    private static void ListRoadRoutes(Terminal.ConsoleEventArgs args)
+    {
+        IReadOnlyList<RoadRoute> routes = RoadNetworkGenerator.GetRoadRoutes();
+        if (routes.Count == 0)
+        {
+            args.Context.AddString("ERROR: No road routes available. Generate roads with this ProceduralRoads version, or run road_generate to rebuild route metadata.");
+            return;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.AppendLine($"OK: {routes.Count} road route(s)");
+        for (int i = 0; i < routes.Count; i++)
+        {
+            RoadRoute route = routes[i];
+            Vector3 start = route.Points.Count > 0 ? route.Points[0] : Vector3.zero;
+            Vector3 end = route.Points.Count > 0 ? route.Points[route.Points.Count - 1] : Vector3.zero;
+            sb.AppendLine(
+                $"ROUTE {i} label=\"{route.Label}\" length={route.Length.ToString("F1", CultureInfo.InvariantCulture)}m points={route.Points.Count} start=({FormatVector(start)}) end=({FormatVector(end)})");
+        }
+
+        args.Context.AddString(sb.ToString().TrimEnd());
+    }
+
+    private static void FindNearestRoadRoute(Terminal.ConsoleEventArgs args)
+    {
+        Player player = Player.m_localPlayer;
+        if (player == null)
+        {
+            args.Context.AddString("ERROR: No local player found");
+            return;
+        }
+
+        float radius = 200f;
+        if (args.Length >= 2 && !float.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out radius))
+        {
+            float.TryParse(args[1], out radius);
+        }
+
+        int routeIndex = RoadNetworkGenerator.FindNearestRoadRouteIndex(player.transform.position, radius);
+        if (routeIndex < 0)
+        {
+            args.Context.AddString($"ERROR: No route found within {radius.ToString("F1", CultureInfo.InvariantCulture)}m");
+            return;
+        }
+
+        IReadOnlyList<RoadRoute> routes = RoadNetworkGenerator.GetRoadRoutes();
+        RoadRoute route = routes[routeIndex];
+        args.Context.AddString(
+            $"OK: nearestRoute={routeIndex} label=\"{route.Label}\" length={route.Length.ToString("F1", CultureInfo.InvariantCulture)}m points={route.Points.Count}");
+    }
+
+    private static void ExportRoadRoute(Terminal.ConsoleEventArgs args)
+    {
+        if (args.Length < 2)
+        {
+            args.Context.AddString("Usage: road_route_export <index|nearest> [spacing=6] [walk|run|sprint] [reverse] [points|commands]");
+            return;
+        }
+
+        bool reverse = false;
+        bool commands = true;
+        string gait = "walk";
+        float spacing = 6f;
+        bool spacingParsed = false;
+
+        for (int i = 2; i < args.Length; i++)
+        {
+            string option = args[i].ToLowerInvariant();
+            if (option == "reverse")
+            {
+                reverse = true;
+            }
+            else if (option == "points")
+            {
+                commands = false;
+            }
+            else if (option == "commands")
+            {
+                commands = true;
+            }
+            else if (option == "walk" || option == "run" || option == "sprint")
+            {
+                gait = option;
+            }
+            else if (!spacingParsed && TryParseFloat(args[i], out float parsedSpacing))
+            {
+                spacing = parsedSpacing;
+                spacingParsed = true;
+            }
+            else
+            {
+                args.Context.AddString($"ERROR: Unknown option '{args[i]}'. Use spacing, walk, run, sprint, reverse, points, or commands.");
+                return;
+            }
+        }
+
+        int routeIndex = ResolveRouteIndex(args[1], 200f);
+        if (routeIndex < 0)
+        {
+            args.Context.AddString($"ERROR: Route '{args[1]}' was not found");
+            return;
+        }
+
+        IReadOnlyList<RoadRoute> routes = RoadNetworkGenerator.GetRoadRoutes();
+        if (routeIndex >= routes.Count)
+        {
+            args.Context.AddString($"ERROR: Route index {routeIndex} is out of range. Route count={routes.Count}");
+            return;
+        }
+
+        RoadRoute route = routes[routeIndex];
+        List<Vector3> waypoints = route.Resample(spacing, reverse);
+        StringBuilder sb = new StringBuilder();
+        sb.AppendLine(
+            $"OK: route={routeIndex} label=\"{route.Label}\" waypoints={waypoints.Count} spacing={spacing.ToString("F1", CultureInfo.InvariantCulture)} gait={gait} reverse={reverse}");
+
+        if (commands)
+        {
+            sb.AppendLine("cli_route_clear");
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                Vector3 point = waypoints[i];
+                sb.AppendLine($"cli_route_add {FormatFloat(point.x)} {FormatFloat(point.y)} {FormatFloat(point.z)} {gait}");
+            }
+        }
+        else
+        {
+            for (int i = 0; i < waypoints.Count; i++)
+            {
+                Vector3 point = waypoints[i];
+                sb.AppendLine($"POINT {i} {FormatVector(point)}");
+            }
+        }
+
+        args.Context.AddString(sb.ToString().TrimEnd());
+    }
+
+    private static int ResolveRouteIndex(string selector, float nearestRadius)
+    {
+        if (selector.Equals("nearest", System.StringComparison.OrdinalIgnoreCase))
+        {
+            Player player = Player.m_localPlayer;
+            if (player == null)
+            {
+                return -1;
+            }
+
+            return RoadNetworkGenerator.FindNearestRoadRouteIndex(player.transform.position, nearestRadius);
+        }
+
+        if (!int.TryParse(selector, out int routeIndex))
+        {
+            return -1;
+        }
+
+        return routeIndex;
+    }
+
+    private static bool TryParseFloat(string value, out float parsed)
+    {
+        return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed) || float.TryParse(value, out parsed);
+    }
+
+    private static string FormatVector(Vector3 point)
+    {
+        return $"{FormatFloat(point.x)},{FormatFloat(point.y)},{FormatFloat(point.z)}";
+    }
+
+    private static string FormatFloat(float value)
+    {
+        return value.ToString("F2", CultureInfo.InvariantCulture);
     }
 
     /// <summary>

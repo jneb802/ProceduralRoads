@@ -26,6 +26,7 @@ public static class RoadTerrainModifier
 
         ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
         ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
+        stats.VegetationRemoved = RoadVegetationCleaner.RemoveOverlappingVegetation(zoneID, roadPoints);
         FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
     }
 
@@ -57,6 +58,7 @@ public static class RoadTerrainModifier
 
         ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context);
         ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
+        stats.VegetationRemoved = RoadVegetationCleaner.RemoveOverlappingVegetation(zoneID, roadPoints);
         FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context);
     }
 
@@ -93,6 +95,7 @@ public static class RoadTerrainModifier
     {
         public int VerticesModified;
         public int VerticesChecked;
+        public int VegetationRemoved;
         public HashSet<Vector2i> PaintedCells;
     }
 
@@ -257,7 +260,12 @@ public static class RoadTerrainModifier
             context.TerrainComp.Save();
             context.Heightmap.Poke(true);
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
+                $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells, {stats.VegetationRemoved} vegetation removed");
+        }
+        else if (stats.VegetationRemoved > 0)
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Zone {zoneID}: {stats.VegetationRemoved} vegetation removed");
         }
         else if (roadPointCount > 0)
         {

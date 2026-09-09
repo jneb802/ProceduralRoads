@@ -55,7 +55,7 @@ public static class RoadClearAreaManager
                 0f,
                 cell.y * RoadConstants.VegetationClearSampleInterval);
             
-            float radius = roadPoint.w * RoadConstants.VegetationClearMultiplier;
+            float radius = RoadConstants.GetVegetationClearRadius(roadPoint.w);
             clearAreas.Add(new ZoneSystem.ClearArea(center, radius));
         }
 

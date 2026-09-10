@@ -277,20 +277,9 @@ public static class RoadCrossingDetector
         }
         else if (swamp)
         {
-            // A BRIDGE starts and ends on land above the water: in a swamp the
-            // wade shelf is road-legal, so the banks found above can sit under
-            // the waterline; walk each one straight out along the crossing
-            // line until the ground clears the waterline, even if that makes
-            // the deck longer. The painted lead still reaches the abutment.
-            float dryFloor = RoadPathfinder.LandingFloor;
-            bool fromWet = BiomeBlendedHeight.GetBlendedHeight(from.x, from.y, world) < dryFloor;
-            bool toWet = BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world) < dryFloor;
-            if (fromWet)
-                from = FirstDryAlongLine(from, -direction, RoadConstants.SwampBridgeDryReach, world, dryFloor);
-            if (toWet)
-                to = FirstDryAlongLine(to, direction, RoadConstants.SwampBridgeDryReach, world, dryFloor);
             // The profile keeps its riverbed and fairway: the added deck is
             // over the shelf, which is shallower than both.
+            (from, to) = ExtendOverSwampShelf(from, to, world);
         }
 
         RoadCrossing crossing = RoadCrossing.Between(from, to, riverbed, fairwayCenter, fairwayWidth,
@@ -432,6 +421,31 @@ public static class RoadCrossingDetector
     /// <summary>Walks straight out from a bank along <paramref name="outward"/>
     /// and returns the first point whose ground is at least <paramref name="floor"/>
     /// high, or the bank itself when none lies within reach.</summary>
+    /// <summary>
+    /// A BRIDGE starts and ends on land above the water, but in a swamp the
+    /// wade shelf is road-legal, so the banks the search landed on can sit
+    /// under the waterline. Walk each wet bank straight out along the crossing
+    /// line until the ground clears the waterline, even though that makes the
+    /// deck longer. The painted lead still reaches the abutment.
+    ///
+    /// The pathfinder calls this too, BEFORE it accepts the jump. It has to:
+    /// moving a bank afterwards would change a span the search had already
+    /// measured against its limit and already priced, and a 64 m jump can come
+    /// out over 150 m long once a long shelf is walked. Both sides must see the
+    /// same geometry, and the side that can still choose a different route is
+    /// the one that has to see it first.
+    /// </summary>
+    public static (Vector2 from, Vector2 to) ExtendOverSwampShelf(Vector2 from, Vector2 to, WorldGenerator world)
+    {
+        Vector2 direction = (to - from).normalized;
+        float dryFloor = RoadPathfinder.LandingFloor;
+        if (BiomeBlendedHeight.GetBlendedHeight(from.x, from.y, world) < dryFloor)
+            from = FirstDryAlongLine(from, -direction, RoadConstants.SwampBridgeDryReach, world, dryFloor);
+        if (BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world) < dryFloor)
+            to = FirstDryAlongLine(to, direction, RoadConstants.SwampBridgeDryReach, world, dryFloor);
+        return (from, to);
+    }
+
     private static Vector2 FirstDryAlongLine(Vector2 bank, Vector2 outward, float reach, WorldGenerator world, float floor)
     {
         for (float d = 0.5f; d <= reach; d += 0.5f)

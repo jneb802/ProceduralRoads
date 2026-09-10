@@ -1194,4 +1194,81 @@ public class BridgeTests
         }
         finally { ZDOMan.instance = null; BridgePlans.Reset(); }
     }
+
+    // ---- the swamp shelf ----
+
+    /// <summary>
+    /// A swamp the road approaches over a long wade shelf. The shelf sits above
+    /// DeepWaterHeight, so ordinary swamp travel crosses it happily, but below
+    /// LandingFloor, so a bridge may not spring from it -- which is exactly the
+    /// case where a bank gets walked outward to find dry ground. West to east:
+    /// dry ground, ShelfLength metres of shelf, the sailable channel, dry again.
+    /// </summary>
+    private sealed class SwampShelfWorld : WorldGenerator
+    {
+        public float HalfChannel = 20f;
+        public float ShelfLength = 100f;
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 260f || Mathf.Abs(wy) > 120f) return 20f;   // bounded, as the other fixtures are
+            if (Mathf.Abs(wx) <= HalfChannel) return 26f;                    // sailable channel
+            if (wx < -HalfChannel && wx > -HalfChannel - ShelfLength) return 31.0f;  // wade shelf: wet, near-level with the far bank
+            return 33f;                                                      // dry ground
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy) => Heightmap.Biome.Swamp;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
+        {
+            weight = Mathf.Abs(wx) <= HalfChannel ? 1f : 0f;
+            width = weight > 0f ? HalfChannel * 2f : 0f;
+        }
+    }
+
+    [Fact]
+    public void ABridgeIsNeverLongerThanTheSpanTheSearchWasAllowedToAccept()
+    {
+        // The search measures a jump against MaxBridgeCrossingCells and prices
+        // it by its length. In a swamp the banks then get walked outward over
+        // the wade shelf to find dry ground -- and when that happened AFTER the
+        // search, a jump accepted at 41 m came back as a 140.5 m bridge on a
+        // 128 m cap, at a price nobody charged for it. Measured, not supposed:
+        // this fixture built exactly that before the walk moved into routing.
+        //
+        // Whatever the search accepts, the bridge that gets built fits the cap.
+        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        foreach (float shelf in new[] { 0f, 30f, 100f, 200f })
+        {
+            var world = new SwampShelfWorld { ShelfLength = shelf };
+            WorldGenerator.instance = world;
+            try
+            {
+                var path = Pathfinder(world, true).FindPath(new Vector2(-200f, 0f), new Vector2(200f, 0f));
+                Assert.True(path != null, $"shelf {shelf} m: no route at all, so this proves nothing");
+                var crossings = RoadCrossingDetector.Detect(path!, world, true);
+                Assert.NotEmpty(crossings);
+                foreach (RoadCrossing c in crossings)
+                {
+                    if (c.Kind != CrossingKind.Bridge)
+                        continue;
+                    Assert.True(c.Width <= cap + 0.5f,
+                        $"shelf {shelf} m: built a {c.Width:F1} m bridge, cap is {cap:F0} m");
+                }
+            }
+            finally { WorldGenerator.instance = null; }
+        }
+    }
+
+    [Fact]
+    public void AShelfWithNoDryGroundLeavesTheBanksWhereTheyWere()
+    {
+        // FirstDryAlongLine gives up and returns the bank it started from when
+        // nothing within reach clears the waterline. The span must then be the
+        // one the search measured, not something longer.
+        var world = new SwampShelfWorld { ShelfLength = 10000f };   // never dry within reach
+        var from = new Vector2(-25f, 0f);
+        var to = new Vector2(25f, 0f);
+        var (f2, t2) = RoadCrossingDetector.ExtendOverSwampShelf(from, to, world);
+        Assert.Equal(from.x, f2.x, 3);
+        Assert.True(Vector2.Distance(f2, t2) <= RoadConstants.SwampBridgeDryReach + Vector2.Distance(from, to) + 0.5f);
+    }
+
 }

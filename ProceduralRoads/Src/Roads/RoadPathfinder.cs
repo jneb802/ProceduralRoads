@@ -279,7 +279,20 @@ public class RoadPathfinder
             if (!sawRiverWater)
                 return false;
 
-            float distance = Vector2.Distance(fromWorld, world);
+            bool bridgesAllowed = Bridges;
+            Vector2 fromBank = fromWorld;
+            Vector2 toBank = world;
+            // In a swamp the detector walks a wet bank out over the wade shelf
+            // until it finds dry ground, which can add a great deal of deck.
+            // Do it HERE, before the span is measured against the cap and
+            // before the crossing is priced, so the search judges the bridge it
+            // will actually get. Deciding afterwards would leave a route
+            // accepted at one length and built at another.
+            if (bridgesAllowed && m_worldGen.GetBiome(
+                    (fromWorld.x + world.x) * 0.5f, (fromWorld.y + world.y) * 0.5f) == Heightmap.Biome.Swamp)
+                (fromBank, toBank) = RoadCrossingDetector.ExtendOverSwampShelf(fromWorld, world, m_worldGen);
+
+            float distance = Vector2.Distance(fromBank, toBank);
             // The cells are 8 m apart and a channel can hide between them:
             // the whole jump is sampled every 2 m before its depth is trusted.
             deepest = Mathf.Min(deepest, DeepestAlong(fromWorld, world));
@@ -290,7 +303,9 @@ public class RoadPathfinder
             if (distance > maxCells * CellSize)
                 return false;
 
-            float bankDelta = Mathf.Abs(height - fromHeight);
+            float bankDelta = Mathf.Abs(
+                BiomeBlendedHeight.GetBlendedHeight(toBank.x, toBank.y, m_worldGen)
+                - BiomeBlendedHeight.GetBlendedHeight(fromBank.x, fromBank.y, m_worldGen));
             if (bankDelta > (bridge ? RoadConstants.MaxBridgeBankDelta : RoadConstants.MaxFordBankDelta))
                 return false;
 

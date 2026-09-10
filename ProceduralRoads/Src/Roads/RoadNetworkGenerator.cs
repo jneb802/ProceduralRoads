@@ -164,6 +164,7 @@ public static class RoadNetworkGenerator
     public static void MarkRoadsLoadedFromZDO()
     {
         m_roadsLoadedFromZDO = true;
+        m_roadsGenerated = true;
         Log.LogDebug("Roads marked as loaded from ZDO persistence");
     }
 

@@ -47,6 +47,51 @@ public struct Vector2i
     public override string ToString() => $"({x}, {y})";
 }
 
+/// <summary>
+/// Mirror of Valheim 1.0's global Vector2s, which replaced Vector2i as the
+/// type of a zone id. The fields really are short in the game: a zone id is
+/// small and the game packs a lot of them, so the mod must not assume it can
+/// put an arbitrary int in one. The int constructor narrows exactly as the
+/// game's does, which is why the mod's own grid coordinates stay Vector2i.
+/// </summary>
+public struct Vector2s
+{
+    public short x;
+    public short y;
+
+    public Vector2s(short x, short y)
+    {
+        this.x = x;
+        this.y = y;
+    }
+
+    public Vector2s(int x, int y)
+    {
+        this.x = (short)x;
+        this.y = (short)y;
+    }
+
+    public Vector2s(Vector2i v)
+    {
+        x = (short)v.x;
+        y = (short)v.y;
+    }
+
+    public override bool Equals(object? other) =>
+        other is Vector2s v && v.x == x && v.y == y;
+
+    public override int GetHashCode() => x.GetHashCode() ^ (y.GetHashCode() << 16);
+
+    public static Vector2s operator +(Vector2s a, Vector2s b) =>
+        new Vector2s((short)(a.x + b.x), (short)(a.y + b.y));
+    public static Vector2s operator -(Vector2s a, Vector2s b) =>
+        new Vector2s((short)(a.x - b.x), (short)(a.y - b.y));
+    public static bool operator ==(Vector2s a, Vector2s b) => a.x == b.x && a.y == b.y;
+    public static bool operator !=(Vector2s a, Vector2s b) => !(a == b);
+
+    public override string ToString() => $"({x}, {y})";
+}
+
 public class Heightmap
 {
     [System.Flags]
@@ -63,6 +108,204 @@ public class Heightmap
         Ocean = 256,
         Mistlands = 512,
     }
+
+    // --- terrain-modifier surface (RoadTerrainModifier) ---
+    // A zone heightmap: m_width vertices per side plus one, m_scale metres
+    // per vertex, centred on transform.position. Tests build one per zone
+    // with a TerrainComp whose arrays start zeroed, exactly like a fresh
+    // _TerrainCompiler in the game.
+    public static UnityEngine.Color m_paintMaskPaved = new(0f, 0f, 1f, 1f);
+    public static Heightmap? Registered;
+
+    public Transform transform = new();
+    public float m_scale = 1f;
+    public TerrainComp? m_terrainComp;
+    public int PokeCount;
+
+    public static Heightmap? FindHeightmap(UnityEngine.Vector3 point) => Registered;
+    public static System.Collections.Generic.List<Heightmap> GetAllHeightmaps() =>
+        Registered == null ? new() : new() { Registered };
+    /// <summary>Like the game: the zone's live compiler, or a new one (with a new ZDO) if it has none.</summary>
+    public TerrainComp GetAndCreateTerrainCompiler() => m_terrainComp ??= new TerrainComp(this, 64);
+    /// <summary>Valheim 1.0: the argument selects which late pass rebuilds
+    /// (1 = LateUpdate, 2 = CustomLateUpdate), it is not a frame count.</summary>
+    public void Poke(int delayed = 0, bool paintOnly = false) { PokeCount++; LastPokeDelayed = delayed; }
+    public int LastPokeDelayed;
+
+    public static Heightmap CreateForZone(Vector2s zoneID, int width = 64, bool withCompiler = true)
+    {
+        var hm = new Heightmap { m_scale = ZoneSystem.ZoneSize / width };
+        hm.transform.position = ZoneSystem.GetZonePos(zoneID);
+        if (withCompiler)
+            hm.m_terrainComp = new TerrainComp(hm, width);
+        return hm;
+    }
+}
+
+/// <summary>Shim for UnityEngine.Transform: only the position is read.</summary>
+public class Transform
+{
+    public UnityEngine.Vector3 position;
+}
+
+/// <summary>Shim for ZNetView: one ZDO behind it, ours unless a test says otherwise.</summary>
+public class ZNetView
+{
+    public ZDO Zdo;
+    public ZNetView(ZDO zdo) { Zdo = zdo; }
+    public bool IsValid() => Zdo != null;
+    public bool IsOwner() => Zdo.IsOwner();
+    public bool HasOwner() => Zdo.HasOwner();
+    public void ClaimOwnership() { if (!IsOwner()) Zdo.SetOwner(ZDOMan.instance?.m_sessionID ?? 1); }
+    public ZDO GetZDO() => Zdo;
+}
+
+/// <summary>Mirror of Valheim's ZDOID, as far as the road code prints it.</summary>
+public struct ZDOID
+{
+    public long ID;
+    public override string ToString() => ID.ToString();
+}
+
+/// <summary>
+/// Shim for a Valheim ZDO: the typed key/value bag the road code stores its
+/// network and per-zone markers in. Only the members the mod calls.
+/// </summary>
+public class ZDO
+{
+    private static long s_nextId = 1;
+
+    public ZDOID m_uid = new() { ID = s_nextId++ };
+    public bool Persistent;
+    private int m_prefab;
+    private long m_owner;
+    private UnityEngine.Vector3 m_position;
+    private readonly System.Collections.Generic.Dictionary<int, int> m_ints = new();
+    private readonly System.Collections.Generic.Dictionary<int, byte[]> m_byteArrays = new();
+
+    public ZDO(UnityEngine.Vector3 position, int prefab)
+    {
+        m_position = position;
+        m_prefab = prefab;
+    }
+
+    public void SetPrefab(int prefab) => m_prefab = prefab;
+    public int GetPrefab() => m_prefab;
+    public void SetOwner(long owner) => m_owner = owner;
+    public long GetOwner() => m_owner;
+    public bool HasOwner() => m_owner != 0;
+    /// <summary>Ours when it carries our session id; without a ZDOMan every ZDO counts as ours.</summary>
+    public bool IsOwner() => ZDOMan.instance == null || m_owner == ZDOMan.instance.m_sessionID;
+    public UnityEngine.Vector3 GetPosition() => m_position;
+    public Vector2s GetSector() => ZoneSystem.GetZone(m_position);
+    public void SetPosition(UnityEngine.Vector3 position) => m_position = position;
+
+    public void Set(int hash, int value) => m_ints[hash] = value;
+    public int GetInt(int hash, int defaultValue = 0) => m_ints.TryGetValue(hash, out int v) ? v : defaultValue;
+    public void Set(int hash, byte[] value) => m_byteArrays[hash] = value;
+    public byte[]? GetByteArray(int hash, byte[]? defaultValue = null) =>
+        m_byteArrays.TryGetValue(hash, out var v) ? v : defaultValue;
+}
+
+/// <summary>Shim for ZDOMan: the world's ZDOs as a list. Tests create one per world.</summary>
+public class ZDOMan
+{
+    public static ZDOMan? instance;
+
+    public long m_sessionID = 1;
+    public readonly System.Collections.Generic.List<ZDO> Zdos = new();
+
+    public ZDO CreateNewZDO(UnityEngine.Vector3 position, int prefabHash)
+    {
+        var zdo = new ZDO(position, prefabHash);
+        Zdos.Add(zdo);
+        return zdo;
+    }
+
+    /// <summary>Adds every ZDO of the prefab to the list; the real one pages, this one finishes in a single call.</summary>
+    public bool GetAllZDOsWithPrefabIterative(string prefab, System.Collections.Generic.List<ZDO> zdos, ref int index)
+    {
+        int hash = prefab.GetStableHashCode();
+        foreach (var zdo in Zdos)
+            if (zdo.GetPrefab() == hash)
+                zdos.Add(zdo);
+        index = Zdos.Count;
+        return true;
+    }
+
+    /// <summary>
+    /// The ZDOs whose position lies in the sector (zone). Valheim 1.0 added the
+    /// set of sectors the caller has already visited; it is required here, as it
+    /// is in the game, so a caller that forgets it fails to compile rather than
+    /// silently passing null. The shim records it and otherwise answers as before.
+    /// </summary>
+    public void FindObjects(Vector2s sector, System.Collections.Generic.List<ZDO> objects,
+        System.Collections.Generic.HashSet<ZoneSystem.SectorIndex> visitedSectorIndices)
+    {
+        visitedSectorIndices.Add(new ZoneSystem.SectorIndex(sector));
+        foreach (var zdo in Zdos)
+            if (zdo.GetSector() == sector)
+                objects.Add(zdo);
+    }
+
+    public int CountWithPrefab(string prefab)
+    {
+        var found = new System.Collections.Generic.List<ZDO>();
+        int index = 0;
+        GetAllZDOsWithPrefabIterative(prefab, found, ref index);
+        return found.Count;
+    }
+}
+
+/// <summary>
+/// Shim for Valheim's TerrainComp (_TerrainCompiler): the per-vertex arrays
+/// the road code writes. (m_width + 1)^2 vertices, row-major, y outer.
+/// </summary>
+public class TerrainComp
+{
+    public const string PrefabName = "_TerrainCompiler";
+
+    public int m_width;
+    public Heightmap m_hmap;
+    public ZNetView m_nview;
+    public float[] m_levelDelta;
+    public float[] m_smoothDelta;
+    public bool[] m_modifiedHeight;
+    public UnityEngine.Color[] m_paintMask;
+    public bool[] m_modifiedPaint;
+    public int SaveCount;
+
+    /// <summary>The zone's live compiler: the one on the registered heightmap, if that heightmap has one.</summary>
+    public static TerrainComp? FindTerrainCompiler(UnityEngine.Vector3 pos)
+    {
+        var hm = Heightmap.Registered;
+        if (hm?.m_terrainComp == null)
+            return null;
+        return UnityEngine.Mathf.Abs(hm.transform.position.x - pos.x) < 32f && UnityEngine.Mathf.Abs(hm.transform.position.z - pos.z) < 32f
+            ? hm.m_terrainComp : null;
+    }
+
+    /// <summary>A new compiler for the heightmap's zone with its own ZDO, registered with the ZDOMan when there is one and owned by us.</summary>
+    public TerrainComp(Heightmap hmap, int width)
+    {
+        m_hmap = hmap;
+        m_width = width;
+        int prefab = PrefabName.GetStableHashCode();
+        ZDO zdo = ZDOMan.instance != null
+            ? ZDOMan.instance.CreateNewZDO(hmap.transform.position, prefab)
+            : new ZDO(hmap.transform.position, prefab);
+        zdo.Persistent = true;
+        zdo.SetOwner(ZDOMan.instance?.m_sessionID ?? 1);
+        m_nview = new ZNetView(zdo);
+        int n = (width + 1) * (width + 1);
+        m_levelDelta = new float[n];
+        m_smoothDelta = new float[n];
+        m_modifiedHeight = new bool[n];
+        m_paintMask = new UnityEngine.Color[n];
+        m_modifiedPaint = new bool[n];
+    }
+
+    public void Save() => SaveCount++;
 }
 
 /// <summary>
@@ -109,6 +352,16 @@ public class ZoneSystem
 {
     public const float ZoneSize = 64f;
 
+    /// <summary>Valheim 1.0's index of a zone within the sector tables.</summary>
+    public readonly struct SectorIndex : System.IEquatable<SectorIndex>
+    {
+        public readonly Vector2s Sector;
+        public SectorIndex(Vector2s sector) => Sector = sector;
+        public bool Equals(SectorIndex other) => Sector == other.Sector;
+        public override bool Equals(object? o) => o is SectorIndex s && Equals(s);
+        public override int GetHashCode() => Sector.GetHashCode();
+    }
+
     public static ZoneSystem? instance;
 
     public class ZoneLocation
@@ -132,10 +385,57 @@ public class ZoneSystem
 
     public System.Collections.Generic.List<LocationInstance> GetLocationList() => Locations;
 
-    public static Vector2i GetZone(UnityEngine.Vector3 point) =>
+    // ---- locations-generated, as Valheim 1.0 actually behaves ----
+    //
+    // 1.0 kept the LocationsGenerated property and the GenerateLocationsCompleted
+    // event, but changed who writes the backing field. The setter still raises the
+    // event (once, then drops the handlers), and subscribing after the fact fires
+    // immediately -- but ZoneSystem.Load now writes m_locationsGenerated DIRECTLY
+    // from the save package, bypassing the setter. So a world read from disk never
+    // raises the event, however early a handler subscribed. Before 1.0 the setter
+    // was the only writer and every path raised it.
+    //
+    // The ordering that matters is the game's own: loading a world sets this from
+    // the save DURING the load, before the world's ZDOs are read.
+    //
+    // The shim models all three doors so a test can tell them apart.
+
+    private bool m_locationsGenerated;
+    private System.Action? m_generateLocationsCompleted;
+
+    public bool LocationsGenerated
+    {
+        get => m_locationsGenerated;
+        set
+        {
+            m_locationsGenerated = value;
+            if (!m_locationsGenerated) return;
+            m_generateLocationsCompleted?.Invoke();
+            m_generateLocationsCompleted = null;
+        }
+    }
+
+    public event System.Action GenerateLocationsCompleted
+    {
+        add
+        {
+            if (m_locationsGenerated) { value?.Invoke(); return; }
+            m_generateLocationsCompleted += value;
+        }
+        remove => m_generateLocationsCompleted -= value;
+    }
+
+    /// <summary>
+    /// What ZoneSystem.Load does in 1.0: set the flag straight from the save and
+    /// raise nothing. This is the door the mod used to be told about and is not.
+    /// </summary>
+    public void LoadLocationsGeneratedFromSave(bool generated) => m_locationsGenerated = generated;
+
+    // Valheim 1.0 types a zone id as Vector2s, not Vector2i.
+    public static Vector2s GetZone(UnityEngine.Vector3 point) =>
         new(UnityEngine.Mathf.FloorToInt((point.x + ZoneSize / 2f) / ZoneSize),
             UnityEngine.Mathf.FloorToInt((point.z + ZoneSize / 2f) / ZoneSize));
 
-    public static UnityEngine.Vector3 GetZonePos(Vector2i id) =>
+    public static UnityEngine.Vector3 GetZonePos(Vector2s id) =>
         new(id.x * ZoneSize, 0f, id.y * ZoneSize);
 }

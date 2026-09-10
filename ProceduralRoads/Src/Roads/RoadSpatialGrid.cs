@@ -111,11 +111,26 @@ public static class RoadSpatialGrid
         Log.LogDebug($"  Path length: {totalLength:F0}m, smoothing window: {RoadConstants.HeightSmoothingWindow} points");
         Log.LogDebug($"  Overlap: {overlapCount}/{densePoints.Count} points overlap existing roads");
 
+        // Endpoint ramps: near each end of the road the final height blends
+        // from the natural terrain (raw) toward the smoothed road height, so
+        // roads meet locations and terrain without a smoothed ledge.
+        float[] distanceFromStart = new float[densePoints.Count];
+        for (int i = 1; i < densePoints.Count; i++)
+            distanceFromStart[i] = distanceFromStart[i - 1] + Vector2.Distance(densePoints[i - 1], densePoints[i]);
+        float pathTotal = densePoints.Count > 0 ? distanceFromStart[densePoints.Count - 1] : 0f;
+
         Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
         for (int i = 0; i < densePoints.Count; i++)
         {
-            AddRoadPoint(tempPoints, densePoints[i], width, smoothedHeights[i]);
-            m_debugInfo[densePoints[i]] = debugInfos[i];
+            float distFromNearestEnd = Mathf.Min(distanceFromStart[i], pathTotal - distanceFromStart[i]);
+            float rampBlend = RoadEndpointRamp.Blend(distFromNearestEnd);
+            float finalHeight = Mathf.Lerp(denseHeights[i], smoothedHeights[i], rampBlend);
+
+            AddRoadPoint(tempPoints, densePoints[i], width, finalHeight);
+
+            RoadPointDebugInfo debugInfo = debugInfos[i];
+            debugInfo.SmoothedHeight = finalHeight;
+            m_debugInfo[densePoints[i]] = debugInfo;
         }
 
         MergePoints(tempPoints);
@@ -126,21 +141,93 @@ public static class RoadSpatialGrid
     }
 
     /// <summary>
-    /// Called after all roads are generated to compute the network version hash.
-    /// This version is stored in TerrainComp ZDOs to detect already-processed zones.
+    /// Called after all roads are generated, and after a network is loaded from
+    /// the save, to compute the network version: a hash of the world seed and
+    /// every stored road point (position, width, height) in canonical order
+    /// (cells by coordinate, points by position, width, height), each record
+    /// mixed into the running value, so it is the same after generation and
+    /// after a save/load round trip (which carries exactly the stored points)
+    /// and changes whenever any road moves or changes height. A sum of
+    /// per-point hashes was tried first and let balanced height changes
+    /// cancel (a road regraded from flat to a slope kept its version).
+    /// RoadTerrainModifier stamps it on each zone's terrain compiler to tell
+    /// zones that already carry the current roads from zones that still need
+    /// them.
     /// </summary>
     public static void FinalizeRoadNetwork()
     {
         int worldSeed = WorldGenerator.instance?.GetSeed() ?? 0;
-        int hash = worldSeed;
-        hash = hash * 31 + TotalRoadPoints;
-        hash = hash * 31 + GridCellsWithRoads;
-        hash = hash * 31 + (int)(TotalRoadLength * 10);
-        
-        RoadNetworkVersion = hash;
+        uint hash = 2166136261u; // FNV offset basis
+        int storedPoints = 0;
+        int cells = 0;
+
+        m_roadCacheLock.EnterReadLock();
+        try
+        {
+            var keys = new List<Vector2i>(m_roadPoints.Keys);
+            keys.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
+            var records = new List<RoadPoint>();
+            foreach (var key in keys)
+            {
+                cells++;
+                Mix(ref hash, key.x);
+                Mix(ref hash, key.y);
+                records.Clear();
+                records.AddRange(m_roadPoints[key]);
+                records.Sort(CompareRecords);
+                foreach (var rp in records)
+                {
+                    storedPoints++;
+                    Mix(ref hash, rp.p.x.GetHashCode());
+                    Mix(ref hash, rp.p.y.GetHashCode());
+                    Mix(ref hash, rp.w.GetHashCode());
+                    Mix(ref hash, rp.h.GetHashCode());
+                }
+            }
+        }
+        finally
+        {
+            m_roadCacheLock.ExitReadLock();
+        }
+
+        Mix(ref hash, worldSeed);
+        Mix(ref hash, storedPoints);
+        Mix(ref hash, cells);
+        int version = unchecked((int)hash);
+        if (version == 0)
+            version = 1; // 0 means "no network"
+
+        RoadNetworkVersion = version;
         Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
     }
-    
+
+    private static int CompareRecords(RoadPoint a, RoadPoint b)
+    {
+        int c = a.p.x.CompareTo(b.p.x);
+        if (c != 0) return c;
+        c = a.p.y.CompareTo(b.p.y);
+        if (c != 0) return c;
+        c = a.w.CompareTo(b.w);
+        return c != 0 ? c : a.h.CompareTo(b.h);
+    }
+
+    /// <summary>FNV-1a step over the four bytes of value, then an avalanche so neighbouring records do not cancel.</summary>
+    private static void Mix(ref uint hash, int value)
+    {
+        unchecked
+        {
+            uint v = (uint)value;
+            for (int i = 0; i < 4; i++)
+            {
+                hash ^= (v >> (8 * i)) & 0xFFu;
+                hash *= 16777619u;
+            }
+            hash ^= hash >> 15;
+            hash *= 0x2C1B3C6Du;
+            hash ^= hash >> 12;
+        }
+    }
+
     private static Vector2 CatmullRom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
     {
         float t2 = t * t;
@@ -224,6 +311,19 @@ public static class RoadSpatialGrid
             }
             
             float smoothedHeight = sum / count;
+            if (windowStart > i - halfWindow || windowEnd < i + halfWindow)
+            {
+                // Within half a window of either end the window is one-sided,
+                // and the mean of a one-sided window on a slope is the height
+                // some way back along the road: the road arrived at its ends
+                // on a ledge (uphill) or a hump (downhill) as high as the
+                // slope times the missing half window. Fit a line through the
+                // window instead and read it at this point, which smooths the
+                // same bumps but is exact on a slope. Mid-road the window is
+                // symmetric and the line's value there is the mean, so the
+                // mean's arithmetic is kept unchanged.
+                smoothedHeight = LineFitAt(heights, windowStart, windowEnd, i, smoothedHeight);
+            }
             smoothed.Add(smoothedHeight);
             
             debugInfos.Add(new RoadPointDebugInfo
@@ -240,6 +340,34 @@ public static class RoadSpatialGrid
         }
         
         return smoothed;
+    }
+
+    /// <summary>
+    /// Least-squares line through heights[start..end] against the point index,
+    /// evaluated at index at; the mean is returned when the window has fewer
+    /// than two points.
+    /// </summary>
+    private static float LineFitAt(List<float> heights, int start, int end, int at, float mean)
+    {
+        int n = end - start + 1;
+        if (n < 2)
+            return mean;
+
+        double sx = 0, sxx = 0, sh = 0, sxh = 0;
+        for (int j = start; j <= end; j++)
+        {
+            double x = j - at;
+            double h = heights[j];
+            sx += x;
+            sxx += x * x;
+            sh += h;
+            sxh += x * h;
+        }
+
+        double det = n * sxx - sx * sx;
+        if (det <= 0)
+            return mean;
+        return (float)((sxx * sh - sx * sxh) / det);
     }
 
     private static int DetectOverlap(List<Vector2> points, float width)
@@ -490,7 +618,7 @@ public static class RoadSpatialGrid
         return t * t * (3f - 2f * t);
     }
 
-    public static List<RoadPoint> GetRoadPointsInZone(Vector2i zoneID)
+    public static List<RoadPoint> GetRoadPointsInZone(Vector2s zoneID)
     {
         List<RoadPoint> result = new List<RoadPoint>();
         
@@ -597,7 +725,7 @@ public static class RoadSpatialGrid
     /// Serialize road points for a specific zone to a byte array for ZDO storage.
     /// Uses the same logic as GetRoadPointsInZone to capture all affecting points.
     /// </summary>
-    public static byte[]? SerializeZoneRoadPoints(Vector2i zoneID)
+    public static byte[]? SerializeZoneRoadPoints(Vector2s zoneID)
     {
         var points = GetRoadPointsInZone(zoneID);
         
@@ -623,7 +751,7 @@ public static class RoadSpatialGrid
     /// Deserialize road points from a byte array and add them to the grid.
     /// Points are added to grid cells based on their actual position.
     /// </summary>
-    public static void DeserializeZoneRoadPoints(Vector2i zoneID, byte[] data)
+    public static void DeserializeZoneRoadPoints(Vector2s zoneID, byte[] data)
     {
         if (data == null || data.Length == 0)
             return;
@@ -811,6 +939,7 @@ public static class RoadSpatialGrid
             }
             
             Log.LogDebug($"Deserialized {cellCount} grid cells, {totalPoints} road points");
+            FinalizeRoadNetwork();
             return true;
         }
         catch (System.Exception ex)

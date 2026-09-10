@@ -28,6 +28,20 @@ public static class RoadConstants
     public const float DefaultSteepSlopeThreshold = 0.6f;
     public const float DefaultTerrainVariancePenalty = 1000f;
     public const float DefaultTerrainVarianceThreshold = 5f;
+
+    // Road cross-section (see RoadProfile): flat core fully leveled and
+    // solidly painted; paint fades out strictly inside the leveled footprint
+    // so roads keep an unpainted, smoothed verge; leveling eases to natural
+    // terrain over TerrainBlendMargin beyond the half-width.
+    public const float RoadFlatCoreRatio = 0.6f;
+    public const float RoadPaintOuterRatio = 0.85f;
+
+    // Terrain leveling fits a line along the road through the nearby road
+    // points (see RoadTerrainModifier.CalculateBlendedHeight): the spread of
+    // the prior that holds an undetermined gradient at zero, and the steepest
+    // gradient the fit may report (metres per metre).
+    public const float HeightFitRidgeMetres = 0.02f;
+    public const float HeightFitMaxGradient = 1.5f;
     
     public const float SpatialGridSize = 64f;
     public const float DefaultRoadWidth = 4f;

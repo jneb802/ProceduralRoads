@@ -34,6 +34,26 @@ public static class ConsoleCommands
 
         // road_debug - Show detailed road info at player position
         new Terminal.ConsoleCommand(
+            "road_regen_island",
+            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
+            (args) => RegenerateIslandHere(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_ends",
+            "For every location with a road end, compare the end's road height with the natural terrain at the end and the mean natural height on a ring: road_ends [ring=8] [top=20]. Writes ProceduralRoads.ends.csv to the config folder; the console shows the worst.",
+            (args) => ReportRoadEnds(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
             (args) => DebugRoadPoints(args),
@@ -282,6 +302,39 @@ public static class ConsoleCommands
         args.Context.AddString($"Removed {count} pins.");
     }
 
+    private static void ReportRoadEnds(Terminal.ConsoleEventArgs args)
+    {
+        float ring = 8f;
+        int top = 20;
+        if (args.Length > 1) float.TryParse(args[1], out ring);
+        if (args.Length > 2) int.TryParse(args[2], out top);
+
+        if (ZoneSystem.instance == null || WorldGenerator.instance == null || !RoadSpatialGrid.IsInitialized)
+        {
+            args.Context.AddString("Error: world or road network not available");
+            return;
+        }
+
+        var locations = new List<(string name, Vector3 position, float radius)>();
+        foreach (var inst in ZoneSystem.instance.GetLocationList())
+            locations.Add((inst.m_location.m_prefab.Name, inst.m_position, inst.m_location.m_exteriorRadius));
+
+        var rows = RoadEndReport.Compute(locations, ring, WorldGenerator.instance);
+
+        string path = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "ProceduralRoads.ends.csv");
+        var sb = new System.Text.StringBuilder("name,x,z,roadHeight,terrainAtEnd,ringMean,ringMin,ringMax,deltaEnd,deltaRing\n");
+        foreach (var r in rows)
+            sb.Append($"{r.Name},{r.Point.x:F1},{r.Point.y:F1},{r.RoadHeight:F2},{r.TerrainAtEnd:F2},{r.RingMean:F2},{r.RingMin:F2},{r.RingMax:F2},{r.DeltaEnd:F2},{r.DeltaRing:F2}\n");
+        System.IO.File.WriteAllText(path, sb.ToString());
+
+        args.Context.AddString($"{rows.Count} road ends -> {path}; worst {Mathf.Min(top, rows.Count)} by |road - ring mean|:");
+        for (int i = 0; i < Mathf.Min(top, rows.Count); i++)
+        {
+            var r = rows[i];
+            args.Context.AddString($"  {r.Name} ({r.Point.x:F0},{r.Point.y:F0}) road={r.RoadHeight:F1} terrain={r.TerrainAtEnd:F1} ring={r.RingMean:F1} [{r.RingMin:F1}..{r.RingMax:F1}] dEnd={r.DeltaEnd:+0.0;-0.0} dRing={r.DeltaRing:+0.0;-0.0}");
+        }
+    }
+
     /// <summary>
     /// Debug road points near player position.
     /// Shows detailed info about road points, heights, and terrain.
@@ -299,7 +352,7 @@ public static class ConsoleCommands
         float searchRadius = 15f; // Search within 15m
 
         // Get zone info
-        Vector2i zoneID = ZoneSystem.GetZone(playerPos);
+        Vector2s zoneID = ZoneSystem.GetZone(playerPos);
         
         args.Context.AddString($"=== Road Debug at ({playerPos.x:F1}, {playerPos.z:F1}) ===");
         args.Context.AddString($"Zone: {zoneID}, Player altitude: {playerPos.y:F1}m");
@@ -456,32 +509,39 @@ public static class ConsoleCommands
 
         // Apply roads to currently loaded zones
         args.Context.AddString("Applying to loaded zones...");
-
-        var heightmaps = Heightmap.GetAllHeightmaps();
-        int zonesWithRoads = 0;
-
-        if (heightmaps != null)
-        {
-            foreach (var heightmap in heightmaps)
-            {
-                if (heightmap == null) continue;
-
-                Vector3 hmPos = heightmap.transform.position;
-                Vector2i zoneID = ZoneSystem.GetZone(hmPos);
-
-                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-                if (roadPoints.Count == 0) continue;
-
-                TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-                if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
-
-                RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
-                zonesWithRoads++;
-            }
-        }
-
+        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
     }
+
+    private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
+    {
+        Vector3 pos;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+        {
+            pos = new Vector3(x, 0f, z);
+        }
+        else if (Player.m_localPlayer != null)
+        {
+            pos = Player.m_localPlayer.transform.position;
+        }
+        else
+        {
+            args.Context.AddString("No local player; use road_regen_island <x> <z>");
+            return;
+        }
+
+        args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})...");
+        if (!RoadNetworkGenerator.RegenerateIslandAt(pos, out string summary))
+        {
+            args.Context.AddString($"Failed: {summary}");
+            return;
+        }
+
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        args.Context.AddString(summary);
+        args.Context.AddString($"Applied to {zones} loaded zone(s).");
+    }
+
 
     /// <summary>
     /// Spawn debug markers above road points in the current zone.
@@ -502,7 +562,7 @@ public static class ConsoleCommands
         }
 
         Vector3 playerPos = player.transform.position;
-        Vector2i zoneID = ZoneSystem.GetZone(playerPos);
+        Vector2s zoneID = ZoneSystem.GetZone(playerPos);
 
         var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
         if (roadPoints.Count == 0)
@@ -622,7 +682,7 @@ public static class ConsoleCommands
 
         Vector3 playerPos = player.transform.position;
         Vector2 playerPos2D = new Vector2(playerPos.x, playerPos.z);
-        Vector2i zoneID = ZoneSystem.GetZone(playerPos);
+        Vector2s zoneID = ZoneSystem.GetZone(playerPos);
 
         // Get road points from current and adjacent zones
         List<RoadSpatialGrid.RoadPoint> nearbyPoints = new List<RoadSpatialGrid.RoadPoint>();
@@ -630,7 +690,7 @@ public static class ConsoleCommands
         {
             for (int dz = -1; dz <= 1; dz++)
             {
-                Vector2i checkZone = new Vector2i(zoneID.x + dx, zoneID.y + dz);
+                Vector2s checkZone = new Vector2s((int)zoneID.x + dx, (int)zoneID.y + dz);
                 var zonePoints = RoadSpatialGrid.GetRoadPointsInZone(checkZone);
                 foreach (var rp in zonePoints)
                 {

@@ -12,6 +12,7 @@ namespace ProceduralRoads;
 public static class RoadNetworkGenerator
 {
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
+    private const float WorldRadius = 10000f;
     
     private static readonly HashSet<string> BossLocationNames = new HashSet<string>
     {
@@ -78,11 +79,13 @@ public static class RoadNetworkGenerator
     private const int MinLocationsPerIsland = 2;
     public static int MaxLocationsPerIsland = 12;
     private const float AreaPerLocation = 2_000_000f;
+    private const float MaxRoadLinkDistance = 2200f;
+    private const int MaxFailedEdgeAttemptsPerIsland = 24;
 
     /// <summary>
     /// Location names registered via API or config for road generation.
     /// </summary>
-    private static readonly HashSet<string> RegisteredLocationNames = new HashSet<string>();
+    private static readonly Dictionary<string, int> RegisteredLocationPriorities = new Dictionary<string, int>(StringComparer.Ordinal);
 
     #region Location Registration API
 
@@ -92,13 +95,29 @@ public static class RoadNetworkGenerator
     /// </summary>
     public static void RegisterLocation(string locationName)
     {
+        RegisterLocation(locationName, CustomLocationPriority);
+    }
+
+    /// <summary>
+    /// Register a location name with an explicit road endpoint priority.
+    /// Higher priority locations are preferred when an island has too many endpoints.
+    /// </summary>
+    public static void RegisterLocation(string locationName, int priority)
+    {
         if (string.IsNullOrWhiteSpace(locationName))
             return;
         
         string trimmed = locationName.Trim();
-        if (RegisteredLocationNames.Add(trimmed))
+        int clampedPriority = Mathf.Clamp(priority, 0, 100);
+        bool isNew = !RegisteredLocationPriorities.ContainsKey(trimmed);
+        RegisteredLocationPriorities[trimmed] = clampedPriority;
+        if (isNew)
         {
-            Log.LogDebug($"Registered location for roads: {trimmed}");
+            Log.LogDebug($"Registered location for roads: {trimmed} (priority {clampedPriority})");
+        }
+        else
+        {
+            Log.LogDebug($"Updated road location priority: {trimmed} (priority {clampedPriority})");
         }
     }
 
@@ -111,7 +130,7 @@ public static class RoadNetworkGenerator
             return;
         
         string trimmed = locationName.Trim();
-        if (RegisteredLocationNames.Remove(trimmed))
+        if (RegisteredLocationPriorities.Remove(trimmed))
         {
             Log.LogDebug($"Unregistered location from roads: {trimmed}");
         }
@@ -122,7 +141,15 @@ public static class RoadNetworkGenerator
     /// </summary>
     public static IReadOnlyCollection<string> GetRegisteredLocations()
     {
-        return RegisteredLocationNames;
+        return RegisteredLocationPriorities.Keys.ToList();
+    }
+
+    /// <summary>
+    /// Get all currently registered location names and road endpoint priorities.
+    /// </summary>
+    public static IReadOnlyDictionary<string, int> GetRegisteredLocationPriorities()
+    {
+        return new Dictionary<string, int>(RegisteredLocationPriorities);
     }
 
     #endregion
@@ -201,10 +228,11 @@ public static class RoadNetworkGenerator
 
         // Merge config-defined custom locations into registered set
         var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
-        foreach (var locName in configLocations)
+        foreach (string locName in configLocations)
         {
-            if (RegisteredLocationNames.Add(locName))
+            if (!RegisteredLocationPriorities.ContainsKey(locName))
             {
+                RegisterLocation(locName, CustomLocationPriority);
                 Log.LogDebug($"Added config location: {locName}");
             }
         }
@@ -217,29 +245,25 @@ public static class RoadNetworkGenerator
         if (locations == null)
             return;
 
-        var islands = IslandDetector.DetectIslands();
-        
-        var sortedIslands = islands.OrderByDescending(i => i.ApproxArea).ToList();
-        
-        int islandCount = Mathf.Max(1, Mathf.RoundToInt(sortedIslands.Count * IslandRoadPercentage / 100f));
-        var selectedIslands = sortedIslands.Take(islandCount).ToList();
-        
-        Log.LogDebug($"Islands: {islands.Count} total, {islandCount} selected ({IslandRoadPercentage}%)");
+        List<Island> islands = IslandDetector.DetectIslands();
+        List<IslandCandidate> islandCandidates = BuildIslandCandidates(islands, locations.Value.AllLocations, locations.Value.SpawnPoint);
+        List<IslandCandidate> selectedIslands = SelectBalancedIslands(islandCandidates, IslandRoadPercentage);
 
-        foreach (var island in selectedIslands)
+        Log.LogDebug(
+            $"Islands: {islands.Count} total, {islandCandidates.Count} eligible, {selectedIslands.Count} selected ({IslandRoadPercentage}%)");
+
+        foreach (IslandCandidate candidate in selectedIslands)
         {
-            var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
-            if (islandLocations.Count == 0) continue;
-            
-            int maxLocs = GetMaxLocationsForIsland(island);
-            var selected = SelectLocations(islandLocations, maxLocs);
+            Island island = candidate.Island;
+            List<(string name, Vector3 position, float radius)> islandLocations = candidate.Locations;
+            int maxLocs = GetMaxLocationsForIsland(candidate.Island);
+            List<(string name, Vector3 position, float radius)> selected = SelectLocations(islandLocations, maxLocs);
             
             Log.LogDebug(
-                $"Island {island.Id}: {islandLocations.Count} candidates -> {selected.Count} selected (max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km²)");
+                $"Island {island.Id}: {islandLocations.Count} candidates -> {selected.Count} selected " +
+                $"(max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km², ring {candidate.Ring})");
             
-        bool isStarterIsland = island.ContainsPoint(locations.Value.SpawnPoint);
-            
-            if (isStarterIsland)
+            if (candidate.IsStarterIsland)
             {
                 GenerateIslandRoads(island, selected, 
                     locations.Value.SpawnPoint, locations.Value.SpawnRadius);
@@ -285,7 +309,9 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        List<Vector2>? path = m_pathfinder.FindPath(startCenter, endCenter);
+        Vector2 pathStart = GetNearestPathablePoint(startCenter, startRadius);
+        Vector2 pathEnd = GetNearestPathablePoint(endCenter, endRadius);
+        List<Vector2>? path = m_pathfinder.FindPath(pathStart, pathEnd);
 
         UnityEngine.Canvas.ForceUpdateCanvases();
 
@@ -346,6 +372,14 @@ public static class RoadNetworkGenerator
         public List<(string name, Vector3 position, float radius)> AllLocations;
     }
 
+    private sealed class IslandCandidate
+    {
+        public Island Island = null!;
+        public List<(string name, Vector3 position, float radius)> Locations = new();
+        public bool IsStarterIsland;
+        public int Ring;
+    }
+
     private static LocationData? GatherLocationData()
     {
         var locationInstances = ZoneSystem.instance.GetLocationList();
@@ -402,8 +436,20 @@ public static class RoadNetworkGenerator
         var result = new List<(string name, Vector3 position, float radius)>();
         foreach (var loc in allLocations)
         {
-            if (island.ContainsPoint(loc.position) && IsRoadLocation(loc.name))
-                result.Add(loc);
+            if (!island.ContainsPoint(loc.position) || !IsRoadLocation(loc.name))
+                continue;
+
+            Vector2 position = new Vector2(loc.position.x, loc.position.z);
+            if (!HasNearbyPathablePoint(position, loc.radius))
+                continue;
+
+            bool duplicate = result.Any(existing =>
+                existing.name == loc.name &&
+                Vector3.SqrMagnitude(existing.position - loc.position) < RoadConstants.PathfindingCellSize * RoadConstants.PathfindingCellSize);
+            if (duplicate)
+                continue;
+
+            result.Add(loc);
         }
         return result;
     }
@@ -412,7 +458,94 @@ public static class RoadNetworkGenerator
     {
         return BossLocationNames.Contains(locationName) ||
                LocationPriorities.ContainsKey(locationName) ||
-               RegisteredLocationNames.Contains(locationName);
+               RegisteredLocationPriorities.ContainsKey(locationName);
+    }
+
+    private static List<IslandCandidate> BuildIslandCandidates(
+        List<Island> islands,
+        List<(string name, Vector3 position, float radius)> allLocations,
+        Vector3 spawnPoint)
+    {
+        List<IslandCandidate> candidates = new List<IslandCandidate>();
+        foreach (Island island in islands)
+        {
+            List<(string name, Vector3 position, float radius)> islandLocations = GetLocationsOnIsland(island, allLocations);
+            if (islandLocations.Count == 0)
+                continue;
+
+            candidates.Add(new IslandCandidate
+            {
+                Island = island,
+                Locations = islandLocations,
+                IsStarterIsland = island.ContainsPoint(spawnPoint),
+                Ring = GetIslandRing(island)
+            });
+        }
+
+        return candidates;
+    }
+
+    private static int GetIslandRing(Island island)
+    {
+        float distanceFromCenter = island.Center.magnitude;
+        float normalizedDistance = Mathf.Clamp01(distanceFromCenter / WorldRadius);
+        if (normalizedDistance < 0.33f)
+            return 0;
+        if (normalizedDistance < 0.66f)
+            return 1;
+        return 2;
+    }
+
+    private static List<IslandCandidate> SelectBalancedIslands(List<IslandCandidate> candidates, int percentage)
+    {
+        if (candidates.Count == 0)
+            return new List<IslandCandidate>();
+
+        int targetCount = Mathf.Max(1, Mathf.RoundToInt(candidates.Count * percentage / 100f));
+        if (targetCount >= candidates.Count)
+            return candidates.OrderByDescending(candidate => candidate.Island.ApproxArea).ToList();
+
+        List<IslandCandidate> selected = new List<IslandCandidate>();
+        HashSet<int> selectedIslandIds = new HashSet<int>();
+
+        IslandCandidate? starterIsland = candidates.FirstOrDefault(candidate => candidate.IsStarterIsland);
+        if (starterIsland != null)
+        {
+            selected.Add(starterIsland);
+            selectedIslandIds.Add(starterIsland.Island.Id);
+        }
+
+        List<List<IslandCandidate>> rings = new List<List<IslandCandidate>>();
+        for (int ring = 0; ring < 3; ring++)
+        {
+            List<IslandCandidate> ringCandidates = candidates
+                .Where(candidate => candidate.Ring == ring && !selectedIslandIds.Contains(candidate.Island.Id))
+                .OrderByDescending(candidate => candidate.Island.ApproxArea)
+                .ToList();
+            rings.Add(ringCandidates);
+        }
+
+        int[] ringIndexes = new int[rings.Count];
+        while (selected.Count < targetCount)
+        {
+            bool addedAny = false;
+            for (int ring = 0; ring < rings.Count && selected.Count < targetCount; ring++)
+            {
+                List<IslandCandidate> ringCandidates = rings[ring];
+                if (ringIndexes[ring] >= ringCandidates.Count)
+                    continue;
+
+                IslandCandidate candidate = ringCandidates[ringIndexes[ring]++];
+                selected.Add(candidate);
+                selectedIslandIds.Add(candidate.Island.Id);
+                addedAny = true;
+            }
+
+            if (!addedAny)
+                break;
+        }
+
+        return selected;
     }
 
     private static int GetMaxLocationsForIsland(Island island)
@@ -427,10 +560,36 @@ public static class RoadNetworkGenerator
         if (candidates.Count <= maxCount)
             return candidates;
         
-        return candidates
-            .OrderByDescending(loc => GetLocationPriority(loc.name))
-            .Take(maxCount)
+        List<(string name, Vector3 position, float radius)> selected = new List<(string name, Vector3 position, float radius)>();
+        List<(string name, Vector3 position, float radius)> remaining = candidates
+            .OrderByDescending(location => GetLocationPriority(location.name))
             .ToList();
+
+        selected.Add(remaining[0]);
+        remaining.RemoveAt(0);
+
+        while (selected.Count < maxCount && remaining.Count > 0)
+        {
+            int bestIndex = 0;
+            float bestScore = float.MinValue;
+            for (int i = 0; i < remaining.Count; i++)
+            {
+                (string name, Vector3 position, float radius) candidate = remaining[i];
+                float minDistanceToSelected = selected.Min(location => Vector3.Distance(location.position, candidate.position));
+                float distancePenalty = Mathf.Min(minDistanceToSelected, MaxRoadLinkDistance) * 0.05f;
+                float score = GetLocationPriority(candidate.name) * 100f - distancePenalty;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestIndex = i;
+                }
+            }
+
+            selected.Add(remaining[bestIndex]);
+            remaining.RemoveAt(bestIndex);
+        }
+
+        return selected;
     }
 
     private static int GetLocationPriority(string locationName)
@@ -438,8 +597,8 @@ public static class RoadNetworkGenerator
         if (LocationPriorities.TryGetValue(locationName, out int priority))
             return priority;
 
-        if (RegisteredLocationNames.Contains(locationName))
-            return CustomLocationPriority;
+        if (RegisteredLocationPriorities.TryGetValue(locationName, out int registeredPriority))
+            return registeredPriority;
 
         return DefaultPriority;
     }
@@ -447,103 +606,6 @@ public static class RoadNetworkGenerator
     #endregion
 
     #region Island Road Strategies
-
-    private static void GenerateChainRoads(
-        Vector3 startPos, float startRadius,
-        List<(string name, Vector3 position, float radius)> locations)
-    {
-        if (locations.Count == 0) return;
-        
-        var unvisited = new List<(string name, Vector3 position, float radius)>(locations);
-        Vector3 current = startPos;
-        float currentRadius = startRadius;
-        string currentName = "Start";
-        
-        while (unvisited.Count > 0)
-        {
-            int nearestIdx = 0;
-            float nearestDist = float.MaxValue;
-            for (int i = 0; i < unvisited.Count; i++)
-            {
-                float dist = Vector3.Distance(current, unvisited[i].position);
-                if (dist < nearestDist)
-                {
-                    nearestDist = dist;
-                    nearestIdx = i;
-                }
-            }
-            
-            var nearest = unvisited[nearestIdx];
-            unvisited.RemoveAt(nearestIdx);
-            
-            GenerateRoad(current, currentRadius, nearest.position, nearest.radius, RoadWidth,
-                $"{currentName} -> {nearest.name}");
-            
-            current = nearest.position;
-            currentRadius = nearest.radius;
-            currentName = nearest.name;
-        }
-    }
-
-    private static void GenerateMSTRoads(
-        Vector3 startPos, float startRadius,
-        List<(string name, Vector3 position, float radius)> locations)
-    {
-        if (locations.Count == 0) return;
-        
-        var nodes = new List<(string name, Vector3 position, float radius)>();
-        nodes.Add(("Start", startPos, startRadius));
-        nodes.AddRange(locations);
-        
-        var inTree = new bool[nodes.Count];
-        var minEdge = new float[nodes.Count];
-        var parent = new int[nodes.Count];
-        
-        for (int i = 0; i < nodes.Count; i++)
-        {
-            minEdge[i] = float.MaxValue;
-            parent[i] = -1;
-        }
-        
-        minEdge[0] = 0;
-        
-        for (int iter = 0; iter < nodes.Count; iter++)
-        {
-            int u = -1;
-            for (int i = 0; i < nodes.Count; i++)
-            {
-                if (!inTree[i] && (u == -1 || minEdge[i] < minEdge[u]))
-                    u = i;
-            }
-            
-            if (u == -1 || minEdge[u] == float.MaxValue) break;
-            inTree[u] = true;
-            
-            for (int v = 0; v < nodes.Count; v++)
-            {
-                if (!inTree[v])
-                {
-                    float dist = Vector3.Distance(nodes[u].position, nodes[v].position);
-                    if (dist < minEdge[v])
-                    {
-                        minEdge[v] = dist;
-                        parent[v] = u;
-                    }
-                }
-            }
-        }
-        
-        for (int i = 1; i < nodes.Count; i++)
-        {
-            if (parent[i] >= 0)
-            {
-                var from = nodes[parent[i]];
-                var to = nodes[i];
-                GenerateRoad(from.position, from.radius, to.position, to.radius, RoadWidth,
-                    $"{from.name} -> {to.name}");
-            }
-        }
-    }
 
     private static void GenerateIslandRoads(
         Island island,
@@ -555,32 +617,220 @@ public static class RoadNetworkGenerator
         
         Vector3 startPos;
         float startRadius;
+        string startName;
+        List<(string name, Vector3 position, float radius)> roadLocations = islandLocations;
         if (overrideStart.HasValue)
         {
             startPos = overrideStart.Value;
             startRadius = overrideStartRadius;
+            startName = "Start";
         }
         else
         {
-            Vector2 edge = island.GetEdgePoint();
-            startPos = new Vector3(edge.x, 0, edge.y);
-            startRadius = 0f;
+            (string name, Vector3 position, float radius) anchor = SelectIslandAnchor(island, islandLocations);
+            startPos = anchor.position;
+            startRadius = anchor.radius;
+            startName = anchor.name;
+            roadLocations = islandLocations
+                .Where(location => !SameLocation(location, anchor))
+                .ToList();
+
+            if (roadLocations.Count == 0)
+            {
+                Log.LogDebug($"Island {island.Id}: skipped single-location island anchored at {anchor.name}");
+                return;
+            }
         }
-        
-        bool useMST = (island.Id % 2) == 0;
-        
+
         Log.LogDebug(
-            $"Island {island.Id}: {islandLocations.Count} locations, strategy={(useMST ? "MST" : "Chain")}");
-        
-        if (useMST)
-            GenerateMSTRoads(startPos, startRadius, islandLocations);
-        else
-            GenerateChainRoads(startPos, startRadius, islandLocations);
+            $"Island {island.Id}: {islandLocations.Count} locations, strategy=ReachableMST, anchor={startName}");
+
+        GenerateReachableRoads(startPos, startRadius, roadLocations, startName);
+    }
+
+    private static void GenerateReachableRoads(
+        Vector3 startPos,
+        float startRadius,
+        List<(string name, Vector3 position, float radius)> locations,
+        string startName)
+    {
+        if (locations.Count == 0)
+            return;
+
+        List<(string name, Vector3 position, float radius)> nodes = new List<(string name, Vector3 position, float radius)>
+        {
+            (startName, startPos, startRadius)
+        };
+        nodes.AddRange(locations);
+
+        HashSet<int> connected = new HashSet<int> { 0 };
+        HashSet<int> remaining = new HashSet<int>(Enumerable.Range(1, nodes.Count - 1));
+        HashSet<string> failedEdges = new HashSet<string>();
+        int maxAttempts = Mathf.Min(nodes.Count * nodes.Count, MaxFailedEdgeAttemptsPerIsland);
+        int attempts = 0;
+
+        while (remaining.Count > 0 && attempts < maxAttempts)
+        {
+            int bestFrom = -1;
+            int bestTo = -1;
+            float bestScore = float.MaxValue;
+
+            foreach (int fromIndex in connected)
+            {
+                foreach (int toIndex in remaining)
+                {
+                    string edgeKey = GetEdgeKey(fromIndex, toIndex);
+                    if (failedEdges.Contains(edgeKey))
+                        continue;
+
+                    float distance = Vector3.Distance(nodes[fromIndex].position, nodes[toIndex].position);
+                    if (distance > MaxRoadLinkDistance)
+                        continue;
+
+                    float priorityBonus = GetLocationPriority(nodes[toIndex].name) * 20f;
+                    float score = distance - priorityBonus;
+                    if (score < bestScore)
+                    {
+                        bestScore = score;
+                        bestFrom = fromIndex;
+                        bestTo = toIndex;
+                    }
+                }
+            }
+
+            if (bestFrom < 0 || bestTo < 0)
+            {
+                PromoteNextComponentAnchor(nodes, connected, remaining);
+                continue;
+            }
+
+            attempts++;
+            (string name, Vector3 position, float radius) from = nodes[bestFrom];
+            (string name, Vector3 position, float radius) to = nodes[bestTo];
+            bool generated = GenerateRoad(from.position, from.radius, to.position, to.radius, RoadWidth,
+                $"{from.name} -> {to.name}");
+
+            if (generated)
+            {
+                connected.Add(bestTo);
+                remaining.Remove(bestTo);
+            }
+            else
+            {
+                failedEdges.Add(GetEdgeKey(bestFrom, bestTo));
+            }
+        }
+
+        if (failedEdges.Count > 0)
+        {
+            Log.LogDebug($"Skipped {failedEdges.Count} unreachable road edge attempt(s)");
+        }
+
+        if (remaining.Count > 0)
+        {
+            string skipped = string.Join(", ", remaining.Select(index => nodes[index].name).Distinct().Take(8));
+            Log.LogDebug($"Skipped {remaining.Count} endpoint(s) after reaching edge attempt cap: {skipped}");
+        }
+    }
+
+    private static void PromoteNextComponentAnchor(
+        List<(string name, Vector3 position, float radius)> nodes,
+        HashSet<int> connected,
+        HashSet<int> remaining)
+    {
+        if (remaining.Count == 0)
+            return;
+
+        int nextAnchor = remaining
+            .OrderByDescending(index => GetLocationPriority(nodes[index].name))
+            .First();
+
+        connected.Add(nextAnchor);
+        remaining.Remove(nextAnchor);
+        Log.LogDebug($"Started disconnected road component at {nodes[nextAnchor].name}");
+    }
+
+    private static string GetEdgeKey(int a, int b)
+    {
+        return a < b ? $"{a}:{b}" : $"{b}:{a}";
     }
 
     #endregion
 
     #region Utility Methods
+
+    private static (string name, Vector3 position, float radius) SelectIslandAnchor(
+        Island island,
+        List<(string name, Vector3 position, float radius)> locations)
+    {
+        Vector3 islandCenter = new Vector3(island.Center.x, 0f, island.Center.y);
+        return locations
+            .OrderByDescending(location => GetLocationPriority(location.name))
+            .ThenBy(location => Vector3.Distance(location.position, islandCenter))
+            .First();
+    }
+
+    private static bool SameLocation(
+        (string name, Vector3 position, float radius) a,
+        (string name, Vector3 position, float radius) b)
+    {
+        return a.name == b.name &&
+               Vector3.SqrMagnitude(a.position - b.position) < 1f;
+    }
+
+    private static Vector2 GetNearestPathablePoint(Vector2 center, float radius)
+    {
+        if (IsPathablePoint(center))
+            return center;
+
+        float searchRadius = Mathf.Max(radius + RoadConstants.PathfindingCellSize * 2f, RoadConstants.PathfindingCellSize * 2f);
+        float bestDistance = float.MaxValue;
+        Vector2 bestPoint = center;
+        bool found = false;
+
+        for (float currentRadius = RoadConstants.PathfindingCellSize; currentRadius <= searchRadius; currentRadius += RoadConstants.PathfindingCellSize)
+        {
+            int sampleCount = Mathf.Max(12, Mathf.CeilToInt(currentRadius / 8f));
+            for (int i = 0; i < sampleCount; i++)
+            {
+                float angle = i * Mathf.PI * 2f / sampleCount;
+                Vector2 candidate = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * currentRadius;
+                if (!IsPathablePoint(candidate))
+                    continue;
+
+                float distance = (candidate - center).sqrMagnitude;
+                if (distance < bestDistance)
+                {
+                    bestDistance = distance;
+                    bestPoint = candidate;
+                    found = true;
+                }
+            }
+
+            if (found)
+                return bestPoint;
+        }
+
+        return center;
+    }
+
+    private static bool HasNearbyPathablePoint(Vector2 center, float radius)
+    {
+        return IsPathablePoint(GetNearestPathablePoint(center, radius));
+    }
+
+    private static bool IsPathablePoint(Vector2 point)
+    {
+        if (WorldGenerator.instance == null)
+            return true;
+
+        float height = WorldGenerator.instance.GetHeight(point.x, point.y);
+        if (height < RoadConstants.ShallowWaterHeight)
+            return false;
+
+        WorldGenerator.instance.GetRiverWeight(point.x, point.y, out float riverWeight, out _);
+        return riverWeight <= RoadConstants.RiverImpassableThreshold;
+    }
 
     public static void Reset()
     {

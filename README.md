@@ -21,7 +21,7 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | RoadWidth | 4 | Road width in meters (2-10) |
-| IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
+| IslandRoadPercentage | 50 | Percentage of eligible islands that will have roads (0-100). Islands are selected across inner, middle, and outer world rings, with larger islands preferred inside each ring. |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 
 ### Custom Locations via Config
@@ -41,14 +41,17 @@ Other mods can register locations for road generation programmatically.
 ```csharp
 using ProceduralRoads;
 
-// Register a location
-RoadNetworkGenerator.RegisterLocation("MyCustomLocation");
+// Register a location with the default custom priority
+ProceduralRoadsAPI.RegisterLocation("MyCustomLocation");
+
+// Register a location with an explicit priority (0-100)
+ProceduralRoadsAPI.RegisterLocation("MyImportantLocation", 90);
 
 // Unregister if needed
-RoadNetworkGenerator.UnregisterLocation("MyCustomLocation");
+ProceduralRoadsAPI.UnregisterLocation("MyCustomLocation");
 
-// Get all registered locations
-IReadOnlyCollection<string> locations = RoadNetworkGenerator.GetRegisteredLocations();
+// Get all registered locations and priorities
+IReadOnlyDictionary<string, int> locations = ProceduralRoadsAPI.GetRegisteredLocationPriorities();
 ```
 
 ### Reflection (soft dependency, no DLL reference required)
@@ -61,11 +64,12 @@ private static void RegisterRoadLocation(string locationName)
 
     if (assembly == null) return;
 
-    var generatorType = assembly.GetType("ProceduralRoads.RoadNetworkGenerator");
-    var method = generatorType?.GetMethod("RegisterLocation", 
-        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+    var apiType = assembly.GetType("ProceduralRoads.ProceduralRoadsAPI");
+    var method = apiType?.GetMethod(
+        "RegisterLocation",
+        new[] { typeof(string), typeof(int) });
 
-    method?.Invoke(null, new object[] { locationName });
+    method?.Invoke(null, new object[] { locationName, 80 });
 }
 ```
 
@@ -73,9 +77,11 @@ private static void RegisterRoadLocation(string locationName)
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `RegisterLocation` | `void RegisterLocation(string locationName)` | Add a location to road generation |
+| `RegisterLocation` | `void RegisterLocation(string locationName)` | Add a location to road generation with the default custom priority |
+| `RegisterLocation` | `void RegisterLocation(string locationName, int priority)` | Add a location to road generation with an explicit priority from 0-100 |
+| `RegisterLocations` | `void RegisterLocations(IEnumerable<string> locationNames, int priority = 80)` | Add multiple locations to road generation with a shared priority |
 | `UnregisterLocation` | `void UnregisterLocation(string locationName)` | Remove a location from road generation |
-| `GetRegisteredLocations` | `IReadOnlyCollection<string> GetRegisteredLocations()` | Get all registered location names |
+| `GetRegisteredLocationPriorities` | `IReadOnlyDictionary<string, int> GetRegisteredLocationPriorities()` | Get all registered location names and priorities |
 
 ### Notes
 

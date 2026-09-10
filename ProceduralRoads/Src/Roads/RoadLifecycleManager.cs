@@ -40,12 +40,13 @@ public static class RoadLifecycleManager
     /// <summary>
     /// Called when location generation completes.
     ///
-    /// This can fire BEFORE the world's ZDOs are in memory. Loading a saved
-    /// world runs ZoneSystem.Load, which sets LocationsGenerated from the
-    /// save, and that setter raises this event -- while ZDOMan.LoadChunks,
-    /// on the next line of ZNet.LoadWorld, has not run yet. Deciding here
-    /// would look for a saved network before anything was loaded, find
-    /// nothing, and generate a new one over the top of it.
+    /// This can fire while the world is still loading. Reading an old-format
+    /// save runs ZoneSystem.LoadOld, which sets LocationsGenerated and so
+    /// raises this event from inside ZNet's load routine, before that routine
+    /// has returned. Deciding here would look for the saved network partway
+    /// through the load and risk finding nothing, then generating a second
+    /// network over the one on disk. The mod waits for the load to finish
+    /// instead of reasoning about the order of its internal steps.
     /// </summary>
     private static void OnLocationsGenerated()
     {
@@ -78,10 +79,9 @@ public static class RoadLifecycleManager
     ///     ZoneSystem.LocationsGenerated through the property setter, and the
     ///     setter raises GenerateLocationsCompleted. The event arrives, late.
     ///   - An OLD-FORMAT save goes through ZoneSystem.LoadOld, which also uses
-    ///     the setter, so the event arrives -- but DURING the load, before
-    ///     ZDOMan.LoadChunks on the next line of ZNet.LoadWorld has run. Early,
-    ///     with nothing yet in memory to find. This is not a pre-1.0 path: it
-    ///     is what 1.0 runs the first time a player opens a world they saved
+    ///     the setter, so the event arrives -- but from inside ZNet's load
+    ///     routine, before it has returned. This is not a pre-1.0 path: it is
+    ///     what 1.0 runs the first time a player opens a world they saved
     ///     before updating.
     ///   - A 1.0-FORMAT save goes through ZoneSystem.Load, which writes the
     ///     backing field straight from the save and skips the setter. No event
@@ -95,9 +95,11 @@ public static class RoadLifecycleManager
     /// having been told or the game simply being in that state. What it must
     /// never do is stand in for the other half. Locations being in place says
     /// nothing about whether the world's ZDOs are in memory, and the saved
-    /// network lives in a ZDO -- so the world-data gate below stays, or an
-    /// existing world would build a second network over the one it saved and
-    /// no one would be told.
+    /// network lives in a ZDO -- so the world-data gate below stays. That gate
+    /// is a postfix on ZNet.ServerLoadWorld: the whole load routine has
+    /// returned, which is a guarantee that does not depend on the order of the
+    /// steps inside it. Without it an existing world could build a second
+    /// network over the one it saved, and no one would be told.
     /// </summary>
     private static void DecideOnce(string trigger)
     {

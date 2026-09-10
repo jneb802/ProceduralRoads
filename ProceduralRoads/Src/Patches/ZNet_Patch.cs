@@ -12,7 +12,7 @@ public static class ZNet_Patch
     /// generate locations if it must. Only after it returns is a saved road
     /// network in memory to be found: the locations event alone fires too
     /// early on a world loaded from a save, because ZoneSystem.Load raises it
-    /// before ZDOMan.LoadChunks has run.
+    /// before the load routine has returned.
     /// </summary>
     [HarmonyPatch(typeof(ZNet), "ServerLoadWorld")]
     public static class ZNet_ServerLoadWorld_Patch

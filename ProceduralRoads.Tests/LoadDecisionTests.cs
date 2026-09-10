@@ -12,10 +12,10 @@ namespace ProceduralRoads.Tests;
 /// Getting this wrong is expensive and silent: a world that already had roads
 /// generates a second network over the top of the one it saved, and the player
 /// never learns that the first is gone. It happened, and it happened because
-/// the decision was taken too early -- loading a world sets ZoneSystem's
-/// LocationsGenerated from the save, and that setter raises
-/// GenerateLocationsCompleted while ZDOMan.LoadChunks, the next line of
-/// ZNet.LoadWorld, has not run. Nothing was in memory to find.
+/// the decision was taken too early -- reading an old-format save sets
+/// ZoneSystem's LocationsGenerated, and that setter raises
+/// GenerateLocationsCompleted from inside ZNet's load routine, before the
+/// routine has returned and before the mod can rely on finding anything.
 ///
 /// So the decision waits for both halves -- locations ready, and the world's
 /// data read -- and is taken by whichever arrives last. These tests hold that

@@ -47,6 +47,11 @@ namespace ProceduralRoads
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
+        public static ConfigEntry<float> FordWadeWeight = null!;
+        public static ConfigEntry<float> FordRaiseWeight = null!;
+        public static ConfigEntry<float> FordSpanWeight = null!;
+        public static ConfigEntry<float> BridgeCostFixed = null!;
+        public static ConfigEntry<float> BridgeCostPerMeter = null!;
 
         public void Awake()
         {
@@ -76,6 +81,32 @@ namespace ProceduralRoads
                 new ConfigDescription("Maximum number of locations that can be connected by roads on a single island. " +
                     "Higher values allow more roads on large islands.",
                     new AcceptableValueRange<int>(2, 30)));
+
+            FordWadeWeight = Config.Bind("Fords", "WadeWeight", RoadConstants.DefaultFordStyleWeight,
+                new ConfigDescription("Relative odds that a ford is WADED, the road painted through the shallows at ground height " +
+                    "(offered only where the water is ankle deep, always in swamps). 0 disables the style; with equal weights each site picks evenly among the styles it allows.",
+                    new AcceptableValueRange<float>(0f, 100f)));
+
+            FordRaiseWeight = Config.Bind("Fords", "RaiseWeight", RoadConstants.DefaultFordStyleWeight,
+                new ConfigDescription("Relative odds that a ford is RAISED, the road leveled up through the shallows. " +
+                    "Always allowed, and used whenever no other style is.",
+                    new AcceptableValueRange<float>(0f, 100f)));
+
+            FordSpanWeight = Config.Bind("Fords", "SpanWeight", RoadConstants.DefaultFordStyleWeight,
+                new ConfigDescription("Relative odds that a ford is SPANNED by a short low footbridge with a step at each end " +
+                    "(offered only where the crossing is at least 6 m wide).",
+                    new AcceptableValueRange<float>(0f, 100f)));
+
+            BridgeCostFixed = Config.Bind("Bridges", "CostFixed", RoadConstants.DefaultBridgeCostFixed,
+                new ConfigDescription("Pathfinding cost of a bridge, fixed part. " +
+                    "For scale: easy ground costs about 1 per metre of road, rough or steep ground 1000-2000 per 8 m cell. " +
+                    "Lower = more bridges, higher = roads go around instead.",
+                    new AcceptableValueRange<float>(0f, 1000000f)));
+
+            BridgeCostPerMeter = Config.Bind("Bridges", "CostPerMeter", RoadConstants.DefaultBridgeCostPerMeter,
+                new ConfigDescription("Pathfinding cost of a bridge per metre of span, on top of CostFixed. " +
+                    "Makes long bridges dearer than short ones.",
+                    new AcceptableValueRange<float>(0f, 10000f)));
 
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
@@ -124,8 +155,13 @@ namespace ProceduralRoads
         {
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
+            // A validation switch, not a setting: see DebugSwitches.
+            RoadNetworkGenerator.GenerateOnLoad = DebugSwitches.Flag("GENERATE_ROADS_ON_LOAD", true);
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
+            RoadCrossingDetector.SetFordStyleWeights(FordWadeWeight.Value, FordRaiseWeight.Value, FordSpanWeight.Value);
+            RoadPathfinder.ConfiguredBridgeCostFixed = BridgeCostFixed.Value;
+            RoadPathfinder.ConfiguredBridgeCostPerMeter = BridgeCostPerMeter.Value;
             // CustomLocations is parsed at generation time to preserve API registrations
         }
 

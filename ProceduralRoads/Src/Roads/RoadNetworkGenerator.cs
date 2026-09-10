@@ -136,11 +136,58 @@ public static class RoadNetworkGenerator
     private static RoadPathfinder? m_pathfinder;
     private static int m_roadsGeneratedCount = 0;
     private static List<(Vector2 position, string label)> m_roadStartPoints = new();
+    private static readonly List<RoadCrossing> m_roadCrossings = new();
 
     public static bool RoadsGenerated => m_roadsGenerated;
-    public static bool IsLocationsReady => m_locationsReady;
+    /// <summary>
+    /// Whether the world's locations are in place, so roads may be loaded or built.
+    ///
+    /// Not just "our event fired". Valheim 1.0 writes ZoneSystem's
+    /// m_locationsGenerated straight from the save when a world is read from
+    /// disk, bypassing the property setter that raises
+    /// GenerateLocationsCompleted -- so on an existing world the event never
+    /// arrives, no matter how early we subscribed. Before 1.0 the setter was the
+    /// only writer and the event always came. Ask the game what is true rather
+    /// than relying on having been told.
+    /// </summary>
+    public static bool IsLocationsReady =>
+        m_locationsReady || (ZoneSystem.instance != null && ZoneSystem.instance.LocationsGenerated);
+
+    /// <summary>River crossings of the generated roads (fords and bridges
+    /// prototypes): empty unless the network was generated with either on.</summary>
+    public static IReadOnlyList<RoadCrossing> GetRoadCrossings() => m_roadCrossings;
     public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
+
+    /// <summary>
+    /// Whether a world without persisted roads generates its network when the
+    /// player spawns. Off (PROCEDURALROADS_GENERATE_ROADS_ON_LOAD=0), the world
+    /// stays road-free until road_generate or road_regen_island asks; a
+    /// validation loop on one site then pays seconds, not a whole-world
+    /// generation. There is no config key for this: it is a switch for
+    /// developing the mod, and a config key cannot be taken back once written.
+    /// </summary>
+    public static bool GenerateOnLoad = true;
+
+    /// <summary>Load-time entry: generate unless GenerateOnLoad is off. Returns whether it generated.</summary>
+    public static bool GenerateRoadsOnLoad()
+    {
+        if (!GenerateOnLoad)
+        {
+            Log.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +
+                        "no roads until road_generate or road_regen_island");
+            return false;
+        }
+        GenerateRoads();
+        // Zones generated during the loading screen (around the login position)
+        // exist before the network does; give them their roads now.
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        Log.LogDebug($"Applied road terrain to {zones} zone(s) loaded before generation");
+        int bridgeZones = BridgePlacement.SpawnInLoadedZones();
+        if (bridgeZones > 0)
+            Log.LogDebug($"Spawned bridges into {bridgeZones} zone(s) loaded before generation");
+        return true;
+    }
 
     /// <summary>
     /// Get the start points of all generated roads for visualization.
@@ -173,13 +220,18 @@ public static class RoadNetworkGenerator
     /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
     public static void GenerateRoads(bool force = false)
     {
-        if (m_roadsGenerated && !force)
+        // A world can already have a network two ways: this session generated
+        // one, or one was loaded from the save. Both count. Asking only whether
+        // this session generated it meant a forced regeneration in a world that
+        // already had roads skipped the reset and laid the new network on top
+        // of the old one - the spatial grid kept both sets of points.
+        if (RoadsAvailable && !force)
         {
-            Log.LogDebug("Roads already generated, skipping");
+            Log.LogDebug("Roads already present, skipping");
             return;
         }
-        
-        if (force && m_roadsGenerated)
+
+        if (force && RoadsAvailable)
         {
             Log.LogDebug("Force regenerating roads...");
             Reset();
@@ -199,15 +251,7 @@ public static class RoadNetworkGenerator
 
         Log.LogDebug("Starting road network generation...");
 
-        // Merge config-defined custom locations into registered set
-        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
-        foreach (var locName in configLocations)
-        {
-            if (RegisteredLocationNames.Add(locName))
-            {
-                Log.LogDebug($"Added config location: {locName}");
-            }
-        }
+        RegisterConfiguredLocations();
 
         DateTime startTime = DateTime.Now;
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
@@ -261,6 +305,23 @@ public static class RoadNetworkGenerator
         RoadNetworkPersistence.EnsureMetadataInstance();
     }
 
+    /// <summary>
+    /// Merge the config-defined custom locations into the registered set.
+    /// Every generation entry point calls this first, so a location named in
+    /// the config counts as road-eligible whichever entry point runs first.
+    /// </summary>
+    private static void RegisterConfiguredLocations()
+    {
+        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
+        foreach (var locName in configLocations)
+        {
+            if (RegisteredLocationNames.Add(locName))
+            {
+                Log.LogDebug($"Added config location: {locName}");
+            }
+        }
+    }
+
     #region Core Road Generation Primitive
 
     /// <summary>
@@ -305,7 +366,30 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+        // Fords (prototype): where the road jumped a river, the water is
+        // crossed in the ford's style, not paved like the land. Record the
+        // crossings and paint the land and each crossing on its own; without
+        // fords (or on a road that crossed no river) the whole path is one
+        // road as before.
+        List<RoadCrossing> crossings = m_pathfinder.Fords || m_pathfinder.Bridges
+            ? RoadCrossingDetector.Detect(path, WorldGenerator.instance, m_pathfinder.Bridges, m_pathfinder.Fords)
+            : new List<RoadCrossing>();
+        // A crossing a few metres from one an earlier road made is the same
+        // site: it takes that site's banks, so this road is painted up to
+        // the one bridge built there instead of pointing at water beside it.
+        foreach (RoadCrossing crossing in crossings)
+        {
+            foreach (RoadCrossing existing in m_roadCrossings)
+            {
+                if (RoadCrossing.SameBanks(existing, crossing))
+                {
+                    crossing.SnapTo(existing);
+                    break;
+                }
+            }
+        }
+        AddRoadPathWithCrossings(path, crossings, width);
+        m_roadCrossings.AddRange(crossings);
         m_roadsGeneratedCount++;
 
         if (path.Count > 0)
@@ -313,11 +397,77 @@ public static class RoadNetworkGenerator
             string pinLabel = label ?? $"Road {m_roadsGeneratedCount}";
             m_roadStartPoints.Add((path[0], pinLabel));
         }
+        if (crossings.Count > 0 && label != null)
+            Log.LogDebug($"Road {label}: {crossings.Count} river crossing(s)");
 
         if (label != null)
             Log.LogDebug($"Generated road: {label} ({path.Count} waypoints)");
 
         return true;
+    }
+
+    /// <summary>
+    /// Adds the path to the spatial grid as road: the land before a crossing
+    /// runs on to its near bank and the land after it starts at its far
+    /// bank, and the crossing itself, bank to bank along the road, is
+    /// painted in its style: waded at the ground's own height, or raised to
+    /// the bank clearance so the leveled road stands above the water.
+    /// </summary>
+    private static void AddRoadPathWithCrossings(List<Vector2> path, List<RoadCrossing> crossings, float width)
+    {
+        if (crossings.Count == 0)
+        {
+            RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+            return;
+        }
+
+        int cursor = 0;
+        Vector2? resumeAt = null;
+        foreach (RoadCrossing crossing in crossings)
+        {
+            // Two crossings on one road can overlap on the path: a bridge's
+            // banks walk out to the bank tops and a swamp bridge's on to dry
+            // ground, so one crossing's span can reach past the start of the
+            // next. A crossing the previous one already spans has nothing left
+            // to paint, and one that merely starts inside it has no land in
+            // front of it.
+            if (crossing.ToIndex <= cursor)
+                continue;
+
+            List<Vector2> land = crossing.FromIndex > cursor
+                ? path.GetRange(cursor, crossing.FromIndex - cursor + 1)
+                : new List<Vector2>();
+            if (resumeAt.HasValue && (land.Count == 0 || Vector2.Distance(resumeAt.Value, land[0]) > 0.5f))
+                land.Insert(0, resumeAt.Value);
+            if (land.Count > 0 && Vector2.Distance(crossing.FromBank, land[land.Count - 1]) > 0.5f)
+                land.Add(crossing.FromBank);
+            if (land.Count >= 2)
+                RoadSpatialGrid.AddRoadPath(land, width, WorldGenerator.instance);
+
+            // A bridge or a spanned ford is left to its pieces: nothing is
+            // leveled or painted over the water.
+            if (crossing.Kind == CrossingKind.Ford && crossing.Style != FordStyle.Span)
+            {
+                List<Vector2> ford = new() { crossing.FromBank };
+                for (int k = Mathf.Max(crossing.FromIndex + 1, cursor + 1); k < crossing.ToIndex; k++)
+                    ford.Add(path[k]);
+                ford.Add(crossing.ToBank);
+                if (crossing.Style == FordStyle.Wade)
+                    RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, followTerrain: true);
+                else
+                    RoadSpatialGrid.AddRoadPath(ford, width, WorldGenerator.instance, minHeight: RoadPathfinder.LandingFloor);
+            }
+
+            resumeAt = crossing.ToBank;
+            cursor = crossing.ToIndex;
+        }
+
+        int tailStart = Mathf.Min(cursor, path.Count - 1);
+        List<Vector2> tail = path.GetRange(tailStart, path.Count - tailStart);
+        if (resumeAt.HasValue && Vector2.Distance(resumeAt.Value, tail[0]) > 0.5f)
+            tail.Insert(0, resumeAt.Value);
+        if (tail.Count >= 2)
+            RoadSpatialGrid.AddRoadPath(tail, width, WorldGenerator.instance);
     }
 
     /// <summary>
@@ -582,6 +732,73 @@ public static class RoadNetworkGenerator
 
     #region Utility Methods
 
+    /// <summary>
+    /// Clear the network and regenerate roads for the single island containing
+    /// worldPos: the same island selection, location selection and pathfinding
+    /// as the global pass, restricted to one island. A validation loop that
+    /// iterates on one site runs in seconds instead of a whole-world generation.
+    /// </summary>
+    public static bool RegenerateIslandAt(Vector3 worldPos, out string summary)
+    {
+        if (WorldGenerator.instance == null || ZoneSystem.instance == null)
+        {
+            summary = "World not ready";
+            return false;
+        }
+
+        RegisterConfiguredLocations();
+
+        var locations = GatherLocationData();
+        if (locations == null)
+        {
+            summary = "No location data available";
+            return false;
+        }
+
+        var islands = IslandDetector.DetectIslands();
+        Island? island = islands.FirstOrDefault(i => i.ContainsPoint(worldPos));
+        if (island == null)
+        {
+            summary = $"No island at ({worldPos.x:F0},{worldPos.z:F0})";
+            return false;
+        }
+
+        var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
+        if (islandLocations.Count == 0)
+        {
+            summary = $"Island {island.Id} has no road-eligible locations";
+            return false;
+        }
+
+        var selected = SelectLocations(islandLocations, GetMaxLocationsForIsland(island));
+
+        DateTime startTime = DateTime.Now;
+        bool locationsWereReady = m_locationsReady;
+        Reset();
+        m_locationsReady = locationsWereReady;
+        m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
+        m_roadsGeneratedCount = 0;
+
+        if (island.ContainsPoint(locations.Value.SpawnPoint))
+            GenerateIslandRoads(island, selected, locations.Value.SpawnPoint, locations.Value.SpawnRadius);
+        else
+            GenerateIslandRoads(island, selected);
+
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        m_roadsGenerated = true;
+        m_pathfinder = null;
+        // Same as after global generation: without the metadata object the
+        // save path has nowhere to put the network and logs an error instead.
+        RoadNetworkPersistence.EnsureMetadataInstance();
+
+        TimeSpan elapsed = DateTime.Now - startTime;
+        summary =
+            $"Island {island.Id} ({island.ApproxArea / 1_000_000f:F1}km²): " +
+            $"{selected.Count} locations, {m_roadsGeneratedCount} roads, " +
+            $"{RoadSpatialGrid.TotalRoadLength:F0}m in {elapsed.TotalSeconds:F1}s";
+        return true;
+    }
+
     public static void Reset()
     {
         m_roadsGenerated = false;
@@ -590,6 +807,8 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
+        m_roadCrossings.Clear();
+        BridgePlans.Reset();
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
     }
@@ -701,7 +920,20 @@ public static class RoadNetworkGenerator
             return;
         }
 
-        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints);
+        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadCrossings, BridgePlans.SpawnedZones);
+    }
+
+    /// <summary>
+    /// Save only which zones have their bridge pieces (bridges prototype).
+    /// For a session whose network was loaded, not generated: the network
+    /// itself is unchanged, but zones spawned this session must be
+    /// remembered, or a bridge whose pieces were all destroyed comes back.
+    /// </summary>
+    public static void SaveBridgeZones()
+    {
+        if (!RoadsAvailable)
+            return;
+        RoadNetworkPersistence.SaveBridgeZones(BridgePlans.SpawnedZones);
     }
 
     /// <summary>
@@ -711,7 +943,11 @@ public static class RoadNetworkGenerator
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData()
     {
-        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints);
+        var bridgeZones = new HashSet<Vector2s>();
+        bool loaded = RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings, bridgeZones);
+        if (loaded)
+            BridgePlans.MarkSpawned(bridgeZones);
+        return loaded;
     }
 
     #endregion

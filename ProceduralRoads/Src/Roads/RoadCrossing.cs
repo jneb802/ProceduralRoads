@@ -216,14 +216,24 @@ public static class RoadCrossingDetector
         // water, the deck springs from the bank tops instead of the water's
         // edge. Both banks move together, and only when the tops are level
         // enough for one deck.
+        //
+        // This placement is OPTIONAL -- the crossing is sound either way -- and
+        // it lengthens the deck, so it is taken only while the result still fits
+        // the span the search is allowed to accept. Springing from the tops of a
+        // gorge whose rims stand back from the water can add metres at each end:
+        // a 128 m jump came back as a 136.05 m bridge, past a cap the router had
+        // already checked and priced against. When the tops do not fit, the
+        // water's-edge banks stand, and those are the ones routing measured.
         if (bridges)
         {
             float fromH = BiomeBlendedHeight.GetBlendedHeight(from.x, from.y, world);
             float toH = BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world);
             (Vector2 topFrom, int topFromIndex, float topFromH) = BankTop(path, from, fromIndex, -1, world);
             (Vector2 topTo, int topToIndex, float topToH) = BankTop(path, to, toIndex, +1, world);
+            float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
             if (topFromH >= fromH + RoadConstants.HighBankRise && topToH >= toH + RoadConstants.HighBankRise
-                && Mathf.Abs(topFromH - topToH) <= RoadConstants.MaxBridgeBankDelta)
+                && Mathf.Abs(topFromH - topToH) <= RoadConstants.MaxBridgeBankDelta
+                && Vector2.Distance(topFrom, topTo) <= cap)
             {
                 from = topFrom;
                 to = topTo;

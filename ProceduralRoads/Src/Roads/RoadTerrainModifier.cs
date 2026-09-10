@@ -379,15 +379,23 @@ public static class RoadTerrainModifier
     }
 
     /// <summary>
-    /// The fitted road surface height at the vertex. The points are the
-    /// road's centreline, so the surface is a line along the road: the
-    /// points' principal direction (weighted) is the road direction, the
-    /// height is regressed on the offset along it, and the gradient across
-    /// the road is zero by construction, which keeps the cross-section level
-    /// (a free plane fit let a road's slight curvature turn its height change
-    /// into a steep tilt across the road). The ridge (a prior spread of
-    /// HeightFitRidgeMetres) keeps the gradient defined for a single point
-    /// or two nearly coincident ones, and the clamp bounds it.
+    /// The fitted road surface height at the vertex.
+    ///
+    /// This is a LINE fit along the road, not a plane fit. The points are the
+    /// road's centreline, so the surface is one-dimensional: the second-moment
+    /// sums (sxx, sxy, syy) are here only to find the points' principal
+    /// direction, which is the road direction; the height is then regressed on
+    /// the offset along that direction alone, and the gradient ACROSS the road
+    /// is zero by construction, which keeps the cross-section level.
+    ///
+    /// A free plane fit was tried and abandoned: on a bend the lateral offset
+    /// of the centreline grows with distance in the same way the ramp's lift
+    /// does, and the plane attributed the one to the other, tilting the road
+    /// sideways by as much as the clamp allows. Nothing below fits a plane.
+    ///
+    /// The ridge (a prior spread of HeightFitRidgeMetres) keeps the gradient
+    /// defined for a single point or two nearly coincident ones, and the clamp
+    /// bounds it.
     /// </summary>
     private static float FitHeightAtVertex(double sw, double sx, double sy, double sxx, double sxy, double syy,
         double sh, double sxh, double syh)

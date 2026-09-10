@@ -1271,4 +1271,58 @@ public class BridgeTests
         Assert.True(Vector2.Distance(f2, t2) <= RoadConstants.SwampBridgeDryReach + Vector2.Distance(from, to) + 0.5f);
     }
 
+    // ---- high banks that stand back from the water ----
+
+    /// <summary>
+    /// A gorge: a wide river core, a narrow ledge just above the water at each
+    /// side, then the rim standing higher and further back. The search lands on
+    /// the ledges; the high-bank placement would rather spring the deck from the
+    /// rims, which are further apart.
+    /// </summary>
+    private sealed class HighRimGorgeWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy) =>
+            Mathf.Abs(wy) > 80f || Mathf.Abs(wx) > 200f ? 20f
+            : Mathf.Abs(wx) <= 56f ? 26f
+            : Mathf.Abs(wx) <= 68f ? 32f
+            : 36f;
+        public override Heightmap.Biome GetBiome(float wx, float wy) => Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
+        {
+            weight = Mathf.Abs(wx) <= 56f ? 1f : 0f;
+            width = 112f;
+        }
+    }
+
+    [Fact]
+    public void SpringingFromTheBankTopsNeverPushesABridgePastTheCap()
+    {
+        // The high-bank placement is a choice about where a sound crossing puts
+        // its abutments, not about whether to cross. It also makes the deck
+        // longer, and it ran after the search had measured and priced the jump:
+        // a 128 m jump came back as a 136.05 m bridge on a 128 m cap. Reported
+        // by review with this world.
+        //
+        // Taking the tops is optional; staying inside the cap is not. Where the
+        // rims do not fit, the water's-edge banks stand -- which is the geometry
+        // routing accepted, so the road still gets its bridge.
+        var world = new HighRimGorgeWorld();
+        WorldGenerator.instance = world;
+        int before = RoadPathfinder.MaxIterations;
+        RoadPathfinder.MaxIterations = 100000;
+        try
+        {
+            var path = Pathfinder(world, true).FindPath(new Vector2(-120f, 0f), new Vector2(120f, 0f));
+            Assert.NotNull(path);
+            var crossings = RoadCrossingDetector.Detect(path!, world, true);
+            Assert.NotEmpty(crossings);
+            float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+            foreach (RoadCrossing c in crossings)
+                Assert.True(c.Width <= cap + 0.5f, $"built a {c.Width:F2} m bridge, cap is {cap:F0} m");
+            // and the crossing is still there: the guard trims the placement,
+            // it does not withdraw the bridge.
+            Assert.Contains(crossings, c => c.Kind == CrossingKind.Bridge);
+        }
+        finally { WorldGenerator.instance = null; RoadPathfinder.MaxIterations = before; }
+    }
 }

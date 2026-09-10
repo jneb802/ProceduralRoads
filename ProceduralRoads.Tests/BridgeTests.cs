@@ -1125,4 +1125,73 @@ public class BridgeTests
         }
         return Enumerable.Range(0, n).Where(i => !supported[i]).ToList();
     }
+
+    // ---- respawn while the old pieces are still being destroyed ----
+
+    /// <summary>A zone holding n marked bridge pieces, as a spawned bridge leaves it.</summary>
+    private static List<ZDOID> PlacePieces(Vector2s zone, int n)
+    {
+        var ids = new List<ZDOID>();
+        UnityEngine.Vector3 at = ZoneSystem.GetZonePos(zone);
+        for (int i = 0; i < n; i++)
+        {
+            ZDO zdo = ZDOMan.instance!.CreateNewZDO(at, 0);
+            zdo.Set(BridgePlans.MarkerHash, 1);
+            ids.Add(zdo.m_uid);
+        }
+        return ids;
+    }
+
+    [Fact]
+    public void PiecesAwaitingDestructionDoNotCountAsPiecesAlreadyStanding()
+    {
+        // Destroying a ZDO does not remove it. ZDOMan.DestroyZDO appends the id
+        // to m_destroySendList and the removal happens when that queue runs, and
+        // ZNetScene.Destroy funnels into the same call. So during a respawn the
+        // pieces just condemned are STILL in the sector lookup when the
+        // replacement pass asks whether the zone already has a bridge.
+        //
+        // Answering "yes" there is the bug this guards: the zone is skipped, the
+        // old pieces then vanish, and because the skip also recorded the zone as
+        // spawned nothing ever puts a bridge back. The crossing is priced into
+        // the road and there is nothing over the water.
+        ZDOMan.instance = new ZDOMan();
+        try
+        {
+            var zone = new Vector2s(3, -4);
+            List<ZDOID> condemned = PlacePieces(zone, 5);
+
+            // Before the respawn: the pieces are standing, so the zone is built.
+            Assert.True(BridgePlans.ZoneHasLivePieces(zone));
+
+            // Mid-respawn: the same ZDOs are still there, but all are condemned.
+            Assert.False(BridgePlans.ZoneHasLivePieces(zone, condemned),
+                "condemned pieces were mistaken for a bridge that is still standing");
+
+            // A piece that is NOT being retired still counts -- a zone someone
+            // else's build already populated must not be doubled up on.
+            PlacePieces(zone, 1);
+            Assert.True(BridgePlans.ZoneHasLivePieces(zone, condemned));
+        }
+        finally { ZDOMan.instance = null; BridgePlans.Reset(); }
+    }
+
+    [Fact]
+    public void AskingWhetherAZoneIsBuiltDoesNotRecordThatItIs()
+    {
+        // The old helper called MarkSpawned from inside the question. A zone
+        // could therefore be written off as done by a caller that only wanted
+        // to look, and once written off it is skipped for the rest of the
+        // session. Asking and recording are separate now.
+        ZDOMan.instance = new ZDOMan();
+        try
+        {
+            var zone = new Vector2s(7, 7);
+            PlacePieces(zone, 2);
+
+            Assert.True(BridgePlans.ZoneHasLivePieces(zone));
+            Assert.False(BridgePlans.IsSpawned(zone), "asking recorded the zone as spawned");
+        }
+        finally { ZDOMan.instance = null; BridgePlans.Reset(); }
+    }
 }

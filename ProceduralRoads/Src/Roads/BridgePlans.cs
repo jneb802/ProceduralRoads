@@ -46,6 +46,43 @@ public static class BridgePlans
             s_spawnedZones.Add(zone);
     }
 
+    /// <summary>The marker a spawned bridge piece carries in its ZDO.</summary>
+    public static readonly int MarkerHash = "ProceduralRoads_Bridge".GetStableHashCode();
+
+    /// <summary>
+    /// Whether the zone still holds bridge pieces that are STAYING -- markers
+    /// belonging to pieces already condemned are not counted.
+    ///
+    /// The distinction is the whole point. ZDOMan.DestroyZDO does not remove a
+    /// ZDO; it appends the id to m_destroySendList and the removal happens when
+    /// that queue is processed. ZNetScene.Destroy drops the instance and then
+    /// calls the same method, so it is queued too. A respawn that destroys the
+    /// old pieces and immediately looks for duplicates therefore finds the
+    /// pieces it has just condemned, concludes the zone is already built, and
+    /// skips it -- after which the old pieces do disappear and nothing replaces
+    /// them. Passing the condemned ids in is what keeps that from happening.
+    ///
+    /// This deliberately has no side effect: deciding a zone is already built
+    /// and RECORDING that it is are separate acts, and the caller does the
+    /// second one.
+    /// </summary>
+    public static bool ZoneHasLivePieces(Vector2s zoneID, ICollection<ZDOID>? condemned = null)
+    {
+        if (ZDOMan.instance == null)
+            return false;
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zoneID, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        foreach (ZDO zdo in zdos)
+        {
+            if (zdo.GetInt(MarkerHash) != 1)
+                continue;
+            if (condemned != null && condemned.Contains(zdo.m_uid))
+                continue;
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>The pieces planned for a zone, or null when it has none.</summary>
     public static List<BridgePiece>? PlanFor(Vector2s zone)
     {

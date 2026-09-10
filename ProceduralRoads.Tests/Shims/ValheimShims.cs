@@ -161,10 +161,13 @@ public class ZNetView
 }
 
 /// <summary>Mirror of Valheim's ZDOID, as far as the road code prints it.</summary>
-public struct ZDOID
+public struct ZDOID : System.IEquatable<ZDOID>
 {
     public long ID;
     public override string ToString() => ID.ToString();
+    public bool Equals(ZDOID other) => ID == other.ID;
+    public override bool Equals(object? obj) => obj is ZDOID other && Equals(other);
+    public override int GetHashCode() => ID.GetHashCode();
 }
 
 /// <summary>

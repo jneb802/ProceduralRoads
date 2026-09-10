@@ -19,7 +19,7 @@ public static class BridgePlacement
 
     /// <summary>ZDO marker on every piece this mod spawned. Vanilla clients
     /// ignore unknown ZDO variables, so the marker is crossplay-safe.</summary>
-    public static readonly int MarkerHash = "ProceduralRoads_Bridge".GetStableHashCode();
+    private static int MarkerHash => BridgePlans.MarkerHash;
 
     private static readonly HashSet<string> s_warnedPrefabs = new();
 
@@ -41,7 +41,7 @@ public static class BridgePlacement
     /// the mod was added to) never spawn again while they stay loaded, so
     /// they get their pieces here. Returns how many zones got pieces.
     /// </summary>
-    public static int SpawnInLoadedZones()
+    public static int SpawnInLoadedZones(ICollection<ZDOID>? condemned = null)
     {
         var heightmaps = Heightmap.GetAllHeightmaps();
         if (heightmaps == null)
@@ -51,7 +51,7 @@ public static class BridgePlacement
         {
             if (heightmap == null)
                 continue;
-            if (SpawnInZone(ZoneSystem.GetZone(heightmap.transform.position), ghost: false) > 0)
+            if (SpawnInZone(ZoneSystem.GetZone(heightmap.transform.position), ghost: false, condemned) > 0)
                 zones++;
         }
         return zones;
@@ -64,42 +64,37 @@ public static class BridgePlacement
     /// </summary>
     public static (int destroyed, int zones) RespawnFromPlans()
     {
-        int destroyed = ClearSpawnedPieces();
-        return (destroyed, SpawnInLoadedZones());
+        // The ids come back because destruction is QUEUED: the old pieces are
+        // still in ZDOMan's sector lookup while the replacements go in, and
+        // without this the replacement pass would mistake them for pieces
+        // already standing and skip every zone it was asked to rebuild.
+        var condemned = new HashSet<ZDOID>();
+        int destroyed = ClearSpawnedPieces(condemned);
+        return (destroyed, SpawnInLoadedZones(condemned));
     }
 
-    private static int SpawnInZone(Vector2s zoneID, bool ghost)
+    private static int SpawnInZone(Vector2s zoneID, bool ghost, ICollection<ZDOID>? condemned = null)
     {
         if (!IsServer || ZNetScene.instance == null || ZDOMan.instance == null)
             return 0;
         List<BridgePiece>? pieces = BridgePlans.PlanFor(zoneID);
         if (pieces == null)
             return 0;
-        if (BridgePlans.IsSpawned(zoneID) || HasMarkedPieces(zoneID))
+        if (BridgePlans.IsSpawned(zoneID))
             return 0;
+        // A zone whose pieces are already standing is recorded as spawned and
+        // left alone; pieces condemned moments ago do not count as standing.
+        if (BridgePlans.ZoneHasLivePieces(zoneID, condemned))
+        {
+            BridgePlans.MarkSpawned(zoneID);
+            return 0;
+        }
 
         BridgePlans.MarkSpawned(zoneID);
         int spawned = SpawnPieces(pieces, ghost);
         if (spawned > 0)
             Log.LogInfo($"[BRIDGES] zone {zoneID}: spawned {spawned} bridge pieces");
         return spawned;
-    }
-
-    /// <summary>Whether the zone's saved objects already include our pieces
-    /// (a zone spawned by a build that did not keep the spawned set).</summary>
-    private static bool HasMarkedPieces(Vector2s zoneID)
-    {
-        List<ZDO> zdos = new();
-        ZDOMan.instance.FindObjects(zoneID, zdos, new HashSet<ZoneSystem.SectorIndex>());
-        foreach (ZDO zdo in zdos)
-        {
-            if (zdo.GetInt(MarkerHash) == 1)
-            {
-                BridgePlans.MarkSpawned(zoneID);
-                return true;
-            }
-        }
-        return false;
     }
 
     private static int SpawnPieces(List<BridgePiece> pieces, bool ghost)
@@ -147,7 +142,7 @@ public static class BridgePlacement
     /// Destroy every piece this mod spawned, loaded or not, and forget which
     /// zones had them, so the current plans can be spawned afresh. Server only.
     /// </summary>
-    public static int ClearSpawnedPieces()
+    public static int ClearSpawnedPieces(ICollection<ZDOID>? condemned = null)
     {
         if (!IsServer || ZDOMan.instance == null || ZNetScene.instance == null)
             return 0;
@@ -178,6 +173,7 @@ public static class BridgePlacement
                 zdo.SetOwner(ZDOMan.GetSessionID());
                 ZDOMan.instance.DestroyZDO(zdo);
             }
+            condemned?.Add(zdo.m_uid);
             destroyed++;
         }
         if (destroyed > 0)

@@ -313,18 +313,20 @@ public static class RoadTerrainModifier
 
     /// <summary>
     /// The road surface height at a vertex, from the road points within reach.
-    /// The points sit on the centreline, so the surface is fitted as a plane
-    /// through them (weighted least squares, the same blend weights as
+    /// The points sit on the centreline, so the surface is fitted as a LINE
+    /// along the road (weighted least squares, the same blend weights as
     /// before) and read at the vertex. A weighted mean would do mid-road,
     /// where the points lie on both sides of the vertex, but at a road end
     /// every point lies on one side: on a slope the mean of their heights is
     /// the height some way back along the road, and the terrain at the end,
-    /// and for the blend margin beyond it, came out on a shelf. The plane
+    /// and for the blend margin beyond it, came out on a shelf. The fit
     /// follows the road's own gradient through the end instead.
     ///
-    /// Across the road the points give no gradient at all (they are
-    /// collinear), and a small ridge term settles that gradient at zero, so
-    /// the surface is level across the road as before.
+    /// The sums gathered below are the ones a plane fit would need, but they
+    /// are used to find the road's direction, not to fit a plane: the height
+    /// is regressed along that direction alone and the gradient across the
+    /// road is zero by construction. See FitHeightAtVertex, which explains why
+    /// a free plane fit was tried and abandoned.
     /// </summary>
     private static BlendResult CalculateBlendedHeight(List<RoadSpatialGrid.RoadPoint> roadPoints, Vector2 vertexPos)
     {

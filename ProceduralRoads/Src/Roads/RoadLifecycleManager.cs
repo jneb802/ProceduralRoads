@@ -23,6 +23,7 @@ public static class RoadLifecycleManager
     public static void OnZoneSystemDestroy(ZoneSystem zoneSystem)
     {
         zoneSystem.GenerateLocationsCompleted -= OnLocationsGenerated;
+        m_worldDataLoaded = false;
         RoadNetworkGenerator.Reset();
         RoadClearAreaManager.ClearCache();
         RoadTerrainModifier.ResetDebugCounters();
@@ -31,38 +32,107 @@ public static class RoadLifecycleManager
     }
 
     /// <summary>
-    /// Called when location generation completes. Triggers road loading or generation.
+    /// Whether the world's own data has finished loading, so a road network
+    /// saved in it would be in memory to find.
+    /// </summary>
+    private static bool m_worldDataLoaded;
+
+    /// <summary>
+    /// Called when location generation completes.
+    ///
+    /// This can fire while the world is still loading. Reading an old-format
+    /// save runs ZoneSystem.LoadOld, which sets LocationsGenerated and so
+    /// raises this event from inside ZNet's load routine, before that routine
+    /// has returned. Deciding here would look for the saved network partway
+    /// through the load and risk finding nothing, then generating a second
+    /// network over the one on disk. The mod waits for the load to finish
+    /// instead of reasoning about the order of its internal steps.
     /// </summary>
     private static void OnLocationsGenerated()
     {
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete...");
         RoadNetworkGenerator.MarkLocationsReady();
         RoadClearAreaManager.ClearCache();
+        DecideOnce("locations generated");
+    }
+
+    /// <summary>
+    /// Called once the world's own data, ZDOs included, has been read.
+    /// </summary>
+    public static void OnWorldDataLoaded()
+    {
+        m_worldDataLoaded = true;
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("World data loaded");
+        DecideOnce("world data loaded");
+    }
+
+    /// <summary>
+    /// Load the saved network, or build one - whichever this world needs, once,
+    /// and only when both halves are ready: the locations in place, and the
+    /// world's own data read. Each caller says it is ready and whichever
+    /// arrives last does the work, because the order is not ours to choose.
+    ///
+    /// The two halves are separate on purpose, and the locations half has
+    /// three doors into it. On Valheim 1.0, read from the assembly:
+    ///
+    ///   - A NEW world generates its locations in a coroutine that sets
+    ///     ZoneSystem.LocationsGenerated through the property setter, and the
+    ///     setter raises GenerateLocationsCompleted. The event arrives, late.
+    ///   - An OLD-FORMAT save goes through ZoneSystem.LoadOld, which also uses
+    ///     the setter, so the event arrives -- but from inside ZNet's load
+    ///     routine, before it has returned. This is not a pre-1.0 path: it is
+    ///     what 1.0 runs the first time a player opens a world they saved
+    ///     before updating.
+    ///   - A 1.0-FORMAT save goes through ZoneSystem.Load, which writes the
+    ///     backing field straight from the save and skips the setter. No event
+    ///     is raised at all, however early we subscribed.
+    ///
+    /// So the event cannot be dropped in favour of asking the game, and asking
+    /// the game cannot be dropped in favour of the event: two of the three
+    /// doors only announce themselves, and the third only ever shows its state.
+    ///
+    /// RoadNetworkGenerator.IsLocationsReady covers both: it accepts either
+    /// having been told or the game simply being in that state. What it must
+    /// never do is stand in for the other half. Locations being in place says
+    /// nothing about whether the world's ZDOs are in memory, and the saved
+    /// network lives in a ZDO -- so the world-data gate below stays. That gate
+    /// is a postfix on ZNet.ServerLoadWorld: the whole load routine has
+    /// returned, which is a guarantee that does not depend on the order of the
+    /// steps inside it. Without it an existing world could build a second
+    /// network over the one it saved, and no one would be told.
+    /// </summary>
+    private static void DecideOnce(string trigger)
+    {
+        if (RoadNetworkGenerator.RoadsAvailable)
+            return;
 
         bool hasWorldGen = WorldGenerator.instance != null;
         bool hasLocations = ZoneSystem.instance?.GetLocationList()?.Count > 0;
 
-        if (hasWorldGen && hasLocations)
+        if (!hasWorldGen || !hasLocations || !RoadNetworkGenerator.IsLocationsReady || !m_worldDataLoaded)
         {
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"WorldGenerator and locations available ({ZoneSystem.instance!.GetLocationList()!.Count} locations)...");
-            
-            if (RoadNetworkGenerator.TryLoadGlobalRoadData())
-            {
-                RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Loaded roads from global persistence");
-            }
-            else
-            {
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No persisted roads found, generating...");
-                RoadNetworkGenerator.GenerateRoads();
-            }
+                $"Waiting after {trigger} (WorldGen={hasWorldGen}, Locations={hasLocations}, " +
+                $"LocationsReady={RoadNetworkGenerator.IsLocationsReady}, WorldData={m_worldDataLoaded})");
+            return;
         }
-        else
+
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+            $"Deciding after {trigger}: {ZoneSystem.instance!.GetLocationList()!.Count} locations");
+
+        if (RoadNetworkGenerator.TryLoadGlobalRoadData())
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"Deferring road generation (WorldGen={hasWorldGen}, Locations={hasLocations})...");
+            RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Loaded roads from global persistence");
+            return;
         }
+
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No persisted roads found, generating...");
+        // GenerateRoadsOnLoad, not GenerateRoads: it honours the
+        // PROCEDURALROADS_GENERATE_ROADS_ON_LOAD switch and then applies road
+        // terrain to the zones that spawned during the loading screen, before
+        // the network existed. Calling the generator directly loses both.
+        RoadNetworkGenerator.GenerateRoadsOnLoad();
     }
 
     /// <summary>
@@ -70,22 +140,18 @@ public static class RoadLifecycleManager
     /// </summary>
     public static void OnPlayerSpawn(Vector3 spawnPoint)
     {
-        if (!RoadNetworkGenerator.IsLocationsReady || RoadNetworkGenerator.RoadsAvailable)
+        if (RoadNetworkGenerator.RoadsAvailable)
             return;
 
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-            $"Player spawning at {spawnPoint}, attempting to load global road data...");
-
-        if (RoadNetworkGenerator.TryLoadGlobalRoadData())
-        {
-            RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Roads loaded from global persistence");
-        }
-        else
-        {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("No global road data, generating...");
-            RoadNetworkGenerator.GenerateRoads();
-        }
+        // A last resort, for a host path that did not go through ZNet's world
+        // load. It does NOT establish that a saved network has arrived: on a
+        // client the player spawns without any guarantee that the road
+        // metadata has replicated, and nothing here waits for it. Road
+        // generation is host-side, so a client reaching this is already
+        // outside what this hook can promise.
+        m_worldDataLoaded = true;
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Player spawning at {spawnPoint}");
+        DecideOnce("player spawn");
     }
 
     /// <summary>

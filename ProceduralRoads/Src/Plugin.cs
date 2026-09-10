@@ -124,6 +124,8 @@ namespace ProceduralRoads
         {
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
+            // A validation switch, not a setting: see DebugSwitches.
+            RoadNetworkGenerator.GenerateOnLoad = DebugSwitches.Flag("GENERATE_ROADS_ON_LOAD", true);
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
             // CustomLocations is parsed at generation time to preserve API registrations

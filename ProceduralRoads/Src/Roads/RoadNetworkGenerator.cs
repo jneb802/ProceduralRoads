@@ -98,7 +98,7 @@ public static class RoadNetworkGenerator
         string trimmed = locationName.Trim();
         if (RegisteredLocationNames.Add(trimmed))
         {
-            Log.LogDebug($"Registered location for roads: {trimmed}");
+            Log.LogInfo($"Registered location for roads: {trimmed}");
         }
     }
 

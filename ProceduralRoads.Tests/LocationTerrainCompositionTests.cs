@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -14,6 +15,7 @@ public class LocationTerrainCompositionTests : IDisposable
 
     private const int Centre = 32 * 65 + 32;
     private static readonly Vector2s Zone = new(0, 0);
+    private readonly ValheimWorldScope _world = new ValheimWorldScope().WithWorld(new FlatWorld()).WithZdos();
     private readonly Heightmap hm;
     private readonly TerrainComp tc;
 
@@ -21,10 +23,7 @@ public class LocationTerrainCompositionTests : IDisposable
     {
         RoadTerrainModifier.ResetDebugCounters();
         RoadSpatialGrid.Clear();
-        WorldGenerator.instance = new FlatWorld();
-        ZDOMan.instance = new ZDOMan();
-        hm = Heightmap.CreateForZone(Zone, 64);
-        Heightmap.Registered = hm;
+        hm = _world.RegisterHeightmap(Zone, 64);
         tc = hm.m_terrainComp!;
     }
 
@@ -221,8 +220,6 @@ public class LocationTerrainCompositionTests : IDisposable
     {
         RoadTerrainModifier.ResetDebugCounters();
         RoadSpatialGrid.Clear();
-        Heightmap.Registered = null;
-        WorldGenerator.instance = null;
-        ZDOMan.instance = null;
+        _world.Dispose();
     }
 }

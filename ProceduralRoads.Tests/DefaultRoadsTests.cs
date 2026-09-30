@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -44,7 +45,7 @@ public class DefaultRoadsTests
     public void ARoadIsBuiltWithEveryDefaultOnAndSwaysOffTheStraight()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -60,6 +61,6 @@ public class DefaultRoadsTests
                 Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
             });
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 }

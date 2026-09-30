@@ -1,6 +1,7 @@
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -24,7 +25,7 @@ public class ReviewRegressionTests
     {
         var path = new List<Vector2> { new(-16, 0), new(-8, 0), new(0, 0), new(8, 0), new(16, 0) };
         var world = new GradeWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
             RoadSpatialGrid.Clear();
@@ -37,7 +38,7 @@ public class ReviewRegressionTests
             RoadSpatialGrid.FinalizeRoadNetwork();
             Assert.NotEqual(old, RoadSpatialGrid.RoadNetworkVersion);
         }
-        finally { WorldGenerator.instance = null; RoadSpatialGrid.Clear(); }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     private static byte[] Network(float h1, float h2)
@@ -54,7 +55,7 @@ public class ReviewRegressionTests
     [Fact]
     public void RegradingMustChangeVersion()
     {
-        WorldGenerator.instance = new SyntheticWorld();
+        using var scope = new ValheimWorldScope().WithWorld(new SyntheticWorld());
         try
         {
             Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Network(40, 40)));
@@ -62,14 +63,13 @@ public class ReviewRegressionTests
             Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Network(41, 39)));
             Assert.NotEqual(old, RoadSpatialGrid.RoadNetworkVersion);
         }
-        finally { WorldGenerator.instance = null; RoadSpatialGrid.Clear(); }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
     public void LoadedZoneApplyMustNotDuplicateSavedCompiler()
     {
-        WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZdos();
         RoadSpatialGrid.Clear();
         try
         {
@@ -77,8 +77,7 @@ public class ReviewRegressionTests
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-8, 0), new(8, 0) }, 4, WorldGenerator.instance);
             RoadSpatialGrid.FinalizeRoadNetwork();
             ZDOMan.instance.CreateNewZDO(ZoneSystem.GetZonePos(zone), TerrainComp.PrefabName.GetStableHashCode());
-            Heightmap hm = Heightmap.CreateForZone(zone, 64, withCompiler: false);
-            Heightmap.Registered = hm;
+            Heightmap hm = scope.RegisterHeightmap(zone, 64, withCompiler: false);
             Assert.True(RoadTerrainModifier.HasSavedTerrainCompiler(zone));
 
             RoadTerrainModifier.ApplyToLoadedZones();
@@ -95,6 +94,6 @@ public class ReviewRegressionTests
             RoadTerrainModifier.OnTerrainCompilerReady(saved);
             Assert.Equal(1, saved.SaveCount);
         }
-        finally { Heightmap.Registered = null; ZDOMan.instance = null; WorldGenerator.instance = null; RoadSpatialGrid.Clear(); RoadTerrainModifier.ResetDebugCounters(); }
+        finally { RoadSpatialGrid.Clear(); RoadTerrainModifier.ResetDebugCounters(); }
     }
 }

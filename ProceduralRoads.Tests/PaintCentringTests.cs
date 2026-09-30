@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -17,23 +19,19 @@ public class PaintCentringTests
 
     private static TerrainComp Build(bool exact, float roadZ = 0f)
     {
-        bool saved = RoadTerrainModifier.PaintExact;
-        try
-        {
-            RoadTerrainModifier.PaintExact = exact;
-            WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-            var zone = new Vector2s(0, 0);
-            Heightmap hm = Heightmap.CreateForZone(zone, Width);
-            Heightmap.Registered = hm;
-            TerrainComp tc = hm.m_terrainComp!;
-            float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
-            var points = new List<RoadSpatialGrid.RoadPoint>();
-            for (float x = -40f; x <= 40f; x += 1f)
-                points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, roadZ), 4f, natural + 1f));
-            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
-            return tc;
-        }
-        finally { RoadTerrainModifier.PaintExact = saved; Heightmap.Registered = null; WorldGenerator.instance = null; }
+        using var scope = new ValheimWorldScope();
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.PaintExact);
+        RoadTerrainModifier.PaintExact = exact;
+        scope.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false });
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = scope.RegisterHeightmap(zone, Width);
+        TerrainComp tc = hm.m_terrainComp!;
+        float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
+        var points = new List<RoadSpatialGrid.RoadPoint>();
+        for (float x = -40f; x <= 40f; x += 1f)
+            points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, roadZ), 4f, natural + 1f));
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
+        return tc;
     }
 
     [Fact]

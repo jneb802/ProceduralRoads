@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -50,7 +52,7 @@ public class RoadEdgesAndVegetationTests
     public void ANarrowRoadBesideABorderGivesBothZonesTheSameBorderHeights()
     {
         var world = new SlopeWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
             RoadSpatialGrid.Clear();
@@ -76,7 +78,6 @@ public class RoadEdgesAndVegetationTests
         finally
         {
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
         }
     }
 
@@ -88,14 +89,8 @@ public class RoadEdgesAndVegetationTests
     public void AZoneSeesPointsAsFarAsTheyReachAndFromFourMetresUpAsBefore(float width, float reach)
     {
         // The plain cross-section's reach; the earthworks widen it (below).
-        float savedBatter = RoadTerrainModifier.BatterPerMetre;
-        try
-        {
-            PlainEarthworks.Begin();
-            RoadTerrainModifier.BatterPerMetre = 0f;
+        using (PlainEarthworks.Apply().And(() => RoadTerrainModifier.BatterPerMetre, 0f))
             Assert.Equal(reach, RoadSpatialGrid.ZoneReach(width), 5);
-        }
-        finally { PlainEarthworks.End(); RoadTerrainModifier.BatterPerMetre = savedBatter; }
         // With the earthworks a zone sees as far as they can reach.
         Assert.Equal(Mathf.Max(width, RoadTerrainModifier.GatherRadius(width)), RoadSpatialGrid.ZoneReach(width), 5);
         Assert.True(RoadSpatialGrid.ZoneReach(width) >= reach);
@@ -107,11 +102,10 @@ public class RoadEdgesAndVegetationTests
         // The plain cross-section (60 % flat core, no earthwork widening),
         // whose reach the 3.9 m below is set against.
         var world = new SlopeWorld();
-        WorldGenerator.instance = world;
-        float savedBatter = RoadTerrainModifier.BatterPerMetre, savedCore = RoadProfile.FlatCoreRatio;
-        PlainEarthworks.Begin();
-        RoadTerrainModifier.BatterPerMetre = 0f;
-        RoadProfile.FlatCoreRatio = RoadConstants.RoadFlatCoreRatio;
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        using var plain = PlainEarthworks.Apply()
+            .And(() => RoadTerrainModifier.BatterPerMetre, 0f)
+            .And(() => RoadProfile.FlatCoreRatio, RoadConstants.RoadFlatCoreRatio);
         try
         {
             RoadSpatialGrid.Clear();
@@ -130,14 +124,7 @@ public class RoadEdgesAndVegetationTests
             Assert.Equal(RoadTerrainModifier.WriteOutcome.Written, RoadTerrainModifier.LastWriteOutcome);
             Assert.Equal(1, east.SaveCount);
         }
-        finally
-        {
-            PlainEarthworks.End();
-            RoadTerrainModifier.BatterPerMetre = savedBatter;
-            RoadProfile.FlatCoreRatio = savedCore;
-            RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
-        }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     private static readonly int Tree = "Beech1".GetStableHashCode();
@@ -271,8 +258,7 @@ public class RoadEdgesAndVegetationTests
     public void TheClearedZonesSurviveASaveAndLoadWithTheNetwork()
     {
         var world = new SlopeWorld();
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
         RoadNetworkGenerator.Reset();
         try
         {
@@ -295,8 +281,6 @@ public class RoadEdgesAndVegetationTests
         finally
         {
             RoadNetworkGenerator.Reset();
-            ZDOMan.instance = null;
-            WorldGenerator.instance = null;
         }
     }
 }

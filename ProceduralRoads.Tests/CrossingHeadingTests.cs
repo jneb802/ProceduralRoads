@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -67,7 +69,6 @@ public class CrossingHeadingTests
         SetPathfinder(null);
         RoadNetworkGenerator.Reset();
         RoadCrossingDetector.SetFordStyleWeights(1f, 1f);
-        WorldGenerator.instance = null;
     }
 
     // ---- the defect: an accepted route losing its bridge ----
@@ -103,17 +104,14 @@ public class CrossingHeadingTests
         // are terrain and need nothing. Given a site that cannot be turned, the
         // ford must change STYLE, not disappear.
         var world = new NarrowBanksWorld();
+        using var overrides = StaticOverride.Keep(() => RoadCrossingDetector.ConfiguredWadeWeight).AndKeep(() => RoadCrossingDetector.ConfiguredRaiseWeight).AndKeep(() => RoadCrossingDetector.ConfiguredSpanWeight);
         RoadCrossingDetector.SetFordStyleWeights(0f, 0f, 1f);   // Span, if it can
-        try
-        {
-            var router = new RoadPathfinder(world) { Bridges = true, Fords = true };
-            var path = router.FindPath(new Vector2(0f, 0f), new Vector2(32f, 0f));
-            Assert.NotNull(path);
+        var router = new RoadPathfinder(world) { Bridges = true, Fords = true };
+        var path = router.FindPath(new Vector2(0f, 0f), new Vector2(32f, 0f));
+        Assert.NotNull(path);
 
-            var crossing = Assert.Single(RoadCrossingDetector.Detect(path!, world, bridges: true, fords: true));
-            Assert.NotEqual(FordStyle.Span, crossing.Style);
-        }
-        finally { RoadCrossingDetector.SetFordStyleWeights(1f, 1f, 1f); }
+        var crossing = Assert.Single(RoadCrossingDetector.Detect(path!, world, bridges: true, fords: true));
+        Assert.NotEqual(FordStyle.Span, crossing.Style);
     }
 
     // ---- the turn itself, and what the road does about it ----
@@ -122,7 +120,7 @@ public class CrossingHeadingTests
     public void AGenuinelyTurnedCrossingStillHasRoadAtBothOfItsMovedBanks()
     {
         var world = new GullyWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(new RoadPathfinder(world) { Bridges = true, Fords = false });
         try
@@ -317,7 +315,7 @@ public class CrossingHeadingTests
     public void FallingBackReturnsThePathIntervalTooWithAFollowingCrossingBehindIt()
     {
         var world = new TwoBentChannels();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
         try
@@ -416,7 +414,7 @@ public class CrossingHeadingTests
     public void ATurnedCrossingsApproachesArePaintedToTheBanksItMovedTo()
     {
         var world = new GullyWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
         try

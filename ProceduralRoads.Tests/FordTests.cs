@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -86,7 +88,6 @@ public class FordTests
         SetPathfinder(null);
         RoadNetworkGenerator.Reset();
         RoadCrossingDetector.SetFordStyleWeights(1f, 1f);
-        WorldGenerator.instance = null;
     }
 
     // ---- pathfinder ----
@@ -103,7 +104,7 @@ public class FordTests
         Assert.Null(Pathfinder(new GullyWorld(), false).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
 
         var dry = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = dry;
+        using var scope = new ValheimWorldScope().WithWorld(dry);
         try
         {
             byte[]? Generate(bool fords)
@@ -213,29 +214,26 @@ public class FordTests
         float bearing = BridgeLayout.YawDegrees((path[1] - path[0]).normalized);
         Assert.False(BridgeLayout.HeadingIsPlaceable(bearing), $"the fixture bearing {bearing:F2} is supposed to be off the grid");
 
+        using var overrides = StaticOverride.Keep(() => RoadCrossingDetector.ConfiguredWadeWeight).AndKeep(() => RoadCrossingDetector.ConfiguredRaiseWeight).AndKeep(() => RoadCrossingDetector.ConfiguredSpanWeight);
         RoadCrossingDetector.SetFordStyleWeights(1f, 0f, 0f);
-        try
-        {
-            // Waded: the road drives through the water, nothing is placed.
-            var ford = Assert.Single(RoadCrossingDetector.Detect(path, world, bridges: false, fords: true));
-            Assert.Equal(FordStyle.Wade, ford.Style);
-            Assert.InRange(BridgeLayout.YawDegrees(ford.Direction), bearing - 0.01f, bearing + 0.01f);
+        // Waded: the road drives through the water, nothing is placed.
+        var ford = Assert.Single(RoadCrossingDetector.Detect(path, world, bridges: false, fords: true));
+        Assert.Equal(FordStyle.Wade, ford.Style);
+        Assert.InRange(BridgeLayout.YawDegrees(ford.Direction), bearing - 0.01f, bearing + 0.01f);
 
-            // The same water with fords off is a bridge, and a bridge is pieces.
-            var bridge = Assert.Single(RoadCrossingDetector.Detect(path, world, bridges: true, fords: false));
-            Assert.Equal(CrossingKind.Bridge, bridge.Kind);
-            float heading = BridgeLayout.YawDegrees(bridge.Direction);
-            Assert.True(BridgeLayout.HeadingIsPlaceable(heading),
-                $"a bridge stands at {heading:F2}, which no hammer can match");
-            Assert.InRange(heading, BridgeLayout.SnapHeadingDegrees(bearing) - 0.01f, BridgeLayout.SnapHeadingDegrees(bearing) + 0.01f);
+        // The same water with fords off is a bridge, and a bridge is pieces.
+        var bridge = Assert.Single(RoadCrossingDetector.Detect(path, world, bridges: true, fords: false));
+        Assert.Equal(CrossingKind.Bridge, bridge.Kind);
+        float heading = BridgeLayout.YawDegrees(bridge.Direction);
+        Assert.True(BridgeLayout.HeadingIsPlaceable(heading),
+            $"a bridge stands at {heading:F2}, which no hammer can match");
+        Assert.InRange(heading, BridgeLayout.SnapHeadingDegrees(bearing) - 0.01f, BridgeLayout.SnapHeadingDegrees(bearing) + 0.01f);
 
-            // Every piece it lays out inherits that heading.
-            foreach (var piece in BridgeLayout.SolveComplete(bridge, world, 11)
-                         .Where(x => x.Kind != BridgePieceKind.Debris))
-                Assert.True(BridgeLayout.HeadingIsPlaceable(piece.YawDegrees, 0.06f),
-                    $"{piece.Prefab} at yaw {piece.YawDegrees:F2}");
-        }
-        finally { RoadCrossingDetector.SetFordStyleWeights(1f, 1f, 1f); }
+        // Every piece it lays out inherits that heading.
+        foreach (var piece in BridgeLayout.SolveComplete(bridge, world, 11)
+                     .Where(x => x.Kind != BridgePieceKind.Debris))
+            Assert.True(BridgeLayout.HeadingIsPlaceable(piece.YawDegrees, 0.06f),
+                $"{piece.Prefab} at yaw {piece.YawDegrees:F2}");
     }
 
     [Theory]
@@ -244,7 +242,7 @@ public class FordTests
     public void EachFordStyleTreatsTheShallowsItsOwnWay(FordStyle style)
     {
         var world = new GullyWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         RoadCrossingDetector.SetFordStyleWeights(style == FordStyle.Wade ? 1f : 0f, style == FordStyle.Raise ? 1f : 0f);
@@ -272,29 +270,26 @@ public class FordTests
     public void FordStylesFollowTheWeights()
     {
         var eligible = new List<FordStyle> { FordStyle.Raise, FordStyle.Wade };
-        try
-        {
-            RoadCrossingDetector.SetFordStyleWeights(0f, 0f);
-            Assert.Equal(FordStyle.Raise, RoadCrossingDetector.PickFordStyle(eligible, 12345));
-            RoadCrossingDetector.SetFordStyleWeights(1f, 1f);
-            var even = Enumerable.Range(0, 200).Select(h => RoadCrossingDetector.PickFordStyle(eligible, h * 7919)).ToList();
-            Assert.Contains(FordStyle.Wade, even);
-            Assert.Contains(FordStyle.Raise, even);
-            RoadCrossingDetector.SetFordStyleWeights(5f, 0f);
-            Assert.All(Enumerable.Range(0, 200), h => Assert.Equal(FordStyle.Wade, RoadCrossingDetector.PickFordStyle(eligible, h * 7919)));
-            // Wading is offered only where the water is ankle deep; a deeper gully raises.
-            var deeper = new GullyWorld { Bed = RoadConstants.SeaLevel - RoadConstants.FordWadeMaxDepth - 0.1f };
-            var path = Pathfinder(deeper, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f))!;
-            Assert.Equal(FordStyle.Raise, Assert.Single(RoadCrossingDetector.Detect(path, deeper)).Style);
-        }
-        finally { RoadCrossingDetector.SetFordStyleWeights(1f, 1f); }
+        using var overrides = StaticOverride.Keep(() => RoadCrossingDetector.ConfiguredWadeWeight).AndKeep(() => RoadCrossingDetector.ConfiguredRaiseWeight).AndKeep(() => RoadCrossingDetector.ConfiguredSpanWeight);
+        RoadCrossingDetector.SetFordStyleWeights(0f, 0f);
+        Assert.Equal(FordStyle.Raise, RoadCrossingDetector.PickFordStyle(eligible, 12345));
+        RoadCrossingDetector.SetFordStyleWeights(1f, 1f);
+        var even = Enumerable.Range(0, 200).Select(h => RoadCrossingDetector.PickFordStyle(eligible, h * 7919)).ToList();
+        Assert.Contains(FordStyle.Wade, even);
+        Assert.Contains(FordStyle.Raise, even);
+        RoadCrossingDetector.SetFordStyleWeights(5f, 0f);
+        Assert.All(Enumerable.Range(0, 200), h => Assert.Equal(FordStyle.Wade, RoadCrossingDetector.PickFordStyle(eligible, h * 7919)));
+        // Wading is offered only where the water is ankle deep; a deeper gully raises.
+        var deeper = new GullyWorld { Bed = RoadConstants.SeaLevel - RoadConstants.FordWadeMaxDepth - 0.1f };
+        var path = Pathfinder(deeper, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f))!;
+        Assert.Equal(FordStyle.Raise, Assert.Single(RoadCrossingDetector.Detect(path, deeper)).Style);
     }
 
     [Fact]
     public void ALaterRoadJoinsTheFirstFordInsteadOfCrossingBesideIt()
     {
         var world = new GullyWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         try
         {
@@ -335,7 +330,7 @@ public class FordTests
     public void AWadedFordPaintsButDoesNotLevelTheBed()
     {
         var world = new SlopedBedWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -358,7 +353,7 @@ public class FordTests
             Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(data));
             Assert.All(RoadSpatialGrid.GetRoadPointsInZone(zone), p => Assert.True(p.paintOnly));
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -368,7 +363,7 @@ public class FordTests
         // network on load; a point that stops being paint-only changes the
         // terrain and so must change the version, whatever its height.
         var world = new SlopedBedWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
             var path = new List<Vector2> { new(-25f, 0f), new(25f, 0f) };
@@ -394,7 +389,7 @@ public class FordTests
             Assert.NotEqual(0, waded);
             Assert.NotEqual(waded, leveled);
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     /// <summary>A knee-deep gully with a 4 m deep channel hidden between the
@@ -446,8 +441,7 @@ public class FordTests
     public void CrossingsSurviveASaveAndLoad()
     {
         var world = new GullyWorld();
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -482,7 +476,6 @@ public class FordTests
         finally
         {
             RoadNetworkPersistence.Reset();
-            ZDOMan.instance = null;
             TearDownGeneration();
         }
     }

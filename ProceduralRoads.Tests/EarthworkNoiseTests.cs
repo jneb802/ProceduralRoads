@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -14,27 +16,19 @@ public class EarthworkNoiseTests
 
     private static TerrainComp Causeway(float amplitude, float fillSpread = 0f)
     {
-        float saved = RoadEarthworkNoise.Amplitude, savedSpread = RoadEarthworkNoise.FillSpread;
-        try
-        {
-            RoadEarthworkNoise.Amplitude = amplitude; RoadEarthworkNoise.FillSpread = fillSpread;
-            WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-            var zone = new Vector2s(0, 0);
-            Heightmap hm = Heightmap.CreateForZone(zone, Width);
-            Heightmap.Registered = hm;
-            TerrainComp tc = hm.m_terrainComp!;
-            float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
-            var points = new List<RoadSpatialGrid.RoadPoint>();
-            for (float x = -40f; x <= 40f; x += 1f)
-                points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, 0f), 4f, natural + 4f));
-            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
-            return tc;
-        }
-        finally
-        {
-            RoadEarthworkNoise.Amplitude = saved; RoadEarthworkNoise.FillSpread = savedSpread;
-            Heightmap.Registered = null; WorldGenerator.instance = null;
-        }
+        using var scope = new ValheimWorldScope();
+        using var overrides = StaticOverride.Keep(() => RoadEarthworkNoise.Amplitude).AndKeep(() => RoadEarthworkNoise.FillSpread);
+        RoadEarthworkNoise.Amplitude = amplitude; RoadEarthworkNoise.FillSpread = fillSpread;
+        scope.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false });
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = scope.RegisterHeightmap(zone, Width);
+        TerrainComp tc = hm.m_terrainComp!;
+        float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
+        var points = new List<RoadSpatialGrid.RoadPoint>();
+        for (float x = -40f; x <= 40f; x += 1f)
+            points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, 0f), 4f, natural + 4f));
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
+        return tc;
     }
 
     [Fact]
@@ -85,23 +79,19 @@ public class EarthworkNoiseTests
     [Fact]
     public void FillSpreadsOnlyOverFlatGround()
     {
-        float saved = RoadEarthworkNoise.FillSpread, savedAmplitude = RoadEarthworkNoise.Amplitude;
-        try
-        {
-            RoadEarthworkNoise.FillSpread = 1f;
-            // 4 m of fill on flat ground: 3 m of extra reach.
-            Assert.Equal(3f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 14f, (x, z) => 10f), 3);
-            // The same fill across a 30% sidehill: nothing, no apron.
-            Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 14f, (x, z) => 10f + 0.3f * z));
-            // Cut, or fill under 1 m: nothing.
-            Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 6f, (x, z) => 10f));
-            Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 10.8f, (x, z) => 10f));
-            Assert.True(RoadTerrainModifier.GatherRadius(4f) >= RoadTerrainModifier.MaxInfluenceRadius(4f) + RoadEarthworkNoise.FillSpreadMax - 1e-4f);
-            // With neither the spread nor the noise the gather pads by the influence radius alone.
-            RoadEarthworkNoise.FillSpread = 0f; RoadEarthworkNoise.Amplitude = 0f;
-            Assert.Equal(RoadTerrainModifier.MaxInfluenceRadius(4f), RoadTerrainModifier.GatherRadius(4f));
-        }
-        finally { RoadEarthworkNoise.FillSpread = saved; RoadEarthworkNoise.Amplitude = savedAmplitude; }
+        using var overrides = StaticOverride.Keep(() => RoadEarthworkNoise.FillSpread).AndKeep(() => RoadEarthworkNoise.Amplitude);
+        RoadEarthworkNoise.FillSpread = 1f;
+        // 4 m of fill on flat ground: 3 m of extra reach.
+        Assert.Equal(3f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 14f, (x, z) => 10f), 3);
+        // The same fill across a 30% sidehill: nothing, no apron.
+        Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 14f, (x, z) => 10f + 0.3f * z));
+        // Cut, or fill under 1 m: nothing.
+        Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 6f, (x, z) => 10f));
+        Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 10.8f, (x, z) => 10f));
+        Assert.True(RoadTerrainModifier.GatherRadius(4f) >= RoadTerrainModifier.MaxInfluenceRadius(4f) + RoadEarthworkNoise.FillSpreadMax - 1e-4f);
+        // With neither the spread nor the noise the gather pads by the influence radius alone.
+        RoadEarthworkNoise.FillSpread = 0f; RoadEarthworkNoise.Amplitude = 0f;
+        Assert.Equal(RoadTerrainModifier.MaxInfluenceRadius(4f), RoadTerrainModifier.GatherRadius(4f));
     }
 
     [Fact]

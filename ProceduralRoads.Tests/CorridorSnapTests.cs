@@ -1,6 +1,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -25,8 +27,8 @@ public class CorridorSnapTests
 
     private static void With(WorldGenerator world, System.Action body)
     {
-        float snap = RoadNetworkGenerator.RoadSnap, corridor = RoadNetworkGenerator.CorridorSnap;
-        WorldGenerator.instance = world;
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.RoadSnap).AndKeep(() => RoadNetworkGenerator.CorridorSnap);
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -35,11 +37,7 @@ public class CorridorSnapTests
             RoadNetworkGenerator.CorridorSnap = 14f;
             body();
         }
-        finally
-        {
-            RoadNetworkGenerator.RoadSnap = snap; RoadNetworkGenerator.CorridorSnap = corridor;
-            RoadSpatialGrid.Clear(); WorldGenerator.instance = null;
-        }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -92,30 +90,26 @@ public class CorridorSnapTests
     public void TwoCrossingsOfTheSameWaterSideBySideAreOneSite()
     {
         // Measured: two roads left one place through a pool, each with its own ford 6.5 m apart.
-        float corridor = RoadNetworkGenerator.CorridorSnap, snap = RoadNetworkGenerator.RoadSnap;
-        WorldGenerator.instance = new Terrace();
-        try
-        {
-            RoadNetworkGenerator.RoadSnap = 6f; RoadNetworkGenerator.CorridorSnap = 14f;
-            var a = RoadCrossing.Between(new Vector2(0f, 0f), new Vector2(0f, 20f), 29f, new Vector2(0f, 10f), 0f);
-            var beside = RoadCrossing.Between(new Vector2(6.5f, 20f), new Vector2(6.5f, 0f), 29f, new Vector2(6.5f, 10f), 0f);
-            Assert.True(RoadNetworkGenerator.SameCorridorCrossing(a, beside, out float d), "6.5 m apart, opposite order");
-            Assert.InRange(d, 12.9f, 13.1f);
-            var across = RoadCrossing.Between(new Vector2(-10f, 10f), new Vector2(10f, 10f), 29f, new Vector2(0f, 10f), 0f);
-            Assert.False(RoadNetworkGenerator.SameCorridorCrossing(a, across, out _), "a crossing at right angles");
-            var far = RoadCrossing.Between(new Vector2(20f, 0f), new Vector2(20f, 20f), 29f, new Vector2(20f, 10f), 0f);
-            Assert.False(RoadNetworkGenerator.SameCorridorCrossing(a, far, out _), "20 m off");
-        }
-        finally { RoadNetworkGenerator.RoadSnap = snap; RoadNetworkGenerator.CorridorSnap = corridor; WorldGenerator.instance = null; }
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.CorridorSnap).AndKeep(() => RoadNetworkGenerator.RoadSnap);
+        using var scope = new ValheimWorldScope().WithWorld(new Terrace());
+        RoadNetworkGenerator.RoadSnap = 6f; RoadNetworkGenerator.CorridorSnap = 14f;
+        var a = RoadCrossing.Between(new Vector2(0f, 0f), new Vector2(0f, 20f), 29f, new Vector2(0f, 10f), 0f);
+        var beside = RoadCrossing.Between(new Vector2(6.5f, 20f), new Vector2(6.5f, 0f), 29f, new Vector2(6.5f, 10f), 0f);
+        Assert.True(RoadNetworkGenerator.SameCorridorCrossing(a, beside, out float d), "6.5 m apart, opposite order");
+        Assert.InRange(d, 12.9f, 13.1f);
+        var across = RoadCrossing.Between(new Vector2(-10f, 10f), new Vector2(10f, 10f), 29f, new Vector2(0f, 10f), 0f);
+        Assert.False(RoadNetworkGenerator.SameCorridorCrossing(a, across, out _), "a crossing at right angles");
+        var far = RoadCrossing.Between(new Vector2(20f, 0f), new Vector2(20f, 20f), 29f, new Vector2(20f, 10f), 0f);
+        Assert.False(RoadNetworkGenerator.SameCorridorCrossing(a, far, out _), "20 m off");
     }
     [Fact]
     public void AChainOfCrossingsBesideABridgeBecomesThatBridge()
     {
         // Measured: a raised pool, a wade and a 38 m bridge ran 6 m beside a 53 m bridge; piece
         // by piece no bank matched, end to end both did.
-        float corridor = RoadNetworkGenerator.CorridorSnap, snap = RoadNetworkGenerator.RoadSnap;
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.CorridorSnap).AndKeep(() => RoadNetworkGenerator.RoadSnap);
         var registry = (List<RoadCrossing>)RoadNetworkGenerator.GetRoadCrossings();
-        WorldGenerator.instance = new Terrace();
+        using var scope = new ValheimWorldScope().WithWorld(new Terrace());
         try
         {
             RoadNetworkGenerator.RoadSnap = 6f; RoadNetworkGenerator.CorridorSnap = 14f;
@@ -136,6 +130,6 @@ public class CorridorSnapTests
             Assert.Equal(new Vector2(0f, 50f), c.ToBank);
             Assert.Equal(3, c.FromIndex); Assert.Equal(9, c.ToIndex);
         }
-        finally { registry.Clear(); RoadNetworkGenerator.RoadSnap = snap; RoadNetworkGenerator.CorridorSnap = corridor; WorldGenerator.instance = null; }
+        finally { registry.Clear(); }
     }
 }

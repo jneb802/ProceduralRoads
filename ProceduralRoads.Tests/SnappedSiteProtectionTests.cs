@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -17,13 +19,13 @@ public class SnappedSiteProtectionTests : IDisposable
         { weight = 0; width = 0; }
     }
 
-    private readonly WorldGenerator? previousWorld = WorldGenerator.instance;
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
     private readonly Func<System.Collections.Generic.IEnumerable<RoadSiteProtection.Footprint>?>? previousSource = RoadSiteProtection.Source;
     private readonly FlatWorld world = new();
 
     public SnappedSiteProtectionTests()
     {
-        WorldGenerator.instance = world;
+        _scope.WithWorld(world);
         RoadSpatialGrid.Clear();
         RoadSiteProtection.Source = null;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
@@ -42,12 +44,12 @@ public class SnappedSiteProtectionTests : IDisposable
 
         PlainRoads.WithModDefaults(() =>
         {
-            float snap = RoadNetworkGenerator.RoadSnap, corridor = RoadNetworkGenerator.CorridorSnap;
-            RoadNetworkGenerator.RoadSnap = 0; RoadNetworkGenerator.CorridorSnap = 0;
-            var control = RoadSpatialGrid.PlanRoadPath(path, 4, world);
-            Assert.NotNull(control);
-            AssertClear(control!, 4);
-            RoadNetworkGenerator.RoadSnap = snap; RoadNetworkGenerator.CorridorSnap = corridor;
+            using (StaticOverride.Set(() => RoadNetworkGenerator.RoadSnap, 0f).And(() => RoadNetworkGenerator.CorridorSnap, 0f))
+            {
+                var control = RoadSpatialGrid.PlanRoadPath(path, 4, world);
+                Assert.NotNull(control);
+                AssertClear(control!, 4);
+            }
 
             var plan = RoadSpatialGrid.PlanRoadPath(path, 4, world);
             Assert.NotNull(plan); // Keep the safe alternative rather than losing the road.
@@ -115,6 +117,6 @@ public class SnappedSiteProtectionTests : IDisposable
         RoadSpatialGrid.Clear();
         RoadSiteProtection.Reset();
         RoadSiteProtection.Source = previousSource;
-        WorldGenerator.instance = previousWorld;
+        _scope.Dispose();
     }
 }

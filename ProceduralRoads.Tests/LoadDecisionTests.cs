@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -71,12 +72,13 @@ public class LoadDecisionTests : System.IDisposable
     /// </summary>
     private readonly List<ZDO> m_heldBack = new();
 
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+
     /// <summary>A world as the game hands one over: the generator reset, the
     /// mod subscribed, nothing decided yet.</summary>
     private ZoneSystem SetUp(bool savedNetworkExists)
     {
-        WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        ZDOMan.instance = new ZDOMan();
+        _world.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZdos();
         SetWorldDataLoaded(false);
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
@@ -132,9 +134,7 @@ public class LoadDecisionTests : System.IDisposable
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
         RoadNetworkGenerator.Reset();
-        WorldGenerator.instance = null;
-        ZoneSystem.instance = null;
-        ZDOMan.instance = null;
+        _world.Dispose();
     }
 
     [Fact]

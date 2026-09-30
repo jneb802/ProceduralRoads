@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -18,33 +20,21 @@ public class CausewayPaintTests
 
     private static TerrainComp Build(float paintBelow, float flatCore)
     {
-        float savedBelow = RoadTerrainModifier.PaintBelow, savedCore = RoadProfile.FlatCoreRatio;
-        bool savedExact = RoadTerrainModifier.PaintExact;
-        try
-        {
-            PlainEarthworks.Begin();
-            RoadTerrainModifier.PaintBelow = paintBelow;
-            RoadTerrainModifier.PaintExact = false;
-            RoadProfile.FlatCoreRatio = flatCore;
-            WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-            var zone = new Vector2s(0, 0);
-            Heightmap hm = Heightmap.CreateForZone(zone, Width);
-            Heightmap.Registered = hm;
-            TerrainComp tc = hm.m_terrainComp!;
-            float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
-            var points = new List<RoadSpatialGrid.RoadPoint>();
-            for (float x = -40f; x <= 40f; x += 1f)
-                points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, 0f), 4f, natural + Lift));
-            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
-            return tc;
-        }
-        finally
-        {
-            RoadTerrainModifier.PaintBelow = savedBelow; RoadProfile.FlatCoreRatio = savedCore;
-            RoadTerrainModifier.PaintExact = savedExact;
-            PlainEarthworks.End();
-            Heightmap.Registered = null; WorldGenerator.instance = null;
-        }
+        using var scope = new ValheimWorldScope();
+        using var plain = PlainEarthworks.Apply()
+            .And(() => RoadTerrainModifier.PaintBelow, paintBelow)
+            .And(() => RoadTerrainModifier.PaintExact, false)
+            .And(() => RoadProfile.FlatCoreRatio, flatCore);
+        scope.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false });
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = scope.RegisterHeightmap(zone, Width);
+        TerrainComp tc = hm.m_terrainComp!;
+        float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
+        var points = new List<RoadSpatialGrid.RoadPoint>();
+        for (float x = -40f; x <= 40f; x += 1f)
+            points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, 0f), 4f, natural + Lift));
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
+        return tc;
     }
 
     private static int Index(int x, int z) => (z + Width / 2) * (Width + 1) + (x + Width / 2);
@@ -78,18 +68,14 @@ public class CausewayPaintTests
     [Fact]
     public void FlatCoreChangesLevellingNotThePaintBands()
     {
-        float saved = RoadProfile.FlatCoreRatio;
-        try
-        {
-            RoadProfile.FlatCoreRatio = 1f;
-            Assert.Equal(1f, RoadProfile.LevelBlend(1.9f, 4f));
-            Assert.Equal(0f, RoadProfile.PaintStrength(1.7f, 4f));
-            Assert.Equal(1f, RoadProfile.PaintStrength(1.2f, 4f));
-            RoadProfile.FlatCoreRatio = RoadConstants.RoadFlatCoreRatio;
-            Assert.True(RoadProfile.LevelBlend(1.9f, 4f) < 1f);
-            Assert.Equal(1f, RoadProfile.PaintStrength(1.2f, 4f));
-        }
-        finally { RoadProfile.FlatCoreRatio = saved; }
+        using var overrides = StaticOverride.Keep(() => RoadProfile.FlatCoreRatio);
+        RoadProfile.FlatCoreRatio = 1f;
+        Assert.Equal(1f, RoadProfile.LevelBlend(1.9f, 4f));
+        Assert.Equal(0f, RoadProfile.PaintStrength(1.7f, 4f));
+        Assert.Equal(1f, RoadProfile.PaintStrength(1.2f, 4f));
+        RoadProfile.FlatCoreRatio = RoadConstants.RoadFlatCoreRatio;
+        Assert.True(RoadProfile.LevelBlend(1.9f, 4f) < 1f);
+        Assert.Equal(1f, RoadProfile.PaintStrength(1.2f, 4f));
     }
 
     [Fact]
@@ -99,30 +85,22 @@ public class CausewayPaintTests
         // ending on it 3 m lower. The levelling blends the two, so the main
         // road's surface at the join sits below its stored height; that is
         // still the road, and it keeps its paint.
-        float savedBelow = RoadTerrainModifier.PaintBelow; bool savedExact = RoadTerrainModifier.PaintExact;
-        try
-        {
-            RoadTerrainModifier.PaintBelow = 0.5f; RoadTerrainModifier.PaintExact = true;
-            WorldGenerator.instance = new SyntheticWorld { HasRiver = false, HasMountain = false };
-            var zone = new Vector2s(0, 0);
-            Heightmap hm = Heightmap.CreateForZone(zone, Width);
-            Heightmap.Registered = hm;
-            TerrainComp tc = hm.m_terrainComp!;
-            float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
-            var points = new List<RoadSpatialGrid.RoadPoint>();
-            for (float x = -40f; x <= 40f; x += 1f)
-                points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, 0f), 4f, natural + 1f));
-            for (float z = 30f; z >= 1f; z -= 1f)
-                points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(0f, z), 4f, natural - 2f));
-            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
-            // The main road's centreline through the join stays painted.
-            for (int x = -4; x <= 4; x++)
-                Assert.True(tc.m_modifiedPaint[Index(x, 0)], $"main road unpainted at x={x}");
-        }
-        finally
-        {
-            RoadTerrainModifier.PaintBelow = savedBelow; RoadTerrainModifier.PaintExact = savedExact;
-            Heightmap.Registered = null; WorldGenerator.instance = null;
-        }
+        using var scope = new ValheimWorldScope();
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.PaintBelow).AndKeep(() => RoadTerrainModifier.PaintExact);
+        RoadTerrainModifier.PaintBelow = 0.5f; RoadTerrainModifier.PaintExact = true;
+        scope.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false });
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = scope.RegisterHeightmap(zone, Width);
+        TerrainComp tc = hm.m_terrainComp!;
+        float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
+        var points = new List<RoadSpatialGrid.RoadPoint>();
+        for (float x = -40f; x <= 40f; x += 1f)
+            points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, 0f), 4f, natural + 1f));
+        for (float z = 30f; z >= 1f; z -= 1f)
+            points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(0f, z), 4f, natural - 2f));
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
+        // The main road's centreline through the join stays painted.
+        for (int x = -4; x <= 4; x++)
+            Assert.True(tc.m_modifiedPaint[Index(x, 0)], $"main road unpainted at x={x}");
     }
 }

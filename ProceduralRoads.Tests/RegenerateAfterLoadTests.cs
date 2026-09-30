@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -16,8 +18,10 @@ namespace ProceduralRoads.Tests;
 /// old one: the spatial grid kept both sets of points, and the serialized
 /// network the world then stored held both.
 /// </summary>
-public class RegenerateAfterLoadTests
+public class RegenerateAfterLoadTests : System.IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+
     /// <summary>A saved network, as a load hands one back: one cell, two
     /// points, at a height nothing generated here would produce.</summary>
     private const float SavedHeight = 4242f;
@@ -69,11 +73,10 @@ public class RegenerateAfterLoadTests
         ZoneSystem.instance = zones;
     }
 
-    private static SyntheticWorld SetUp()
+    private SyntheticWorld SetUp()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        _world.WithWorld(world).WithZdos();
         RoadNetworkGenerator.Reset();
         GiveTheWorldSomePlaces();
         return world;
@@ -82,10 +85,9 @@ public class RegenerateAfterLoadTests
     private static void TearDown()
     {
         RoadNetworkGenerator.Reset();
-        WorldGenerator.instance = null;
-        ZoneSystem.instance = null;
-        ZDOMan.instance = null;
     }
+
+    public void Dispose() => _world.Dispose();
 
     private static bool HoldsASavedPoint()
     {
@@ -174,8 +176,7 @@ public class RegenerateAfterLoadTests
             int loaded = RoadSpatialGrid.TotalRoadPoints;
             byte[] before = RoadSpatialGrid.SerializeAllRoadPoints()!;
             int hashBefore = RoadSpatialGrid.RoadNetworkVersion;
-            var optionsBefore = RoadNetworkGenerator.NetworkOptions;
-            try
+            using (StaticOverride.Keep(() => RoadNetworkGenerator.NetworkOptions))
             {
                 RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions
                 {
@@ -186,7 +187,6 @@ public class RegenerateAfterLoadTests
                 Assert.Equal(before, RoadSpatialGrid.SerializeAllRoadPoints());
                 Assert.Equal(hashBefore, RoadSpatialGrid.RoadNetworkVersion);
             }
-            finally { RoadNetworkGenerator.NetworkOptions = optionsBefore; }
 
             Assert.False(RoadNetworkGenerator.RoadsGenerated,
                 "generation ran in a world that had already loaded its roads");

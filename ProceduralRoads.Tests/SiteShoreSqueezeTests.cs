@@ -1,6 +1,8 @@
 using System;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -20,10 +22,10 @@ public class SiteShoreSqueezeTests
 
     private static void With(Shore world, RoadSiteProtection.Footprint[] sites, Action body)
     {
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSiteProtection.Set(sites);
         try { body(); }
-        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); WorldGenerator.instance = null; }
+        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
     }
 
     [Fact]
@@ -68,22 +70,18 @@ public class SiteShoreSqueezeTests
             new RoadSiteProtection.Footprint(new Vector2(-150f, 0f), 20f),
         };
         bool InStrip(Vector2 p) => p.x > 10f && p.x < 20f && Mathf.Abs(p.y) < 12f;
-        float saved = RoadPathfinder.SqueezeCorridor;
-        try
+        using var overrides = StaticOverride.Keep(() => RoadPathfinder.SqueezeCorridor);
+        With(new Shore(), sites, () =>
         {
-            With(new Shore(), sites, () =>
-            {
-                RoadPathfinder.SqueezeCorridor = 0f;
-                var through = new RoadPathfinder(WorldGenerator.instance).FindPath(new Vector2(8f, -120f), new Vector2(8f, 120f));
-                Assert.NotNull(through);
-                Assert.Contains(through!, InStrip);
+            RoadPathfinder.SqueezeCorridor = 0f;
+            var through = new RoadPathfinder(WorldGenerator.instance).FindPath(new Vector2(8f, -120f), new Vector2(8f, 120f));
+            Assert.NotNull(through);
+            Assert.Contains(through!, InStrip);
 
-                RoadPathfinder.SqueezeCorridor = 12f;
-                var round = new RoadPathfinder(WorldGenerator.instance).FindPath(new Vector2(8f, -120f), new Vector2(8f, 120f));
-                Assert.True(round == null || !round.Any(InStrip), "the road went through the squeezed strip");
-            });
-        }
-        finally { RoadPathfinder.SqueezeCorridor = saved; }
+            RoadPathfinder.SqueezeCorridor = 12f;
+            var round = new RoadPathfinder(WorldGenerator.instance).FindPath(new Vector2(8f, -120f), new Vector2(8f, 120f));
+            Assert.True(round == null || !round.Any(InStrip), "the road went through the squeezed strip");
+        });
     }
     [Fact]
     public void ABridgeDeckAlongTheShorePastAPlaceIsSqueezed()

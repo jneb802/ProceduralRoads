@@ -1,20 +1,20 @@
 using System;
 using System.IO;
 using Jotunn.Managers;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
 
 public sealed class ManualRoadNetworkTests : IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope().WithNetwork(server: true);
     public ManualRoadNetworkTests()
     {
         RoadNetworkGenerator.Reset();
-        ZNet.instance = new ZNet { Server = true };
-        ZRoutedRpc.instance = new ZRoutedRpc();
         ManualRoadNetworkSync.Register();
     }
-    public void Dispose() { RoadNetworkGenerator.Reset(); ZNet.instance = new ZNet(); }
+    public void Dispose() { RoadNetworkGenerator.Reset(); _world.Dispose(); }
 
     private static void LoadLargeNetwork()
     {
@@ -33,7 +33,7 @@ public sealed class ManualRoadNetworkTests : IDisposable
     {
         LoadLargeNetwork();
         ZNet.instance.Peers.Add(7, new ZNetPeer());
-        var rpc = NetworkManager.Instance.Rpc;
+        var rpc = NetworkManager.Instance.Rpcs["ManualRoadSnapshot"];
         Assert.False(rpc.Server(7, new ZPackage()).MoveNext());
         ManualRoadNetworkSync.Publish();
         Assert.Equal(2, rpc.Sent.Count);
@@ -44,7 +44,7 @@ public sealed class ManualRoadNetworkTests : IDisposable
     public void DisconnectedRequesterCannotSubscribeToSnapshots()
     {
         LoadLargeNetwork();
-        var rpc = NetworkManager.Instance.Rpc;
+        var rpc = NetworkManager.Instance.Rpcs["ManualRoadSnapshot"];
         Assert.False(rpc.Server(123, new ZPackage()).MoveNext());
         ManualRoadNetworkSync.Publish();
         Assert.Empty(rpc.Sent);
@@ -54,10 +54,12 @@ public sealed class ManualRoadNetworkTests : IDisposable
     public void ClientOnlyAcceptsSnapshotsFromItsServer()
     {
         LoadLargeNetwork(); ZNet.instance.Peers.Add(7, new ZNetPeer());
-        var rpc = NetworkManager.Instance.Rpc;
+        var rpc = NetworkManager.Instance.Rpcs["ManualRoadSnapshot"];
         Assert.False(rpc.Server(7, new ZPackage()).MoveNext());
         var package = Assert.Single(rpc.Sent).Package;
+        // Now a client whose one ready peer, its server, is 42: the game (and the double) route "to the server" there.
         RoadNetworkGenerator.Reset(); ZNet.instance.Server = false;
+        ZNet.instance.Peers.Clear(); ZNet.instance.Peers.Add(42, new ZNetPeer());
         package.SetPos(0);
         Assert.False(rpc.Client(999, package).MoveNext());
         Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);

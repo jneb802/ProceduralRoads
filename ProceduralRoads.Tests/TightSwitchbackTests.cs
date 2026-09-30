@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 namespace ProceduralRoads.Tests;
 
@@ -50,13 +51,9 @@ public class TightSwitchbackTests
         // 4 m width (needs 6 m with batter off), far enough at 2 m (needs 4 m).
         var pts = new List<Vector2> { new(0, 0), new(30, 0), new(30, 5), new(0, 5) };
         var h = new List<float> { 60, 66, 68, 74 };
-        float saved = RoadTerrainModifier.BatterPerMetre;
-        try
-        {
-            RoadTerrainModifier.BatterPerMetre = 0f;
-            Assert.False(RoadSwitchbacks.Separated(pts, h, 4, surfaceOnly: true));
-            Assert.True(RoadSwitchbacks.Separated(pts, h, 4, surfaceOnly: true, widths: new List<float> { 2, 2, 2, 2 }));
-        }
-        finally { RoadTerrainModifier.BatterPerMetre = saved; }
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.BatterPerMetre);
+        RoadTerrainModifier.BatterPerMetre = 0f;
+        Assert.False(RoadSwitchbacks.Separated(pts, h, 4, surfaceOnly: true));
+        Assert.True(RoadSwitchbacks.Separated(pts, h, 4, surfaceOnly: true, widths: new List<float> { 2, 2, 2, 2 }));
     }
 }

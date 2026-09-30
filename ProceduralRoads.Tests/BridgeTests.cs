@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -316,14 +318,13 @@ public class BridgeTests
         SetPathfinder(null);
         RoadNetworkGenerator.Reset();
         RoadCrossingDetector.SetFordStyleWeights(1f, 1f, 1f);
-        WorldGenerator.instance = null;
     }
 
     [Fact]
     public void GenerateRoadLeavesTheWaterUnpavedAndRecordsTheCrossing()
     {
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -349,7 +350,7 @@ public class BridgeTests
         // A dry road comes out the same with the feature on or off, and a
         // river with bridges off stays uncrossed with no crossing recorded.
         var dry = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = dry;
+        using var scope = new ValheimWorldScope().WithWorld(dry);
         try
         {
             byte[]? Generate(bool bridges)
@@ -366,7 +367,7 @@ public class BridgeTests
             Assert.Equal(on, off);
 
             var river = new SyntheticWorld { HasRiver = true, HasMountain = false };
-            WorldGenerator.instance = river;
+            scope.WithWorld(river);
             RoadNetworkGenerator.Reset();
             SetPathfinder(Pathfinder(river, false));
             Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Blocked"));
@@ -599,7 +600,7 @@ public class BridgeTests
     public void ALaterRoadJoinsTheFirstBridgeInsteadOfBuildingAParallelOne()
     {
         var world = new WideRiverWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         try
         {
@@ -700,7 +701,7 @@ public class BridgeTests
         // past the start of the next one. Painting must not assume the spans
         // are disjoint: it threw, and a whole world's generation was lost.
         var world = new TwinChannelWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         try
         {
@@ -728,7 +729,7 @@ public class BridgeTests
     public void ACrossingSwallowedByAWiderOneIsSkipped()
     {
         var world = new TwinChannelWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         try
         {
@@ -837,7 +838,7 @@ public class BridgeTests
     public void PlansAreBucketedByZoneAndSpawnedZonesAreRemembered()
     {
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -880,8 +881,7 @@ public class BridgeTests
         // loaded zones are the block around a sentinel reference position and
         // the players' surroundings are ghost zones with no Heightmap at all.
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -917,8 +917,7 @@ public class BridgeTests
     public void SpawnedZonesSurviveASaveAndLoadEvenOnALoadedNetwork()
     {
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -951,7 +950,6 @@ public class BridgeTests
         finally
         {
             RoadNetworkPersistence.Reset();
-            ZDOMan.instance = null;
             TearDownGeneration();
         }
     }
@@ -960,7 +958,7 @@ public class BridgeTests
     public void ARejectedIslandRegenerationKeepsTheBridges()
     {
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         var zones = new ZoneSystem();
         zones.Locations.Add(new ZoneSystem.LocationInstance
         {
@@ -968,7 +966,7 @@ public class BridgeTests
             m_position = new Vector3(-200f, world.GetHeight(-200f, 0f), 0f),
         });
         ZoneSystem.instance = zones;
-        ZDOMan.instance = new ZDOMan();
+        scope.WithZdos();
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -989,8 +987,6 @@ public class BridgeTests
         }
         finally
         {
-            ZDOMan.instance = null;
-            ZoneSystem.instance = null;
             TearDownGeneration();
         }
     }
@@ -1025,8 +1021,7 @@ public class BridgeTests
     public void CrossingsSurviveASaveAndLoad()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
         RoadSpatialGrid.Clear();
         try
         {
@@ -1070,8 +1065,6 @@ public class BridgeTests
         {
             RoadNetworkPersistence.Reset();
             RoadSpatialGrid.Clear();
-            ZDOMan.instance = null;
-            WorldGenerator.instance = null;
         }
     }
 
@@ -1081,7 +1074,7 @@ public class BridgeTests
         // Spawn temple and boss altar on opposite sides of the synthetic
         // river: the only road between them crosses it.
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         var zones = new ZoneSystem();
         foreach ((string name, float x, float z, float radius) in new[] { ("StartTemple", -200f, 0f, 25f), ("Eikthyrnir", 300f, 0f, 10f) })
         {
@@ -1092,7 +1085,7 @@ public class BridgeTests
             });
         }
         ZoneSystem.instance = zones;
-        ZDOMan.instance = new ZDOMan();
+        scope.WithZdos();
         RoadNetworkGenerator.Reset();
         try
         {
@@ -1112,9 +1105,6 @@ public class BridgeTests
         finally
         {
             RoadNetworkGenerator.Reset();
-            ZDOMan.instance = null;
-            ZoneSystem.instance = null;
-            WorldGenerator.instance = null;
         }
     }
 
@@ -1147,7 +1137,7 @@ public class BridgeTests
         // With bridges on a ford may be spanned: the water stays unpaved and
         // a footbridge on posts carries the road, a step at each end.
         var world = new GullyWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         RoadCrossingDetector.SetFordStyleWeights(0f, 0f, 1f);
@@ -1380,7 +1370,7 @@ public class BridgeTests
         // old pieces then vanish, and because the skip also recorded the zone as
         // spawned nothing ever puts a bridge back. The crossing is priced into
         // the road and there is nothing over the water.
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithZdos();
         try
         {
             var zone = new Vector2s(3, -4);
@@ -1398,7 +1388,7 @@ public class BridgeTests
             PlacePieces(zone, 1);
             Assert.True(BridgePlans.ZoneHasLivePieces(zone, condemned));
         }
-        finally { ZDOMan.instance = null; BridgePlans.Reset(); }
+        finally { BridgePlans.Reset(); }
     }
 
     [Fact]
@@ -1408,7 +1398,7 @@ public class BridgeTests
         // could therefore be written off as done by a caller that only wanted
         // to look, and once written off it is skipped for the rest of the
         // session. Asking and recording are separate now.
-        ZDOMan.instance = new ZDOMan();
+        using var scope = new ValheimWorldScope().WithZdos();
         try
         {
             var zone = new Vector2s(7, 7);
@@ -1417,7 +1407,7 @@ public class BridgeTests
             Assert.True(BridgePlans.ZoneHasLivePieces(zone));
             Assert.False(BridgePlans.IsSpawned(zone), "asking recorded the zone as spawned");
         }
-        finally { ZDOMan.instance = null; BridgePlans.Reset(); }
+        finally { BridgePlans.Reset(); }
     }
 
     // ---- the swamp shelf ----
@@ -1463,8 +1453,7 @@ public class BridgeTests
         foreach (float shelf in new[] { 0f, 30f, 100f, 200f })
         {
             var world = new SwampShelfWorld { ShelfLength = shelf };
-            WorldGenerator.instance = world;
-            try
+            using (new ValheimWorldScope().WithWorld(world))
             {
                 var path = Pathfinder(world, true).FindPath(new Vector2(-200f, 0f), new Vector2(200f, 0f));
                 Assert.True(path != null, $"shelf {shelf} m: no route at all, so this proves nothing");
@@ -1478,7 +1467,6 @@ public class BridgeTests
                         $"shelf {shelf} m: built a {c.Width:F1} m bridge, cap is {cap:F0} m");
                 }
             }
-            finally { WorldGenerator.instance = null; }
         }
     }
 
@@ -1532,22 +1520,18 @@ public class BridgeTests
         // rims do not fit, the water's-edge banks stand -- which is the geometry
         // routing accepted, so the road still gets its bridge.
         var world = new HighRimGorgeWorld();
-        WorldGenerator.instance = world;
-        int before = RoadPathfinder.MaxIterations;
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        using var overrides = StaticOverride.Keep(() => RoadPathfinder.MaxIterations);
         RoadPathfinder.MaxIterations = 100000;
-        try
-        {
-            var path = Pathfinder(world, true).FindPath(new Vector2(-120f, 0f), new Vector2(120f, 0f));
-            Assert.NotNull(path);
-            var crossings = RoadCrossingDetector.Detect(path!, world, true);
-            Assert.NotEmpty(crossings);
-            float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
-            foreach (RoadCrossing c in crossings)
-                Assert.True(c.Width <= cap + 0.5f, $"built a {c.Width:F2} m bridge, cap is {cap:F0} m");
-            // and the crossing is still there: the guard trims the placement,
-            // it does not withdraw the bridge.
-            Assert.Contains(crossings, c => c.Kind == CrossingKind.Bridge);
-        }
-        finally { WorldGenerator.instance = null; RoadPathfinder.MaxIterations = before; }
+        var path = Pathfinder(world, true).FindPath(new Vector2(-120f, 0f), new Vector2(120f, 0f));
+        Assert.NotNull(path);
+        var crossings = RoadCrossingDetector.Detect(path!, world, true);
+        Assert.NotEmpty(crossings);
+        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        foreach (RoadCrossing c in crossings)
+            Assert.True(c.Width <= cap + 0.5f, $"built a {c.Width:F2} m bridge, cap is {cap:F0} m");
+        // and the crossing is still there: the guard trims the placement,
+        // it does not withdraw the bridge.
+        Assert.Contains(crossings, c => c.Kind == CrossingKind.Bridge);
     }
 }

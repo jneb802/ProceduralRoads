@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -19,8 +20,7 @@ public class SharedCrossingValidityTests
     {
         var registry = (List<RoadCrossing>)RoadNetworkGenerator.GetRoadCrossings();
         var savedRegistry = registry.ToArray();
-        var savedWorld = WorldGenerator.instance;
-        WorldGenerator.instance = new FlatWorld();
+        using var scope = new ValheimWorldScope().WithWorld(new FlatWorld());
         registry.Clear();
         try
         {
@@ -59,7 +59,6 @@ public class SharedCrossingValidityTests
         finally
         {
             registry.Clear(); registry.AddRange(savedRegistry);
-            WorldGenerator.instance = savedWorld;
         }
     }
 

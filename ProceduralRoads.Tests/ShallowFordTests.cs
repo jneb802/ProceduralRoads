@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 namespace ProceduralRoads.Tests;
 
@@ -28,21 +29,17 @@ public class ShallowFordTests
     [Fact]
     public void ASwampPoolTheRoadWalksIsAFordWithDryBanks()
     {
-        bool was = RoadCrossingDetector.Shallows;
-        try
-        {
-            RoadCrossingDetector.Shallows = true;
-            var world = new SwampPool(0f, 16f, 0.5f);
-            var c = Assert.Single(RoadCrossingDetector.Detect(Line(0f), world, bridges: true, fords: true));
-            Assert.Equal(CrossingKind.Ford, c.Kind);
-            Assert.True(c.Shallow);
-            Assert.Contains(c.Style, new[] { FordStyle.Raise, FordStyle.Wade, FordStyle.Span });
-            Assert.InRange(c.Width, 15f, 19f);
-            Assert.True(world.GetHeight(c.FromBank.x, c.FromBank.y) >= RoadConstants.SeaLevel, "from bank in the water");
-            Assert.True(world.GetHeight(c.ToBank.x, c.ToBank.y) >= RoadConstants.SeaLevel, "to bank in the water");
-            Assert.True(c.FromIndex < c.ToIndex);
-        }
-        finally { RoadCrossingDetector.Shallows = was; }
+        using var overrides = StaticOverride.Keep(() => RoadCrossingDetector.Shallows);
+        RoadCrossingDetector.Shallows = true;
+        var world = new SwampPool(0f, 16f, 0.5f);
+        var c = Assert.Single(RoadCrossingDetector.Detect(Line(0f), world, bridges: true, fords: true));
+        Assert.Equal(CrossingKind.Ford, c.Kind);
+        Assert.True(c.Shallow);
+        Assert.Contains(c.Style, new[] { FordStyle.Raise, FordStyle.Wade, FordStyle.Span });
+        Assert.InRange(c.Width, 15f, 19f);
+        Assert.True(world.GetHeight(c.FromBank.x, c.FromBank.y) >= RoadConstants.SeaLevel, "from bank in the water");
+        Assert.True(world.GetHeight(c.ToBank.x, c.ToBank.y) >= RoadConstants.SeaLevel, "to bank in the water");
+        Assert.True(c.FromIndex < c.ToIndex);
     }
 
     [Fact]
@@ -102,13 +99,9 @@ public class ShallowFordTests
     [Fact]
     public void WithShallowsOffAPoolIsWadedAsBefore()
     {
-        bool was = RoadCrossingDetector.Shallows;
-        try
-        {
-            RoadCrossingDetector.Shallows = false;
-            Assert.Empty(RoadCrossingDetector.Detect(Line(0f), new SwampPool(0f, 16f, 0.5f), bridges: true, fords: true));
-        }
-        finally { RoadCrossingDetector.Shallows = was; }
+        using var overrides = StaticOverride.Keep(() => RoadCrossingDetector.Shallows);
+        RoadCrossingDetector.Shallows = false;
+        Assert.Empty(RoadCrossingDetector.Detect(Line(0f), new SwampPool(0f, 16f, 0.5f), bridges: true, fords: true));
     }
     /// <summary>A round pool of the given radius and depth at (cx, cz) in a swamp at 31 m.</summary>
     private sealed class RoundPool : WorldGenerator

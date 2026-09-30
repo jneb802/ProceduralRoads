@@ -1,3 +1,5 @@
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using System.Collections.Generic;
 using UnityEngine;
 using Xunit;
@@ -17,11 +19,10 @@ namespace ProceduralRoads.Tests;
 public class SearchGradeMarginTests
 {
     /// <summary>A plane rising east, above water everywhere these tests look.</summary>
-    private sealed class Ramp : WorldGenerator
+    private sealed class Ramp : TerrainWorld
     {
-        public float Grade = 0.35f;
-        public override float GetHeight(float wx, float wy) => 60f + Grade * wx;
-        public override Heightmap.Biome GetBiome(float wx, float wy) => Heightmap.Biome.Meadows;
+        public readonly float Grade;
+        public Ramp(float grade = .35f) : base(new PlaneTerrain(60, grade)) { Grade = grade; }
     }
 
     /// <summary>
@@ -34,12 +35,10 @@ public class SearchGradeMarginTests
     /// only step that goes anywhere is due east, so the step's grade IS the
     /// causeway's and the ceiling has something to refuse.
     /// </summary>
-    private sealed class Causeway : WorldGenerator
+    private sealed class Causeway : TerrainWorld
     {
-        public float Grade = 0.35f;
-        public override float GetHeight(float wx, float wy) =>
-            Mathf.Abs(wy) <= 4f ? 60f + Grade * wx : 0f;
-        public override Heightmap.Biome GetBiome(float wx, float wy) => Heightmap.Biome.Meadows;
+        public Causeway(float grade = .35f) : base(new CompositeTerrain(new PlaneTerrain(0),
+            new TerrainRegion((x,z) => System.Math.Abs(z) <= 4, new PlaneTerrain(60, grade)))) { }
     }
 
     // The variance term prices a plane alike everywhere and only slows the
@@ -64,7 +63,7 @@ public class SearchGradeMarginTests
     public void GroundInsideTheMarginIsCrossedStraightUp()
     {
         // 0.40 is over the 0.35 cap and inside the 0.45 ceiling.
-        var world = new Ramp { Grade = 0.40f };
+        var world = new Ramp(0.40f);
         var path = Finder(world, 0.35f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
 
         Assert.NotNull(path);
@@ -78,7 +77,7 @@ public class SearchGradeMarginTests
     {
         // 0.50 is past cap + margin, and on a one-cell causeway there is no
         // shallower heading to take instead.
-        var world = new Causeway { Grade = 0.50f };
+        var world = new Causeway(0.50f);
         var path = Finder(world, 0.35f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
 
         Assert.Null(path);
@@ -89,7 +88,7 @@ public class SearchGradeMarginTests
     {
         // The control for the refusal above: same corridor, 0.40 instead of
         // 0.50, so the only difference is which side of the ceiling it sits on.
-        var world = new Causeway { Grade = 0.40f };
+        var world = new Causeway(0.40f);
         var path = Finder(world, 0.35f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
 
         Assert.NotNull(path);
@@ -99,7 +98,7 @@ public class SearchGradeMarginTests
     public void TheMarginIsNotAppliedWhenTheCapIsOff()
     {
         // A cap of zero is "no cap". It must not become a 0.10 cap.
-        var world = new Ramp { Grade = 1.20f };
+        var world = new Ramp(1.20f);
         var path = Finder(world, 0f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
 
         Assert.NotNull(path);
@@ -113,8 +112,8 @@ public class SearchGradeMarginTests
         // "already on network" before a step is taken.
         const float JoinRadius = 16f;
 
-        var inside = new Causeway { Grade = 0.40f };
-        var beyond = new Causeway { Grade = 0.50f };
+        var inside = new Causeway(0.40f);
+        var beyond = new Causeway(0.50f);
 
         // Across the causeway, not along it: at a constant x the ground is
         // level, so the seed road is storable under the finished cap. Along it
@@ -149,7 +148,7 @@ public class SearchGradeMarginTests
         // cross 0.40 ground, and the finished profile is still held to 0.35.
         // Ends 96 m apart in height over 240 m of run is 0.40, which no profile
         // inside the cap can meet, so the road is refused after the path is found.
-        var world = new Ramp { Grade = 0.40f };
+        var world = new Ramp(0.40f);
         var path = Finder(world, 0.35f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
         Assert.NotNull(path);
 

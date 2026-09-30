@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -20,7 +21,7 @@ public class ReviewFallbackApproachTests
     public void ReturningToWaterEdgeMustRestoreTheApproachConsumedByOptionalTops()
     {
         var world = new BentHighBanks();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
         try
@@ -52,7 +53,6 @@ public class ReviewFallbackApproachTests
         {
             RoadNetworkGenerator.Reset();
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = new WorldGenerator();
         }
     }
 }

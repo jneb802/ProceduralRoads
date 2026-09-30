@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="../ProceduralRoads/environment.props" />
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework><LangVersion>10</LangVersion><Nullable>enable</Nullable>
+    <RoadsDll Condition="'$(RoadsDll)' == ''">../ProceduralRoads/bin/Debug/ProceduralRoads.dll</RoadsDll>
+    <Version>0.1.0</Version><DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="valheimCLI"><HintPath>$(CliDll)</HintPath><Private>false</Private></Reference>
+    <Reference Include="ProceduralRoads"><HintPath>$(RoadsDll)</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+  <ItemGroup><Compile Include="../ProceduralRoads.TestFixtures/FlatRoadFixture.cs" Link="Fixtures/FlatRoadFixture.cs" /></ItemGroup>
+  <!-- Source only: the owned-session identity and ValheimCLI registration, compiled into this adapter. -->
+  <ItemGroup><PackageReference Include="Valheim.Testing.Adapter" Version="[0.1.0-preview.2]" PrivateAssets="all" /></ItemGroup>
+  <!-- No default: compile against the exact ValheimCLI core installed in the staged runtime. -->
+  <Target Name="RequireCliDll" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="'$(CliDll)' == ''" Text="Pass -p:CliDll=/path/to/valheimCLI.dll, the ValheimCLI core installed in the staged test runtime." />
+    <Error Condition="'$(CliDll)' != '' And !Exists('$(CliDll)')" Text="CliDll does not exist: $(CliDll)" />
+  </Target>
+</Project>

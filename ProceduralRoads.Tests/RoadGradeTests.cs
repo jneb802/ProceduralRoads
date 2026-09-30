@@ -103,7 +103,7 @@ public class RoadGradeTests
         // none is closer to the input than what Limit returned. This is the
         // property that matters: the limiter is not free to redraw a road, only
         // to take the steepness out of it.
-        var rng = new Random(20260918);
+        var rng = new System.Random(20260918);
         var points = Line(120);
         var input = new List<float>();
         for (int i = 0; i < 120; i++)

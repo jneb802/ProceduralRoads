@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -17,9 +18,9 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public class BridgePierCapTests : IDisposable
 {
-    private readonly float _saved = RoadCrossingDetector.DeclineTallClimbs;
+    private readonly StaticOverride _saved = StaticOverride.Keep(() => RoadCrossingDetector.DeclineTallClimbs);
 
-    public void Dispose() => RoadCrossingDetector.DeclineTallClimbs = _saved;
+    public void Dispose() => _saved.Dispose();
 
     /// <summary>A deep channel whose banks RAMP upward away from the water,
     /// along the road that crosses it. The road runs straight across, which is

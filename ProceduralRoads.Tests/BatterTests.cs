@@ -1,4 +1,5 @@
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -92,32 +93,28 @@ public class BatterTests
     [InlineData(4f)]
     public void TheZoneGatherPadsByTheBlendReachNotTheRoadWidth(float batter)
     {
-        float saved = RoadTerrainModifier.BatterPerMetre;
-        try
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.BatterPerMetre);
+        RoadTerrainModifier.BatterPerMetre = batter;
+        const float width = 4f;
+        float reach = RoadTerrainModifier.MaxInfluenceRadius(width);
+
+        // Walk every divergence the writer can produce and take the
+        // widest margin the blend actually asks for. Computed by sweeping
+        // rather than by repeating the formula, so a change to the batter's
+        // SHAPE - a threshold, a cap, a curve - is still covered here.
+        float deepest = 0f;
+        for (float d = 0f; d <= RoadConstants.TerrainDeltaMax + 1f; d += 0.25f)
         {
-            RoadTerrainModifier.BatterPerMetre = batter;
-            const float width = 4f;
-            float reach = RoadTerrainModifier.MaxInfluenceRadius(width);
-
-            // Walk every divergence the writer can produce and take the
-            // widest margin the blend actually asks for. Computed by sweeping
-            // rather than by repeating the formula, so a change to the batter's
-            // SHAPE - a threshold, a cap, a curve - is still covered here.
-            float deepest = 0f;
-            for (float d = 0f; d <= RoadConstants.TerrainDeltaMax + 1f; d += 0.25f)
-            {
-                float margin = RoadConstants.TerrainBlendMargin
-                             + RoadTerrainModifier.BatterExtra(RoadTerrainModifier.BatterDivergence(30f - d, 30f));
-                if (margin > deepest) deepest = margin;
-            }
-            Assert.True(reach >= width * 0.5f + deepest - 1e-4f,
-                $"reach {reach:F2} m does not cover a {deepest:F2} m margin on a {width:F0} m road");
-
-            // And it must never be narrower than the width the gather used
-            // before, or a wide road loses points it used to collect.
-            Assert.True(Mathf.Max(width, reach) >= width);
+            float margin = RoadConstants.TerrainBlendMargin
+                         + RoadTerrainModifier.BatterExtra(RoadTerrainModifier.BatterDivergence(30f - d, 30f));
+            if (margin > deepest) deepest = margin;
         }
-        finally { RoadTerrainModifier.BatterPerMetre = saved; }
+        Assert.True(reach >= width * 0.5f + deepest - 1e-4f,
+            $"reach {reach:F2} m does not cover a {deepest:F2} m margin on a {width:F0} m road");
+
+        // And it must never be narrower than the width the gather used
+        // before, or a wide road loses points it used to collect.
+        Assert.True(Mathf.Max(width, reach) >= width);
     }
 
     /// <summary>The divergence the batter widens for is clamped to what the
@@ -160,22 +157,11 @@ public class BatterTests
     [InlineData(20f, 6f)]     // capped, never an apron
     public void TheBatterIsInertUntilTheCutIsDeepThenCapped(float divergence, float expected)
     {
-        float savedP = RoadTerrainModifier.BatterPerMetre;
-        float savedT = RoadTerrainModifier.BatterThreshold;
-        float savedM = RoadTerrainModifier.BatterMaxExtra;
-        try
-        {
-            RoadTerrainModifier.BatterPerMetre = 1.5f;
-            RoadTerrainModifier.BatterThreshold = 4f;
-            RoadTerrainModifier.BatterMaxExtra = 6f;
-            Assert.Equal(expected, RoadTerrainModifier.BatterExtra(divergence), 4);
-        }
-        finally
-        {
-            RoadTerrainModifier.BatterPerMetre = savedP;
-            RoadTerrainModifier.BatterThreshold = savedT;
-            RoadTerrainModifier.BatterMaxExtra = savedM;
-        }
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.BatterPerMetre).AndKeep(() => RoadTerrainModifier.BatterThreshold).AndKeep(() => RoadTerrainModifier.BatterMaxExtra);
+        RoadTerrainModifier.BatterPerMetre = 1.5f;
+        RoadTerrainModifier.BatterThreshold = 4f;
+        RoadTerrainModifier.BatterMaxExtra = 6f;
+        Assert.Equal(expected, RoadTerrainModifier.BatterExtra(divergence), 4);
     }
 
     /// <summary>The cap is what keeps the influence radius - and therefore the
@@ -184,19 +170,10 @@ public class BatterTests
     [Fact]
     public void TheMaxInfluenceRadiusRespectsTheCap()
     {
-        float savedP = RoadTerrainModifier.BatterPerMetre;
-        float savedM = RoadTerrainModifier.BatterMaxExtra;
-        try
-        {
-            RoadTerrainModifier.BatterPerMetre = 8f;   // far past the default
-            RoadTerrainModifier.BatterMaxExtra = 6f;
-            float reach = RoadTerrainModifier.MaxInfluenceRadius(4f);
-            Assert.Equal(2f + RoadConstants.TerrainBlendMargin + 6f, reach, 4);
-        }
-        finally
-        {
-            RoadTerrainModifier.BatterPerMetre = savedP;
-            RoadTerrainModifier.BatterMaxExtra = savedM;
-        }
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.BatterPerMetre).AndKeep(() => RoadTerrainModifier.BatterMaxExtra);
+        RoadTerrainModifier.BatterPerMetre = 8f;   // far past the default
+        RoadTerrainModifier.BatterMaxExtra = 6f;
+        float reach = RoadTerrainModifier.MaxInfluenceRadius(4f);
+        Assert.Equal(2f + RoadConstants.TerrainBlendMargin + 6f, reach, 4);
     }
 }

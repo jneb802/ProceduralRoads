@@ -394,3 +394,8 @@ Use `road_connect` to join the network on your island, `road_path` to route thro
 X,Z coordinates, or `road_mark add/list/undo/build/clear` to collect waypoints while
 exploring. Host/admin only. See [manual-road commands](docs/manual-roads.md) for
 examples, persistence and compatibility requirements.
+
+
+## Development tests
+
+Start with the [test-framework setup and migration guide](ProceduralRoads.SystemTests/README.md#quick-start-and-migration). Existing Roads unit tests remain here; synthetic terrain and external system-test infrastructure use [ValheimTesting](https://github.com/tvongaza/ValheimTesting). The optional adapter, test packages and ValheimCLI are not required by a normal Roads installation. Native test scenarios use disposable fixtures, separately from the fast unit suite. Coding agents working on the test tooling should start with [AGENTS.md](AGENTS.md).

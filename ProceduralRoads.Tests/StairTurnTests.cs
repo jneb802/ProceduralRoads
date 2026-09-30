@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 namespace ProceduralRoads.Tests;
 
@@ -61,26 +62,18 @@ public class StairTurnTests
     public void BuffersMayOverlapWhenNeitherReachesTheOtherSurface()
     {
         // 4 m road, 2 m margin, batter off: surfaces are safe from 6 m apart.
-        float saved = RoadTerrainModifier.BatterPerMetre;
-        try
-        {
-            RoadTerrainModifier.BatterPerMetre = 0f;
-            Assert.True(RoadSwitchbacks.Separated(Legs(7f), Climbing, 4, surfaceOnly: true));
-            Assert.False(RoadSwitchbacks.Separated(Legs(5f), Climbing, 4, surfaceOnly: true));
-        }
-        finally { RoadTerrainModifier.BatterPerMetre = saved; }
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.BatterPerMetre);
+        RoadTerrainModifier.BatterPerMetre = 0f;
+        Assert.True(RoadSwitchbacks.Separated(Legs(7f), Climbing, 4, surfaceOnly: true));
+        Assert.False(RoadSwitchbacks.Separated(Legs(5f), Climbing, 4, surfaceOnly: true));
     }
 
     [Fact]
     public void ABatteredLegReachesFurtherSoMustSitFurtherAway()
     {
-        float saved = RoadTerrainModifier.BatterPerMetre;
-        try
-        {
-            RoadTerrainModifier.BatterPerMetre = 1.5f;   // may add up to BATTER_MAX
-            Assert.False(RoadSwitchbacks.Separated(Legs(7f), Climbing, 4, surfaceOnly: true));
-        }
-        finally { RoadTerrainModifier.BatterPerMetre = saved; }
+        using var overrides = StaticOverride.Keep(() => RoadTerrainModifier.BatterPerMetre);
+        RoadTerrainModifier.BatterPerMetre = 1.5f;   // may add up to BATTER_MAX
+        Assert.False(RoadSwitchbacks.Separated(Legs(7f), Climbing, 4, surfaceOnly: true));
     }
 
     [Fact]

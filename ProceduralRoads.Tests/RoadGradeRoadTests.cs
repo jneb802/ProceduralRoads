@@ -1,3 +1,5 @@
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using System.Collections.Generic;
 using UnityEngine;
 using Xunit;
@@ -11,11 +13,10 @@ namespace ProceduralRoads.Tests;
 public class RoadGradeRoadTests
 {
     /// <summary>A plane rising east, above water everywhere the tests look.</summary>
-    private sealed class Ramp : WorldGenerator
+    private sealed class Ramp : TerrainWorld
     {
-        public float Grade = 0.35f;
-        public override float GetHeight(float wx, float wy) => 60f + Grade * wx;
-        public override Heightmap.Biome GetBiome(float wx, float wy) => Heightmap.Biome.Meadows;
+        public readonly float Grade;
+        public Ramp(float grade = .35f) : base(new PlaneTerrain(60, grade)) { Grade = grade; }
     }
 
     private static RoadPathfinder Finder(WorldGenerator world, float cap)
@@ -93,7 +94,7 @@ public class RoadGradeRoadTests
         // 20% cap, so there is no road and the destination goes unconnected.
         // This is the case the cap is meant to reach: an honest refusal in
         // place of a road glued to a wall.
-        var world = new Ramp { Grade = 1.0f };
+        var world = new Ramp(1.0f);
         Assert.Null(Finder(world, 0.2f).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f)));
         Assert.NotNull(Finder(world, 0f).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f)));
     }
@@ -101,8 +102,8 @@ public class RoadGradeRoadTests
     [Fact]
     public void StoredHeightsNeverExceedTheCap()
     {
-        var world = new Ramp { Grade = 0.35f };
-        WorldGenerator.instance = world;
+        var world = new Ramp(0.35f);
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -125,14 +126,14 @@ public class RoadGradeRoadTests
             Assert.True(RoadGrade.SteepestStep(points, heights) <= 0.2f + 0.01f,
                 $"stored profile climbs at {RoadGrade.SteepestStep(points, heights):P1}");
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
     public void ARoadWhoseEndsAreTooFarApartIsRefusedAndStoresNothing()
     {
-        var world = new Ramp { Grade = 0.5f };
-        WorldGenerator.instance = world;
+        var world = new Ramp(0.5f);
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -145,7 +146,7 @@ public class RoadGradeRoadTests
             Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
             Assert.Empty(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(80f, 0f, 0f), 400f));
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -154,8 +155,8 @@ public class RoadGradeRoadTests
         // A road laid in more than one piece must not end up half in the grid.
         // Planning is apart from storing so the caller can find out that one
         // piece is unbuildable before it has stored any of the others.
-        var world = new Ramp { Grade = 0.5f };
-        WorldGenerator.instance = world;
+        var world = new Ramp(0.5f);
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -174,7 +175,7 @@ public class RoadGradeRoadTests
                 Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
             }
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -184,9 +185,10 @@ public class RoadGradeRoadTests
         // recorded at planning time because the spatial grid keeps points as a
         // set per cell, with no order and no road they belong to: the nearest
         // neighbour of a stored point can be a different road crossing it.
-        var world = new Ramp { Grade = 0.35f };
-        WorldGenerator.instance = world;
+        var world = new Ramp(0.35f);
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
+        using var overrides = StaticOverride.Keep(() => RoadGrade.SteepestPlanned);
         try
         {
             var path = new List<Vector2>();
@@ -207,7 +209,7 @@ public class RoadGradeRoadTests
                 Assert.True(RoadSpatialGrid.AddRoadPath(flat, 4f, world));
             Assert.Equal(afterFirst, RoadGrade.SteepestPlanned);
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; RoadGrade.SteepestPlanned = 0f; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -217,8 +219,8 @@ public class RoadGradeRoadTests
         // stored height is what it was before there was a cap. Without this the
         // tests above would be satisfied by a limiter that quietly regraded
         // every road in the world.
-        var world = new Ramp { Grade = 0.1f };
-        WorldGenerator.instance = world;
+        var world = new Ramp(0.1f);
+        using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
             var path = new List<Vector2>();
@@ -243,6 +245,6 @@ public class RoadGradeRoadTests
                 Assert.True(Mathf.Abs(capped[i] - uncapped[i]) < 0.001f,
                     $"point {i} moved {capped[i] - uncapped[i]:F4} m on ground well inside the cap");
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 }

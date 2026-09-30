@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -13,10 +15,13 @@ namespace ProceduralRoads.Tests;
 /// paint edge, terrain beyond the blend margin is untouched, and the paint
 /// along the centreline has no gaps.
 /// </summary>
-public class RoadGeometryTests
+public class RoadGeometryTests : System.IDisposable
 {
     private const int Width = 64;
     private const float Lift = 1.5f;
+
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+    private StaticOverride? _plain;
 
     private sealed class FlatWorld : WorldGenerator
     {
@@ -26,11 +31,11 @@ public class RoadGeometryTests
     private static int Index(int vx, int vz) => vz * (Width + 1) + vx;
 
     /// <summary>A straight road through the zone: direction at angleDeg, passing offset metres beside the zone centre.</summary>
-    private static (TerrainComp tc, Vector2 dir, Vector2 origin, List<RoadSpatialGrid.RoadPoint> points) Build(float angleDeg, float offset, float width)
+    private (TerrainComp tc, Vector2 dir, Vector2 origin, List<RoadSpatialGrid.RoadPoint> points) Build(float angleDeg, float offset, float width)
     {
-        PlainEarthworks.Begin();
+        _plain ??= PlainEarthworks.Apply();
         var world = new FlatWorld();
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         float a = angleDeg * Mathf.PI / 180f;
         var dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
         var normal = new Vector2(-dir.y, dir.x);
@@ -41,18 +46,17 @@ public class RoadGeometryTests
         for (float s = -60f; s <= 60f; s += step)
             points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(origin.x + dir.x * s, origin.y + dir.y * s), width, 40f + Lift));
 
-        Heightmap hm = Heightmap.CreateForZone(new Vector2s(0, 0), Width);
-        Heightmap.Registered = hm;
+        Heightmap hm = _world.RegisterHeightmap(new Vector2s(0, 0), Width);
         RoadTerrainModifier.ApplyRoadTerrainModsWithContext(new Vector2s(0, 0), points, hm, hm.m_terrainComp!);
         return (hm.m_terrainComp!, dir, origin, points);
     }
 
-    private static void Cleanup()
+    private void Cleanup()
     {
-        Heightmap.Registered = null;
-        WorldGenerator.instance = null;
-        PlainEarthworks.End();
+        _plain?.Dispose(); _plain = null;
     }
+
+    public void Dispose() { _plain?.Dispose(); _world.Dispose(); }
 
     [Theory]
     [InlineData(0f, 0f, 4f)]      // grid-aligned (the case the profile tests cover)

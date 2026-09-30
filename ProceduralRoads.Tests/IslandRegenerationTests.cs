@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -7,8 +9,10 @@ namespace ProceduralRoads.Tests;
 /// <summary>
 /// Single-island regeneration (road_regen_island) on the synthetic world: one island, a spawn temple and three road locations.
 /// </summary>
-public class IslandRegenerationTests
+public class IslandRegenerationTests : System.IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+
     private static readonly (string name, float x, float z, float radius)[] StandardLocations =
     {
         ("StartTemple", 0f, 0f, 25f),
@@ -17,12 +21,12 @@ public class IslandRegenerationTests
         ("Crypt4", 120f, -260f, 18f),
     };
 
-    private static SyntheticWorld SetUp() => SetUp(StandardLocations);
+    private SyntheticWorld SetUp() => SetUp(StandardLocations);
 
-    private static SyntheticWorld SetUp(params (string name, float x, float z, float radius)[] locations)
+    private SyntheticWorld SetUp(params (string name, float x, float z, float radius)[] locations)
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         var zones = new ZoneSystem();
         foreach (var (name, x, z, radius) in locations)
         {
@@ -33,7 +37,7 @@ public class IslandRegenerationTests
             });
         }
         ZoneSystem.instance = zones;
-        ZDOMan.instance = new ZDOMan();
+        _world.WithZdos();
         RoadNetworkGenerator.Reset();
         return world;
     }
@@ -43,10 +47,9 @@ public class IslandRegenerationTests
         RoadNetworkGenerator.Reset();
         RoadNetworkGenerator.GenerateOnLoad = true;
         ProceduralRoadsPlugin.ConfigLocationNames = new();
-        ZDOMan.instance = null;
-        ZoneSystem.instance = null;
-        WorldGenerator.instance = null;
     }
+
+    public void Dispose() => _world.Dispose();
 
     [Fact]
     public void IslandRegenerationMatchesGlobalOnAOneIslandWorld()
@@ -70,6 +73,7 @@ public class IslandRegenerationTests
     public void LoadTimeGenerationCanBeSwitchedOffAndIslandRegenerationStillWorks()
     {
         SetUp();
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.GenerateOnLoad);
         try
         {
             RoadNetworkGenerator.GenerateOnLoad = false;
@@ -85,7 +89,7 @@ public class IslandRegenerationTests
             Assert.True(RoadNetworkGenerator.GenerateRoadsOnLoad());
             Assert.True(RoadNetworkGenerator.RoadsAvailable);
         }
-        finally { RoadNetworkGenerator.GenerateOnLoad = true; TearDown(); }
+        finally { TearDown(); }
     }
 
     [Fact]
@@ -98,8 +102,7 @@ public class IslandRegenerationTests
             // temple towards Eikthyrnir: its heightmap must carry road deltas and
             // paint right after the load-time generation, without any zone spawn.
             var zone = new Vector2s(2, 0);
-            Heightmap hm = Heightmap.CreateForZone(zone, 64);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(zone, 64);
             TerrainComp tc = hm.m_terrainComp!;
 
             Assert.True(RoadNetworkGenerator.GenerateRoadsOnLoad());
@@ -110,7 +113,6 @@ public class IslandRegenerationTests
         }
         finally
         {
-            Heightmap.Registered = null;
             TearDown();
         }
     }
@@ -133,8 +135,7 @@ public class IslandRegenerationTests
             int version = RoadSpatialGrid.RoadNetworkVersion;
             Assert.NotEqual(0, version);
 
-            var log = new List<string>();
-            BepInEx.Logging.ManualLogSource.Captured = log;
+            var log = _world.CaptureLog();
             RoadNetworkGenerator.SaveGlobalRoadData();
             BepInEx.Logging.ManualLogSource.Captured = null;
             Assert.DoesNotContain(log, l => l.Contains("No metadata ZDO"));

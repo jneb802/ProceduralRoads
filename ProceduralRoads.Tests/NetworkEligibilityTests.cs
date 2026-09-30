@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -42,11 +44,11 @@ public class NetworkEligibilityTests
     [Fact]
     public void ExcludedBiomeFiltersApiAndRequiredSitesBeforeSelection()
     {
-        var world = WorldGenerator.instance;
-        var options = RoadNetworkGenerator.NetworkOptions;
+        using var scope = new ValheimWorldScope();
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.NetworkOptions);
         try
         {
-            WorldGenerator.instance = new AshWorld();
+            scope.WithWorld(new AshWorld());
             RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions();
             RoadNetworkGenerator.RegisterLocation("ApiAshFixture");
             // The API is how a content mod opts in; there is no prefix rule.
@@ -60,12 +62,6 @@ public class NetworkEligibilityTests
             RoadNetworkGenerator.NetworkOptions.ExcludedBiomes = 0;
             Assert.Equal(3, ((List<(string,Vector3,float)>)Call("GetLocationsOnIsland",island,places)).Count);
         }
-        finally
-        {
-            RoadNetworkGenerator.UnregisterLocation("ApiAshFixture");
-            RoadNetworkGenerator.UnregisterLocation("MWL_Test");
-            WorldGenerator.instance = world;
-            RoadNetworkGenerator.NetworkOptions = options;
-        }
+        finally { RoadNetworkGenerator.UnregisterLocation("ApiAshFixture"); RoadNetworkGenerator.UnregisterLocation("MWL_Test"); }
     }
 }

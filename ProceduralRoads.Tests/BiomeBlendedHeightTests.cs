@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -90,7 +91,7 @@ public class BiomeBlendedHeightTests
         // End to end: the road crosses the tongue on ground the game renders
         // flat at 40 m. It must not be lifted onto the forest formula's 46 m.
         var world = new TongueWorld();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -108,7 +109,6 @@ public class BiomeBlendedHeightTests
         finally
         {
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
         }
     }
 }

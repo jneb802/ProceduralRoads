@@ -12,3 +12,6 @@ WARP.md
 
 .claude
 .claude/
+
+# Local system-test runner packages and evidence
+/artifacts/

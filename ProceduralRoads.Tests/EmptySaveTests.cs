@@ -1,19 +1,21 @@
 using System.Collections.Generic;
 using ProceduralRoads;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 public class EmptySaveTests : System.IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
     public void Dispose()
     {
         RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); BridgeAppendQueue.Reset();
-        ZDOMan.instance = null;
+        _world.Dispose();
     }
     static void Save() => RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
     static bool Load() => RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
-    static void Begin()
+    void Begin()
     {
-        ZDOMan.instance = new ZDOMan();
+        _world.WithZdos();
         RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); BridgeAppendQueue.Reset();
         RoadNetworkPersistence.EnsureMetadataInstance();
     }

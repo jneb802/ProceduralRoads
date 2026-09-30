@@ -1,6 +1,7 @@
 using System.Linq;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 namespace ProceduralRoads.Tests;
 
@@ -86,34 +87,25 @@ public class PitchTests
     [Fact]
     public void FollowingTheGroundSmoothsOverAShortWindow()
     {
-        bool saved = RoadSpatialGrid.FollowGround;
-        try
-        {
-            RoadSpatialGrid.FollowGround = false;
-            Assert.Equal(RoadConstants.HeightSmoothingWindow, RoadSpatialGrid.SmoothingWindow(4f));
-            RoadSpatialGrid.FollowGround = true;
-            Assert.Equal(9, RoadSpatialGrid.SmoothingWindow(4f));
-            Assert.True(RoadSpatialGrid.SmoothingWindow(4f) % 2 == 1);
-        }
-        finally { RoadSpatialGrid.FollowGround = saved; }
+        using var overrides = StaticOverride.Keep(() => RoadSpatialGrid.FollowGround);
+        RoadSpatialGrid.FollowGround = false;
+        Assert.Equal(RoadConstants.HeightSmoothingWindow, RoadSpatialGrid.SmoothingWindow(4f));
+        RoadSpatialGrid.FollowGround = true;
+        Assert.Equal(9, RoadSpatialGrid.SmoothingWindow(4f));
+        Assert.True(RoadSpatialGrid.SmoothingWindow(4f) % 2 == 1);
     }
 
     [Fact]
     public void TheSustainedGradeIsAPriceNotAWall()
     {
-        float savedW = RoadPitches.PitchOverWeight, savedS = RoadPitches.Sustained;
-        bool savedE = RoadPitches.Enabled;
-        try
-        {
-            RoadPitches.Enabled = true;
-            RoadPitches.Sustained = 0.30f;
-            RoadPitches.PitchOverWeight = 0f;
-            Assert.Equal(0f, RoadPitches.OverSustainedPrice(0.40f, 8f));
-            RoadPitches.PitchOverWeight = 50f;
-            Assert.Equal(0f, RoadPitches.OverSustainedPrice(0.25f, 8f));       // under sustained: free
-            Assert.Equal(50f * 0.10f * 8f, RoadPitches.OverSustainedPrice(0.40f, 8f), 3);
-        }
-        finally { RoadPitches.PitchOverWeight = savedW; RoadPitches.Sustained = savedS; RoadPitches.Enabled = savedE; }
+        using var overrides = StaticOverride.Keep(() => RoadPitches.PitchOverWeight).AndKeep(() => RoadPitches.Sustained).AndKeep(() => RoadPitches.Enabled);
+        RoadPitches.Enabled = true;
+        RoadPitches.Sustained = 0.30f;
+        RoadPitches.PitchOverWeight = 0f;
+        Assert.Equal(0f, RoadPitches.OverSustainedPrice(0.40f, 8f));
+        RoadPitches.PitchOverWeight = 50f;
+        Assert.Equal(0f, RoadPitches.OverSustainedPrice(0.25f, 8f));       // under sustained: free
+        Assert.Equal(50f * 0.10f * 8f, RoadPitches.OverSustainedPrice(0.40f, 8f), 3);
     }
 
     [Fact]

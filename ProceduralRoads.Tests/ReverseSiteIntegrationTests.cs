@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -9,12 +10,12 @@ public sealed class ReverseSiteIntegrationTests : IDisposable
 {
     private sealed class Flat : WorldGenerator { public override float GetHeight(float x, float z) => 60f; }
     private readonly Flat world = new();
-    private readonly WorldGenerator? previous = WorldGenerator.instance;
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
 
     public ReverseSiteIntegrationTests()
     {
         RoadSpatialGrid.Clear(); RoadSiteProtection.Source = null;
-        RoadSiteProtection.Reset(); WorldGenerator.instance = world;
+        RoadSiteProtection.Reset(); _scope.WithWorld(world);
         Assert.True(RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(80, -40), new(80, 40) }, 4, world));
         RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(0, 0), 12) });
     }
@@ -46,6 +47,6 @@ public sealed class ReverseSiteIntegrationTests : IDisposable
     public void Dispose()
     {
         RoadSiteProtection.Reset(); RoadSiteProtection.Source = null;
-        RoadSpatialGrid.Clear(); WorldGenerator.instance = previous;
+        RoadSpatialGrid.Clear(); _scope.Dispose();
     }
 }

@@ -1,14 +1,16 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
 
 public class SiteProtectionTests : IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
     public SiteProtectionTests() { RoadSiteProtection.Reset(); RoadSiteProtection.Source = null; }
-    public void Dispose() { RoadSiteProtection.Reset(); RoadSiteProtection.Source = null; Heightmap.Registered = null; RoadSpatialGrid.Clear(); }
+    public void Dispose() { RoadSiteProtection.Reset(); RoadSiteProtection.Source = null; RoadSpatialGrid.Clear(); _world.Dispose(); }
     private sealed class Flat : WorldGenerator { public override float GetHeight(float x, float z) => 60f; }
     private static void Pit(float radius = 12) => RoadSiteProtection.Set(new[] {
         new RoadSiteProtection.Footprint(new Vector2(0, 0), radius) });
@@ -59,9 +61,9 @@ public class SiteProtectionTests : IDisposable
     public void WriterPreservesSiteHeightAndPaintEvenForAnOldRoadThroughIt()
     {
         Pit(8);
-        var world = new Flat(); WorldGenerator.instance = world;
+        var world = new Flat(); _world.WithWorld(world);
         var zone = new Vector2s(0,0);
-        var hm = Heightmap.CreateForZone(zone,64); Heightmap.Registered = hm;
+        var hm = _world.RegisterHeightmap(zone,64);
         var tc = hm.m_terrainComp!;
         int middle = 32 * 65 + 32;
         tc.m_levelDelta[middle] = 1.5f;
@@ -75,16 +77,15 @@ public class SiteProtectionTests : IDisposable
         Assert.Equal(beforePaint,tc.m_paintMask[middle]);
         Assert.False(tc.m_modifiedPaint[middle]);
         Assert.True(tc.m_modifiedHeight[32*65+52]); // genuinely wrote outside
-        WorldGenerator.instance = null;
     }
 
     [Fact]
     public void LateLocationShapingCannotTurnAnOldRoadDeltaIntoARidge()
     {
         Pit(8);
-        WorldGenerator.instance = new Flat();
+        _world.WithWorld(new Flat());
         var zone = new Vector2s(0,0);
-        var hm = Heightmap.CreateForZone(zone,64); Heightmap.Registered = hm;
+        var hm = _world.RegisterHeightmap(zone,64);
         var points = new List<RoadSpatialGrid.RoadPoint>();
         for (int x=-24;x<=24;x++) points.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x,0),4,61.2f));
         RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone,points,hm,hm.m_terrainComp!);
@@ -98,7 +99,6 @@ public class SiteProtectionTests : IDisposable
         Assert.Equal(69f,hm.LastRenderedHeights![middle]);
         Assert.Equal(0f,hm.m_terrainComp!.m_levelDelta[middle]);
         Assert.True(hm.m_terrainComp.m_modifiedHeight[32*65+52]);
-        WorldGenerator.instance = null;
     }
 
     [Fact]

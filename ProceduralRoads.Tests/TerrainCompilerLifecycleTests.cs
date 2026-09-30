@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -11,15 +12,16 @@ namespace ProceduralRoads.Tests;
 /// alive (OnTerrainCompilerReady), which also claims an unowned one and leaves
 /// another peer's alone.
 /// </summary>
-public class TerrainCompilerLifecycleTests
+public class TerrainCompilerLifecycleTests : System.IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+
     private static readonly Vector2s Zone = new(0, 0);
 
-    private static (SyntheticWorld world, List<RoadSpatialGrid.RoadPoint> points) SetUp()
+    private (SyntheticWorld world, List<RoadSpatialGrid.RoadPoint> points) SetUp()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
-        ZDOMan.instance = new ZDOMan();
+        _world.WithWorld(world).WithZdos();
         RoadSpatialGrid.Clear();
         var path = new List<Vector2>();
         for (float x = -40f; x <= 40f; x += 8f)
@@ -33,11 +35,10 @@ public class TerrainCompilerLifecycleTests
 
     private static void TearDown()
     {
-        Heightmap.Registered = null;
         RoadSpatialGrid.Clear();
-        ZDOMan.instance = null;
-        WorldGenerator.instance = null;
     }
+
+    public void Dispose() => _world.Dispose();
 
     private static int Compilers() => ZDOMan.instance!.CountWithPrefab(TerrainComp.PrefabName);
 
@@ -47,8 +48,7 @@ public class TerrainCompilerLifecycleTests
         var (_, points) = SetUp();
         try
         {
-            Heightmap hm = Heightmap.CreateForZone(Zone, 64, withCompiler: false);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(Zone, 64, withCompiler: false);
             Assert.Equal(0, Compilers());
 
             RoadTerrainModifier.OnZoneSpawned(Zone, points);
@@ -70,8 +70,7 @@ public class TerrainCompilerLifecycleTests
             // The save holds this zone's compiler; the game brings it to life
             // after the zone is loaded, i.e. after the spawn hook has run.
             ZDO saved = ZDOMan.instance!.CreateNewZDO(ZoneSystem.GetZonePos(Zone), TerrainComp.PrefabName.GetStableHashCode());
-            Heightmap hm = Heightmap.CreateForZone(Zone, 64, withCompiler: false);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(Zone, 64, withCompiler: false);
             Assert.True(RoadTerrainModifier.HasSavedTerrainCompiler(Zone));
 
             RoadTerrainModifier.OnZoneSpawned(Zone, points);
@@ -89,8 +88,7 @@ public class TerrainCompilerLifecycleTests
         var (_, _) = SetUp();
         try
         {
-            Heightmap hm = Heightmap.CreateForZone(Zone, 64);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(Zone, 64);
             TerrainComp tc = hm.m_terrainComp!;
 
             RoadTerrainModifier.OnTerrainCompilerReady(tc);
@@ -114,8 +112,7 @@ public class TerrainCompilerLifecycleTests
         SetUp();
         try
         {
-            Heightmap hm = Heightmap.CreateForZone(Zone, 64);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(Zone, 64);
             TerrainComp tc = hm.m_terrainComp!;
 
             tc.m_nview.GetZDO().SetOwner(0);
@@ -123,8 +120,7 @@ public class TerrainCompilerLifecycleTests
             Assert.True(tc.m_nview.IsOwner(), "unowned compiler in our area was not claimed");
             Assert.Equal(1, tc.SaveCount);
 
-            Heightmap other = Heightmap.CreateForZone(Zone, 64);
-            Heightmap.Registered = other;
+            Heightmap other = _world.RegisterHeightmap(Zone, 64);
             TerrainComp theirs = other.m_terrainComp!;
             theirs.m_nview.GetZDO().SetOwner(2);
             RoadTerrainModifier.OnTerrainCompilerReady(theirs);
@@ -140,8 +136,7 @@ public class TerrainCompilerLifecycleTests
         SetUp();
         try
         {
-            Heightmap hm = Heightmap.CreateForZone(new Vector2s(5, 5), 64);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(new Vector2s(5, 5), 64);
             RoadTerrainModifier.OnTerrainCompilerReady(hm.m_terrainComp!);
             Assert.Equal(0, hm.m_terrainComp!.SaveCount);
         }

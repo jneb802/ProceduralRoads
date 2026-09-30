@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -82,26 +83,22 @@ public class CoastalLandingTests
     [Fact]
     public void LandingsTakeQuotaSlotsWithoutMutatingRealPoiList()
     {
-        var old=RoadNetworkGenerator.NetworkOptions;
-        try
-        {
-            RoadNetworkGenerator.NetworkOptions=new();
-            var island=new Island { ApproxArea=6_000_000, CoastalLandings=new() { new Vector3(0,33,0),new Vector3(800,33,0) } };
-            var pois=new List<(string name,Vector3 position,float radius)> {
-                ("Crypt4",new Vector3(200,33,200),10), ("Crypt4",new Vector3(400,33,200),10),
-                ("Eikthyrnir",new Vector3(600,33,200),10) };
-            var method=typeof(RoadNetworkGenerator).GetMethod("SelectIslandDestinations",BindingFlags.NonPublic|BindingFlags.Static)!;
-            List<(string name,Vector3 position,float radius)> Select() =>
-                (List<(string name,Vector3 position,float radius)>)method.Invoke(null,new object[] {island,pois,4})!;
-            var selected=Select();
-            Assert.Equal(4,selected.Count);
-            Assert.Equal(2,selected.Count(p=>p.name==RoadCoastalLandings.Name));
-            Assert.Contains(selected,p=>p.name=="Eikthyrnir");
-            Assert.Equal(3,pois.Count);
-            RoadNetworkGenerator.NetworkOptions.CoastalLandings=false;
-            Assert.DoesNotContain(Select(),p=>p.name==RoadCoastalLandings.Name);
-        }
-        finally { RoadNetworkGenerator.NetworkOptions=old; }
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.NetworkOptions);
+        RoadNetworkGenerator.NetworkOptions=new();
+        var island=new Island { ApproxArea=6_000_000, CoastalLandings=new() { new Vector3(0,33,0),new Vector3(800,33,0) } };
+        var pois=new List<(string name,Vector3 position,float radius)> {
+            ("Crypt4",new Vector3(200,33,200),10), ("Crypt4",new Vector3(400,33,200),10),
+            ("Eikthyrnir",new Vector3(600,33,200),10) };
+        var method=typeof(RoadNetworkGenerator).GetMethod("SelectIslandDestinations",BindingFlags.NonPublic|BindingFlags.Static)!;
+        List<(string name,Vector3 position,float radius)> Select() =>
+            (List<(string name,Vector3 position,float radius)>)method.Invoke(null,new object[] {island,pois,4})!;
+        var selected=Select();
+        Assert.Equal(4,selected.Count);
+        Assert.Equal(2,selected.Count(p=>p.name==RoadCoastalLandings.Name));
+        Assert.Contains(selected,p=>p.name=="Eikthyrnir");
+        Assert.Equal(3,pois.Count);
+        RoadNetworkGenerator.NetworkOptions.CoastalLandings=false;
+        Assert.DoesNotContain(Select(),p=>p.name==RoadCoastalLandings.Name);
     }
 
     private sealed class CountingCoast : WorldGenerator

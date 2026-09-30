@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -10,22 +12,24 @@ namespace ProceduralRoads.Tests;
 /// footprint is wider than the painted one, the flat core is fully leveled,
 /// terrain beyond the blend margin is untouched, and paint alpha survives.
 /// </summary>
-public class TerrainModifierTests
+public class TerrainModifierTests : System.IDisposable
 {
     private const int Width = 64;                 // vanilla zone: 64 vertices per side, 1 m apart
     private const float RoadWidth = 4f;
     private const float Lift = 1.5f;              // road height above natural terrain
 
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+    private StaticOverride? _plain;
+
     /// <summary>A straight east-west road through the zone centre, one point per metre.</summary>
-    private static (Heightmap hm, TerrainComp tc, float natural) BuildZone(SyntheticWorld world) =>
+    private (Heightmap hm, TerrainComp tc, float natural) BuildZone(SyntheticWorld world) =>
         BuildZone(world, new Vector2s(0, 0));
 
-    private static (Heightmap hm, TerrainComp tc, float natural) BuildZone(SyntheticWorld world, Vector2s zone)
+    private (Heightmap hm, TerrainComp tc, float natural) BuildZone(SyntheticWorld world, Vector2s zone)
     {
-        PlainEarthworks.Begin();
+        _plain ??= PlainEarthworks.Apply();
         Vector3 centre = ZoneSystem.GetZonePos(zone);
-        Heightmap hm = Heightmap.CreateForZone(zone, Width);
-        Heightmap.Registered = hm;
+        Heightmap hm = _world.RegisterHeightmap(zone, Width);
         TerrainComp tc = hm.m_terrainComp!;
         for (int i = 0; i < tc.m_paintMask.Length; i++)
             tc.m_paintMask[i] = new Color(0f, 0f, 0f, 0.25f);   // alpha must survive painting
@@ -42,10 +46,10 @@ public class TerrainModifierTests
     /// <summary>Vertex index for (x, z) metres from the zone centre on the zone grid.</summary>
     private static int Index(int x, int z) => (z + Width / 2) * (Width + 1) + (x + Width / 2);
 
-    private static SyntheticWorld FlatWorld()
+    private SyntheticWorld FlatWorld()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         return world;
     }
 
@@ -156,10 +160,10 @@ public class TerrainModifierTests
                     && Mathf.Abs(actual.b - expected.b) < 1e-4f,
             $"{what} is ({actual.r:F2}, {actual.g:F2}, {actual.b:F2}), expected ({expected.r:F2}, {expected.g:F2}, {expected.b:F2})");
 
-    private static void Cleanup()
+    private void Cleanup()
     {
-        Heightmap.Registered = null;
-        WorldGenerator.instance = null;
-        PlainEarthworks.End();
+        _plain?.Dispose(); _plain = null;
     }
+
+    public void Dispose() { _plain?.Dispose(); _world.Dispose(); }
 }

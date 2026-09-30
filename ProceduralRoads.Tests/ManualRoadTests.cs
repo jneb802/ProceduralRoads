@@ -4,6 +4,8 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -16,11 +18,11 @@ public class ManualRoadTests : IDisposable
         public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0; width = 0; }
     }
     private readonly WorldGenerator world = new FlatWorld();
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
     public ManualRoadTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetDebugCounters();
-        WorldGenerator.instance = world; ZDOMan.instance = new ZDOMan();
-        ZoneSystem.instance = new ZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
+        _scope.WithWorld(world).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
         Heightmap.Registered = null; RoadGrade.Configured = .35f;
         RoadNetworkGenerator.RoadWidth = 4;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
@@ -28,7 +30,7 @@ public class ManualRoadTests : IDisposable
     public void Dispose()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetDebugCounters();
-        WorldGenerator.instance = null; ZDOMan.instance = null; ZoneSystem.instance = null; Heightmap.Registered = null;
+        _scope.Dispose();
     }
     private static Island Group(int xmin = -64, int xmax = 64)
     {
@@ -51,15 +53,11 @@ public class ManualRoadTests : IDisposable
 
     [Fact] public void CoordinatesUseInvariantXZAndCanBeCopiedBack()
     {
-        var before = CultureInfo.CurrentCulture;
-        try
-        {
-            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
-            var d = new ManualRoadDraft(); d.Add(ManualRoadDraft.ParsePoint("-120.5", "450.25")); d.Add(new Vector2(0, -80));
-            Assert.Equal("road_path -120.5,450.25 0,-80", d.Command);
-            Assert.Equal(d.Points, ManualRoadDraft.ParsePath(d.Command.Split(' ').Skip(1)));
-        }
-        finally { CultureInfo.CurrentCulture = before; }
+        using var overrides = StaticOverride.Keep(() => CultureInfo.CurrentCulture);
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("fr-FR");
+        var d = new ManualRoadDraft(); d.Add(ManualRoadDraft.ParsePoint("-120.5", "450.25")); d.Add(new Vector2(0, -80));
+        Assert.Equal("road_path -120.5,450.25 0,-80", d.Command);
+        Assert.Equal(d.Points, ManualRoadDraft.ParsePath(d.Command.Split(' ').Skip(1)));
     }
     [Theory]
     [InlineData("NaN", "0")][InlineData("Infinity", "2")][InlineData("10000", "0")][InlineData("2,3", "4")][InlineData("a", "b")]
@@ -117,7 +115,7 @@ public class ManualRoadTests : IDisposable
     }
     [Fact] public void UnchangedZoneIsNotRewrittenAfterAnAppendElsewhere()
     {
-        BaseRoad(); var hm=Heightmap.CreateForZone(new Vector2s(0,0)); Heightmap.Registered=hm;
+        BaseRoad(); var hm=_scope.RegisterHeightmap(new Vector2s(0,0));
         RoadTerrainModifier.OnTerrainCompilerReady(hm.m_terrainComp!);
         int saves=hm.m_terrainComp!.SaveCount;
         Add(200); RoadTerrainModifier.OnTerrainCompilerReady(hm.m_terrainComp);
@@ -126,7 +124,7 @@ public class ManualRoadTests : IDisposable
     [Fact] public void SharedZoneKeepsPlayerEditsOnOldRoadAndOffTheAdditionAfterReload()
     {
         int original=BaseRoad(); var zone=new Vector2s(0,0);
-        var hm=Heightmap.CreateForZone(zone); Heightmap.Registered=hm; var tc=hm.m_terrainComp!;
+        var hm=_scope.RegisterHeightmap(zone); var tc=hm.m_terrainComp!;
         RoadTerrainModifier.OnTerrainCompilerReady(tc);
         int oldRoad=16*65+32, untouched=32*65+32, newRoad=48*65+32;
         tc.m_levelDelta[oldRoad]=3.25f; tc.m_smoothDelta[oldRoad]=.75f;
@@ -147,7 +145,7 @@ public class ManualRoadTests : IDisposable
     public void ServerBakePreservesOldRoadEditsWhenAnAdditionIsInThisZoneOrElsewhere(bool elsewhere)
     {
         BaseRoad(); var zone = new Vector2s(0, 0);
-        var hm = Heightmap.CreateForZone(zone); Heightmap.Registered = hm; var tc = hm.m_terrainComp!;
+        var hm = _scope.RegisterHeightmap(zone); var tc = hm.m_terrainComp!;
         RoadTerrainModifier.OnTerrainCompilerReady(tc);
         int oldRoad = 16 * 65 + 32, newRoad = 48 * 65 + 32;
         tc.m_levelDelta[oldRoad] = 3.25f; tc.m_smoothDelta[oldRoad] = .75f;
@@ -264,17 +262,16 @@ public class ManualRoadFailureTests : IDisposable
         public override float GetHeight(float x,float z)=>x<64 ? 40 : 180;
         public override void GetRiverWeight(float x,float z,out float weight,out float width){weight=0;width=0;}
     }
+    private readonly ValheimWorldScope _world=new ValheimWorldScope().WithWorld(new Cliff()).WithZdos().WithZoneSystem();
     public ManualRoadFailureTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetDebugCounters();
-        WorldGenerator.instance=new Cliff(); ZDOMan.instance=new ZDOMan();ZoneSystem.instance=new ZoneSystem();
         RoadNetworkGenerator.MarkLocationsReady();RoadGrade.Configured=.35f;RoadNetworkGenerator.RoadWidth=4;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
     }
     public void Dispose()
     {
-        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetDebugCounters();WorldGenerator.instance=null;
-        ZDOMan.instance=null;ZoneSystem.instance=null;Heightmap.Registered=null;
+        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetDebugCounters();_world.Dispose();
     }
     private static Island Island()
     {
@@ -292,7 +289,7 @@ public class ManualRoadFailureTests : IDisposable
     {
         var world=WorldGenerator.instance!;
         RoadSpatialGrid.AddRoadPath(new List<Vector2>{new(-24,-16),new(24,-16)},4,world);RoadSpatialGrid.FinalizeRoadNetwork();
-        var hm=Heightmap.CreateForZone(new Vector2s(0,0));Heightmap.Registered=hm;var tc=hm.m_terrainComp!;
+        var hm=_world.RegisterHeightmap(new Vector2s(0,0));var tc=hm.m_terrainComp!;
         RoadTerrainModifier.OnTerrainCompilerReady(tc);int saves=tc.SaveCount;
         var plan=RoadSpatialGrid.PlanRoadPath(new List<Vector2>{new(-24,16),new(24,16)},4,world)!;
         RoadSpatialGrid.CommitAppend(new[]{plan},RoadSpatialGrid.RoadNetworkVersion);
@@ -303,7 +300,7 @@ public class ManualRoadFailureTests : IDisposable
     {
         var world=WorldGenerator.instance!;var zone=new Vector2s(0,0);
         RoadSpatialGrid.AddRoadPath(new List<Vector2>{new(-24,-16),new(24,-16)},4,world);RoadSpatialGrid.FinalizeRoadNetwork();
-        var hm=Heightmap.CreateForZone(zone);Heightmap.Registered=hm;var tc=hm.m_terrainComp!;
+        var hm=_world.RegisterHeightmap(zone);var tc=hm.m_terrainComp!;
         RoadTerrainModifier.OnTerrainCompilerReady(tc);hm.AutoRebuild=false;
         foreach(float z in new[]{0f,16f})
         {
@@ -328,16 +325,16 @@ public class ManualRoadFailureTests : IDisposable
 
 public class ManualBridgeTests : IDisposable
 {
+    private readonly ValheimWorldScope _world=new ValheimWorldScope().WithWorld(new BridgeTests.WideRiverWorld()).WithZdos().WithZoneSystem();
     public ManualBridgeTests()
     {
         RoadNetworkGenerator.Reset();RoadTerrainModifier.ResetDebugCounters();
-        WorldGenerator.instance=new BridgeTests.WideRiverWorld();ZDOMan.instance=new ZDOMan();ZoneSystem.instance=new ZoneSystem();
         RoadNetworkGenerator.MarkLocationsReady();RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
         RoadGrade.Configured=.35f;RoadNetworkGenerator.RoadWidth=4;
     }
     public void Dispose()
     {
-        RoadNetworkGenerator.Reset();WorldGenerator.instance=null;ZoneSystem.instance=null;ZDOMan.instance=null;Heightmap.Registered=null;
+        RoadNetworkGenerator.Reset();_world.Dispose();
     }
     [Fact] public void FullRespawnDiscardsAppendProgressButKeepsTheCompletePlan()
     {

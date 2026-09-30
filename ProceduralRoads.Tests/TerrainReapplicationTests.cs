@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -11,8 +12,10 @@ namespace ProceduralRoads.Tests;
 /// terrain edits in the road survive a reload and paint is not blended
 /// again; a changed network or an explicit reapplication writes it anew.
 /// </summary>
-public class TerrainReapplicationTests
+public class TerrainReapplicationTests : System.IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+
     private const int Width = 64;
     private static readonly Vector2s Zone = new(0, 0);
 
@@ -25,16 +28,15 @@ public class TerrainReapplicationTests
     }
 
     /// <summary>One road through the zone, network finalized, a fresh zone heightmap registered.</summary>
-    private static (SyntheticWorld world, Heightmap hm, TerrainComp tc, List<RoadSpatialGrid.RoadPoint> points) SetUp()
+    private (SyntheticWorld world, Heightmap hm, TerrainComp tc, List<RoadSpatialGrid.RoadPoint> points) SetUp()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         RoadSpatialGrid.Clear();
         RoadSpatialGrid.AddRoadPath(StraightPath(0f), 4f, world);
         RoadSpatialGrid.FinalizeRoadNetwork();
 
-        Heightmap hm = Heightmap.CreateForZone(Zone, Width);
-        Heightmap.Registered = hm;
+        Heightmap hm = _world.RegisterHeightmap(Zone, Width);
         var points = RoadSpatialGrid.GetRoadPointsInZone(Zone);
         Assert.True(points.Count > 0, "road missed the zone");
         return (world, hm, hm.m_terrainComp!, points);
@@ -42,10 +44,10 @@ public class TerrainReapplicationTests
 
     private static void TearDown()
     {
-        Heightmap.Registered = null;
         RoadSpatialGrid.Clear();
-        WorldGenerator.instance = null;
     }
+
+    public void Dispose() => _world.Dispose();
 
     private static int Index(int x, int z) => (z + Width / 2) * (Width + 1) + (x + Width / 2);
 
@@ -149,7 +151,7 @@ public class TerrainReapplicationTests
             // version must differ with them, so re-leveled roads reach zones.
             RoadSpatialGrid.Clear();
             var taller = new SyntheticWorld { HasRiver = false, HasMountain = false, IslandPeakHeight = 25f };
-            WorldGenerator.instance = taller;
+            _world.WithWorld(taller);
             RoadSpatialGrid.AddRoadPath(StraightPath(0f), 4f, taller);
             RoadSpatialGrid.AddRoadPath(StraightPath(20f), 4f, taller);
             RoadSpatialGrid.FinalizeRoadNetwork();

@@ -1,0 +1,51 @@
+name: Tests
+# From the ValheimTesting ModWithTests workflow template (examples/ModWithTests/.github/workflows/tests.yml).
+# Runs the mod's tests on every push and pull request. Builds only the test projects: the plugin project
+# references Valheim, Unity and BepInEx assemblies that a hosted runner does not have, and those must not
+# be committed or uploaded. Uses no game, Steam account or secret. Packages restore from NuGet.org only.
+# Pushes to master and pull requests only: a branch with an open PR would otherwise run twice.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      # The unit tests also target net48; that leg runs in the net48 job below.
+      - run: dotnet test ProceduralRoads.Tests/ProceduralRoads.Tests.csproj -c Release -f net10.0
+      - run: dotnet test ProceduralRoads.SystemTests.Tests/ProceduralRoads.SystemTests.Tests.csproj -c Release
+  net48:
+    # The game runs the mod on Mono, a .NET Framework 4.x runtime: the net48 leg, built with dotnet and run by the
+    # xunit console runner under Mono (tools/test-runners, copied from ValheimTesting).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Install Mono
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends mono-complete
+          mono --version
+      - run: bash tools/test-runners/run-tests.sh -c Release -f net48 ProceduralRoads.Tests/ProceduralRoads.Tests.csproj

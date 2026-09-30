@@ -1,16 +1,19 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
 
 /// <summary>The road-end report behind the road_ends debug command, on the synthetic one-island world.</summary>
-public class RoadEndReportTests
+public class RoadEndReportTests : System.IDisposable
 {
-    private static SyntheticWorld SetUp()
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+
+    private SyntheticWorld SetUp()
     {
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         var zones = new ZoneSystem();
         foreach (var (name, x, z, radius) in new[]
         {
@@ -27,7 +30,7 @@ public class RoadEndReportTests
             });
         }
         ZoneSystem.instance = zones;
-        ZDOMan.instance = new ZDOMan();
+        _world.WithZdos();
         RoadNetworkGenerator.Reset();
         return world;
     }
@@ -35,10 +38,9 @@ public class RoadEndReportTests
     private static void TearDown()
     {
         RoadNetworkGenerator.Reset();
-        ZDOMan.instance = null;
-        ZoneSystem.instance = null;
-        WorldGenerator.instance = null;
     }
+
+    public void Dispose() => _world.Dispose();
 
     [Fact]
     public void RoadEndReportListsEveryConnectedLocationWithItsNearestPoint()

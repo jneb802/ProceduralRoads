@@ -1,4 +1,5 @@
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -30,7 +31,7 @@ public class EndpointRampTests
         // smoothing window at the ends used to lean the last twenty metres
         // toward the interior: a hump on the way down, a cut on the way up.
         var world = new PlaneSlope();
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -57,7 +58,6 @@ public class EndpointRampTests
         finally
         {
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
         }
     }
 
@@ -73,7 +73,7 @@ public class EndpointRampTests
         // natural terrain height (ramp blend 0) while smoothing still applies
         // mid-road, so a road meets its location without a ledge.
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -93,7 +93,6 @@ public class EndpointRampTests
         finally
         {
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
         }
     }
 }

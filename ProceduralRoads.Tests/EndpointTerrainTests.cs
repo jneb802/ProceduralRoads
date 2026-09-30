@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -11,8 +13,11 @@ namespace ProceduralRoads.Tests;
 /// plane slope (one end arrives uphill, the other downhill), and just beyond
 /// each end, while mid-road the cross-section stays leveled.
 /// </summary>
-public class EndpointTerrainTests
+public class EndpointTerrainTests : System.IDisposable
 {
+    private readonly ValheimWorldScope _world = new ValheimWorldScope();
+    private StaticOverride? _plain;
+
     private sealed class SlopeWorld : WorldGenerator
     {
         public float AlongX = 0.5f;   // metres of rise per metre east
@@ -35,12 +40,12 @@ public class EndpointTerrainTests
     /// RoadGradeRoadTests; it is not being avoided here, only held out of a
     /// test about something else.
     /// </summary>
-    private static (SlopeWorld world, List<Vector2> path) SetUp(float across = 0f)
+    private (SlopeWorld world, List<Vector2> path) SetUp(float across = 0f)
     {
         // The fitted surface at the end, not the side-slope detail around it.
-        PlainEarthworks.Begin();
+        _plain ??= PlainEarthworks.Apply();
         var world = new SlopeWorld { AcrossZ = across };
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         RoadSpatialGrid.Clear();
         var path = new List<Vector2>();
         for (float x = WestEnd; x <= EastEnd; x += 8f)
@@ -51,20 +56,19 @@ public class EndpointTerrainTests
         return (world, path);
     }
 
-    private static void TearDown()
+    private void TearDown()
     {
-        PlainEarthworks.End();
-        Heightmap.Registered = null;
+        _plain?.Dispose(); _plain = null;
         RoadSpatialGrid.Clear();
-        WorldGenerator.instance = null;
     }
 
+    public void Dispose() { _plain?.Dispose(); _world.Dispose(); }
+
     /// <summary>Writes the road terrain of the zone containing world x and returns its compiler.</summary>
-    private static TerrainComp Apply(float worldX)
+    private TerrainComp Apply(float worldX)
     {
         Vector2s zone = ZoneSystem.GetZone(new Vector3(worldX, 0f, 0f));
-        Heightmap hm = Heightmap.CreateForZone(zone, Width);
-        Heightmap.Registered = hm;
+        Heightmap hm = _world.RegisterHeightmap(zone, Width);
         var points = RoadSpatialGrid.GetRoadPointsInZone(zone);
         Assert.True(points.Count > 0, $"no road points in zone {zone}");
         RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, hm.m_terrainComp!);
@@ -122,7 +126,7 @@ public class EndpointTerrainTests
         // road only: the leveled ground within the flat core stays at the
         // centreline height next to it.
         var world = new SlopeWorld { AlongX = 0f, AcrossZ = 0f };
-        WorldGenerator.instance = world;
+        _world.WithWorld(world);
         RoadSpatialGrid.Clear();
         try
         {
@@ -138,8 +142,7 @@ public class EndpointTerrainTests
                 points.Add(new RoadSpatialGrid.RoadPoint(pos, RoadWidth, h));
             }
             Vector2s zone = ZoneSystem.GetZone(Vector3.zero);
-            Heightmap hm = Heightmap.CreateForZone(zone, Width);
-            Heightmap.Registered = hm;
+            Heightmap hm = _world.RegisterHeightmap(zone, Width);
             RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, hm.m_terrainComp!);
             TerrainComp tc = hm.m_terrainComp!;
 

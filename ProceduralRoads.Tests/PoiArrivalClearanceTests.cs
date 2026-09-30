@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -16,13 +17,13 @@ public class PoiArrivalClearanceTests : IDisposable
         public override void GetRiverWeight(float x, float z, out float weight, out float width)
         { weight = 0; width = 0; }
     }
-    private readonly WorldGenerator? previousWorld = WorldGenerator.instance;
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
     private readonly Func<IEnumerable<RoadSiteProtection.Footprint>?>? previousSource = RoadSiteProtection.Source;
     private readonly Flat world = new();
 
     public PoiArrivalClearanceTests()
     {
-        WorldGenerator.instance = world;
+        _scope.WithWorld(world);
         RoadSpatialGrid.Clear();
         RoadSiteProtection.Source = null;
         RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(0, 0), 12f) });
@@ -93,19 +94,13 @@ public class PoiArrivalClearanceTests : IDisposable
     [Fact]
     public void RefusalNamesTheSegmentAndTheActualBlockingSite()
     {
-        var previous = BepInEx.Logging.ManualLogSource.Captured;
-        var lines = new List<string>();
-        BepInEx.Logging.ManualLogSource.Captured = lines;
-        try
-        {
-            AnArrivalDoesNotExemptAThirdSite();
-            string detail = Assert.Single(lines.Where(s => s.StartsWith("POI clearance refused trial:")));
-            Assert.Contains("site=(-8.00,20.00) radius=2.00", detail);
-            Assert.Contains("segment=(", detail);
-            Assert.Contains("input=(0.00,40.00)->(-16.00,0.00)", detail);
-            Assert.Contains("Trial refusal, not necessarily a lost road", detail);
-        }
-        finally { BepInEx.Logging.ManualLogSource.Captured = previous; }
+        var lines = _scope.CaptureLog();
+        AnArrivalDoesNotExemptAThirdSite();
+        string detail = Assert.Single(lines.Where(s => s.StartsWith("POI clearance refused trial:")));
+        Assert.Contains("site=(-8.00,20.00) radius=2.00", detail);
+        Assert.Contains("segment=(", detail);
+        Assert.Contains("input=(0.00,40.00)->(-16.00,0.00)", detail);
+        Assert.Contains("Trial refusal, not necessarily a lost road", detail);
     }
 
     public void Dispose()
@@ -113,6 +108,6 @@ public class PoiArrivalClearanceTests : IDisposable
         RoadSpatialGrid.Clear();
         RoadSiteProtection.Reset();
         RoadSiteProtection.Source = previousSource;
-        WorldGenerator.instance = previousWorld;
+        _scope.Dispose();
     }
 }

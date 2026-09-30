@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -188,11 +189,11 @@ public class NetworkRoutingTests
     [Fact]
     public void Vector3BuilderProvidesSamplesToTheNextReverseBranch()
     {
-        var world=WorldGenerator.instance;
+        using var scope=new ValheimWorldScope();
         RoadNetworkGenerator.Reset();
         try
         {
-            WorldGenerator.instance=new Flat();
+            scope.WithWorld(new Flat());
             typeof(RoadNetworkGenerator).GetField("m_pathfinder",
                 System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!
                 .SetValue(null,new RoadPathfinder(WorldGenerator.instance));
@@ -202,7 +203,7 @@ public class NetworkRoutingTests
             Assert.NotEmpty(hints);
             Assert.All(hints,p=>Assert.InRange(System.Math.Abs(p.y),0,0.01f));
         }
-        finally { RoadNetworkGenerator.Reset(); WorldGenerator.instance=world; }
+        finally { RoadNetworkGenerator.Reset(); }
     }
 
     [Fact]

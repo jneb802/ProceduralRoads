@@ -1,6 +1,7 @@
 using System.IO;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -42,7 +43,7 @@ public class ValheimVersionCompatibilityTests
         // The retyping of a zone id from Vector2i to Vector2s must not have
         // reached the saved format. If it ever does, every player who updates
         // loses the roads in their world, and they will not get them back.
-        WorldGenerator.instance = new SyntheticWorld();
+        using var scope = new ValheimWorldScope().WithWorld(new SyntheticWorld());
         try
         {
             RoadSpatialGrid.Clear();
@@ -56,7 +57,7 @@ public class ValheimVersionCompatibilityTests
             Assert.Contains(near, p => Mathf.Abs(p.h - 41.5f) < 0.001f);
             Assert.Contains(near, p => Mathf.Abs(p.h - 42.5f) < 0.001f);
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -67,7 +68,7 @@ public class ValheimVersionCompatibilityTests
         // format to version 2, so the bytes are no longer the version 1 bytes
         // above -- the invariant that has to hold is the round trip, plus the
         // version 2 marker that tells an older reader it cannot read this.
-        WorldGenerator.instance = new SyntheticWorld();
+        using var scope = new ValheimWorldScope().WithWorld(new SyntheticWorld());
         try
         {
             RoadSpatialGrid.Clear();
@@ -91,7 +92,7 @@ public class ValheimVersionCompatibilityTests
             // waded ford: the flag that version 2 adds defaults off.
             Assert.All(near, p => Assert.False(p.paintOnly));
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Theory]
@@ -130,7 +131,7 @@ public class ValheimVersionCompatibilityTests
         // road points a Vector2i one did. A road is laid across a known place
         // and the zone containing that place is asked for it.
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
             RoadSpatialGrid.Clear();
@@ -147,7 +148,7 @@ public class ValheimVersionCompatibilityTests
             Assert.NotEmpty(inZone);
             Assert.Contains(inZone, p => Mathf.Abs(p.p.x - x) < 1f && Mathf.Abs(p.p.y - z) < 1f);
         }
-        finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -160,6 +161,7 @@ public class ValheimVersionCompatibilityTests
         // ready" waits forever, and an existing world silently gets no roads.
         RoadNetworkGenerator.Reset();
         var zones = new ZoneSystem();
+        using var scope = new ValheimWorldScope();
         ZoneSystem.instance = zones;
         try
         {
@@ -172,7 +174,7 @@ public class ValheimVersionCompatibilityTests
             Assert.True(RoadNetworkGenerator.IsLocationsReady,
                 "the world's locations are in place, so roads must be allowed to load or build");
         }
-        finally { ZoneSystem.instance = null; RoadNetworkGenerator.Reset(); }
+        finally { RoadNetworkGenerator.Reset(); }
     }
 
     [Fact]
@@ -182,6 +184,7 @@ public class ValheimVersionCompatibilityTests
         // for whoever subscribed, and the mod is told the ordinary way.
         RoadNetworkGenerator.Reset();
         var zones = new ZoneSystem();
+        using var scope = new ValheimWorldScope();
         ZoneSystem.instance = zones;
         try
         {
@@ -202,6 +205,6 @@ public class ValheimVersionCompatibilityTests
             Assert.Equal(1, late);
             Assert.Equal(1, fired);
         }
-        finally { ZoneSystem.instance = null; RoadNetworkGenerator.Reset(); }
+        finally { RoadNetworkGenerator.Reset(); }
     }
 }

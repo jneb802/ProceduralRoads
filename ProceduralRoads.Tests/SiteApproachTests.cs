@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -128,9 +130,9 @@ public class SiteApproachTests
     public void NetworkResetAlsoInvalidatesThePlacementHeightSnapshot()
     {
         int resets=0;
+        using var overrides = StaticOverride.Keep(() => LocationLevelling.ResetPlacements);
         LocationLevelling.ResetPlacements=()=>resets++;
-        try { RoadNetworkGenerator.Reset(); Assert.Equal(1,resets); }
-        finally { LocationLevelling.ResetPlacements=null; }
+        RoadNetworkGenerator.Reset(); Assert.Equal(1,resets);
     }
 
     [Fact]
@@ -138,27 +140,24 @@ public class SiteApproachTests
     {
         Assert.Equal(60f,LocationLevelling.ApproachHeight(60f,new[] {new LevelOp(2,0,-4,8,false)}));
         Assert.Equal(68f,LocationLevelling.ApproachHeight(60f,new[] {new LevelOp(2,0,8,8,false)}));
-        var world=new Flat(); WorldGenerator.instance=world;
+        var world=new Flat(); using var scope=new ValheimWorldScope().WithWorld(world);
+        using var overrides = StaticOverride.Keep(() => LocationLevelling.Source);
         LocationLevelling.Source=_=>new[] {new LevelOp(2,0,0.8f,8,false)};
-        try { Assert.Equal(60f,RoadNetworkGenerator.ApproachGround(new Vector2(20,0),new Vector2(),16)); }
-        finally { WorldGenerator.instance=null; LocationLevelling.Source=null; }
+        Assert.Equal(60f,RoadNetworkGenerator.ApproachGround(new Vector2(20,0),new Vector2(),16));
     }
 
     [Fact]
     public void PlacedPlatformUsesSavedRootRatherThanRecomputedGround()
     {
         var world=new Flat();
+        using var overrides = StaticOverride.Keep(() => LocationLevelling.PlacementHeightSource);
         LocationLevelling.PlacementHeightSource=_=>66f;
-        try
-        {
-            Assert.Equal(64.8f,LocationLevelling.PlatformHeight(LocationLevelling.CentreHeight(new Vector2(),world),
-                new[] {new LevelOp(2,0,-1.2f,8,false)}));
-            LocationLevelling.PlacementHeightSource=_=>float.NaN;
-            Assert.Equal(60f,LocationLevelling.CentreHeight(new Vector2(),world));
-            LocationLevelling.PlacementHeightSource=_=>null;
-            Assert.Equal(60f,LocationLevelling.CentreHeight(new Vector2(),world));
-        }
-        finally { LocationLevelling.PlacementHeightSource=null; }
+        Assert.Equal(64.8f,LocationLevelling.PlatformHeight(LocationLevelling.CentreHeight(new Vector2(),world),
+            new[] {new LevelOp(2,0,-1.2f,8,false)}));
+        LocationLevelling.PlacementHeightSource=_=>float.NaN;
+        Assert.Equal(60f,LocationLevelling.CentreHeight(new Vector2(),world));
+        LocationLevelling.PlacementHeightSource=_=>null;
+        Assert.Equal(60f,LocationLevelling.CentreHeight(new Vector2(),world));
     }
 
     [Fact]
@@ -166,14 +165,11 @@ public class SiteApproachTests
     {
         Assert.Equal(58.8f, LocationLevelling.PlatformHeight(60f, new[] { new LevelOp(2,0,-1.2f,8,false) }));
         Assert.Null(LocationLevelling.PlatformHeight(60f,new[] { new LevelOp(0,0,0,8,false),new LevelOp(10,0,6,4,false) }));
-        var world = new PlatformSlope(); WorldGenerator.instance=world;
+        var world = new PlatformSlope(); using var scope = new ValheimWorldScope().WithWorld(world);
+        using var overrides = StaticOverride.Keep(() => LocationLevelling.Source);
         LocationLevelling.Source = _ => new[] { new LevelOp(0,0,8,4,false) };
-        try
-        {
-            Assert.Null(RoadNetworkGenerator.ApproachGround(new Vector2(16,0),new Vector2(),16));
-            Assert.Equal(60f,RoadNetworkGenerator.ApproachGround(new Vector2(0,-16),new Vector2(),16));
-        }
-        finally { LocationLevelling.Source=null; WorldGenerator.instance=null; }
+        Assert.Null(RoadNetworkGenerator.ApproachGround(new Vector2(16,0),new Vector2(),16));
+        Assert.Equal(60f,RoadNetworkGenerator.ApproachGround(new Vector2(0,-16),new Vector2(),16));
     }
 
     [Fact]

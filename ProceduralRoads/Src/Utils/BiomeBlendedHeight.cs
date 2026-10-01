@@ -75,9 +75,19 @@ public static class BiomeBlendedHeight
         
         // If all corners have the same biome, no blending needed
         // (This is the fast path that HeightmapBuilder uses)
+        //
+        // The game builds the WHOLE heightmap from the corners' biome here,
+        // not from the biome at the point: HeightmapBuilder.Build calls
+        // GetBiomeHeight(cornerBiome, wx, wy). WorldGenerator.GetHeight asks
+        // GetBiome(wx, wy) instead, and the two differ wherever a biome
+        // narrower than a zone lies between four corners of another - the
+        // tip of a Black Forest tongue inside a Meadows zone, a knoll that
+        // reads Mountain, an inlet that reads Ocean. A road across such a
+        // patch was levelled to the patch's formula - a Black Forest height
+        // metres above the Meadows ground the game actually rendered there.
         if (biome00 == biome10 && biome00 == biome01 && biome00 == biome11)
         {
-            return worldGen.GetHeight(wx, wy);
+            return worldGen.GetBiomeHeight(biome00, wx, wy, out _);
         }
         
         // Different biomes at corners - need to blend
@@ -163,6 +173,7 @@ public static class BiomeBlendedHeight
         info.Height01 = worldGen.GetBiomeHeight(info.Biome01, wx, wy, out mask);
         info.Height11 = worldGen.GetBiomeHeight(info.Biome11, wx, wy, out mask);
         
+        info.PointBiome = worldGen.GetBiome(wx, wy);
         info.RawHeight = worldGen.GetHeight(wx, wy);
         info.BlendedHeight = GetBlendedHeight(wx, wy, worldGen);
         info.HeightDifference = info.BlendedHeight - info.RawHeight;
@@ -178,6 +189,10 @@ public static class BiomeBlendedHeight
         public float Tx, Tz;
         
         public Heightmap.Biome Biome00, Biome10, Biome01, Biome11;
+        /// <summary>The biome WorldGenerator.GetHeight uses at the point. When
+        /// it is not the corners' shared biome, the raw height is a formula
+        /// the rendered terrain does not use here.</summary>
+        public Heightmap.Biome PointBiome;
         public bool IsBiomeBoundary;
         
         public float Height00, Height10, Height01, Height11;

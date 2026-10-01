@@ -21,14 +21,69 @@
       here; anything touching Harmony patches or engine runtime cannot.
     -->
     <ItemGroup>
+        <Compile Include="../ProceduralRoads/Src/Utils/ManualRoadNetworkSync.cs" Link="ModSrc/ManualRoadNetworkSync.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeAppendQueue.cs" Link="ModSrc/BridgeAppendQueue.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ManualRoadDraft.cs" Link="ModSrc/ManualRoadDraft.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ManualRoads.cs" Link="ModSrc/ManualRoads.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.Appends.cs" Link="ModSrc/RoadSpatialGrid.Appends.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadGridComparer.cs" Link="ModSrc/RoadGridComparer.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadTerrainSamples.cs" Link="ModSrc/RoadTerrainSamples.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ApproachTerrainSamples.cs" Link="ModSrc/ApproachTerrainSamples.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadSwitchbacks.cs" Link="ModSrc/RoadSwitchbacks.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadSiteProtection.cs" Link="ModSrc/RoadSiteProtection.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadPathPull.cs" Link="ModSrc/RoadPathPull.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadWiggle.cs" Link="ModSrc/RoadWiggle.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadPitches.cs" Link="ModSrc/RoadPitches.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadEarthworkNoise.cs" Link="ModSrc/RoadEarthworkNoise.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadRockPolicy.cs" Link="ModSrc/RoadRockPolicy.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/LocationPlacementHeights.cs" Link="ModSrc/LocationPlacementHeights.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadSiteApproach.cs" Link="ModSrc/RoadSiteApproach.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/TemporaryAssetRead.cs" Link="ModSrc/TemporaryAssetRead.cs"/>
+
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadCoastalLandings.cs" Link="ModSrc/RoadCoastalLandings.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadConnectionPlanner.cs" Link="ModSrc/RoadConnectionPlanner.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadParallel.cs" Link="ModSrc/RoadParallel.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkRouting.cs" Link="ModSrc/RoadNetworkRouting.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadEndpoint.cs" Link="ModSrc/RoadEndpoint.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkOptions.cs" Link="ModSrc/RoadNetworkOptions.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkSelection.cs" Link="ModSrc/RoadNetworkSelection.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadConstants.cs" Link="ModSrc/RoadConstants.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPathfinder.cs" Link="ModSrc/RoadPathfinder.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkGenerator.cs" Link="ModSrc/RoadNetworkGenerator.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadLifecycleManager.cs" Link="ModSrc/RoadLifecycleManager.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.cs" Link="ModSrc/RoadSpatialGrid.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadTerrainModifier.cs" Link="ModSrc/RoadTerrainModifier.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkPersistence.cs" Link="ModSrc/RoadNetworkPersistence.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadCrossing.cs" Link="ModSrc/RoadCrossing.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeLayout.cs" Link="ModSrc/BridgeLayout.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeSupport.cs" Link="ModSrc/BridgeSupport.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgePlans.cs" Link="ModSrc/BridgePlans.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Utils/RoadIslandDetector.cs" Link="ModSrc/RoadIslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadEndReport.cs" Link="ModSrc/RoadEndReport.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/RoadEndReport.cs')"/>
+        <Compile Remove="RoadEndReportTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/RoadEndReport.cs')"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/LocationLevelling.cs" Link="ModSrc/LocationLevelling.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/LocationLevelling.cs')"/>
+        <Compile Remove="LocationLevellingTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/LocationLevelling.cs')"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadGrade.cs" Link="ModSrc/RoadGrade.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/RoadGrade.cs')"/>
+        <Compile Remove="RoadGradeTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/RoadGrade.cs')"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadEndpointRamp.cs" Link="ModSrc/RoadEndpointRamp.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/RoadEndpointRamp.cs')"/>
+        <Compile Remove="EndpointRampTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/RoadEndpointRamp.cs')"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRoute.cs" Link="ModSrc/RoadRoute.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/RoadRoute.cs')"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadProfile.cs" Link="ModSrc/RoadProfile.cs"
+                 Condition="Exists('../ProceduralRoads/Src/Roads/RoadProfile.cs')"/>
+        <Compile Remove="RoadProfileTests.cs"
+                 Condition="!Exists('../ProceduralRoads/Src/Roads/RoadProfile.cs')"/>
     </ItemGroup>
 
     <ItemGroup>

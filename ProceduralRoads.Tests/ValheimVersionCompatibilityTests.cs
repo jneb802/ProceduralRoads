@@ -62,16 +62,34 @@ public class ValheimVersionCompatibilityTests
     [Fact]
     public void TheFormatIsStillWrittenTheWayItIsRead()
     {
-        // The other half: what the mod writes today must match the bytes
-        // above, or a world saved now would not load on a build that reads
-        // the documented format.
+        // The other half: what the mod writes today must read back as what it
+        // wrote. Crossings added a per-point paint-only flag and took the
+        // format to version 2, so the bytes are no longer the version 1 bytes
+        // above -- the invariant that has to hold is the round trip, plus the
+        // version 2 marker that tells an older reader it cannot read this.
         WorldGenerator.instance = new SyntheticWorld();
         try
         {
             RoadSpatialGrid.Clear();
             Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(NetworkAsSavedBefore1Point0()));
             byte[] written = RoadSpatialGrid.SerializeAllRoadPoints()!;
-            Assert.Equal(NetworkAsSavedBefore1Point0(), written);
+
+            Assert.Equal(2, System.BitConverter.ToInt32(written, 0));
+
+            RoadSpatialGrid.Clear();
+            Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(written),
+                "what the mod writes today does not read back");
+            Assert.Equal(2, RoadSpatialGrid.TotalRoadPoints);
+
+            List<RoadSpatialGrid.RoadPoint> near =
+                RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(4f, 0f, 0f), 16f);
+            Assert.Equal(2, near.Count);
+            Assert.Contains(near, p => Mathf.Abs(p.h - 41.5f) < 0.001f);
+            Assert.Contains(near, p => Mathf.Abs(p.h - 42.5f) < 0.001f);
+
+            // A point read from a version 1 world is a leveled road, not a
+            // waded ford: the flag that version 2 adds defaults off.
+            Assert.All(near, p => Assert.False(p.paintOnly));
         }
         finally { RoadSpatialGrid.Clear(); WorldGenerator.instance = null; }
     }

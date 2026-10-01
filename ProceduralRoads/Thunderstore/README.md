@@ -19,17 +19,17 @@ Version 1.4.4 supports Valheim 1.0. Install Jotunn 2.30.2 or newer on each clien
 
 ## Road generation process
 - Road generation starts after all locations have been placed.
-- First we detect all the islands in the world. 
+- First we detect all the islands in the world.
 - Get the users island percentage config, i.e if 50% islands then we select 50% of total islands to give roads.
 - For each selected island, we select generate a road network within the island locations.
 - Within the island, we find locations and build a network of roads between them. Some locations are prioritized over others, such as bosses and dungeons. Some locations are excluded entirely.
-- Once we have locations, pathfind between the locations using A* pathfinding, avoiding rivers, steep slopes, and water. 
+- Once we have locations, pathfind between the locations using A* pathfinding, avoiding rivers, steep slopes, and water.
 - Once a road is defined, paint it as a stone path and smooth its height to fit the surrounding terrain.
 
 ## Instructions
-- Roads will automatically generate for new worlds. 
-- Please make a backup before adding roads to an existing world! 
-- To add roads to an existing world, use the road_generate command shown below. You can validate using the road_pins command to see where roads were placed. Then you can use road_clearpins to remove the road_pins on your map. 
+- Roads will automatically generate for new worlds.
+- Please make a backup before adding roads to an existing world!
+- To add roads to an existing world, use the road_generate command shown below. You can validate using the road_pins command to see where roads were placed. Then you can use road_clearpins to remove the road_pins on your map.
 - Please note, I have not done extensive testing on how roads impact terrain within or around player builds. Roads could potentially generate directly through an existing build.
 
 ## Configuration

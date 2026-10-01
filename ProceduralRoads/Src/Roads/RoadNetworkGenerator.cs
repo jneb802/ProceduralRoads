@@ -155,6 +155,33 @@ public static class RoadNetworkGenerator
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
 
     /// <summary>
+    /// Whether a world without persisted roads generates its network when the
+    /// player spawns. Off (PROCEDURALROADS_GENERATE_ROADS_ON_LOAD=0), the world
+    /// stays road-free until road_generate or road_regen_island asks; a
+    /// validation loop on one site then pays seconds, not a whole-world
+    /// generation. There is no config key for this: it is a switch for
+    /// developing the mod, and a config key cannot be taken back once written.
+    /// </summary>
+    public static bool GenerateOnLoad = true;
+
+    /// <summary>Load-time entry: generate unless GenerateOnLoad is off. Returns whether it generated.</summary>
+    public static bool GenerateRoadsOnLoad()
+    {
+        if (!GenerateOnLoad)
+        {
+            Log.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +
+                        "no roads until road_generate or road_regen_island");
+            return false;
+        }
+        GenerateRoads();
+        // Zones generated during the loading screen (around the login position)
+        // exist before the network does; give them their roads now.
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        Log.LogDebug($"Queued road terrain for {zones} zone(s) loaded before generation");
+        return true;
+    }
+
+    /// <summary>
     /// Get the start points of all generated roads for visualization.
     /// </summary>
     public static IReadOnlyList<(Vector2 position, string label)> GetRoadStartPoints() => m_roadStartPoints;
@@ -185,13 +212,18 @@ public static class RoadNetworkGenerator
     /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
     public static void GenerateRoads(bool force = false)
     {
-        if (m_roadsGenerated && !force)
+        // A world can already have a network two ways: this session generated
+        // one, or one was loaded from the save. Both count. Asking only whether
+        // this session generated it meant a forced regeneration in a world that
+        // already had roads skipped the reset and laid the new network on top
+        // of the old one - the spatial grid kept both sets of points.
+        if (RoadsAvailable && !force)
         {
-            Log.LogDebug("Roads already generated, skipping");
+            Log.LogDebug("Roads already present, skipping");
             return;
         }
-        
-        if (force && m_roadsGenerated)
+
+        if (force && RoadsAvailable)
         {
             Log.LogDebug("Force regenerating roads...");
             Reset();
@@ -211,19 +243,15 @@ public static class RoadNetworkGenerator
 
         Log.LogDebug("Starting road network generation...");
 
-        // Merge config-defined custom locations into registered set
-        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
-        foreach (var locName in configLocations)
-        {
-            if (RegisteredLocationNames.Add(locName))
-            {
-                Log.LogDebug($"Added config location: {locName}");
-            }
-        }
+        RegisterConfiguredLocations();
 
         DateTime startTime = DateTime.Now;
-        m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
+        m_pathfinder = new RoadPathfinder(WorldGenerator.instance) { SiteClearance = RoadWidth * 0.5f + 2f };
         m_roadsGeneratedCount = 0;
+        m_roadsRefusedForGrade = 0;
+        m_roadsWithNoRoute = 0;
+        RoadGrade.SteepestPlanned = 0f;
+        RoadSiteProtection.Reset();
 
         var locations = GatherLocationData();
         if (locations == null)
@@ -273,7 +301,94 @@ public static class RoadNetworkGenerator
         RoadNetworkPersistence.EnsureMetadataInstance();
     }
 
+    /// <summary>
+    /// Merge the config-defined custom locations into the registered set.
+    /// Every generation entry point calls this first, so a location named in
+    /// the config counts as road-eligible whichever entry point runs first.
+    /// </summary>
+    private static void RegisterConfiguredLocations()
+    {
+        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
+        foreach (var locName in configLocations)
+        {
+            if (RegisteredLocationNames.Add(locName))
+            {
+                Log.LogDebug($"Added config location: {locName}");
+            }
+        }
+    }
+
     #region Core Road Generation Primitive
+
+    /// <summary>How many roads were dropped because no profile inside the
+    /// grade cap joins their two ends. Counted so the cost of the cap is a
+    /// number in the generation summary rather than a matter of opinion.</summary>
+    private static int m_roadsRefusedForGrade;
+
+    /// <summary>How many roads found no route at all. With a grade cap on,
+    /// most of these are a destination the cap put out of reach rather than
+    /// one across water, so the two are counted apart.</summary>
+    private static int m_roadsWithNoRoute;
+
+    /// <summary>
+    /// The height a road has to arrive at for a location: the ground under the
+    /// location's centre, which is what the game reads when it places the
+    /// location and levels its footprint.
+    ///
+    /// Null for an endpoint that is not a location - an island's edge point
+    /// has no footprint and radius zero - and null when that ground is under
+    /// water, where the centre is not somewhere a road can end and
+    /// RoadEndpoint has already moved the path elsewhere. Both fall back to
+    /// the natural terrain under the road's own last point, as before.
+    /// </summary>
+    internal static float? LocationGround(Vector2 endPoint, Vector2 center, float radius)
+    {
+        if (radius <= 0f || WorldGenerator.instance == null)
+            return null;
+        IReadOnlyList<LevelOp>? ops = LocationLevelling.OpsAt(center);
+        if (ops == null)
+            return null;
+        float centreGround = LocationLevelling.CentreHeight(center, WorldGenerator.instance);
+        float? levelled = LocationLevelling.GroundAt(endPoint, center, centreGround, ops);
+        if (!levelled.HasValue)
+            return null;
+        return levelled.Value < RoadConstants.ShallowWaterHeight ? null : levelled;
+    }
+
+    internal static List<Vector2> ImproveSiteApproach(List<Vector2> path, Vector2 centre,
+        float radius, float width, bool atStart)
+    {
+        var world = WorldGenerator.instance;
+        if (world == null || radius <= 0f) return path;
+        var ops = LocationLevelling.OpsAt(centre);
+        // Copy the terrain facts once: scoring must not reload the template
+        // for every vertex. Unknown location shaping retains the old approach.
+        if (ops == null || ops.Count == 0) return path;
+        float centreHeight = LocationLevelling.CentreHeight(centre, world);
+        float? platform = LocationLevelling.ApproachHeight(centreHeight, ops);
+        if (platform < RoadConstants.ShallowWaterHeight) platform = null;
+        Log.LogDebug($"Site approach {centre}: keep-out edge {radius:F1}m, approach {(platform.HasValue ? platform.Value.ToString("F2") : "unknown")}m");
+        float Ground(Vector2 p) => LocationLevelling.GroundAt(p, centre, centreHeight, ops)
+            ?? BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+        float? Target(Vector2 p) => platform.HasValue && Mathf.Abs(Ground(p) - platform.Value) <= 1.5f
+            ? Ground(p) : LocationLevelling.GroundAt(p, centre, centreHeight, ops);
+        return RoadSiteApproach.Improve(path, centre, radius, width, world, atStart, Target, Ground, platform);
+    }
+
+    internal static float? ApproachGround(Vector2 point, Vector2 centre, float radius)
+    {
+        float? local = LocationGround(point, centre, radius);
+        if (local.HasValue || radius <= 0f || WorldGenerator.instance == null) return local;
+        var world = WorldGenerator.instance;
+        float centreHeight = LocationLevelling.CentreHeight(centre, world);
+        float? platform = LocationLevelling.ApproachHeight(centreHeight, LocationLevelling.OpsAt(centre));
+        // Never make an arbitrary high embankment merely to hit a platform.
+        // The approach search must first find naturally nearby elevation.
+        if (platform.HasValue && platform.Value >= RoadConstants.ShallowWaterHeight &&
+            Mathf.Abs(BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, world) - platform.Value) <= 1.5f)
+            return BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, world);
+        return null;
+    }
 
     /// <summary>
     /// Core primitive: Generates a single road between two points.
@@ -305,9 +420,14 @@ public static class RoadNetworkGenerator
         {
             if (label != null)
                 Log.LogWarning($"Could not find path: {label}");
+            m_roadsWithNoRoute++;
             return false;
         }
 
+        // Leave enough space for the entire terrain blend, not just the
+        // centreline. Sites retain their own authored terrain and paint.
+        if (startRadius > 0f) startRadius = RoadSiteProtection.RadiusAt(startCenter, startRadius) + width * 0.5f + 2f;
+        if (endRadius > 0f) endRadius = RoadSiteProtection.RadiusAt(endCenter, endRadius) + width * 0.5f + 2f;
         path = TrimPathToRadii(path, startCenter, startRadius, endCenter, endRadius);
 
         if (path == null || path.Count < 2)
@@ -317,7 +437,23 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+        path = ImproveSiteApproach(path, startCenter, startRadius, width, true);
+        path = ImproveSiteApproach(path, endCenter, endRadius, width, false);
+
+        // The heights to meet are asked for at the road's OWN ends, after
+        // trimming - not at the locations' centres. A road stops at the
+        // exterior radius, which on a hillside is metres below the middle of
+        // the place it is going to, and aiming at the middle builds that
+        // difference as a rim around the doorstep.
+        if (!RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance,
+                ApproachGround(path[0], startCenter, startRadius),
+                ApproachGround(path[path.Count - 1], endCenter, endRadius)))
+        {
+            if (label != null)
+                Log.LogWarning($"Road too steep to build, destination left unconnected: {label}");
+            m_roadsRefusedForGrade++;
+            return false;
+        }
         m_roadsGeneratedCount++;
 
         if (path.Count > 0)
@@ -594,13 +730,89 @@ public static class RoadNetworkGenerator
 
     #region Utility Methods
 
+    /// <summary>
+    /// Clear the network and regenerate roads for the single island containing
+    /// worldPos: the same island selection, location selection and pathfinding
+    /// as the global pass, restricted to one island. A validation loop that
+    /// iterates on one site runs in seconds instead of a whole-world generation.
+    /// </summary>
+    public static bool RegenerateIslandAt(Vector3 worldPos, out string summary)
+    {
+        if (WorldGenerator.instance == null || ZoneSystem.instance == null)
+        {
+            summary = "World not ready";
+            return false;
+        }
+
+        RegisterConfiguredLocations();
+
+        var locations = GatherLocationData();
+        if (locations == null)
+        {
+            summary = "No location data available";
+            return false;
+        }
+
+        var islands = IslandDetector.DetectIslands();
+        Island? island = islands.FirstOrDefault(i => i.ContainsPoint(worldPos));
+        if (island == null)
+        {
+            summary = $"No island at ({worldPos.x:F0},{worldPos.z:F0})";
+            return false;
+        }
+
+        var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
+        if (islandLocations.Count == 0)
+        {
+            summary = $"Island {island.Id} has no road-eligible locations";
+            return false;
+        }
+
+        var selected = SelectLocations(islandLocations, GetMaxLocationsForIsland(island));
+
+        DateTime startTime = DateTime.Now;
+        bool locationsWereReady = m_locationsReady;
+        Reset();
+        m_locationsReady = locationsWereReady;
+        m_pathfinder = new RoadPathfinder(WorldGenerator.instance) { SiteClearance = RoadWidth * 0.5f + 2f };
+        m_roadsGeneratedCount = 0;
+        m_roadsRefusedForGrade = 0;
+        m_roadsWithNoRoute = 0;
+        RoadGrade.SteepestPlanned = 0f;
+        RoadSiteProtection.Reset();
+
+        if (island.ContainsPoint(locations.Value.SpawnPoint))
+            GenerateIslandRoads(island, selected, locations.Value.SpawnPoint, locations.Value.SpawnRadius);
+        else
+            GenerateIslandRoads(island, selected);
+
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        m_roadsGenerated = true;
+        m_pathfinder = null;
+        // Same as after global generation: without the metadata object the
+        // save path has nowhere to put the network and logs an error instead.
+        RoadNetworkPersistence.EnsureMetadataInstance();
+
+        TimeSpan elapsed = DateTime.Now - startTime;
+        summary =
+            $"Island {island.Id} ({island.ApproxArea / 1_000_000f:F1}km²): " +
+            $"{selected.Count} locations, {m_roadsGeneratedCount} roads, " +
+            $"{RoadSpatialGrid.TotalRoadLength:F0}m in {elapsed.TotalSeconds:F1}s";
+        return true;
+    }
+
     public static void Reset()
     {
+        LocationLevelling.ResetPlacements?.Invoke();
         m_roadsGenerated = false;
         m_locationsReady = false;
         m_roadsLoadedFromZDO = false;
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
+        m_roadsRefusedForGrade = 0;
+        m_roadsWithNoRoute = 0;
+        RoadGrade.SteepestPlanned = 0f;
+        RoadSiteProtection.Reset();
         m_roadStartPoints.Clear();
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
@@ -624,6 +836,9 @@ public static class RoadNetworkGenerator
 
         log.LogDebug($"  Generation time: {elapsed.TotalSeconds:F2}s");
         log.LogDebug($"  Road width: {RoadWidth}m");
+        log.LogDebug($"  Max grade: {(RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured.ToString("P0") : "uncapped")}");
+        log.LogDebug($"  Destinations dropped: {m_roadsWithNoRoute} with no route, {m_roadsRefusedForGrade} too steep to build");
+        log.LogDebug($"  Steepest road built: {RoadGrade.SteepestPlanned:P1}");
         log.LogDebug("===============================");
     }
 

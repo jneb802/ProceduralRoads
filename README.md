@@ -24,6 +24,16 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 
+### Road approaches and protected locations
+
+Roads approach the outside of locations while preserving their authored terrain and paint, including locations that are not road destinations. On hillsides, the generator searches for an arrival near the site's elevation and blends the final road profile into the ground. Excavated interiors do not pull an exterior approach down into the excavation.
+
+`Roads / MaxGrade` defaults to `0.35` (35% rise over run). It constrains the planned route and height profile; `0` disables the grade cap. Climbing switchbacks use wider turns and gentler landing profiles. A route that cannot fit the grade, turn or location-clearance constraints can be refused, leaving the location without a road. Actual ground still depends on the game's terrain limits and existing edits.
+
+These routing changes apply when generating a network. They do not remove terrain damage already baked by an older network. Test regeneration on a disposable world or copy first.
+
+Diagnostics: `road_site <x> <z>` describes a nearby location; `road_ends` compares locations with nearby road points. Its height differences are diagnostic measurements, not proof that an entrance or turn is walkable. See [validation and follow-ups](docs/ROAD-FOLLOWUPS.md) and the [offline approach audit](docs/SITE-APPROACH-AUDIT.md).
+
 ### Custom Locations via Config
 
 Use the `CustomLocations` setting to add locations from other mods (e.g., Expand World Data):

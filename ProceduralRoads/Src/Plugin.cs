@@ -47,6 +47,7 @@ namespace ProceduralRoads
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
+        public static ConfigEntry<float> MaxGrade = null!;
 
         public void Awake()
         {
@@ -77,10 +78,24 @@ namespace ProceduralRoads
                     "Higher values allow more roads on large islands.",
                     new AcceptableValueRange<int>(2, 30)));
 
+            MaxGrade = Config.Bind("Roads", "MaxGrade", RoadConstants.DefaultMaxRoadGrade,
+                new ConfigDescription("Steepest a road may climb, as rise over run: 0.35 is one metre up " +
+                    "for every three along, about 19 degrees. A road never exceeds it, neither where it " +
+                    "is routed nor in the height it is built at, so a destination reachable only by a " +
+                    "steeper climb is left without a road rather than given one too steep to walk. " +
+                    "Lower values mean gentler roads, longer detours and more destinations left out. " +
+                    "0 removes the cap entirely.",
+                    new AcceptableValueRange<float>(0f, 1f)));
+
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
                 "Use this for locations added by Expand World Data or other mods. " +
                 "Example: Runestone_Boars,Runestone_Greydwarfs,MerchantCamp");
+
+            // Locations level the ground under themselves when they are
+            // placed; roads are built before that happens, so the generator
+            // needs a way to ask what that ground will be.
+            LocationPrefabLevelling.Install();
 
             // Apply config to road generator
             ApplyConfiguration();
@@ -132,8 +147,11 @@ namespace ProceduralRoads
         {
             RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
             RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
+            // A validation switch, not a setting: see DebugSwitches.
+            RoadNetworkGenerator.GenerateOnLoad = DebugSwitches.Flag("GENERATE_ROADS_ON_LOAD", true);
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
+            RoadGrade.Configured = MaxGrade.Value;
             // CustomLocations is parsed at generation time to preserve API registrations
         }
 
@@ -159,6 +177,17 @@ namespace ProceduralRoads
             }
             
             return result;
+        }
+
+        private float m_nextTerrainSweep;
+
+        // Road terrain the zone-spawn path missed (see RoadTerrainModifier.SweepUnstamped).
+        private void Update()
+        {
+            if (Time.time < m_nextTerrainSweep) return;
+            m_nextTerrainSweep = Time.time + 3f;
+            if (RoadNetworkGenerator.RoadsAvailable && ZNet.instance != null)
+                RoadTerrainModifier.SweepUnstamped();
         }
 
         private void OnDestroy()

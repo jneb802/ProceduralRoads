@@ -34,6 +34,31 @@ public static class ConsoleCommands
 
         // road_debug - Show detailed road info at player position
         new Terminal.ConsoleCommand(
+            "road_regen_island",
+            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
+            (args) => RegenerateIslandHere(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_site",
+            "Inspect the closest location at <x> <z>: saved root, platform estimate and protected radius. Read-only.",
+            args => InspectRoadSite(args), isCheat: true);
+
+        new Terminal.ConsoleCommand(
+            "road_ends",
+            "Compare each location's nearest road point with procedural terrain: road_ends [ring=8] [top=20]. Ring is a radius in metres. CSV also records loaded collision height where available; procedural deltas do not measure the visible rim.",
+            (args) => ReportRoadEnds(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
             (args) => DebugRoadPoints(args),
@@ -282,6 +307,76 @@ public static class ConsoleCommands
         args.Context.AddString($"Removed {count} pins.");
     }
 
+    private static void InspectRoadSite(Terminal.ConsoleEventArgs args)
+    {
+        if (args.Length != 3 || !float.TryParse(args[1], System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float x) ||
+            !float.TryParse(args[2], System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float z) ||
+            float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(z) || float.IsInfinity(z) ||
+            ZoneSystem.instance == null || WorldGenerator.instance == null)
+        { args.Context.AddString("Usage: road_site <x> <z> in a loaded world"); return; }
+        ZoneSystem.LocationInstance? best = null; float distance = 64f;
+        foreach (var site in ZoneSystem.instance.GetLocationList())
+        {
+            float d=Vector2.Distance(new Vector2(x,z),new Vector2(site.m_position.x,site.m_position.z));
+            if (d < distance) { best=site; distance=d; }
+        }
+        if (best == null) { args.Context.AddString("No location within 64m"); return; }
+        var centre=new Vector2(best.Value.m_position.x,best.Value.m_position.z);
+        float? saved=LocationLevelling.PlacementHeightSource?.Invoke(centre);
+        float baseHeight=LocationLevelling.CentreHeight(centre,WorldGenerator.instance);
+        float? platform=LocationLevelling.PlatformHeight(baseHeight,LocationLevelling.OpsAt(centre));
+        float? approach=LocationLevelling.ApproachHeight(baseHeight,LocationLevelling.OpsAt(centre));
+        float radius=RoadSiteProtection.RadiusAt(centre,best.Value.m_location.m_exteriorRadius);
+        args.Context.AddString($"Site {best.Value.m_location.m_prefab.Name} at {centre}; savedRoot={saved?.ToString("F3") ?? "unknown"}; base={baseHeight:F3}; platform={platform?.ToString("F3") ?? "unknown"}; approach={approach?.ToString("F3") ?? "unknown"}; protectedRadius={radius:F2}");
+    }
+
+    private static void ReportRoadEnds(Terminal.ConsoleEventArgs args)
+    {
+        float ring = 8f;
+        int top = 20;
+        if ((args.Length > 1 && (!float.TryParse(args[1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out ring) ||
+                float.IsNaN(ring) || float.IsInfinity(ring) || ring <= 0f)) ||
+            (args.Length > 2 && (!int.TryParse(args[2], out top) || top < 0)))
+        {
+            args.Context.AddString("Usage: road_ends [positive ring radius in metres=8] [top>=0]");
+            return;
+        }
+
+        if (ZoneSystem.instance == null || WorldGenerator.instance == null || !RoadSpatialGrid.IsInitialized)
+        {
+            args.Context.AddString("Error: world or road network not available");
+            return;
+        }
+
+        var locations = new List<(string name, Vector3 position, float radius)>();
+        foreach (var inst in ZoneSystem.instance.GetLocationList())
+            locations.Add((inst.m_location.m_prefab.Name, inst.m_position, inst.m_location.m_exteriorRadius));
+
+        var rows = RoadEndReport.Compute(locations, ring, WorldGenerator.instance);
+
+        string path = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "ProceduralRoads.ends.csv");
+        var sb = new System.Text.StringBuilder("name,x,z,roadHeight,terrainAtEnd,ringMean,ringMin,ringMax,deltaEnd,deltaRing,sampleKind,ringRadius,locationX,locationZ,loadedGround,roadMinusLoadedGround\n");
+        foreach (var r in rows)
+        {
+            bool loaded = ZoneSystem.instance.GetGroundHeight(new Vector3(r.Point.x, 0f, r.Point.y), out float ground);
+            string liveGround = loaded ? ground.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "";
+            string liveDelta = loaded ? (r.RoadHeight - ground).ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "";
+            sb.Append(System.FormattableString.Invariant($"{r.Name},{r.Point.x:F1},{r.Point.y:F1},{r.RoadHeight:F2},{r.TerrainAtEnd:F2},{r.RingMean:F2},{r.RingMin:F2},{r.RingMax:F2},{r.DeltaEnd:F2},{r.DeltaRing:F2},nearest-road-point/procedural,{r.RingRadius:F2},{r.LocationCentre.x:F1},{r.LocationCentre.y:F1},{liveGround},{liveDelta}\n"));
+        }
+        System.IO.File.WriteAllText(path, sb.ToString());
+
+        args.Context.AddString($"{rows.Count} nearest road points -> {path}; worst {Mathf.Min(top, rows.Count)} by |road - ring mean|:");
+        args.Context.AddString($"Ring radius {ring:F1} m. Terrain/ring are procedural samples, not final ground. Loaded collision height is recorded separately in the CSV where available.");
+        for (int i = 0; i < Mathf.Min(top, rows.Count); i++)
+        {
+            var r = rows[i];
+            args.Context.AddString($"  {r.Name} ({r.Point.x:F0},{r.Point.y:F0}) road={r.RoadHeight:F1} terrain={r.TerrainAtEnd:F1} ring={r.RingMean:F1} [{r.RingMin:F1}..{r.RingMax:F1}] dEnd={r.DeltaEnd:+0.0;-0.0} dRing={r.DeltaRing:+0.0;-0.0}");
+        }
+    }
+
     /// <summary>
     /// Debug road points near player position.
     /// Shows detailed info about road points, heights, and terrain.
@@ -455,33 +550,40 @@ public static class ConsoleCommands
         args.Context.AddString($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
 
         // Apply roads to currently loaded zones
-        args.Context.AddString("Applying to loaded zones...");
+        args.Context.AddString("Queuing terrain for loaded zones...");
+        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
+        args.Context.AddString($"Queued road terrain for {zonesWithRoads} visible zones.");
+    }
 
-        var heightmaps = Heightmap.GetAllHeightmaps();
-        int zonesWithRoads = 0;
-
-        if (heightmaps != null)
+    private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
+    {
+        Vector3 pos;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
         {
-            foreach (var heightmap in heightmaps)
-            {
-                if (heightmap == null) continue;
-
-                Vector3 hmPos = heightmap.transform.position;
-                Vector2s zoneID = ZoneSystem.GetZone(hmPos);
-
-                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-                if (roadPoints.Count == 0) continue;
-
-                TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-                if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
-
-                RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
-                zonesWithRoads++;
-            }
+            pos = new Vector3(x, 0f, z);
+        }
+        else if (Player.m_localPlayer != null)
+        {
+            pos = Player.m_localPlayer.transform.position;
+        }
+        else
+        {
+            args.Context.AddString("No local player; use road_regen_island <x> <z>");
+            return;
         }
 
-        args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
+        args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})...");
+        if (!RoadNetworkGenerator.RegenerateIslandAt(pos, out string summary))
+        {
+            args.Context.AddString($"Failed: {summary}");
+            return;
+        }
+
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        args.Context.AddString(summary);
+        args.Context.AddString($"Queued terrain for {zones} loaded zone(s).");
     }
+
 
     /// <summary>
     /// Spawn debug markers above road points in the current zone.
@@ -875,6 +977,9 @@ public static class ConsoleCommands
         sb.AppendLine($"  Top-left:     {debugInfo.Biome01}");
         sb.AppendLine($"  Top-right:    {debugInfo.Biome11}");
         sb.AppendLine($"  At biome boundary: {debugInfo.IsBiomeBoundary}");
+        if (!debugInfo.IsBiomeBoundary && debugInfo.PointBiome != debugInfo.Biome00)
+            sb.AppendLine($"  Point biome {debugInfo.PointBiome} is not the corners' {debugInfo.Biome00}: " +
+                          $"the game renders {debugInfo.Biome00} height here, raw GetHeight uses {debugInfo.PointBiome}");
         sb.AppendLine();
 
         // Get actual rendered terrain height from Heightmap

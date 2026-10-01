@@ -138,7 +138,19 @@ public static class RoadNetworkGenerator
     private static List<(Vector2 position, string label)> m_roadStartPoints = new();
 
     public static bool RoadsGenerated => m_roadsGenerated;
-    public static bool IsLocationsReady => m_locationsReady;
+    /// <summary>
+    /// Whether the world's locations are in place, so roads may be loaded or built.
+    ///
+    /// Not just "our event fired". Valheim 1.0 writes ZoneSystem's
+    /// m_locationsGenerated straight from the save when a world is read from
+    /// disk, bypassing the property setter that raises
+    /// GenerateLocationsCompleted -- so on an existing world the event never
+    /// arrives, no matter how early we subscribed. Before 1.0 the setter was the
+    /// only writer and the event always came. Ask the game what is true rather
+    /// than relying on having been told.
+    /// </summary>
+    public static bool IsLocationsReady =>
+        m_locationsReady || (ZoneSystem.instance != null && ZoneSystem.instance.LocationsGenerated);
     public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
 

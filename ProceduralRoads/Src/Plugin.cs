@@ -108,15 +108,23 @@ namespace ProceduralRoads
         {
             // Create an empty GameObject - no mesh, no collider, completely invisible
             var prefab = new GameObject(RoadNetworkGenerator.MetadataPrefabName);
-            
-            // Add ZNetView for ZDO creation and networking
+
+            // Added to an active object, the ZNetView would run Awake at once, find
+            // no ZDOMan yet and destroy itself. The prefab would then have no
+            // ZNetView: every copy the game made for the saved metadata ZDO left
+            // the ZDO unclaimed ("ZDO ... not used when creating object"), so it
+            // was made again the next frame, leaking an object each time.
+            // Inactive while the component is added, then parented under Jotunn's
+            // inactive prefab container, the prefab never wakes; copies do.
+            prefab.SetActive(false);
             var nview = prefab.AddComponent<ZNetView>();
             nview.m_persistent = true;
-            
+
             // Wrap in CustomPrefab and register with Jotunn
             var customPrefab = new CustomPrefab(prefab, false);
             PrefabManager.Instance.AddPrefab(customPrefab);
-            
+            prefab.SetActive(true);
+
             ProceduralRoadsLogger.LogDebug($"Registered metadata prefab: {RoadNetworkGenerator.MetadataPrefabName}");
         }
 

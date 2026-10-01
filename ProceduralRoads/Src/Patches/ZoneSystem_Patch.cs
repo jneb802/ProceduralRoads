@@ -24,7 +24,7 @@ public static class ZoneSystem_Patch
     public static class ZoneSystem_PlaceVegetation_Patch
     {
         [HarmonyPrefix]
-        public static void Prefix(Vector2i zoneID, List<ZoneSystem.ClearArea> clearAreas)
+        public static void Prefix(Vector2s zoneID, List<ZoneSystem.ClearArea> clearAreas)
         {
             if (!RoadNetworkGenerator.RoadsGenerated)
                 return;
@@ -38,7 +38,7 @@ public static class ZoneSystem_Patch
     public static class ZoneSystem_SpawnZone_Patch
     {
         [HarmonyPostfix]
-        public static void Postfix(ZoneSystem __instance, Vector2i zoneID, ZoneSystem.SpawnMode mode, ref bool __result)
+        public static void Postfix(ZoneSystem __instance, Vector2s zoneID, ZoneSystem.SpawnMode mode, ref bool __result)
         {
             if (mode == ZoneSystem.SpawnMode.Client)
                 return;

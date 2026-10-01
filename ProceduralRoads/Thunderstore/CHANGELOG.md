@@ -2,7 +2,7 @@
 |-----------|-------------------|
 | 1.4.4     | - Added Valheim 1.0 compatibility for zone identifiers, debug markers, terrain rebuilds, and saved-world location readiness. |
 |           | - Fixed road metadata object initialization. Empty road networks now replace previously saved road data. |
-|           | - Added the MaxLocationsPerIsland setting. Updated the Jotunn requirement to 2.30.2. |
+|           | - Added the MaxLocationsPerIsland setting. Updated the Jotunn requirement to 2.30.2 and BepInExPack to 5.4.2351. |
 | 1.4.3     | - Fixed an issue where customLocations rarely got roads. I increased their default selection weight from 20 --> 80 |
 | 1.4.2     | - Increased default pathfinding iterations to 10,000 to improve road generation success on complex terrain. Added configurable PathfindingMaxIterations setting. |
 |           | - Added small analytics code to ping whenever game starts with my mod so I can get usage data. Totally anonymous and no player data is sent. You can disable if you'd like. |

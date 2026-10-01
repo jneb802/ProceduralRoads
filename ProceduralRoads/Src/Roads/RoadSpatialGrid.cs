@@ -126,21 +126,93 @@ public static class RoadSpatialGrid
     }
 
     /// <summary>
-    /// Called after all roads are generated to compute the network version hash.
-    /// This version is stored in TerrainComp ZDOs to detect already-processed zones.
+    /// Called after all roads are generated, and after a network is loaded from
+    /// the save, to compute the network version: a hash of the world seed and
+    /// every stored road point (position, width, height) in canonical order
+    /// (cells by coordinate, points by position, width, height), each record
+    /// mixed into the running value, so it is the same after generation and
+    /// after a save/load round trip (which carries exactly the stored points)
+    /// and changes whenever any road moves or changes height. A sum of
+    /// per-point hashes was tried first and let balanced height changes
+    /// cancel (a road regraded from flat to a slope kept its version).
+    /// RoadTerrainModifier stamps it on each zone's terrain compiler to tell
+    /// zones that already carry the current roads from zones that still need
+    /// them.
     /// </summary>
     public static void FinalizeRoadNetwork()
     {
         int worldSeed = WorldGenerator.instance?.GetSeed() ?? 0;
-        int hash = worldSeed;
-        hash = hash * 31 + TotalRoadPoints;
-        hash = hash * 31 + GridCellsWithRoads;
-        hash = hash * 31 + (int)(TotalRoadLength * 10);
-        
-        RoadNetworkVersion = hash;
+        uint hash = 2166136261u; // FNV offset basis
+        int storedPoints = 0;
+        int cells = 0;
+
+        m_roadCacheLock.EnterReadLock();
+        try
+        {
+            var keys = new List<Vector2i>(m_roadPoints.Keys);
+            keys.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
+            var records = new List<RoadPoint>();
+            foreach (var key in keys)
+            {
+                cells++;
+                Mix(ref hash, key.x);
+                Mix(ref hash, key.y);
+                records.Clear();
+                records.AddRange(m_roadPoints[key]);
+                records.Sort(CompareRecords);
+                foreach (var rp in records)
+                {
+                    storedPoints++;
+                    Mix(ref hash, rp.p.x.GetHashCode());
+                    Mix(ref hash, rp.p.y.GetHashCode());
+                    Mix(ref hash, rp.w.GetHashCode());
+                    Mix(ref hash, rp.h.GetHashCode());
+                }
+            }
+        }
+        finally
+        {
+            m_roadCacheLock.ExitReadLock();
+        }
+
+        Mix(ref hash, worldSeed);
+        Mix(ref hash, storedPoints);
+        Mix(ref hash, cells);
+        int version = unchecked((int)hash);
+        if (version == 0)
+            version = 1; // 0 means "no network"
+
+        RoadNetworkVersion = version;
         Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
     }
-    
+
+    private static int CompareRecords(RoadPoint a, RoadPoint b)
+    {
+        int c = a.p.x.CompareTo(b.p.x);
+        if (c != 0) return c;
+        c = a.p.y.CompareTo(b.p.y);
+        if (c != 0) return c;
+        c = a.w.CompareTo(b.w);
+        return c != 0 ? c : a.h.CompareTo(b.h);
+    }
+
+    /// <summary>FNV-1a step over the four bytes of value, then an avalanche so neighbouring records do not cancel.</summary>
+    private static void Mix(ref uint hash, int value)
+    {
+        unchecked
+        {
+            uint v = (uint)value;
+            for (int i = 0; i < 4; i++)
+            {
+                hash ^= (v >> (8 * i)) & 0xFFu;
+                hash *= 16777619u;
+            }
+            hash ^= hash >> 15;
+            hash *= 0x2C1B3C6Du;
+            hash ^= hash >> 12;
+        }
+    }
+
     private static Vector2 CatmullRom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
     {
         float t2 = t * t;
@@ -512,10 +584,17 @@ public static class RoadSpatialGrid
                     {
                         foreach (var rp in points)
                         {
-                            if (rp.p.x >= zonePos.x - RoadConstants.HalfZoneSize - rp.w &&
-                                rp.p.x <= zonePos.x + RoadConstants.HalfZoneSize + rp.w &&
-                                rp.p.y >= zonePos.z - RoadConstants.HalfZoneSize - rp.w &&
-                                rp.p.y <= zonePos.z + RoadConstants.HalfZoneSize + rp.w)
+                            // Pad by how far this point's levelling can REACH,
+                            // not by its width: once the side slope widens with
+                            // the cut or the fill the two diverge, and a point
+                            // left out still pulls on vertices inside this
+                            // zone, which leaves a seam along the zone edge.
+                            // Width stays as a floor for a wide road.
+                            float reach = Mathf.Max(rp.w, RoadTerrainModifier.GatherRadius(rp.w));
+                            if (rp.p.x >= zonePos.x - RoadConstants.HalfZoneSize - reach &&
+                                rp.p.x <= zonePos.x + RoadConstants.HalfZoneSize + reach &&
+                                rp.p.y >= zonePos.z - RoadConstants.HalfZoneSize - reach &&
+                                rp.p.y <= zonePos.z + RoadConstants.HalfZoneSize + reach)
                             {
                                 result.Add(rp);
                             }
@@ -810,6 +889,7 @@ public static class RoadSpatialGrid
             }
             
             Log.LogDebug($"Deserialized {cellCount} grid cells, {totalPoints} road points");
+            FinalizeRoadNetwork();
             return true;
         }
         catch (System.Exception ex)

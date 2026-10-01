@@ -34,6 +34,16 @@ public static class ConsoleCommands
 
         // road_debug - Show detailed road info at player position
         new Terminal.ConsoleCommand(
+            "road_regen_island",
+            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
+            (args) => RegenerateIslandHere(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
             (args) => DebugRoadPoints(args),
@@ -456,32 +466,39 @@ public static class ConsoleCommands
 
         // Apply roads to currently loaded zones
         args.Context.AddString("Applying to loaded zones...");
-
-        var heightmaps = Heightmap.GetAllHeightmaps();
-        int zonesWithRoads = 0;
-
-        if (heightmaps != null)
-        {
-            foreach (var heightmap in heightmaps)
-            {
-                if (heightmap == null) continue;
-
-                Vector3 hmPos = heightmap.transform.position;
-                Vector2s zoneID = ZoneSystem.GetZone(hmPos);
-
-                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-                if (roadPoints.Count == 0) continue;
-
-                TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-                if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
-
-                RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
-                zonesWithRoads++;
-            }
-        }
-
+        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
         args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
     }
+
+    private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
+    {
+        Vector3 pos;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+        {
+            pos = new Vector3(x, 0f, z);
+        }
+        else if (Player.m_localPlayer != null)
+        {
+            pos = Player.m_localPlayer.transform.position;
+        }
+        else
+        {
+            args.Context.AddString("No local player; use road_regen_island <x> <z>");
+            return;
+        }
+
+        args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})...");
+        if (!RoadNetworkGenerator.RegenerateIslandAt(pos, out string summary))
+        {
+            args.Context.AddString($"Failed: {summary}");
+            return;
+        }
+
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        args.Context.AddString(summary);
+        args.Context.AddString($"Applied to {zones} loaded zone(s).");
+    }
+
 
     /// <summary>
     /// Spawn debug markers above road points in the current zone.
@@ -875,6 +892,9 @@ public static class ConsoleCommands
         sb.AppendLine($"  Top-left:     {debugInfo.Biome01}");
         sb.AppendLine($"  Top-right:    {debugInfo.Biome11}");
         sb.AppendLine($"  At biome boundary: {debugInfo.IsBiomeBoundary}");
+        if (!debugInfo.IsBiomeBoundary && debugInfo.PointBiome != debugInfo.Biome00)
+            sb.AppendLine($"  Point biome {debugInfo.PointBiome} is not the corners' {debugInfo.Biome00}: " +
+                          $"the game renders {debugInfo.Biome00} height here, raw GetHeight uses {debugInfo.PointBiome}");
         sb.AppendLine();
 
         // Get actual rendered terrain height from Heightmap

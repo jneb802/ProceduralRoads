@@ -1,0 +1,55 @@
+{
+  "productionSource": "85b10db",
+  "inputs": [
+    {
+      "file": "RoadSeedA.cells8.csv",
+      "size": 266441343,
+      "sha256": "b9e254fa3f77a215f6a53bc0715456a9f04c2acd5cfcb88916128715b3590aac"
+    },
+    {
+      "file": "RoadSeedA.locations.csv",
+      "size": 471358,
+      "sha256": "e326ddfb4646f6b0c03f8340c55c1735b369c7180d7f3071b4859a8a2f6c8cd6"
+    },
+    {
+      "file": "RoadSeedB.cells8.csv",
+      "size": 266127625,
+      "sha256": "a2cb82462d26986c2af368c60878f15756cd09a1d0f8aeb56d3da69d85324749"
+    },
+    {
+      "file": "RoadSeedB.locations.csv",
+      "size": 470372,
+      "sha256": "b5c711f7429658b297de5b3efabf3066c3212956288a6c65c0b0fae6bf1a7a9a"
+    },
+    {
+      "file": "RoadSeedC.cells8.csv",
+      "size": 266332670,
+      "sha256": "126fc8f45b289cceb54b841b80e1c5d4deddeee865f1a38c5d1bed8c03bfea7e"
+    },
+    {
+      "file": "RoadSeedC.locations.csv",
+      "size": 468477,
+      "sha256": "ea58bee3848bf14a12021f5e5b1a58d100b81946f4e9c3e0f9b3041d44150684"
+    },
+    {
+      "file": "RoadSeedD.cells8.csv",
+      "size": 265954981,
+      "sha256": "a1930243aae249a43b3e93aca6f1df4819add62498313d6a18b20b44e989c356"
+    },
+    {
+      "file": "RoadSeedD.locations.csv",
+      "size": 470033,
+      "sha256": "64b5344ad266c703a53337ca7ed39bc382151b7923a4ad0a21f46dae857b4d15"
+    },
+    {
+      "file": "RoadSeedE.cells8.csv",
+      "size": 266537195,
+      "sha256": "d521d453e24d9ecdb455065d54687aa188bdb485f45c24cc97e6a3e8290ae859"
+    },
+    {
+      "file": "RoadSeedE.locations.csv",
+      "size": 473384,
+      "sha256": "279b769d2943ab88ec79bd4bf072d657fc7d9bbc787cdfd56c6313d30f29e2f2"
+    }
+  ]
+}

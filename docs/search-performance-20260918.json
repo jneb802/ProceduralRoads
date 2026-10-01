@@ -1,0 +1,30 @@
+{
+  "candidate": {
+    "summary": "Island 5 (4.3km\u00b2): 16 locations, 11 roads, 7795m in 43.5s",
+    "seconds": 46.008025,
+    "allocated": 1564330648,
+    "Heights": 99121123,
+    "Biomes": 84728793,
+    "Rivers": 16468083,
+    "roads": 11,
+    "length": 7795.3257,
+    "points": 7909,
+    "cells": 164,
+    "sha256": "CF7F3C79BD8C946EF60345864FCFC9FCD03A5AB5B269B9D0E64394D13192BE86",
+    "bytes": 178028
+  },
+  "baseline": {
+    "summary": "Island 5 (4.3km\u00b2): 16 locations, 11 roads, 7795m in 128.5s",
+    "seconds": 131.0486317,
+    "allocated": 1563865920,
+    "Heights": 381302328,
+    "Biomes": 95964626,
+    "Rivers": 46643141,
+    "roads": 11,
+    "length": 7795.3257,
+    "points": 7909,
+    "cells": 164,
+    "sha256": "CF7F3C79BD8C946EF60345864FCFC9FCD03A5AB5B269B9D0E64394D13192BE86",
+    "bytes": 178028
+  }
+}

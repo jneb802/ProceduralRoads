@@ -1,0 +1,182 @@
+[
+  {
+    "world": "RoadSeedA",
+    "repeat": 1,
+    "tested": 24,
+    "changed": 5,
+    "baseline": {
+      "seconds": 1.4704392,
+      "approachBytes": 123563016,
+      "approachHeights": 202309,
+      "approachBiomes": 190408
+    },
+    "optimized": {
+      "seconds": 1.6345447,
+      "approachBytes": 95546920,
+      "approachHeights": 79951,
+      "approachBiomes": 54572
+    }
+  },
+  {
+    "world": "RoadSeedB",
+    "repeat": 1,
+    "tested": 24,
+    "changed": 3,
+    "baseline": {
+      "seconds": 0.5230374,
+      "approachBytes": 22907168,
+      "approachHeights": 71431,
+      "approachBiomes": 89648
+    },
+    "optimized": {
+      "seconds": 0.1213972,
+      "approachBytes": 8339984,
+      "approachHeights": 21035,
+      "approachBiomes": 27728
+    }
+  },
+  {
+    "world": "RoadSeedC",
+    "repeat": 1,
+    "tested": 24,
+    "changed": 3,
+    "baseline": {
+      "seconds": 2.1169726,
+      "approachBytes": 96605336,
+      "approachHeights": 146947,
+      "approachBiomes": 170888
+    },
+    "optimized": {
+      "seconds": 1.2546718,
+      "approachBytes": 62435448,
+      "approachHeights": 41838,
+      "approachBiomes": 27980
+    }
+  },
+  {
+    "world": "RoadSeedD",
+    "repeat": 1,
+    "tested": 24,
+    "changed": 5,
+    "baseline": {
+      "seconds": 2.2810367,
+      "approachBytes": 164641864,
+      "approachHeights": 269388,
+      "approachBiomes": 245012
+    },
+    "optimized": {
+      "seconds": 1.0389633,
+      "approachBytes": 124667864,
+      "approachHeights": 114769,
+      "approachBiomes": 65508
+    }
+  },
+  {
+    "world": "RoadSeedE",
+    "repeat": 1,
+    "tested": 24,
+    "changed": 3,
+    "baseline": {
+      "seconds": 0.968308,
+      "approachBytes": 112536368,
+      "approachHeights": 150628,
+      "approachBiomes": 163080
+    },
+    "optimized": {
+      "seconds": 1.0597239,
+      "approachBytes": 81448864,
+      "approachHeights": 38639,
+      "approachBiomes": 26144
+    }
+  },
+  {
+    "world": "RoadSeedA",
+    "repeat": 2,
+    "tested": 24,
+    "changed": 5,
+    "optimized": {
+      "seconds": 0.9265113,
+      "approachBytes": 93837112,
+      "approachHeights": 79951,
+      "approachBiomes": 54572
+    },
+    "baseline": {
+      "seconds": 4.2231501,
+      "approachBytes": 122370152,
+      "approachHeights": 202309,
+      "approachBiomes": 190408
+    }
+  },
+  {
+    "world": "RoadSeedB",
+    "repeat": 2,
+    "tested": 24,
+    "changed": 3,
+    "optimized": {
+      "seconds": 0.36919609999999997,
+      "approachBytes": 8339984,
+      "approachHeights": 21035,
+      "approachBiomes": 27728
+    },
+    "baseline": {
+      "seconds": 0.7548533000000001,
+      "approachBytes": 22919000,
+      "approachHeights": 71431,
+      "approachBiomes": 89648
+    }
+  },
+  {
+    "world": "RoadSeedC",
+    "repeat": 2,
+    "tested": 24,
+    "changed": 3,
+    "optimized": {
+      "seconds": 1.7393974,
+      "approachBytes": 63236824,
+      "approachHeights": 41838,
+      "approachBiomes": 27980
+    },
+    "baseline": {
+      "seconds": 2.5588568,
+      "approachBytes": 96641544,
+      "approachHeights": 146947,
+      "approachBiomes": 170888
+    }
+  },
+  {
+    "world": "RoadSeedD",
+    "repeat": 2,
+    "tested": 24,
+    "changed": 5,
+    "optimized": {
+      "seconds": 2.3342616,
+      "approachBytes": 126674048,
+      "approachHeights": 114769,
+      "approachBiomes": 65508
+    },
+    "baseline": {
+      "seconds": 8.1399191,
+      "approachBytes": 165330952,
+      "approachHeights": 269388,
+      "approachBiomes": 245012
+    }
+  },
+  {
+    "world": "RoadSeedE",
+    "repeat": 2,
+    "tested": 24,
+    "changed": 3,
+    "optimized": {
+      "seconds": 2.3131889,
+      "approachBytes": 81343144,
+      "approachHeights": 38639,
+      "approachBiomes": 26144
+    },
+    "baseline": {
+      "seconds": 2.8740075,
+      "approachBytes": 113102624,
+      "approachHeights": 150628,
+      "approachBiomes": 163080
+    }
+  }
+]

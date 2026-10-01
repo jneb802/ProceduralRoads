@@ -32,8 +32,20 @@ public static class RoadNetworkPersistence
     private static readonly int RoadStartPointsHash = "ProceduralRoads_StartPoints".GetStableHashCode();
 
     /// <summary>
+    /// Hash key for storing the river crossings (fords prototype) on the ZDO.
+    /// </summary>
+    private static readonly int RoadCrossingsHash = "ProceduralRoads_Crossings".GetStableHashCode();
+
+    /// <summary>
+    /// Hash key for the zones that have received their bridge pieces (bridges prototype).
+    /// </summary>
+    private static readonly int BridgeZonesHash = "ProceduralRoads_BridgeZones".GetStableHashCode();
+
+    /// <summary>
     /// Hash key for storing global road network data on the ZDO.
     /// </summary>
+    private static readonly int AppendBridgesHash = "ProceduralRoads_AppendBridges".GetStableHashCode();
+
     private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
 
     /// <summary>
@@ -93,7 +105,10 @@ public static class RoadNetworkPersistence
     /// <summary>
     /// Save the entire road network to a dedicated ZDO for persistence across world reloads.
     /// </summary>
-    public static void SaveGlobalRoadData(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
+    public static void SaveGlobalRoadData(
+        IReadOnlyList<(Vector2 position, string label)> roadStartPoints,
+        IReadOnlyList<RoadCrossing> roadCrossings,
+        IReadOnlyCollection<Vector2s> bridgeZones)
     {
         Log.LogDebug($"[SAVE] SaveGlobalRoadData called");
 
@@ -120,6 +135,14 @@ public static class RoadNetworkPersistence
             metadataZdo.Set(GlobalRoadDataHash, data);
             Log.LogDebug($"[SAVE] Saved global road data: {data.Length} bytes, {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
         }
+        else if (RoadSpatialGrid.GridCellsWithRoads == 0)
+        {
+            // A world with no roads is a legitimate state - IslandRoadPercentage
+            // is documented as disabling generation at zero - and it is saved on
+            // the same schedule as any other, so warning here fired on every
+            // autosave for the rest of the session.
+            Log.LogDebug("[SAVE] No roads to save; the network is empty.");
+        }
         else
         {
             Log.LogWarning("[SAVE] SerializeAllRoadPoints returned null or empty data!");
@@ -131,6 +154,39 @@ public static class RoadNetworkPersistence
             metadataZdo.Set(RoadStartPointsHash, startPointsData);
             Log.LogDebug($"[SAVE] Saved {roadStartPoints.Count} road start points ({startPointsData.Length} bytes)");
         }
+
+        // Always written, so a network regenerated without fords does not
+        // keep the crossings of an earlier one.
+        byte[] crossingsData = SerializeRoadCrossings(roadCrossings);
+        metadataZdo.Set(RoadCrossingsHash, crossingsData);
+        Log.LogDebug($"[SAVE] Saved {roadCrossings.Count} river crossings ({crossingsData.Length} bytes)");
+        WriteBridgeZones(metadataZdo, bridgeZones);
+        metadataZdo.Set(AppendBridgesHash, BridgeAppendQueue.Serialize());
+    }
+
+    /// <summary>
+    /// Save only the zones that have their bridge pieces, on a network that
+    /// was loaded rather than generated this session.
+    /// </summary>
+    public static void SaveBridgeZones(IReadOnlyCollection<Vector2s> bridgeZones)
+    {
+        ZDO? metadataZdo = GetMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogWarning("[SAVE] No metadata ZDO: bridge zones not saved");
+            return;
+        }
+        if (!metadataZdo.IsOwner())
+            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
+        WriteBridgeZones(metadataZdo, bridgeZones);
+        metadataZdo.Set(AppendBridgesHash, BridgeAppendQueue.Serialize());
+    }
+
+    private static void WriteBridgeZones(ZDO metadataZdo, IReadOnlyCollection<Vector2s> bridgeZones)
+    {
+        byte[] data = SerializeBridgeZones(bridgeZones);
+        metadataZdo.Set(BridgeZonesHash, data);
+        Log.LogDebug($"[SAVE] Saved {bridgeZones.Count} bridge zones ({data.Length} bytes)");
     }
 
     /// <summary>
@@ -138,7 +194,10 @@ public static class RoadNetworkPersistence
     /// </summary>
     /// <param name="roadStartPoints">List to populate with loaded start points</param>
     /// <returns>True if road data was found and loaded</returns>
-    public static bool TryLoadGlobalRoadData(List<(Vector2 position, string label)> roadStartPoints)
+    public static bool TryLoadGlobalRoadData(
+        List<(Vector2 position, string label)> roadStartPoints,
+        List<RoadCrossing> roadCrossings,
+        HashSet<Vector2s> bridgeZones)
     {
         Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
 
@@ -171,6 +230,9 @@ public static class RoadNetworkPersistence
             Log.LogDebug($"[LOAD] Successfully loaded: {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
 
             TryLoadRoadMetadata(roadStartPoints);
+            TryLoadRoadCrossings(metadataZdo, roadCrossings);
+            TryLoadBridgeZones(metadataZdo, bridgeZones);
+            BridgeAppendQueue.Load(metadataZdo.GetByteArray(AppendBridgesHash, null));
 
             return true;
         }
@@ -276,7 +338,7 @@ public static class RoadNetworkPersistence
     /// Serialize road start points to binary format.
     /// Format: [count][x1][y1][labelLen1][labelBytes1]...
     /// </summary>
-    private static byte[] SerializeRoadStartPoints(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
+    internal static byte[] SerializeRoadStartPoints(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
@@ -299,7 +361,7 @@ public static class RoadNetworkPersistence
     /// <summary>
     /// Deserialize road start points from binary format.
     /// </summary>
-    private static bool DeserializeRoadStartPoints(byte[] data, List<(Vector2 position, string label)> roadStartPoints)
+    internal static bool DeserializeRoadStartPoints(byte[] data, List<(Vector2 position, string label)> roadStartPoints)
     {
         try
         {
@@ -338,6 +400,175 @@ public static class RoadNetworkPersistence
         catch (Exception ex)
         {
             Log.LogWarning($"Failed to deserialize road start points: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Load the river crossings stored with the network (fords prototype).
+    /// A save without the blob (an older build, or a network generated with
+    /// fords off) leaves the list empty.
+    /// </summary>
+    private static void TryLoadRoadCrossings(ZDO metadataZdo, List<RoadCrossing> roadCrossings)
+    {
+        roadCrossings.Clear();
+        byte[]? data = metadataZdo.GetByteArray(RoadCrossingsHash, null);
+        if (data == null || data.Length == 0)
+            return;
+        if (DeserializeRoadCrossings(data, roadCrossings))
+            Log.LogDebug($"Loaded {roadCrossings.Count} river crossings from ZDO");
+    }
+
+    /// <summary>
+    /// Serialize river crossings to binary format.
+    /// Format: [version=1][count] then per crossing [fromX][fromY][toX][toY][riverbed][fairwayX][fairwayY][fairwayWidth][kind][style].
+    /// The rest of a crossing is derived from its banks on load.
+    /// </summary>
+    internal static byte[] SerializeRoadCrossings(IReadOnlyList<RoadCrossing> roadCrossings)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+
+        writer.Write(1);
+        writer.Write(roadCrossings.Count);
+        foreach (RoadCrossing crossing in roadCrossings)
+        {
+            writer.Write(crossing.FromBank.x);
+            writer.Write(crossing.FromBank.y);
+            writer.Write(crossing.ToBank.x);
+            writer.Write(crossing.ToBank.y);
+            writer.Write(crossing.RiverbedHeight);
+            writer.Write(crossing.FairwayCenter.x);
+            writer.Write(crossing.FairwayCenter.y);
+            writer.Write(crossing.FairwayWidth);
+            writer.Write((int)crossing.Kind);
+            writer.Write((int)crossing.Style);
+        }
+
+        return ms.ToArray();
+    }
+
+    /// <summary>Set by the loader when the saved spawned-zone record was
+    /// written by an OLDER bridge layout. The zones are then not marked spawned,
+    /// and whoever owns the world (RoadNetworkGenerator.TryLoadGlobalRoadData)
+    /// destroys the old pieces so the current layout can replace them -- never
+    /// a bridge half old and half new.</summary>
+    public static bool BridgeLayoutIsStale { get; private set; }
+
+    private static void TryLoadBridgeZones(ZDO metadataZdo, HashSet<Vector2s> bridgeZones)
+    {
+        bridgeZones.Clear();
+        BridgeLayoutIsStale = false;
+        byte[]? data = metadataZdo.GetByteArray(BridgeZonesHash, null);
+        if (data == null || data.Length == 0)
+            return;
+        try
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+            int version = reader.ReadInt32();
+            int layout;
+            if (version == 1)
+            {
+                // Written before the record carried a layout id: the narrow,
+                // single-lane bridges. Every zone recorded here holds pieces of
+                // a shape this build no longer makes.
+                layout = 1;
+            }
+            else if (version == 2)
+            {
+                layout = reader.ReadInt32();
+            }
+            else
+            {
+                Log.LogWarning($"Unknown bridge zone data version: {version}");
+                return;
+            }
+            int count = reader.ReadInt32();
+            if (count < 0 || count > 1_000_000)
+            {
+                Log.LogWarning($"Invalid bridge zone count: {count}");
+                return;
+            }
+            if (layout != BridgeLayout.LayoutVersion)
+            {
+                BridgeLayoutIsStale = true;
+                Log.LogInfo($"[BRIDGES] the saved bridges were laid out by layout {layout}; this build is layout {BridgeLayout.LayoutVersion}. " +
+                            $"Their {count} zone(s) are not marked spawned and their pieces will be replaced.");
+                return;
+            }
+            for (int i = 0; i < count; i++)
+                bridgeZones.Add(new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32()));
+            Log.LogDebug($"Loaded {bridgeZones.Count} bridge zones from ZDO");
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"Failed to deserialize bridge zones: {ex.Message}");
+            bridgeZones.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Format: [version=2][layout][count] then [x][y] per zone, each a 32-bit
+    /// int. Version 1 had no layout id and is read as layout 1, the narrow
+    /// bridges. Valheim 1.0 made a zone id a pair of shorts; the casts here
+    /// keep the saved bytes as they were, so worlds written before 1.0 still
+    /// read.
+    /// </summary>
+    private static byte[] SerializeBridgeZones(IReadOnlyCollection<Vector2s> zones)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+        writer.Write(2);
+        writer.Write(BridgeLayout.LayoutVersion);
+        writer.Write(zones.Count);
+        foreach (Vector2s zone in zones)
+        {
+            writer.Write((int)zone.x);
+            writer.Write((int)zone.y);
+        }
+        return ms.ToArray();
+    }
+
+    internal static bool DeserializeRoadCrossings(byte[] data, List<RoadCrossing> roadCrossings)
+    {
+        try
+        {
+            using var ms = new MemoryStream(data);
+            using var reader = new BinaryReader(ms);
+
+            int version = reader.ReadInt32();
+            if (version != 1)
+            {
+                Log.LogWarning($"Unknown river crossing data version: {version}");
+                return false;
+            }
+
+            int count = reader.ReadInt32();
+            if (count < 0 || count > 10000)
+            {
+                Log.LogWarning($"Invalid river crossing count: {count}");
+                return false;
+            }
+
+            roadCrossings.Clear();
+            for (int i = 0; i < count; i++)
+            {
+                Vector2 fromBank = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                Vector2 toBank = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                float riverbed = reader.ReadSingle();
+                Vector2 fairwayCenter = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                float fairwayWidth = reader.ReadSingle();
+                CrossingKind kind = (CrossingKind)reader.ReadInt32();
+                FordStyle style = (FordStyle)reader.ReadInt32();
+                roadCrossings.Add(RoadCrossing.Between(fromBank, toBank, riverbed, fairwayCenter, fairwayWidth, kind, style));
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.LogWarning($"Failed to deserialize river crossings: {ex.Message}");
             return false;
         }
     }

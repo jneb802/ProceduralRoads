@@ -26,11 +26,17 @@ public class RoadTopologyTests
         public readonly List<string> Logs = new();
         public readonly RoadPathfinder Pathfinder;
 
+        /// <summary>
+        /// Crossings are off here. These tests are about what the strategies do
+        /// with an edge that FAILED, so they need a river that actually stops a
+        /// road; now that fords and bridges ship on, one would be carried across
+        /// and there would be no failed edge left to characterize.
+        /// </summary>
         public Harness(SyntheticWorld world)
         {
             WorldGenerator.instance = world;
             RoadSpatialGrid.Clear();
-            Pathfinder = new RoadPathfinder(world);
+            Pathfinder = new RoadPathfinder(world) { Fords = false, Bridges = false };
             PathfinderField.SetValue(null, Pathfinder);
             ManualLogSource.Captured = Logs;
         }

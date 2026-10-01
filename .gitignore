@@ -11,4 +11,8 @@ ProceduralRoads/features
 WARP.md
 
 .claude
+*.DS_Store
+ProceduralRoads/Thunderstore/*.zip
+ProceduralRoads/Nexus/
+ProceduralRoads/Thunderstore/ProceduralRoads_v*/
 .claude/

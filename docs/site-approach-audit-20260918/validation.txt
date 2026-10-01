@@ -1,0 +1,5 @@
+Offline audit build: exit 0; 0 warnings, 0 errors.
+Focused SiteApproachTests and SiteProtectionTests: 21 passed, 0 failed, 0 skipped; .NET 10; exit 0.
+Five final audit processes: all exit 0.
+All initial/final per-site identities, route-change decisions, and before/after metrics equal.
+No production source edits or deployment during audit.

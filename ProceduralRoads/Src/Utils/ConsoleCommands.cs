@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -32,7 +33,140 @@ public static class ConsoleCommands
         if (s_commandsRegistered)
             return;
 
+        ManualRoadCommands.Register();
+        new Terminal.ConsoleCommand(
+            "road_bake",
+            "Road terrain the server writes for players without the mod: what it has written so far; road_bake again to go over every road zone of the current network once more (zones already carrying it are left alone); road_bake zone [x z] for what the server knows and would do about one zone (default: where you stand); road_bake vegetation for the road zones still holding vegetation on the road, most first; road_bake find [x z [radius]] for road zones not generated yet near a point; road_bake server for the server's own zone machinery -- reference position, live zone count, and each peer's zone.",
+            (args) =>
+            {
+                if (args.Length > 1 && args[1] == "zone")
+                {
+                    Vector3 point = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                    if (args.Length > 3 &&
+                        float.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x) &&
+                        float.TryParse(args[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
+                        point = new Vector3(x, 0f, z);
+                    args.Context.AddString(ServerTerrainBake.DescribeZone(point));
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "vegetation")
+                {
+                    int max = 5;
+                    if (args.Length > 2 && int.TryParse(args[2], out int n))
+                        max = n;
+                    foreach (string line in ServerTerrainBake.FindVegetationOnRoads(max))
+                        args.Context.AddString(line);
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "find")
+                {
+                    Vector3 from = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                    float radius = 1000f;
+                    if (args.Length > 3 &&
+                        float.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fx) &&
+                        float.TryParse(args[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fz))
+                        from = new Vector3(fx, 0f, fz);
+                    if (args.Length > 4 &&
+                        float.TryParse(args[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float r))
+                        radius = r;
+                    foreach (string line in ServerTerrainBake.FindUngenerated(from, radius, 5))
+                        args.Context.AddString(line);
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "server")
+                {
+                    foreach (string line in ServerTerrainBake.DescribeServer())
+                        args.Context.AddString(line);
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "again")
+                {
+                    ServerTerrainBake.Requeue();
+                    args.Context.AddString("Road zones queued again for the current network");
+                }
+                args.Context.AddString(ServerTerrainBake.StatusLine());
+            },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_zone_report",
+            "What one zone holds because of the roads, read from the saved data: its terrain compiler's fingerprint, its bridge pieces and its vegetation. road_zone_report [x z] (default: where you stand). The same zone written by a modded client and by the server should report the same thing.",
+            (args) =>
+            {
+                Vector3 point = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                if (args.Length > 2 &&
+                    float.TryParse(args[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x) &&
+                    float.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
+                    point = new Vector3(x, 0f, z);
+                foreach (string line in ZoneReport.Describe(point))
+                    args.Context.AddString(line);
+            },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
         // road_debug - Show detailed road info at player position
+        new Terminal.ConsoleCommand(
+            "road_regen_island",
+            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
+            (args) => RegenerateIslandHere(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_crossings",
+            "List the river crossings (fords and bridges) of the road network nearest to you (road_crossings [count=10]).",
+            (args) => CrossingsCommand(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_bridges",
+            "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are.",
+            (args) => BridgesCommand(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_bridge_repairs",
+            "DIAGNOSTIC: the pieces the COMPLETE bridge at the crossing nearest a point has and the shipped one does not -- exactly what a player would replace to close it up: road_bridge_repairs <x> <z>. Nothing is placed; this only says where the missing pieces belong.",
+            (args) => BridgeRepairsCommand(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_site",
+            "Inspect the closest location at <x> <z>: saved root, platform estimate and protected radius. Read-only.",
+            args => InspectRoadSite(args), isCheat: true);
+
+        new Terminal.ConsoleCommand(
+            "road_ends",
+            "Compare each location's nearest road point with procedural terrain: road_ends [ring=8] [top=20]. Ring is a radius in metres. CSV also records loaded collision height where available; procedural deltas do not measure the visible rim.",
+            (args) => ReportRoadEnds(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
         new Terminal.ConsoleCommand(
             "road_debug",
             "Show detailed road point info near player position (for debugging terrain issues)",
@@ -177,10 +311,12 @@ public static class ConsoleCommands
             return;
         }
         
-        args.Context.AddString($"Detecting islands (cellSize={cellSize}m, minCells={minCells})...");
+        args.Context.AddString(args.Length <= 1 ? "Detecting islands with the road generation settings..."
+            : $"Detecting legacy base-height islands (cellSize={cellSize}m, minCells={minCells})...");
         
         // Run detection
-        var islands = IslandDetector.DetectIslands(cellSize, minCells);
+        var islands = args.Length <= 1 ? IslandDetector.DetectRoadIslands()
+            : IslandDetector.DetectIslands(cellSize, minCells);
         
         if (islands.Count == 0)
         {
@@ -280,6 +416,76 @@ public static class ConsoleCommands
         s_modPins.Clear();
 
         args.Context.AddString($"Removed {count} pins.");
+    }
+
+    private static void InspectRoadSite(Terminal.ConsoleEventArgs args)
+    {
+        if (args.Length != 3 || !float.TryParse(args[1], System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float x) ||
+            !float.TryParse(args[2], System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out float z) ||
+            float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(z) || float.IsInfinity(z) ||
+            ZoneSystem.instance == null || WorldGenerator.instance == null)
+        { args.Context.AddString("Usage: road_site <x> <z> in a loaded world"); return; }
+        ZoneSystem.LocationInstance? best = null; float distance = 64f;
+        foreach (var site in ZoneSystem.instance.GetLocationList())
+        {
+            float d=Vector2.Distance(new Vector2(x,z),new Vector2(site.m_position.x,site.m_position.z));
+            if (d < distance) { best=site; distance=d; }
+        }
+        if (best == null) { args.Context.AddString("No location within 64m"); return; }
+        var centre=new Vector2(best.Value.m_position.x,best.Value.m_position.z);
+        float? saved=LocationLevelling.PlacementHeightSource?.Invoke(centre);
+        float baseHeight=LocationLevelling.CentreHeight(centre,WorldGenerator.instance);
+        float? platform=LocationLevelling.PlatformHeight(baseHeight,LocationLevelling.OpsAt(centre));
+        float? approach=LocationLevelling.ApproachHeight(baseHeight,LocationLevelling.OpsAt(centre));
+        float radius=RoadSiteProtection.RadiusAt(centre,best.Value.m_location.m_exteriorRadius);
+        args.Context.AddString($"Site {best.Value.m_location.m_prefab.Name} at {centre}; savedRoot={saved?.ToString("F3") ?? "unknown"}; base={baseHeight:F3}; platform={platform?.ToString("F3") ?? "unknown"}; approach={approach?.ToString("F3") ?? "unknown"}; protectedRadius={radius:F2}");
+    }
+
+    private static void ReportRoadEnds(Terminal.ConsoleEventArgs args)
+    {
+        float ring = 8f;
+        int top = 20;
+        if ((args.Length > 1 && (!float.TryParse(args[1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out ring) ||
+                float.IsNaN(ring) || float.IsInfinity(ring) || ring <= 0f)) ||
+            (args.Length > 2 && (!int.TryParse(args[2], out top) || top < 0)))
+        {
+            args.Context.AddString("Usage: road_ends [positive ring radius in metres=8] [top>=0]");
+            return;
+        }
+
+        if (ZoneSystem.instance == null || WorldGenerator.instance == null || !RoadSpatialGrid.IsInitialized)
+        {
+            args.Context.AddString("Error: world or road network not available");
+            return;
+        }
+
+        var locations = new List<(string name, Vector3 position, float radius)>();
+        foreach (var inst in ZoneSystem.instance.GetLocationList())
+            locations.Add((inst.m_location.m_prefab.Name, inst.m_position, inst.m_location.m_exteriorRadius));
+
+        var rows = RoadEndReport.Compute(locations, ring, WorldGenerator.instance);
+
+        string path = System.IO.Path.Combine(BepInEx.Paths.ConfigPath, "ProceduralRoads.ends.csv");
+        var sb = new System.Text.StringBuilder("name,x,z,roadHeight,terrainAtEnd,ringMean,ringMin,ringMax,deltaEnd,deltaRing,sampleKind,ringRadius,locationX,locationZ,loadedGround,roadMinusLoadedGround\n");
+        foreach (var r in rows)
+        {
+            bool loaded = ZoneSystem.instance.GetGroundHeight(new Vector3(r.Point.x, 0f, r.Point.y), out float ground);
+            string liveGround = loaded ? ground.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "";
+            string liveDelta = loaded ? (r.RoadHeight - ground).ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "";
+            sb.Append(System.FormattableString.Invariant($"{r.Name},{r.Point.x:F1},{r.Point.y:F1},{r.RoadHeight:F2},{r.TerrainAtEnd:F2},{r.RingMean:F2},{r.RingMin:F2},{r.RingMax:F2},{r.DeltaEnd:F2},{r.DeltaRing:F2},nearest-road-point/procedural,{r.RingRadius:F2},{r.LocationCentre.x:F1},{r.LocationCentre.y:F1},{liveGround},{liveDelta}\n"));
+        }
+        System.IO.File.WriteAllText(path, sb.ToString());
+
+        args.Context.AddString($"{rows.Count} nearest road points -> {path}; worst {Mathf.Min(top, rows.Count)} by |road - ring mean|:");
+        args.Context.AddString($"Ring radius {ring:F1} m. Terrain/ring are procedural samples, not final ground. Loaded collision height is recorded separately in the CSV where available.");
+        for (int i = 0; i < Mathf.Min(top, rows.Count); i++)
+        {
+            var r = rows[i];
+            args.Context.AddString($"  {r.Name} ({r.Point.x:F0},{r.Point.y:F0}) road={r.RoadHeight:F1} terrain={r.TerrainAtEnd:F1} ring={r.RingMean:F1} [{r.RingMin:F1}..{r.RingMax:F1}] dEnd={r.DeltaEnd:+0.0;-0.0} dRing={r.DeltaRing:+0.0;-0.0}");
+        }
     }
 
     /// <summary>
@@ -455,33 +661,201 @@ public static class ConsoleCommands
         args.Context.AddString($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
 
         // Apply roads to currently loaded zones
-        args.Context.AddString("Applying to loaded zones...");
+        args.Context.AddString("Queuing terrain for loaded zones...");
+        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones();
+        args.Context.AddString($"Queued road terrain for {zonesWithRoads} visible zones.");
+        ReportBridgeRespawn(args, BridgePlacement.RespawnFromPlans());
+    }
 
-        var heightmaps = Heightmap.GetAllHeightmaps();
-        int zonesWithRoads = 0;
+    /// <summary>Bridge pieces of the old network sit at the old crossings:
+    /// after a successful rebuild they go, and the new plans go in.</summary>
+    private static void ReportBridgeRespawn(Terminal.ConsoleEventArgs args, (int destroyed, int zones) result)
+    {
+        if (result.destroyed > 0)
+            args.Context.AddString($"Removed {result.destroyed} bridge pieces of the previous network.");
+        if (result.zones > 0)
+            args.Context.AddString($"Spawned bridges into {result.zones} zone(s).");
+    }
 
-        if (heightmaps != null)
+    /// <summary>road_crossings [count] lists the river crossings nearest the player.</summary>
+    private static void CrossingsCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
         {
-            foreach (var heightmap in heightmaps)
-            {
-                if (heightmap == null) continue;
-
-                Vector3 hmPos = heightmap.transform.position;
-                Vector2s zoneID = ZoneSystem.GetZone(hmPos);
-
-                var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-                if (roadPoints.Count == 0) continue;
-
-                TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
-                if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
-
-                RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
-                zonesWithRoads++;
-            }
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
         }
 
-        args.Context.AddString($"Applied roads to {zonesWithRoads} visible zones.");
+        IReadOnlyList<RoadCrossing> crossings = RoadNetworkGenerator.GetRoadCrossings();
+        args.Context.AddString($"{crossings.Count} river crossing(s) on the roads.");
+        if (crossings.Count == 0)
+            return;
+
+        int count = 10;
+        if (args.Length > 1 && int.TryParse(args[1], out int requested))
+            count = requested;
+        Vector3 here = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+        Vector2 here2 = new Vector2(here.x, here.z);
+        foreach (RoadCrossing site in crossings.OrderBy(c => Vector2.Distance(c.Center, here2)).Take(count))
+        {
+            args.Context.AddString(
+                $"  ({site.Center.x:F0},{site.Center.y:F0}) {Vector2.Distance(site.Center, here2):F0} m away: {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")}, {site.Width:F0} m wide " +
+                $"from ({site.FromBank.x:F1},{site.FromBank.y:F1}) to ({site.ToBank.x:F1},{site.ToBank.y:F1}), " +
+                $"bed {site.WaterLevel - site.RiverbedHeight:F1} m deep, fairway {site.FairwayWidth:F0} m, " +
+                // Pier height, not water depth, is what decides whether vanilla
+                // support can reach the deck. The two differ a lot: a 2.3 m deep
+                // channel between high banks carries a 12 m structure.
+                $"{(site.Kind == CrossingKind.Bridge && WorldGenerator.instance != null ? $"pier {BridgeLayout.PierHeight(site, WorldGenerator.instance):F1} m, " : "")}" +
+                $"{BridgePlans.PiecesAt(site)} pieces");
+        }
     }
+
+    /// <summary>road_bridges reports the plans; road_bridges respawn destroys every
+    /// spawned bridge piece and spawns the current plans again into the loaded
+    /// zones (fixture iteration).</summary>
+    private static void BridgesCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+        {
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
+        }
+
+        if (args.Length > 1 && args[1] == "respawn")
+        {
+            (int destroyed, int zones) = BridgePlacement.RespawnFromPlans();
+            args.Context.AddString($"Destroyed {destroyed} bridge pieces; spawned the current plans into {zones} zone(s). Zones the world has not generated yet get theirs when it does.");
+            return;
+        }
+
+        List<RoadCrossing> sites = BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings());
+        args.Context.AddString(
+            $"{sites.Count} crossing site(s), " +
+            $"{BridgePlans.TotalPlannedPieces} pieces planned across {BridgePlans.PlannedZoneCount} zone(s), {BridgePlans.SpawnedZones.Count} zone(s) spawned. road_crossings lists them.");
+    }
+
+    /// <summary>
+    /// What is intentionally missing from a bridge, as coordinates.
+    ///
+    /// The bridges ship ruined on purpose -- piers outlive decks, a navigation
+    /// gap stays clear for boats -- and the claim that goes with that is that a
+    /// player can put the missing pieces back with ordinary vanilla ones and
+    /// get a continuous, aligned crossing. This command is how that claim is
+    /// checked in a running game rather than argued about: it prints the
+    /// difference between the completed layout and the shipped one.
+    ///
+    /// Deterministic, and deliberately computed from the PLAN rather than from
+    /// what is standing: two runs on the same world and seed print the same
+    /// list, whether or not anything has since decayed or been built.
+    /// </summary>
+    private static void BridgeRepairsCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+        {
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
+        }
+        if (WorldGenerator.instance == null)
+        {
+            args.Context.AddString("Error: no world");
+            return;
+        }
+
+        Vector2 at;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+            at = new Vector2(x, z);
+        else if (Player.m_localPlayer != null)
+            at = new Vector2(Player.m_localPlayer.transform.position.x, Player.m_localPlayer.transform.position.z);
+        else
+        {
+            args.Context.AddString("Usage: road_bridge_repairs <x> <z>");
+            return;
+        }
+
+        List<RoadCrossing> sites = BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings());
+        if (sites.Count == 0)
+        {
+            args.Context.AddString("No crossings on this network.");
+            return;
+        }
+
+        RoadCrossing site = sites.OrderBy(c => Vector2.Distance(c.Center, at)).First();
+        int seed = WorldGenerator.instance.GetSeed();
+        List<BridgePiece> complete = BridgeLayout.SolveComplete(site, WorldGenerator.instance, seed);
+        List<BridgePiece> shipped = BridgeLayout.Solve(site, WorldGenerator.instance, seed);
+
+        (float dropFrom, float dropTo) = BridgeLayout.BankDrop(site, WorldGenerator.instance);
+        (bool nearLands, bool farLands) = BridgeLayout.StairRunsLand(site, WorldGenerator.instance);
+        args.Context.AddString(
+            $"Crossing ({site.Center.x:F0},{site.Center.y:F0}) {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")}, " +
+            $"{site.Width:F2} m wide, level deck, bank drop {dropFrom:F2}/{dropTo:F2} m, " +
+            $"built {BridgeLayout.BuiltLength(site.Width):F2} m over {BridgeLayout.Bays(site.Width)} bay(s) " +
+            $"of {BridgeLayout.StationSpacing():F3} m, deck {BridgeLayout.DeckHalfWidth * 2f:F0} m wide, " +
+            $"from ({site.FromBank.x:F2},{site.FromBank.y:F2}) to ({site.ToBank.x:F2},{site.ToBank.y:F2}).");
+        if (!nearLands || !farLands)
+            args.Context.AddString($"STAIRS UNLANDED: near={(nearLands ? "ok" : "above ground")} far={(farLands ? "ok" : "above ground")} " +
+                $"-- the bank falls faster than {BridgeLayout.MaxStairSteps} steps of 1 in 2 can follow.");
+        // A site with no turnable line keeps the bearing the router priced --
+        // better an off-grid bridge than a road over open water -- but then
+        // NONE of its pieces can be replaced by an ordinary hammer, which is
+        // exactly what this command is for. Say so before listing them.
+        float siteHeading = BridgeLayout.YawDegrees(site.Direction);
+        if (!BridgeLayout.HeadingIsPlaceable(siteHeading))
+            args.Context.AddString($"HEADING NOT PLACEABLE: this crossing stands at {siteHeading:F2} deg, and the vanilla hammer " +
+                $"turns only in {BridgeLayout.PlaceableHeadingStep} deg steps. No admissible line reached land on both banks here, " +
+                "so the crossing kept the bearing the router priced. The pieces below are NOT hand-replaceable at this site.");
+        int gap = 0, ruined = 0;
+        List<string> lines = new();
+        foreach (BridgePiece piece in complete)
+        {
+            if (shipped.Any(b => b.Prefab == piece.Prefab && Vector3.Distance(b.Position, piece.Position) < 0.05f))
+                continue;
+            // Two reasons a piece is missing, reported apart: the navigation
+            // gap is left open on purpose for boats, the rest is ruin.
+            bool inGap = BridgeLayout.InNavigationGap(site, site.Along(new Vector2(piece.Position.x, piece.Position.z)));
+            if (inGap) gap++; else ruined++;
+            lines.Add(string.Format(CultureInfo.InvariantCulture,
+                "REPAIR {0} {1} {2:F3} {3:F3} {4:F3} yaw={5:F2} pitch={6:F2} why={7}",
+                lines.Count + 1, piece.Prefab, piece.Position.x, piece.Position.y, piece.Position.z,
+                piece.YawDegrees, piece.PitchDegrees, inGap ? "gap" : "ruin"));
+        }
+        args.Context.AddString($"Completed: {complete.Count} pieces. Shipped: {shipped.Count}. Missing: {lines.Count} ({gap} in the navigation gap, {ruined} ruin).");
+        foreach (string line in lines)
+            args.Context.AddString(line);
+        int n = lines.Count;
+        args.Context.AddString($"OK: BRIDGE_REPAIRS {n} piece(s) to replace");
+    }
+
+    private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
+    {
+        Vector3 pos;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+        {
+            pos = new Vector3(x, 0f, z);
+        }
+        else if (Player.m_localPlayer != null)
+        {
+            pos = Player.m_localPlayer.transform.position;
+        }
+        else
+        {
+            args.Context.AddString("No local player; use road_regen_island <x> <z>");
+            return;
+        }
+
+        args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})...");
+        if (!RoadNetworkGenerator.RegenerateIslandAt(pos, out string summary))
+        {
+            args.Context.AddString($"Failed: {summary}");
+            return;
+        }
+
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        args.Context.AddString(summary);
+        args.Context.AddString($"Queued terrain for {zones} loaded zone(s).");
+        ReportBridgeRespawn(args, BridgePlacement.RespawnFromPlans());
+    }
+
 
     /// <summary>
     /// Spawn debug markers above road points in the current zone.
@@ -875,6 +1249,9 @@ public static class ConsoleCommands
         sb.AppendLine($"  Top-left:     {debugInfo.Biome01}");
         sb.AppendLine($"  Top-right:    {debugInfo.Biome11}");
         sb.AppendLine($"  At biome boundary: {debugInfo.IsBiomeBoundary}");
+        if (!debugInfo.IsBiomeBoundary && debugInfo.PointBiome != debugInfo.Biome00)
+            sb.AppendLine($"  Point biome {debugInfo.PointBiome} is not the corners' {debugInfo.Biome00}: " +
+                          $"the game renders {debugInfo.Biome00} height here, raw GetHeight uses {debugInfo.PointBiome}");
         sb.AppendLine();
 
         // Get actual rendered terrain height from Heightmap

@@ -37,6 +37,16 @@ public class RoadPointDebugMarker : MonoBehaviour, Interactable, Hoverable
         return "Road Point Debug";
     }
 
+    /// <summary>
+    /// Valheim 1.0 added this to Hoverable so a piece can lift its hover text
+    /// clear of itself. A debug marker already sits above the road point it
+    /// describes, so it needs no offset of its own.
+    /// </summary>
+    public float GetHoverOffset()
+    {
+        return 0f;
+    }
+
     public string GetHoverText()
     {
         float delta = DebugInfo.SmoothedHeight - DebugInfo.OriginalHeight;

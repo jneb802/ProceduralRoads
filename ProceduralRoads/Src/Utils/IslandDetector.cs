@@ -77,6 +77,17 @@ public static class IslandDetector
         );
     }
     
+    /// <summary>The grouping used by road generation, also exposed by road_islands without arguments.</summary>
+    public static List<Island> DetectRoadIslands()
+    {
+        var options = RoadNetworkGenerator.NetworkOptions;
+        if (!options.WalkableIslands) return DetectIslands();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var islands = RoadIslandDetector.Detect(WorldGenerator.instance, options: options);
+        Log.LogInfo($"Road island detection: {islands.Count} groups at {RoadIslandDetector.SampleSpacing} m in {clock.Elapsed.TotalSeconds:F1}s");
+        return islands;
+    }
+
     public static List<Island> DetectIslands(float cellSize = DefaultCellSize, int minCells = MinIslandCells)
     {
         var wg = WorldGenerator.instance;

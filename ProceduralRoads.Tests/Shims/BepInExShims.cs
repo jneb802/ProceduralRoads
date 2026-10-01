@@ -31,6 +31,9 @@ namespace ProceduralRoads
     {
         public static BepInEx.Logging.ManualLogSource ProceduralRoadsLogger { get; } = new();
 
-        public static System.Collections.Generic.List<string> GetConfigLocationNames() => new();
+        /// <summary>Stand-in for the [Locations] CustomLocations config entry; tests set it.</summary>
+        public static System.Collections.Generic.List<string> ConfigLocationNames { get; set; } = new();
+
+        public static System.Collections.Generic.List<string> GetConfigLocationNames() => new(ConfigLocationNames);
     }
 }

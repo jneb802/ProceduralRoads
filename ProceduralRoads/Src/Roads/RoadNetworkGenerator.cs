@@ -3625,7 +3625,7 @@ public static partial class RoadNetworkGenerator
                IsCustomLocation(locationName);
     }
 
-    private static bool IsCustomLocation(string name) => RegisteredLocationNames.Contains(name)
+    internal static bool IsCustomLocation(string name) => RegisteredLocationNames.Contains(name)
         || ConfiguredLocationNames.Contains(name);
 
     private static bool IsRequiredLocation(string name) => BossLocationNames.Contains(name)

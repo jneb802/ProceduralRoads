@@ -6,7 +6,7 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// Map icons of places placed before their roads that the game shows once placed (m_iconPlaced: Hildir's
-/// quest sites, with AttemptRoadsToHildirQuestSites on). The game lists every such place once it is placed
+/// quest sites, with AttemptRoadsToHildirQuestSites on; registered or configured places). The game lists every such place once it is placed
 /// (ZoneSystem.GetLocationIcons) and the server sends the list to every player; placed under the loading
 /// screen, all of them would be on every player's map from the start. Vanilla places one only when a player
 /// comes near enough for its zone to be generated (ZoneSystem.CreateGhostZones), so the server leaves each

@@ -20,7 +20,8 @@ namespace ProceduralRoads;
 /// (one try a frame) and <see cref="ReadingStage"/>; then the generation rebuilds their ground
 /// (<see cref="PlacedSites.PrepareSteps"/>). A place that is unique or shows a map icon once placed is never
 /// a destination (<see cref="PlacedSites.PlayerDecides"/>), so never placed here; Hildir's quest sites are, where
-/// the roads go to them, and their icons stay off the map until a player comes near (<see cref="HiddenSiteIcons"/>).
+/// the roads go to them, and so are registered or configured iconed places; their icons stay off the map until a
+/// player comes near (<see cref="HiddenSiteIcons"/>).
 /// </summary>
 public static class SitesFirstLoad
 {
@@ -109,10 +110,11 @@ public static class SitesFirstLoad
                 WorldGenerator.instance.GetBiome(position.x, position.z), LocationLevelling.OpsAt(centre))) return;
         if (PlacedSiteReader.Placed(zone, centre, out _)) { already++; s_placing.Add((centre, zone)); return; }
         if (instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone)) return;
-        // Shown on the map once placed (Hildir's quest sites): off the map until a player comes as near as
-        // the game would have placed it from. Hidden first: placing sends the icons at once.
-        // Only Hildir's quest sites, with roads to them on, get here with such an icon (PlacedSites.PlayerDecides).
-        if (location.m_iconPlaced && RoadNetworkGenerator.HildirRoads(location.m_prefab.Name)) HiddenSiteIcons.Hide(instance.m_position);
+        // Shown on the map once placed (Hildir's quest sites, a registered village): off the map until a player
+        // comes as near as the game would have placed it from. Hidden first: placing sends the icons at once.
+        // Only the iconed places PlacedSites.PlayerDecides lets through get here: Hildir's quest sites with roads
+        // to them on, and registered or configured names.
+        if (location.m_iconPlaced) HiddenSiteIcons.Hide(instance.m_position);
         s_pending.Add((centre, zone));
     }
 

@@ -156,9 +156,12 @@ public static class PlacedSites
     /// <see cref="RoadNetworkGenerator"/>'s location gathering, which leaves such a place out of every destination list.
     /// </summary>
     /// <remarks>Not Hildir's quest sites while roads go to them (<see cref="RoadNetworkOptions.HildirQuestSites"/>): placed
-    /// first like the other caves, their map icons held back until a player comes near (<see cref="HiddenSiteIcons"/>).</remarks>
+    /// first like the other caves, their map icons held back until a player comes near (<see cref="HiddenSiteIcons"/>).
+    /// Not the map icon of a place another mod registers or the config lists (a village, a port): asking for roads to
+    /// it is the choice, and its icon is held back the same way. A unique place stays the player's, registered or not.</remarks>
     public static bool PlayerDecides(string prefab, bool unique, bool iconPlaced, bool iconAlways) =>
-        !RoadNetworkGenerator.HildirRoads(prefab) && (unique || iconPlaced || iconAlways);
+        !RoadNetworkGenerator.HildirRoads(prefab)
+        && (unique || ((iconPlaced || iconAlways) && !RoadNetworkGenerator.IsCustomLocation(prefab)));
 
     /// <summary>
     /// Whether a place's landing is only known once it is placed, so it is placed before its roads:

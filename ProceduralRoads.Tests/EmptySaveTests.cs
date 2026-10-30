@@ -8,7 +8,7 @@ public class EmptySaveTests : System.IDisposable
     private readonly ValheimWorldScope _world = new ValheimWorldScope();
     public void Dispose()
     {
-        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear();
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StructureAppendQueue.Reset();
         _world.Dispose();
     }
     static void Save() => RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
@@ -16,7 +16,7 @@ public class EmptySaveTests : System.IDisposable
     void Begin()
     {
         _world.WithZdos();
-        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear();
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StructureAppendQueue.Reset();
         RoadNetworkPersistence.EnsureMetadataInstance();
     }
     static void AddRoad()

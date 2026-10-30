@@ -65,6 +65,7 @@ Host or admin only:
 | Command | Description |
 |---------|-------------|
 | `road_progress` | Generation phase and island count |
+| `road_connect`, `road_path`, `road_mark` | Add your own roads, round zones players changed unless asked; see [manual roads](docs/manual-roads.md) |
 | `road_generate` | Regenerate the whole network (back up first) |
 | `road_regen_island` | Clear all roads and regenerate only the island you are on (back up first) |
 

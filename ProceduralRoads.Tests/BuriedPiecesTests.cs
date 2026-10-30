@@ -139,12 +139,83 @@ public class BuriedPiecesTests : IDisposable
         public override float GetHeight(float wx, float wy) => 30f + 0.25f * wy;
     }
 
+    /// <summary>
+    /// The finished ground the pass reads is what the terrain writer leaves: a road and a staircase's cut over a
+    /// slope, written into a zone, and read back vertex by vertex.
+    /// </summary>
+    [Fact]
+    public void TheFinishedGroundIsWhatTheTerrainWriterLeaves()
+    {
+        WorldGenerator world = new SlopeWorld();
+        _scope.WithWorld(world);
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-30f, -10f), new(30f, 10f) }, 4f, world);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        RoadSpatialGrid.CommitAppendCuts(new[] { new Vector3(-8f, 25f, 12f), new Vector3(-7f, 25f, 13f) }, StairLayout.CutRadius * 2f, RoadSpatialGrid.RoadNetworkVersion);
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = Heightmap.CreateForZone(zone);
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), hm, hm.m_terrainComp!);
+        TerrainComp tc = hm.m_terrainComp!;
+        int grid = tc.m_width + 1;
+        Func<int, int, float> finished = RoadTerrainModifier.FinishedGround((x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world));
+        int changed = 0;
+        for (int vz = 0; vz < grid; vz++)
+            for (int vx = 0; vx < grid; vx++)
+            {
+                int x = vx - tc.m_width / 2, z = vz - tc.m_width / 2, i = vz * grid + vx;
+                float written = BiomeBlendedHeight.GetBlendedHeight(x, z, world) + (tc.m_modifiedHeight[i] ? tc.m_levelDelta[i] : 0f);
+                if (tc.m_modifiedHeight[i]) changed++;
+                Assert.Equal(written, finished(x, z), 3);
+            }
+        Assert.True(changed > 100, $"only {changed} vertices written");
+        Assert.True(finished(-8, 12) < BiomeBlendedHeight.GetBlendedHeight(-8f, 12f, world) - 1f, "the cut is in it");
+    }
 
     private sealed class FlatWorld : WorldGenerator
     {
         public override float GetHeight(float wx, float wy) => 30f;
     }
 
+    /// <summary>
+    /// A column carried down past the ground (as for a road's cut beside it that was never made) loses the pillar
+    /// wholly under the finished ground and keeps the one through the surface; where a staircase's cut does lower
+    /// the ground there, both stay.
+    /// </summary>
+    [Fact]
+    public void TheNetworkDropsTheBuriedPillarsOnlyWhereNoCutUncoversThem()
+    {
+        WorldGenerator world = new FlatWorld();
+        _scope.WithWorld(world);
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(300f, 300f), new(340f, 300f) }, 4f, world);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        StairStructures.Reset();
+        StairRun Column(float x)
+        {
+            var run = new StairRun { From = new Vector2(x, 0f), To = new Vector2(x, 4f), Width = 2f };
+            run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairFloor, Prefab = "stone_floor_2x2", Position = new Vector3(x, 30.7f, 0f) });
+            run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairSupport, Prefab = "stone_pillar", Position = new Vector3(x, 29.2f, 0f) });
+            run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairSupport, Prefab = "stone_pillar", Position = new Vector3(x, 27.2f, 0f) });
+            StairStructures.Add(run);
+            return run;
+        }
+        StairRun open = Column(0f), cut = Column(20f);
+        // Cut to 27.5 m round the second column: its lower pillar's top at 28.2 m is out of the ground there.
+        var cuts = new List<Vector3>();
+        for (float x = 17f; x <= 23f; x += 1f)
+            for (float z = -3f; z <= 3f; z += 1f) cuts.Add(new Vector3(x, 27.5f, z));
+        RoadSpatialGrid.CommitAppendCuts(cuts, StairLayout.CutRadius * 2f, RoadSpatialGrid.RoadNetworkVersion);
+
+        var byPrefab = new Dictionary<string, int>();
+        var (carried, dropped) = StairStructures.SettleOnFinishedGround(RoadTerrainModifier.FinishedGround((x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world)), byPrefab);
+
+        Assert.Equal(0, carried);
+        Assert.Equal(1, dropped);
+        Assert.Equal(1, byPrefab["stone_pillar"]);
+        Assert.Equal(2, open.Pieces.Count);
+        Assert.DoesNotContain(open.Pieces, p => p.Position.y < 28f);
+        Assert.Equal(3, cut.Pieces.Count);
+    }
 
     /// <summary>
     /// A column with a corner on ground that is not known (NaN) is not carried down, whichever corner that is: Mathf.Min

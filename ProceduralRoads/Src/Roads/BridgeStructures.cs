@@ -323,7 +323,7 @@ public sealed class BridgeStructures : IStructureSource
     {
         if (zones != null)
             foreach (Vector2s zone in zones)
-                if (StructurePlans.IsSpawned(zone) || StructurePlans.ZoneHasLivePieces(zone, condemned))
+                if (StructurePlans.IsSpawned(zone) || StructureAppendQueue.ForZone(zone) != null || StructurePlans.ZoneHasLivePieces(zone, condemned))
                     return true;
         return false;
     }

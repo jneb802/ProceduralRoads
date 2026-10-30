@@ -17,8 +17,9 @@ namespace ProceduralRoads;
 /// with its version. At load, a generated zone outside that record is excluded;
 /// no record, or one for another network, excludes every generated zone.
 ///
-/// An explicit operator command (road_generate, road_regen_island) may write
-/// them; the explored zones it writes become the network's (see Admit).
+/// An explicit operator command (road_mark, road_path, road_connect,
+/// road_generate, road_regen_island) may write them; the explored zones it
+/// writes become the network's (see Admit).
 ///
 /// A world's first network may include the explored land instead
 /// (ExistingWorldRoads.IncludeExplored, see IncludeExplored): then only the
@@ -56,6 +57,9 @@ public static class NetworkCutoff
     /// the search's workers read it while it is set.
     /// </summary>
     private static HashSet<Vector2s> s_avoided = new();
+
+    /// <summary>How far, in metres, a road's centreline keeps from an avoided zone (0: it may run along its border).</summary>
+    private static float s_avoidMargin;
 
     /// <summary>
     /// How far, in metres, a road fades in from the edge of a zone left as it is. At that edge the
@@ -95,15 +99,45 @@ public static class NetworkCutoff
     {
         HashSet<Vector2s> avoided = s_avoided;
         if (avoided.Count == 0) return false;
+        float margin = s_avoidMargin;
         Vector2s? startZone = start.HasValue ? ZoneOf(start.Value) : null;
         Vector2s? endZone = end.HasValue ? ZoneOf(end.Value) : null;
+        bool Kept(Vector2 p)
+        {
+            Vector2s zone = ZoneOf(p);
+            return avoided.Contains(zone) && zone != startZone && zone != endZone;
+        }
         int steps = Mathf.Max(1, Mathf.CeilToInt(Vector2.Distance(a, b) / 4f));
         for (int i = 0; i <= steps; i++)
         {
-            Vector2s zone = ZoneOf(Vector2.Lerp(a, b, i / (float)steps));
-            if (avoided.Contains(zone) && zone != startZone && zone != endZone) return true;
+            Vector2 p = Vector2.Lerp(a, b, i / (float)steps);
+            if (Kept(p)) return true;
+            // The margin is shorter than a zone: the corners of the square round the point find every zone within it.
+            if (margin > 0f && (Kept(p + new Vector2(margin, margin)) || Kept(p + new Vector2(-margin, margin)) ||
+                                Kept(p + new Vector2(margin, -margin)) || Kept(p + new Vector2(-margin, -margin))))
+                return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// For one manual road's planning (main thread, no generation running): its search and straightening go round
+    /// <paramref name="zones"/>, keeping <paramref name="margin"/> metres from them so the road's levelling stays out
+    /// too. Disposing restores what was there.
+    /// </summary>
+    public static IDisposable AvoidWhilePlanning(HashSet<Vector2s> zones, float margin)
+    {
+        var restore = (s_avoided, s_avoidMargin);
+        s_avoided = zones.Count == 0 ? new HashSet<Vector2s>() : new HashSet<Vector2s>(zones);
+        s_avoidMargin = margin;
+        return new Restore(() => { s_avoided = restore.s_avoided; s_avoidMargin = restore.s_avoidMargin; });
+    }
+
+    private sealed class Restore : IDisposable
+    {
+        private Action? m_undo;
+        internal Restore(Action undo) => m_undo = undo;
+        public void Dispose() { m_undo?.Invoke(); m_undo = null; }
     }
 
     private static Vector2s ZoneOf(Vector2 p) => ZoneSystem.GetZone(new Vector3(p.x, 0f, p.y));
@@ -141,6 +175,7 @@ public static class NetworkCutoff
         s_hadNetwork = false;
         s_includeExploredKeeping = null;
         s_avoided = new HashSet<Vector2s>();
+        s_avoidMargin = 0f;
     }
 
     /// <summary>
@@ -245,6 +280,13 @@ public static class NetworkCutoff
         "like land explored after it: every road there is built in full, over whatever stands on its line. Zones: " +
         string.Join(", ", System.Linq.Enumerable.Select(zones, z => $"({z.x}, {z.y})")) + ".";
 
+    /// <summary>Undo <see cref="Admit"/> when the road it was for was not added after all.</summary>
+    internal static void Readmit(IEnumerable<Vector2s> zones)
+    {
+        if (!Current) return;
+        foreach (Vector2s zone in zones) s_excluded.Add(zone);
+    }
+
     /// <summary>
     /// The world is going away. With the world named, only its own state is
     /// dropped: a late teardown of an earlier world leaves the current one's.
@@ -258,6 +300,7 @@ public static class NetworkCutoff
         s_excluded = new HashSet<Vector2s>();
         s_includeExploredKeeping = null;
         s_avoided = new HashSet<Vector2s>();
+        s_avoidMargin = 0f;
     }
 
     /// <summary>

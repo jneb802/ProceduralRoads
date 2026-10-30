@@ -34,6 +34,10 @@ public static class RoadClearAreaManager
         return roadClearAreas;
     }
 
+    /// <summary>The clear areas of the road points in a zone added by appends after the first <paramref name="sinceAppend"/>
+    /// (a zone cleared for the older roads owes only the newer ones'). Not cached.</summary>
+    public static List<ZoneSystem.ClearArea> ClearAreasSince(Vector2s zoneID, int sinceAppend) => CreateRoadClearAreas(zoneID, sinceAppend);
+
     /// <summary>
     /// The road points a zone's grown trees are tested against (VegetationClearing.TrunkReachesRoad): every road point
     /// whose road, widened by the furthest a grown tree reaches (VegetationClearing.TreeReach), comes into the zone.
@@ -48,6 +52,10 @@ public static class RoadClearAreaManager
 
         return centres;
     }
+
+    /// <summary>The road centres of the points added by appends after the first <paramref name="sinceAppend"/>, as
+    /// <see cref="ClearAreasSince"/>. Not cached.</summary>
+    public static List<VegetationClearing.RoadCentre> RoadCentresSince(Vector2s zoneID, int sinceAppend) => CreateRoadCentres(zoneID, sinceAppend);
 
     /// <summary>
     /// PlaceVegetation's test for one vegetation entry, with the scale it drew for this one: inside a clear area
@@ -88,7 +96,7 @@ public static class RoadClearAreaManager
         return false;
     }
 
-    private static List<VegetationClearing.RoadCentre> CreateRoadCentres(Vector2s zoneID)
+    private static List<VegetationClearing.RoadCentre> CreateRoadCentres(Vector2s zoneID, int sinceAppend = -1)
     {
         var centres = new List<VegetationClearing.RoadCentre>();
         Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
@@ -97,6 +105,8 @@ public static class RoadClearAreaManager
         HashSet<Vector2> seen = new HashSet<Vector2>();
         foreach (RoadSpatialGrid.RoadPoint roadPoint in RoadSpatialGrid.GetRoadPointsNearPosition(zonePos, 2f * beyond))
         {
+            if (sinceAppend >= 0 && roadPoint.addition <= sinceAppend)
+                continue;
             float reach = beyond + roadPoint.w * 0.5f;
             if (Mathf.Abs(roadPoint.p.x - zonePos.x) > reach || Mathf.Abs(roadPoint.p.y - zonePos.z) > reach || !seen.Add(roadPoint.p))
                 continue;
@@ -106,10 +116,11 @@ public static class RoadClearAreaManager
         return centres;
     }
 
-    private static List<ZoneSystem.ClearArea> CreateRoadClearAreas(Vector2s zoneID)
+    private static List<ZoneSystem.ClearArea> CreateRoadClearAreas(Vector2s zoneID, int sinceAppend = -1)
     {
         List<ZoneSystem.ClearArea> clearAreas = new List<ZoneSystem.ClearArea>();
         List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+        if (sinceAppend >= 0) roadPoints = roadPoints.FindAll(p => p.addition > sinceAppend);
 
         if (roadPoints.Count == 0)
             return clearAreas;

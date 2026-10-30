@@ -49,8 +49,12 @@ public static class RoadNetworkPersistence
     /// </summary>
     private static readonly int ClearedZonesHash = "ProceduralRoads_ClearedZones".GetStableHashCode();
 
+    /// <summary>Hash key for the bridge pieces owed by manual roads (StructureAppendQueue).</summary>
+    private static readonly int AppendBridgesHash = "ProceduralRoads_AppendBridges".GetStableHashCode();
+
     /// <summary>Map icons of places placed before their roads, kept off the map until a player comes near (<see cref="HiddenSiteIcons"/>).</summary>
     private static readonly int HiddenSiteIconsHash = "ProceduralRoads_HiddenSiteIcons".GetStableHashCode();
+
     /// <summary>The network's staircases: their pieces and clearances (StairStructures).</summary>
     private static readonly int StairRunsHash = "ProceduralRoads_StairRuns".GetStableHashCode();
 
@@ -72,10 +76,18 @@ public static class RoadNetworkPersistence
     /// Whether the last TryLoadGlobalRoadData found a saved network it could
     /// not read: the metadata ZDO holds road data, but its version is unknown,
     /// it fails validation, or reading it threw. Such a world is never given a
-    /// new network automatically (RoadLifecycleManager): only road_generate
-    /// replaces it.
+    /// new network automatically (RoadLifecycleManager), nor a road added to it
+    /// (ManualRoads): only road_generate replaces it.
     /// </summary>
     public static bool LastLoadUnreadable { get; private set; }
+
+    /// <summary>A network generated this session is the world's from now on: a saved one that could not be read no
+    /// longer stands in the way of roads added to it, and its records are saved afresh in place of the ones kept unread.</summary>
+    public static void NetworkGenerated()
+    {
+        LastLoadUnreadable = false;
+        s_kept.Clear();
+    }
 
     /// <summary>
     /// Cached reference to the metadata ZDO.
@@ -88,10 +100,13 @@ public static class RoadNetworkPersistence
     public static void Reset()
     {
         s_metadataZdo = null;
+        LastLoadUnreadable = false;
         s_kept.Clear();
     }
 
-    /// <summary>Saved records this build could not read at load, by key: not used this session and written back unchanged.</summary>
+    /// <summary>Saved records this build could not read at load, by key: not used this session and written back unchanged.
+    /// Like <see cref="LastLoadUnreadable"/>, they are the saved world's until a network is generated in their place
+    /// (<see cref="NetworkGenerated"/>) or the world unloads (<see cref="Reset"/>): a generation that fails replaces nothing.</summary>
     private static readonly Dictionary<int, (string what, byte[] bytes)> s_kept = new();
 
     /// <summary>Whether the saved staircases could not be read this session: none may be added (their record is kept as it was).</summary>
@@ -120,6 +135,9 @@ public static class RoadNetworkPersistence
     /// <summary>Set a record, or write back the one kept unread (<see cref="ReadOrKeep"/>).</summary>
     private static void WriteRecord(ZDO zdo, int key, Func<byte[]> current) =>
         zdo.Set(key, s_kept.TryGetValue(key, out var kept) ? kept.bytes : current());
+
+    /// <summary>Whether the world holds a saved road network, whether or not this session has it in memory.</summary>
+    internal static bool SavedNetworkExists => GetMetadataZDO()?.GetByteArray(GlobalRoadDataHash, null) is { Length: > 0 };
 
     /// <summary>The bytes saved under a key of the network's metadata (tests).</summary>
     internal static byte[]? SavedRecord(string key) => GetMetadataZDO()?.GetByteArray(key.GetStableHashCode(), null);
@@ -227,6 +245,7 @@ public static class RoadNetworkPersistence
     private static void WriteStructureRecords(ZDO metadataZdo, IReadOnlyCollection<Vector2s> bridgeZones)
     {
         WriteRecord(metadataZdo, BridgeZonesHash, () => SerializeBridgeZones(bridgeZones));
+        WriteRecord(metadataZdo, AppendBridgesHash, StructureAppendQueue.Serialize);
         WriteRecord(metadataZdo, StairRunsHash, StairStructures.Serialize);
         if (BuiltBridges.Saving) WriteRecord(metadataZdo, BuiltBridgesHash, BuiltBridges.Serialize);
         WriteRecord(metadataZdo, HiddenSiteIconsHash, HiddenSiteIcons.Serialize);
@@ -354,6 +373,7 @@ public static class RoadNetworkPersistence
                 if (coastalLandings != null)
                     ReadOrKeep(metadataZdo, CoastLandingsHash, "shore landings", b => ReadCoastalLandings(b, coastalLandings), coastalLandings.Clear);
                 ReadOrKeep(metadataZdo, BridgeZonesHash, "bridge zones", b => ReadBridgeZonesOrStartAfresh(b, bridgeZones), bridgeZones.Clear);
+                ReadOrKeep(metadataZdo, AppendBridgesHash, "bridge pieces owed by manual roads", StructureAppendQueue.Load, StructureAppendQueue.Reset);
                 // Unread, the places' icons show: the map as the game would have it once they are placed.
                 ReadOrKeep(metadataZdo, HiddenSiteIconsHash, "hidden site icons", HiddenSiteIcons.Load, HiddenSiteIcons.Reset);
                 var read = System.Diagnostics.Stopwatch.StartNew();
@@ -505,7 +525,7 @@ public static class RoadNetworkPersistence
     /// Serialize road start points to binary format.
     /// Format: [count][x1][y1][labelLen1][labelBytes1]...
     /// </summary>
-    private static byte[] SerializeRoadStartPoints(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
+    internal static byte[] SerializeRoadStartPoints(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
@@ -528,7 +548,7 @@ public static class RoadNetworkPersistence
     /// <summary>
     /// Deserialize road start points from binary format.
     /// </summary>
-    private static bool DeserializeRoadStartPoints(byte[] data, List<(Vector2 position, string label)> roadStartPoints)
+    internal static bool DeserializeRoadStartPoints(byte[] data, List<(Vector2 position, string label)> roadStartPoints)
     {
         try
         {

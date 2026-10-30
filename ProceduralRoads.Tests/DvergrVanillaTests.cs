@@ -51,6 +51,60 @@ public sealed class DvergrVanillaTests : IDisposable
     }
 }
 
+/// <summary>A piece's roll reaches the game: the spawner turned pieces by pitch and yaw only, so a hanging vine (roll 180)
+/// and the wooden kits' toppled debris (rolled up to 30 degrees) came out upright.</summary>
+public sealed class StructureRollTests : IDisposable
+{
+    private readonly ValheimWorldScope _world = new ValheimWorldScope()
+        .WithWorld(new BridgeTests.WideRiverWorld()).WithZdos().WithZoneSystem().WithScene().AsServer();
+
+    public StructureRollTests()
+    {
+        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
+        RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
+        for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
+        ManualRoads.Commit(ManualRoads.Prepare(new[] { new Vector2(-160, 0), new Vector2(160, 0) }, false, new[] { island }));
+    }
+    public void Dispose() { NetworkCutoff.Forget(); RoadNetworkGenerator.Reset(); _world.Dispose(); }
+
+    [Fact]
+    public void ARollIsPartOfThePiecesTurn()
+    {
+        // A vine hanging as vanilla's do (Mistlands_Viaduct1: yaw 270, roll 180): its up points down.
+        var vine = new StructurePiece { Prefab = "vines", YawDegrees = 270f, RollDegrees = 180f };
+        Vector3 up = StructurePlacement.Rotation(vine) * new Vector3(0f, 1f, 0f);
+        Assert.True(Vector3.Distance(up, new Vector3(0f, -1f, 0f)) < 1e-4f, $"up {up}");
+        var tilted = new StructurePiece { Prefab = "vines", PitchDegrees = -26f, YawDegrees = 90f, RollDegrees = 90f };
+        Quaternion want = Quaternion.Euler(-26f, 90f, 90f), got = StructurePlacement.Rotation(tilted);
+        Assert.True(Mathf.Abs(want.x * got.x + want.y * got.y + want.z * got.z + want.w * got.w) > 0.99999f);
+    }
+
+    [Fact]
+    public void EveryPieceIsSpawnedWithItsPlannedTurn()
+    {
+        StructureAppendQueue.Reset();
+        List<Vector2s> zones = StructurePlans.PlannedZones;
+        var planned = zones.SelectMany(z => StructurePlans.PlanFor(z)!).ToList();
+        Assert.NotEmpty(planned);
+        foreach (var piece in planned)
+            if (ZNetScene.instance!.GetPrefab(piece.Prefab) == null) ZNetScene.instance.AddPrefab(piece.Prefab);
+        NetworkCutoff.Forget();
+        NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
+        NetworkCutoff.UseNewNetwork();
+        foreach (Vector2s zone in zones) StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full);
+        var spawned = ZDOMan.instance!.Zdos.Where(z => z.GetInt(StructurePlans.MarkerHash) == 1).ToList();
+        foreach (StructurePiece p in planned)
+        {
+            ZDO zdo = Assert.Single(spawned, z => Vector3.Distance(z.GetPosition(), p.Position) < 0.01f && z.GetPrefab() == p.Prefab.GetStableHashCode());
+            Quaternion want = Quaternion.Euler(p.PitchDegrees, p.YawDegrees, p.RollDegrees);
+            Quaternion got = zdo.GetRotation();
+            float dot = Mathf.Abs(want.x * got.x + want.y * got.y + want.z * got.z + want.w * got.w);
+            Assert.True(dot > 0.99999f, $"{p.Prefab} at {p.Position}: rotation {got} not {want}");
+        }
+    }
+}
 
 /// <summary>Mist lights on Dvergr wood bridges (only some bridges have them, and on those only some posts), mounted as Mistlands_Harbour1's: 0.5 m over a pile's top.</summary>
 public sealed class DvergrWoodLightTests : IDisposable

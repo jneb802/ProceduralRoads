@@ -49,6 +49,7 @@ public static class ConsoleCommands
             var p = RoadLifecycleManager.Progress;
             args.Context.AddString($"Road progress: run={p.RunId} phase={p.Phase} completed={p.Completed} total={p.Total} elapsed={p.ElapsedSeconds:F1}s frame={Time.frameCount}");
         });
+        ManualRoadCommands.Register();
         if (DevCommands)
         {
             RegisterDevCommands();

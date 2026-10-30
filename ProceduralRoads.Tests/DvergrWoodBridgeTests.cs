@@ -731,3 +731,50 @@ public sealed class DvergrWoodBridgeTests : IDisposable
     }
 }
 
+/// <summary>NetworkCutoff for the Dvergr wood kit: a generated low Mistlands bridge that would put any piece in a zone
+/// explored before the network is built nowhere, as every bridge (BridgeLifecycleTests).</summary>
+public sealed class DvergrWoodBridgeCutoffTests : IDisposable
+{
+    private readonly ValheimWorldScope _world = new ValheimWorldScope()
+        .WithWorld(new BridgeTests.WideRiverWorld { Biome = Heightmap.Biome.Mistlands }).WithZdos().WithZoneSystem().WithScene().AsServer();
+
+    public DvergrWoodBridgeCutoffTests()
+    {
+        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
+        RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
+        for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
+        ManualRoads.Commit(ManualRoads.Prepare(new[] { new Vector2(-160, 0), new Vector2(160, 0) }, false, new[] { island }));
+    }
+    public void Dispose() { NetworkCutoff.Forget(); RoadNetworkGenerator.Reset(); _world.Dispose(); }
+
+    [Fact]
+    public void ADvergrWoodBridgeReachingAnExploredZoneIsBuiltNowhere()
+    {
+        RoadCrossing bridge = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), c => c.Kind == CrossingKind.Bridge);
+        Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(bridge, WorldGenerator.instance!));
+        StructureAppendQueue.Reset();
+        List<Vector2s> zones = StructurePlans.PlannedZones;
+        Assert.True(zones.Count >= 2, "the fixture's bridge must span more than one zone");
+        Assert.Contains(zones.SelectMany(z => StructurePlans.PlanFor(z)!), p => p.Prefab == DvergrWoodBridge.Plank);
+        foreach (var piece in zones.SelectMany(z => StructurePlans.PlanFor(z)!))
+            if (ZNetScene.instance!.GetPrefab(piece.Prefab) == null) ZNetScene.instance.AddPrefab(piece.Prefab);
+        NetworkCutoff.Forget();
+        NetworkCutoff.SnapshotWorld(new[] { zones[zones.Count - 1] });
+        NetworkCutoff.UseNewNetwork();
+        foreach (Vector2s zone in zones)
+        {
+            Assert.Equal(0, StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full));
+            Assert.False(StructurePlans.IsSpawned(zone));
+        }
+        Assert.DoesNotContain(ZDOMan.instance!.Zdos, z => z.GetInt(StructurePlans.MarkerHash) == 1);
+
+        // On a world with nothing explored the same bridge gets every planned piece, Dvergr planks among them.
+        NetworkCutoff.Forget();
+        NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
+        NetworkCutoff.UseNewNetwork();
+        Assert.Equal(StructurePlans.TotalPlannedPieces, zones.Sum(z => StructurePlacement.OnZoneSpawned(z, ZoneSystem.SpawnMode.Full)));
+        Assert.Contains(ZDOMan.instance.Zdos, z => z.GetPrefab() == DvergrWoodBridge.Plank.GetStableHashCode());
+    }
+}

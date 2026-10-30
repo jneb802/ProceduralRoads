@@ -340,7 +340,7 @@ public static partial class RoadLifecycleManager
     }
     internal static void RunSynchronous(Action action)
     {
-        if (IsGenerating) throw new InvalidOperationException("Road generation is busy.");
+        if (IsGenerating || ManualRoads.Busy) throw new InvalidOperationException("Road generation is busy.");
         m_synchronous = true;
         m_nextRun++;
         SetProgress("Preparing", 0, 0);

@@ -186,6 +186,7 @@ public static partial class RoadSpatialGrid
         {
             LoadedFromReleasedFormat = false;
             m_roadPoints.Clear();
+            s_appendParents.Clear();
             m_initialized = false;
             m_storedPointRecords = 0;
             lock (m_recordGate) Junctions.Clear();
@@ -1011,37 +1012,55 @@ public static partial class RoadSpatialGrid
     }
 
     /// <summary>
-    /// Stored road points moved to new heights (RoadStairRuns.LayLanding: another road raised to a landing): each point in
-    /// <paramref name="changes"/>, as it was read, goes to its height in every cell it is filed in. A point no longer stored
-    /// as it was read is left. Returns how many stored records moved.
+    /// Stored road points moved to new heights (RoadStairRuns.LayLanding, a structure's end landing: another road raised to
+    /// it): each point in <paramref name="changes"/>, as it was read, goes to its height in every cell it is filed in; a point
+    /// two changes name goes to the higher. A point no longer stored as it was read is left. Returns how many stored records
+    /// moved.
     /// </summary>
     internal static int SetRoadHeights(IReadOnlyList<(RoadPoint at, float to)> changes)
     {
         if (changes.Count == 0) return 0;
-        int moved = 0;
         m_roadCacheLock.EnterWriteLock();
-        try
+        try { return Raise(m_roadPoints, changes, null); }
+        finally { m_roadCacheLock.ExitWriteLock(); }
+    }
+
+    /// <summary><see cref="SetRoadHeights"/> on <paramref name="cells"/> (the caller holds the grid's write lock). With
+    /// <paramref name="addition"/> (an append), a cell's array is replaced rather than changed in place and each moved point
+    /// becomes the append's, so a terrain compiler stamped before it writes the point again.</summary>
+    private static int Raise(IDictionary<Vector2i, RoadPoint[]> cells, IReadOnlyList<(RoadPoint at, float to)> changes, int? addition)
+    {
+        var byPoint = new Dictionary<Vector2, List<(float from, float to)>>();
+        var visit = new HashSet<Vector2i>();
+        foreach (var (at, to) in changes)
         {
-            foreach (var (at, to) in changes)
-            {
-                Vector2i home = GetRoadGrid(at.p.x, at.p.y);
-                int rings = Mathf.CeilToInt(at.w / GridSize) + 1;
-                for (int y = home.y - rings; y <= home.y + rings; y++)
-                    for (int x = home.x - rings; x <= home.x + rings; x++)
-                    {
-                        if (!m_roadPoints.TryGetValue(new Vector2i(x, y), out var points)) continue;
-                        for (int k = 0; k < points.Length; k++)
-                            if (points[k].IsRoad && points[k].p == at.p && Mathf.Abs(points[k].h - at.h) < 1e-4f)
-                            {
-                                points[k].h = to;
-                                moved++;
-                            }
-                    }
-            }
+            if (!byPoint.TryGetValue(at.p, out var list)) byPoint[at.p] = list = new List<(float from, float to)>();
+            int e = list.FindIndex(x => Mathf.Abs(x.from - at.h) < 1e-4f);
+            if (e >= 0) list[e] = (list[e].from, Mathf.Max(list[e].to, to));
+            else list.Add((at.h, to));
+            Vector2i home = GetRoadGrid(at.p.x, at.p.y);
+            int rings = Mathf.CeilToInt(at.w / GridSize) + 1;
+            for (int y = home.y - rings; y <= home.y + rings; y++)
+                for (int x = home.x - rings; x <= home.x + rings; x++)
+                    visit.Add(new Vector2i(x, y));
         }
-        finally
+        int moved = 0;
+        foreach (Vector2i cell in visit)
         {
-            m_roadCacheLock.ExitWriteLock();
+            if (!cells.TryGetValue(cell, out var points)) continue;
+            RoadPoint[]? copy = null;
+            for (int k = 0; k < points.Length; k++)
+            {
+                if (!points[k].IsRoad || !byPoint.TryGetValue(points[k].p, out var list)) continue;
+                float h = points[k].h;
+                int e = list.FindIndex(x => Mathf.Abs(x.from - h) < 1e-4f);
+                if (e < 0) continue;
+                RoadPoint[] into = addition.HasValue ? copy ??= (RoadPoint[])points.Clone() : points;
+                into[k].h = list[e].to;
+                if (addition is int a) into[k].addition = a;
+                moved++;
+            }
+            if (copy != null) cells[cell] = copy;
         }
         return moved;
     }

@@ -397,6 +397,35 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.True(RoadNetworkGenerator.RoadsAvailable);
     }
     [Fact]
+    public void BeginClaimsOnceAndFramesContinueWhileWorkersAreGated()
+    {
+        world.Gate = true;
+        Begin();
+        Assert.Equal("Preparing", RoadLifecycleManager.Progress.Phase);
+        long run = RoadLifecycleManager.Progress.RunId;
+        RoadLifecycleManager.OnWorldDataLoaded();
+        RoadLifecycleManager.OnZoneSystemStart(ZoneSystem.instance!);
+        Assert.Equal(run, RoadLifecycleManager.Progress.RunId);
+        AdvanceToCompute();
+        Assert.True(world.Entered.Wait(3000));
+        for (int frame = 0; frame < 20; frame++) RoadLifecycleManager.Tick();
+        Assert.Equal("Generating", RoadLifecycleManager.Progress.Phase);
+        Assert.Equal(0, RoadLifecycleManager.Progress.Completed);
+        Assert.Equal(2, RoadLifecycleManager.Progress.Total);
+        Assert.False(RoadNetworkGenerator.RoadsAvailable);
+        RoadLifecycleManager.OnPrepareSave();
+        Assert.Empty(ZDOMan.instance!.Zdos);
+        Assert.Throws<InvalidOperationException>(() => RoadNetworkGenerator.GenerateRoads());
+        Assert.Throws<InvalidOperationException>(() => ManualRoads.Prepare(new[] { new Vector2(0, 0), new Vector2(8, 0) }, false));
+        world.Release.Set(); Finish();
+        Assert.Equal("Complete", RoadLifecycleManager.Progress.Phase);
+        Assert.Equal(2, RoadLifecycleManager.Progress.Completed);
+        Assert.True(RoadNetworkGenerator.RoadsAvailable);
+        int version = RoadSpatialGrid.RoadNetworkVersion;
+        RoadLifecycleManager.Tick();
+        Assert.Equal(version, RoadSpatialGrid.RoadNetworkVersion);
+    }
+    [Fact]
     public void CancellationDrainsBeforeResetAndCannotPublishIntoTheNextRun()
     {
         world.Gate = true;
@@ -610,6 +639,28 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.Equal(RoadSpatialGrid.TotalRoadLength/1000d,rows.Sum(r=>r.Kilometres),5);
         Assert.Equal(RoadSpatialGrid.TotalRoadLength/1000d,RoadLifecycleManager.Progress.TotalKilometres!.Value,5);
         Assert.Empty(RoadLifecycleManager.Progress.ActiveIslands);
+    }
+    [Fact]
+    public void AsyncTwoIslandNetworkMatchesSerialBytes()
+    {
+        RoadParallel.Configured = 1;
+        RoadLifecycleManager.DisableActivityForTests=true;
+        RoadNetworkGenerator.GenerateRoads();
+        byte[] serial = RoadSpatialGrid.SerializeAllRoadPoints()!;
+        int version = RoadSpatialGrid.RoadNetworkVersion;
+        var starts = RoadNetworkGenerator.GetRoadStartPoints().Select(p => p.ToString()).OrderBy(p => p, StringComparer.Ordinal).ToArray();
+        var crossings = RoadNetworkPersistence.SerializeRoadCrossings(RoadNetworkGenerator.GetRoadCrossings());
+        Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+        RoadNetworkGenerator.Reset();
+        RoadParallel.Configured = 2;
+        RoadLifecycleManager.DisableActivityForTests=false;
+        RoadPreparation.CheckpointsPerTickForTests=1;
+        Begin(); Finish();
+        Assert.Equal(CanonicalRecords(serial), CanonicalRecords(RoadSpatialGrid.SerializeAllRoadPoints()!));
+        Assert.Equal(2, RoadLifecycleManager.Progress.Total);
+        Assert.Equal(version, RoadSpatialGrid.RoadNetworkVersion);
+        Assert.Equal(starts, RoadNetworkGenerator.GetRoadStartPoints().Select(p => p.ToString()).OrderBy(p => p, StringComparer.Ordinal).ToArray());
+        Assert.Equal(crossings, RoadNetworkPersistence.SerializeRoadCrossings(RoadNetworkGenerator.GetRoadCrossings()));
     }
     private static string[] CanonicalRecords(byte[] bytes)
     {

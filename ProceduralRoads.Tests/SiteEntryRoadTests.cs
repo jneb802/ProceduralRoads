@@ -364,7 +364,74 @@ public class SiteEntryRoadTests : IDisposable
                 $"{piece.Kind} at {piece.Position} on the boulder");
     }
 
+    [Fact]
+    public void InsideAFootprintOnlyARoadIntoTheSiteLevelsAndPaintsAndOnlyCloseToItself()
+    {
+        _scope.WithWorld(new FlatWorld());
+        RoadSpatialGrid.Clear();
+        // An ordinary road, 1 m above the flat ground, straight through the footprint.
+        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-30f, -10f), new(30f, -10f) }, Width, WorldGenerator.instance);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        Vector2s zone = new(0, 0);
+        Heightmap hm = Heightmap.CreateForZone(zone);
+        TerrainComp tc = hm.m_terrainComp!;
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), hm, tc);
+        Assert.DoesNotContain(tc.m_modifiedPaint, m => m);
 
+        // A road into the site, 1 m up, along z = 5 from outside the footprint to near its middle.
+        var points = new List<Vector2>();
+        var heights = new List<float>();
+        for (float x = 30f; x >= 0f; x -= 1f) { points.Add(new Vector2(x, 5f)); heights.Add(31f); }
+        var plan = RoadSpatialGrid.PlanSiteEntry(points, Width, WorldGenerator.instance, 31f, 31f, p => 30f);
+        Assert.NotNull(plan);
+        RoadSpatialGrid.CommitAppend(new[] { plan! }, RoadSpatialGrid.RoadNetworkVersion, intoSite: true);
+        Assert.Contains(RoadSpatialGrid.GetRoadPointsInZone(zone), p => p.intoSite);
+        hm = Heightmap.CreateForZone(zone);
+        tc = hm.m_terrainComp!;
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), hm, tc);
+
+        int grid = tc.m_width + 1;
+        float spacing = RoadConstants.ZoneSize / tc.m_width;
+        int Index(float x, float z) =>
+            Mathf.RoundToInt(z / spacing + tc.m_width / 2f) * grid + Mathf.RoundToInt(x / spacing + tc.m_width / 2f);
+        float reach = RoadSiteEntry.InsideReach(Width);
+        // On it, inside the footprint: levelled and painted.
+        Assert.True(tc.m_modifiedHeight[Index(4f, 5f)], "not levelled on the road inside the footprint");
+        Assert.True(tc.m_modifiedPaint[Index(4f, 5f)], "not painted on the road inside the footprint");
+        // Inside the footprint past its reach: untouched (the batter it has outside stops there).
+        Assert.False(tc.m_modifiedHeight[Index(4f, 5f + reach + 1f)], "levelled past its reach inside the footprint");
+        // The ordinary road still leaves the footprint alone.
+        Assert.False(tc.m_modifiedHeight[Index(0f, -10f)], "an ordinary road levelled inside the footprint");
+    }
+
+    [Fact]
+    public void InsideAPlaceTheEarthworkIsMeasuredAgainstTheGroundThePlaceLeaves()
+    {
+        // The terrain written on is the bare 30 m; the cave levels its landing to 32 m, which the
+        // game draws under the compiler's deltas in play. A road into the site at 32 m needs no
+        // earthwork there: measured against the bare ground it added 2 m on top.
+        _scope.WithWorld(new FlatWorld());
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(300f, 300f), new(340f, 300f) }, Width, WorldGenerator.instance);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        var points = new List<Vector2>();
+        for (float x = 30f; x >= 0f; x -= 1f) points.Add(new Vector2(x, 5f));
+        var plan = RoadSpatialGrid.PlanSiteEntry(points, Width, WorldGenerator.instance, 32f, 32f, p => 32f);
+        RoadSpatialGrid.CommitAppend(new[] { plan! }, RoadSpatialGrid.RoadNetworkVersion, intoSite: true);
+        Vector2s zone = new(0, 0);
+        RoadTerrainModifier.PlacedGround = p => RoadSiteProtection.Contains(p) ? 32f : null;
+        try
+        {
+            Heightmap hm = Heightmap.CreateForZone(zone);
+            TerrainComp tc = hm.m_terrainComp!;
+            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), hm, tc);
+            int grid = tc.m_width + 1;
+            float spacing = RoadConstants.ZoneSize / tc.m_width;
+            int at = Mathf.RoundToInt(5f / spacing + tc.m_width / 2f) * grid + Mathf.RoundToInt(4f / spacing + tc.m_width / 2f);
+            Assert.True(Mathf.Abs(tc.m_levelDelta[at]) < 0.2f, $"delta {tc.m_levelDelta[at]:F2} on the cave's own 32 m");
+        }
+        finally { RoadTerrainModifier.PlacedGround = null; }
+    }
 
     [Fact]
     public void ARoadTakesTheLedgeOnItsOwnSideOfTheMouth()
@@ -437,6 +504,27 @@ public class SiteEntryRoadTests : IDisposable
         Assert.Contains("beside another road", why);
     }
 
+    [Fact]
+    public void TheFlagsSurviveASave()
+    {
+        _scope.WithWorld(new FlatWorld());
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(300f, 300f), new(340f, 300f) }, Width, WorldGenerator.instance);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        var plan = RoadSpatialGrid.PlanSiteEntry(new List<Vector2> { new(30f, 0f), new(10f, 0f) }, Width, WorldGenerator.instance, 30f, 30f, p => 30f);
+        RoadSpatialGrid.CommitAppend(new[] { plan! }, RoadSpatialGrid.RoadNetworkVersion, intoSite: true);
+        byte[] saved = RoadSpatialGrid.SerializeAllRoadPoints()!;
+        RoadSpatialGrid.Clear();
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
+        Assert.Contains(RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0, 0)), p => p.intoSite);
+        Assert.Equal(saved, RoadSpatialGrid.SerializeAllRoadPoints());
+
+        StairStructures.Reset();
+        StairStructures.Add(new StairRun { From = new Vector2(1f, 2f), To = new Vector2(3f, 4f), Width = 2f, KeepsSiteRocks = true });
+        byte[] stairs = StairStructures.Serialize();
+        Assert.True(Assert.Single(StairStructures.Parse(stairs)).KeepsSiteRocks);
+        StairStructures.Reset();
+    }
 
 
     /// <summary>The staircase record is written as format 5, a number no earlier build wrote, with the layout that laid each

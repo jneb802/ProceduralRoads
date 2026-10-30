@@ -298,7 +298,7 @@ public static class RoadCrossingDetector
     /// (DvergrViaduct.ValleyCrossing, "ground over the deck") for every crossing that carries a deck. Measured against
     /// the walking surface, not the underside: a deck stands at its higher bank's ground by construction, so that
     /// bank's own ground is already in the planks' depth, and the ground in under each end is cut below the deck when
-    /// it is built (RoadNetworkGenerator.GroundUnderDeck). Ground over the walking surface is ground a player walks
+    /// it is built (RoadNetworkGenerator.CrossingGround.UnderDecks). Ground over the walking surface is ground a player walks
     /// into, and no earthwork under the deck is planned to remove it.
     /// </summary>
     internal static Vector2? GroundThroughDeck(Vector2 from, Vector2 to, float deck, WorldGenerator world)

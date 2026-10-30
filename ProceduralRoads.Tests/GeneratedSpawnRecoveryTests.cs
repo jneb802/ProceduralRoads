@@ -92,6 +92,37 @@ public sealed class GeneratedSpawnRecoveryTests : IDisposable
         Assert.Empty(Pieces());
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void APlanThatFailsPartWayOwesOnlyTheRestOfIt(bool ghost)
+    {
+        // The worn piece fails in a step of the mod's own after its object is out (ShowHealth): it stands, and is not
+        // owed again with the rest of the plan.
+        var run = new StairRun { From = new Vector2(8, 0), To = new Vector2(12, 0), Width = 4f };
+        run.Pieces.Add(new StructurePiece { Prefab = "Breaking", Kind = StructurePieceKind.StairStep, Position = new Vector3(8, 40, 0), HealthFraction = 0.5f });
+        run.Pieces.Add(new StructurePiece { Prefab = Prefab, Kind = StructurePieceKind.StairStep, Position = new Vector3(12, 40, 0) });
+        StairStructures.Add(run);
+        ZNetScene.instance!.AddPrefab(Prefab);
+        ZNetScene.instance.AddPrefab("Breaking");
+        Assert.Equal(3, StructurePlans.BuildablePlanFor(Zone)!.Count);
+
+        WearNTear.FailVisual = true;
+        try { Assert.ThrowsAny<Exception>(() => Spawn(ghost)); }
+        finally { WearNTear.FailVisual = false; }
+        Assert.False(StructurePlans.IsSpawned(Zone), "a zone part of whose plan is not out is not done");
+        Assert.Contains(Live(), z => z.GetPrefab() == "Breaking".GetStableHashCode());
+
+        Spawn(ghost);
+        Assert.True(StructurePlans.IsSpawned(Zone));
+        Assert.Null(StructureAppendQueue.ForZone(Zone));
+        Assert.Single(Live(), z => z.GetPrefab() == "Breaking".GetStableHashCode());
+        Assert.Equal(2, Live().Count(z => z.GetPrefab() == Prefab.GetStableHashCode()));
+        Assert.Equal(3, Live().Count);
+        Assert.Equal(0, Spawn(ghost));
+        Assert.Equal(3, Live().Count);
+    }
+
     /// <summary>Every live ZDO, marked as the mod's piece or not.</summary>
     private static List<ZDO> Live() => ZDOMan.instance!.Zdos.Where(z => !ZDOMan.instance.DestroyQueue.Contains(z)).ToList();
 }

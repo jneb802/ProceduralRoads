@@ -33,6 +33,7 @@ internal static class PlainRoads
         ("curve checks", () => RoadSpatialGrid.CurveChecks, v => RoadSpatialGrid.CurveChecks = (bool)v, false),
         ("pitches", () => RoadPitches.Enabled, v => RoadPitches.Enabled = (bool)v, false),
         ("junction landing", () => RoadPitches.JunctionLanding, v => RoadPitches.JunctionLanding = (float)v, 0f),
+        ("junction fillet", () => RoadJunctionFillet.Radius, v => RoadJunctionFillet.Radius = (float)v, 0f),
         ("pull", () => RoadPathPull.Enabled, v => RoadPathPull.Enabled = (bool)v, false),
         ("pull tolerance", () => RoadPathPull.Tolerance, v => RoadPathPull.Tolerance = (float)v, 0f),
         ("sway", () => RoadWiggle.Amplitude, v => RoadWiggle.Amplitude = (float)v, 0f),

@@ -297,7 +297,7 @@ public class StairLayoutTests
 
     /// <summary>A landing lines up with the stair below it; the turn comes
     /// as the next stair leaves it. A landing turned 45 degrees off the stair
-    /// below left a gap to the stair above.</summary>
+    /// below left a gap to the stair above. Only a staircase's last row turns off the stair below it.</summary>
     [Theory]
     [InlineData("face")]
     [InlineData("gentle")]
@@ -314,10 +314,12 @@ public class StairLayoutTests
         Assert.Contains(walked, p => p.Kind == StairPieceKind.Landing);
         for (int i = 1; i < walked.Length; i++)
         {
-            // A floor after a stair lines up with it (a stair faces back down its flight); a floor
-            // after a floor may turn, overlapping it.
+            // A floor after a stair lines up with it (a stair faces back down its flight), save the staircase's last row,
+            // which may turn off it as far as a stair off a floor; a floor after a floor may turn, overlapping it.
             if (walked[i].Kind != StairPieceKind.Landing || walked[i - 1].Kind != StairPieceKind.Stair) continue;
-            Assert.Equal(StairLayout.Wrap(walked[i - 1].YawDegrees + 180f), walked[i].YawDegrees, 3);
+            float off = Math.Abs(StairLayout.Wrap(walked[i].YawDegrees - walked[i - 1].YawDegrees) - 180f);
+            if (i == walked.Length - 1) Assert.InRange(off, 0f, StairLayout.MaxJoinTurnSteps * StairLayout.HeadingStep + 1e-3f);
+            else Assert.Equal(0f, off, 3);
         }
     }
 

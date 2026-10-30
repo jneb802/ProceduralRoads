@@ -36,6 +36,9 @@ public static class RoadNetworkPersistence
     /// </summary>
     private static readonly int RoadCrossingsHash = "ProceduralRoads_Crossings".GetStableHashCode();
 
+    /// <summary>Hash key for the shore landings and whether the network reaches them.</summary>
+    private static readonly int CoastLandingsHash = "ProceduralRoads_CoastLandings".GetStableHashCode();
+
     /// <summary>
     /// Hash key for the zones that have received their bridge pieces (bridges prototype).
     /// </summary>
@@ -46,8 +49,13 @@ public static class RoadNetworkPersistence
     /// </summary>
     private static readonly int ClearedZonesHash = "ProceduralRoads_ClearedZones".GetStableHashCode();
 
+    /// <summary>Map icons of places placed before their roads, kept off the map until a player comes near (<see cref="HiddenSiteIcons"/>).</summary>
+    private static readonly int HiddenSiteIconsHash = "ProceduralRoads_HiddenSiteIcons".GetStableHashCode();
     /// <summary>The network's staircases: their pieces and clearances (StairStructures).</summary>
     private static readonly int StairRunsHash = "ProceduralRoads_StairRuns".GetStableHashCode();
+
+    /// <summary>The crossing sites whose first zone was built: their pieces and the ground they stand on (BuiltBridges).</summary>
+    private static readonly int BuiltBridgesHash = "ProceduralRoads_BuiltBridges".GetStableHashCode();
 
     /// <summary>Hash key for storing global road network data on the ZDO.</summary>
     private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
@@ -166,7 +174,8 @@ public static class RoadNetworkPersistence
     public static void SaveGlobalRoadData(
         IReadOnlyList<(Vector2 position, string label)> roadStartPoints,
         IReadOnlyList<RoadCrossing> roadCrossings,
-        IReadOnlyCollection<Vector2s> bridgeZones)
+        IReadOnlyCollection<Vector2s> bridgeZones,
+        IReadOnlyList<CoastalLandingPlace>? coastalLandings = null)
     {
         Log.LogDebug($"[SAVE] SaveGlobalRoadData called");
 
@@ -210,6 +219,8 @@ public static class RoadNetworkPersistence
         // Always written, so a network regenerated without fords does not
         // keep the crossings of an earlier one.
         WriteRecord(metadataZdo, RoadCrossingsHash, () => SerializeRoadCrossings(roadCrossings));
+        if (coastalLandings != null)
+            WriteRecord(metadataZdo, CoastLandingsHash, () => SerializeCoastalLandings(coastalLandings));
         WriteStructureRecords(metadataZdo, bridgeZones);
     }
 
@@ -217,13 +228,15 @@ public static class RoadNetworkPersistence
     {
         WriteRecord(metadataZdo, BridgeZonesHash, () => SerializeBridgeZones(bridgeZones));
         WriteRecord(metadataZdo, StairRunsHash, StairStructures.Serialize);
+        if (BuiltBridges.Saving) WriteRecord(metadataZdo, BuiltBridgesHash, BuiltBridges.Serialize);
+        WriteRecord(metadataZdo, HiddenSiteIconsHash, HiddenSiteIcons.Serialize);
     }
 
     /// <summary>
-    /// Save only the zones that have their bridge pieces, on a network that
-    /// was loaded rather than generated this session.
+    /// Save only the zones that have their bridge pieces, and the crossings when
+    /// given, on a network that was loaded rather than generated this session.
     /// </summary>
-    public static void SaveBridgeZones(IReadOnlyCollection<Vector2s> bridgeZones)
+    public static void SaveBridgeZones(IReadOnlyCollection<Vector2s> bridgeZones, IReadOnlyList<RoadCrossing>? roadCrossings = null)
     {
         ZDO? metadataZdo = GetMetadataZDO();
         if (metadataZdo == null)
@@ -233,6 +246,9 @@ public static class RoadNetworkPersistence
         }
         if (!metadataZdo.IsOwner())
             metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
+        // The crossings, when given: the kits chosen as their bridges were built (BridgeStructures.ChooseKit).
+        if (roadCrossings != null)
+            WriteRecord(metadataZdo, RoadCrossingsHash, () => SerializeRoadCrossings(roadCrossings));
         WriteStructureRecords(metadataZdo, bridgeZones);
     }
 
@@ -296,7 +312,8 @@ public static class RoadNetworkPersistence
     public static bool TryLoadGlobalRoadData(
         List<(Vector2 position, string label)> roadStartPoints,
         List<RoadCrossing> roadCrossings,
-        HashSet<Vector2s> bridgeZones)
+        HashSet<Vector2s> bridgeZones,
+        List<CoastalLandingPlace>? coastalLandings = null)
     {
         Log.LogDebug("[LOAD] TryLoadGlobalRoadData called");
         LastLoadUnreadable = false;
@@ -334,8 +351,17 @@ public static class RoadNetworkPersistence
             {
                 ReadOrKeep(metadataZdo, RoadStartPointsHash, "road start points", b => ReadStartPoints(b, roadStartPoints), roadStartPoints.Clear);
                 ReadOrKeep(metadataZdo, RoadCrossingsHash, "river crossings", b => ReadCrossings(b, roadCrossings), roadCrossings.Clear);
+                if (coastalLandings != null)
+                    ReadOrKeep(metadataZdo, CoastLandingsHash, "shore landings", b => ReadCoastalLandings(b, coastalLandings), coastalLandings.Clear);
                 ReadOrKeep(metadataZdo, BridgeZonesHash, "bridge zones", b => ReadBridgeZonesOrStartAfresh(b, bridgeZones), bridgeZones.Clear);
+                // Unread, the places' icons show: the map as the game would have it once they are placed.
+                ReadOrKeep(metadataZdo, HiddenSiteIconsHash, "hidden site icons", HiddenSiteIcons.Load, HiddenSiteIcons.Reset);
+                var read = System.Diagnostics.Stopwatch.StartNew();
                 ReadOrKeep(metadataZdo, StairRunsHash, "staircases", StairStructures.Load, StairStructures.Reset);
+                ReadOrKeep(metadataZdo, BuiltBridgesHash, "built bridges", BuiltBridges.Load, BuiltBridges.Reset);
+                Log.LogInfo($"[LOAD] saved structures: {StairStructures.Runs.Count} staircase(s) " +
+                            $"({metadataZdo.GetByteArray(StairRunsHash, null)?.Length ?? 0} bytes), {BuiltBridges.Sites.Count} built bridge(s) " +
+                            $"({metadataZdo.GetByteArray(BuiltBridgesHash, null)?.Length ?? 0} bytes), read in {read.Elapsed.TotalMilliseconds:F0} ms");
                 // NetworkCutoff reads it when the network is used, and unread excludes every generated zone; kept, a
                 // save cannot put that fallback over the zones the record says are the network's.
                 ReadOrKeep(metadataZdo, ZonesWithNetworkHash, "zones generated with the network", CheckZonesWithNetwork, () => { });
@@ -350,6 +376,7 @@ public static class RoadNetworkPersistence
                 RoadSpatialGrid.Clear();
                 roadStartPoints.Clear();
                 roadCrossings.Clear();
+                coastalLandings?.Clear();
                 bridgeZones.Clear();
                 LastLoadUnreadable = true;
                 return false;
@@ -549,17 +576,22 @@ public static class RoadNetworkPersistence
     {
         roadCrossings.Clear();
         if (data == null || data.Length == 0) return;
-        if (!DeserializeRoadCrossings(data, roadCrossings)) throw new InvalidDataException("unreadable river crossings");
+        if (!DeserializeRoadCrossings(data, roadCrossings, WorldGenerator.instance)) throw new InvalidDataException("unreadable river crossings");
     }
 
     /// <summary>
     /// Serialize river crossings to binary format.
-    /// Format: [version=3][count] then per crossing [fromX][fromY][toX][toY][riverbed][fairwayX][fairwayY][fairwayWidth][kind][style][flags][kit+1, 0 none].
+    /// Format: [version=5][count] then per crossing [fromX][fromY][toX][toY][riverbed][fairwayX][fairwayY][fairwayWidth][kind][style][flags][kit+1, 0 none, -1 undecided]
+    /// and each end, from then to (<see cref="RoadCrossing.FromEnd"/>, <see cref="RoadCrossing.ToEnd"/>): [is][edgeX][edgeY][upX][upY][height][steps],
+    /// is 0 for none (the rest then 0), 1 a structure's end, 2 an end where the crossing is road.
     /// flags: bit 0, a Mistlands viaduct the search bought over a dry valley (<see cref="RoadCrossing.ValleyJump"/>),
-    /// not a river's bridge. Versions 1 (no flags) and 2 (no kit, decided again from the crossing) are read too. The rest
-    /// of a crossing is derived from its banks on load.
+    /// not a river's bridge. An undecided kit is a deck's whose kit is chosen when it is first built
+    /// (<see cref="BridgeStructures.ChooseKit"/>). Versions 1 (no flags), 2 (no kit, chosen as an undecided one is),
+    /// 3 (no ends, each then as the bank takes it; the ends it recorded in its flags are not read) and 4 (no undecided kit:
+    /// every kit it stored is the crossing's, chosen) are read too. The rest of a crossing is derived
+    /// from its banks on load.
     /// </summary>
-    private static byte[] SerializeRoadCrossings(IReadOnlyList<RoadCrossing> roadCrossings)
+    internal static byte[] SerializeRoadCrossings(IReadOnlyList<RoadCrossing> roadCrossings)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
@@ -579,7 +611,18 @@ public static class RoadNetworkPersistence
             writer.Write((int)crossing.Kind);
             writer.Write((int)crossing.Style);
             writer.Write(crossing.ValleyJump ? 1 : 0);
-            writer.Write(crossing.Kit is BridgeStructures.Kit kit ? (int)kit + 1 : 0);
+            writer.Write(crossing.Kit switch { null => 0, BridgeStructures.Kit.Undecided => UndecidedKit, BridgeStructures.Kit kit => (int)kit + 1 });
+            foreach (StructureEnds.End? end in new[] { crossing.FromEnd, crossing.ToEnd })
+            {
+                StructureEnds.End e = end ?? default;
+                writer.Write(end == null ? 0 : e.Road ? 2 : 1);
+                writer.Write(e.Edge.x);
+                writer.Write(e.Edge.y);
+                writer.Write(e.Up.x);
+                writer.Write(e.Up.y);
+                writer.Write(e.Height);
+                writer.Write(e.Steps);
+            }
         }
 
         return ms.ToArray();
@@ -664,10 +707,131 @@ public static class RoadNetworkPersistence
     }
 
     /// <summary>The crossings record's format: 2 carries each crossing's flags (a valley viaduct's
-    /// <see cref="RoadCrossing.ValleyJump"/>, which the load puts its keep-out back from). 1 is read too.</summary>
-    internal const int CrossingsFormat = 3;
+    /// <see cref="RoadCrossing.ValleyJump"/>, which the load puts its keep-out back from), 3 its kit, 4 its ends, 5 a kit
+    /// not chosen yet (<see cref="UndecidedKit"/>). 1 is read too.</summary>
+    internal const int CrossingsFormat = 5;
 
-    private static bool DeserializeRoadCrossings(byte[] data, List<RoadCrossing> roadCrossings)
+    /// <summary>The crossings record's number for <see cref="BridgeStructures.Kit.Undecided"/> (format 5 on).</summary>
+    internal const int UndecidedKit = -1;
+
+    /// <summary>The crossings record's number for the retired plain wooden kit (formats 3 and 4); it names no kit since.</summary>
+    internal const int RetiredWoodKit = 1;
+
+    /// <summary>How far from the world's centre a saved crossing's points may lie: the edge of the game's world.</summary>
+    private const float CrossingWorldEdge = 10500f;
+
+    /// <summary>The longest crossing a network holds, bank to bank: a bridge's jump (MaxBridgeCrossingCells) with a
+    /// swamp bridge's banks walked out over the shelf at both ends (SwampBridgeDryReach).</summary>
+    internal const float MaxCrossingSpan = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize + 2f * RoadConstants.SwampBridgeDryReach;
+
+    /// <summary>
+    /// Why a saved crossing is not one this build ever makes, or null when it is: every number finite, its points in
+    /// the world, its span within <see cref="MaxCrossingSpan"/> (a valley viaduct's within DvergrViaduct's), a kind and
+    /// style that exist and go together, and no flag but the valley's (a record before format 4 may carry its ends in
+    /// the flags too, which are not read). Checked before anything is planned from it: a
+    /// bridge's layout is sized by its span.
+    /// </summary>
+    private static string? CrossingFault(Vector2 fromBank, Vector2 toBank, float riverbed, Vector2 fairwayCenter,
+        float fairwayWidth, CrossingKind kind, FordStyle style, int flags, int version)
+    {
+        static bool Finite(float x) => !float.IsNaN(x) && !float.IsInfinity(x);
+        static bool InWorld(Vector2 p) => Finite(p.x) && Finite(p.y) && p.magnitude <= CrossingWorldEdge;
+        if (!InWorld(fromBank) || !InWorld(toBank) || !InWorld(fairwayCenter)) return "a point outside the world";
+        if (!Finite(riverbed) || !Finite(fairwayWidth)) return "a height or width that is not a number";
+        float span = Vector2.Distance(fromBank, toBank);
+        if (span <= 0f || span > MaxCrossingSpan) return $"a span of {span} m";
+        if (fairwayWidth < 0f || fairwayWidth > MaxCrossingSpan) return $"a fairway of {fairwayWidth} m";
+        if (!Enum.IsDefined(typeof(CrossingKind), kind) || !Enum.IsDefined(typeof(FordStyle), style)) return $"kind {(int)kind}, style {(int)style}";
+        if (kind == CrossingKind.Bridge && style != FordStyle.None) return $"a bridge with ford style {style}";
+        if ((flags & ~(version >= 4 ? 1 : 0x7FFF)) != 0) return $"flags {flags}";
+        bool valley = (flags & 1) != 0;
+        if (valley && (kind != CrossingKind.Bridge || span < DvergrViaduct.MinValleySpan - 1f || span > DvergrViaduct.MaxValleySpan + 1f))
+            return $"a valley viaduct {kind} of {span} m";
+        return null;
+    }
+
+    /// <summary>One end of a crossing as <see cref="SerializeRoadCrossings"/> wrote it, or null for none; a
+    /// <paramref name="fault"/> where it is not one this build makes: every number finite, its way onto the crossing a unit
+    /// direction, its edge within <see cref="EndReach"/> of the crossing's line between its banks, and no more stairs
+    /// than a kit lays.</summary>
+    private static StructureEnds.End? ReadEnd(BinaryReader reader, RoadCrossing crossing, out string? fault)
+    {
+        fault = null;
+        int kind = reader.ReadInt32();
+        Vector2 edge = new(reader.ReadSingle(), reader.ReadSingle()), up = new(reader.ReadSingle(), reader.ReadSingle());
+        float height = reader.ReadSingle();
+        int steps = reader.ReadInt32();
+        if (kind == 0) return null;
+        static bool Finite(float x) => !float.IsNaN(x) && !float.IsInfinity(x);
+        Vector2 line = crossing.ToBank - crossing.FromBank;
+        float t = Mathf.Clamp01(Vector2.Dot(edge - crossing.FromBank, line) / Mathf.Max(line.sqrMagnitude, 1e-6f));
+        if (kind > 2 || !Finite(edge.x) || !Finite(edge.y) || !Finite(up.x) || !Finite(up.y) || !Finite(height)
+            || Mathf.Abs(up.magnitude - 1f) > 0.01f || steps < 0 || steps > BridgeLayout.MaxStairSteps
+            || Vector2.Distance(edge, crossing.FromBank + line * t) > EndReach)
+        { fault = FormattableString.Invariant($"an end {kind} at ({edge.x}, {edge.y}), {steps} steps"); return null; }
+        return new StructureEnds.End(edge, up, height, steps, road: kind == 2);
+    }
+
+    /// <summary>How far a crossing's saved end's edge may stand off the line between its banks: a deck's ends stand on
+    /// it, a viaduct's a module past a bank at most.</summary>
+    private const float EndReach = 16f;
+
+    /// <summary>The shore landings record's format.</summary>
+    internal const int CoastLandingsFormat = 1;
+
+    /// <summary>
+    /// Serialize the shore landings.
+    /// Format: [version=1][count] then per landing [x][y][z] floats, [island id] int, [flags] byte (bit 0 chosen, bit 1 reached).
+    /// </summary>
+    internal static byte[] SerializeCoastalLandings(IReadOnlyList<CoastalLandingPlace> landings)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+        writer.Write(CoastLandingsFormat);
+        writer.Write(landings.Count);
+        foreach (CoastalLandingPlace l in landings)
+        {
+            writer.Write(l.Position.x);
+            writer.Write(l.Position.y);
+            writer.Write(l.Position.z);
+            writer.Write(l.IslandId);
+            writer.Write((byte)((l.Chosen ? 1 : 0) | (l.Reached ? 2 : 0)));
+        }
+        return ms.ToArray();
+    }
+
+    private static void ReadCoastalLandings(byte[]? data, List<CoastalLandingPlace> landings)
+    {
+        landings.Clear();
+        if (data == null || data.Length == 0) return;
+        using var ms = new MemoryStream(data);
+        using var reader = new BinaryReader(ms);
+        int version = reader.ReadInt32();
+        if (version != CoastLandingsFormat) throw new InvalidDataException($"unknown shore landings version {version}");
+        int count = reader.ReadInt32();
+        if (count < 0 || count > 100000) throw new InvalidDataException($"invalid shore landing count {count}");
+        var read = new List<CoastalLandingPlace>(count);
+        for (int i = 0; i < count; i++)
+        {
+            var position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+            int island = reader.ReadInt32();
+            byte flags = reader.ReadByte();
+            if (float.IsNaN(position.x + position.y + position.z) || float.IsInfinity(position.x + position.y + position.z) || (flags & ~3) != 0)
+                throw new InvalidDataException($"invalid shore landing at {position}");
+            read.Add(new CoastalLandingPlace(position, island, (flags & 1) != 0, (flags & 2) != 0));
+        }
+        landings.AddRange(read);
+    }
+
+    /// <summary>
+    /// The crossings of a record (<see cref="SerializeRoadCrossings"/>). A record before format 5 is read as it was laid: the
+    /// retired plain wooden kit (stored 1, formats 3 and 4) names a deck whose kit is chosen when it is first built
+    /// (<see cref="BridgeStructures.Kit.Undecided"/>), as does a deck it stored with no kit, which it laid as no viaduct; a
+    /// deck of a record that stored no kind (formats 1 and 2) is a viaduct where it was under the ceiling it was laid under
+    /// (<see cref="DvergrViaduct.FormerPierCeiling"/>), read on <paramref name="world"/>, else undecided; without a world
+    /// its kind is left to be asked.
+    /// </summary>
+    internal static bool DeserializeRoadCrossings(byte[] data, List<RoadCrossing> roadCrossings, WorldGenerator? world = null)
     {
         try
         {
@@ -700,11 +864,35 @@ public static class RoadNetworkPersistence
                 FordStyle style = (FordStyle)reader.ReadInt32();
                 int flags = version >= 2 ? reader.ReadInt32() : 0;
                 int kit = version >= 3 ? reader.ReadInt32() : 0;
-                if (kit < 0 || kit > Enum.GetValues(typeof(BridgeStructures.Kit)).Length) { Log.LogWarning($"Invalid crossing kit: {kit}"); return false; }
+                bool undecided = kit == UndecidedKit && version >= 5;
+                if (version < 5 && kit == RetiredWoodKit) { kit = 0; undecided = true; }
+                if (!undecided && (kit < 0 || (kit > 0 && !Enum.IsDefined(typeof(BridgeStructures.Kit), kit - 1))))
+                { Log.LogWarning($"Invalid crossing kit: {kit}"); return false; }
+                string? fault = CrossingFault(fromBank, toBank, riverbed, fairwayCenter, fairwayWidth, kind, style, flags, version);
+                if (fault != null) { Log.LogWarning($"Invalid river crossing {i}: {fault}"); return false; }
                 RoadCrossing crossing = RoadCrossing.Between(fromBank, toBank, riverbed, fairwayCenter, fairwayWidth, kind, style);
                 crossing.ValleyJump = (flags & 1) != 0;
-                if (kit > 0) crossing.Kit = (BridgeStructures.Kit)(kit - 1);
+                if (undecided) crossing.Kit = BridgeStructures.Kit.Undecided;
+                else if (kit > 0) crossing.Kit = (BridgeStructures.Kit)(kit - 1);
+                if (version < 5 && crossing.Kit == null && BridgeStructures.HasDeck(crossing))
+                {
+                    if (version >= 3) crossing.Kit = BridgeStructures.Kit.Undecided;
+                    else if (world != null)
+                        crossing.Kit = DvergrViaduct.Applies(crossing, world, DvergrViaduct.FormerPierCeiling)
+                            ? BridgeStructures.Kit.DvergrViaduct : BridgeStructures.Kit.Undecided;
+                }
+                if (version >= 4)
+                {
+                    StructureEnds.End? from = ReadEnd(reader, crossing, out string? endFault), to = endFault == null ? ReadEnd(reader, crossing, out endFault) : null;
+                    if (endFault != null) { Log.LogWarning($"Invalid river crossing {i}: {endFault}"); return false; }
+                    (crossing.FromEnd, crossing.ToEnd) = (from, to);
+                }
                 roadCrossings.Add(crossing);
+            }
+            if (ms.Position != ms.Length)
+            {
+                Log.LogWarning("River crossing data runs past its crossings");
+                return false;
             }
 
             return true;

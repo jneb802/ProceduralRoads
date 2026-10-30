@@ -22,6 +22,10 @@ public sealed class StairPiece
     /// <summary>A walked piece held out from a face, or part of what holds it (StairLayout.AddCantilever):
     /// a support so marked is clipped into the face beside its piece, not a column down to the ground.</summary>
     public bool Cantilevered;
+    /// <summary>The turn its plan's stats (Turns, TurnSteps, OverlapTurnSteps) count with this piece: a wedge's first filler,
+    /// a floor turned over a floor, a switchback's first floor. Its heading steps, and whether floor over floor; none if null.
+    /// A piece cut away takes its turn out of the stats.</summary>
+    internal (int Steps, bool Overlap)? Turn;
 }
 
 /// <summary>
@@ -177,8 +181,11 @@ public sealed class StairPlan
 /// * A turn may be any size on the hammer's grid (as long as the stair
 ///   corners snap as expected and the stairs don't overlap each other):
 ///   a stair up to two steps (45 degrees) off the stair
-///   below it, four (90) off a landing, three off a switchback. A landing
-///   never turns: it lines up with the stair below it. Its wedge is filled with
+///   below it, four (90) off a flat run (a flat run is a stair run that does
+///   not climb), three off a switchback. A landing
+///   lines up with the stair below it, save as a staircase's last row, where it
+///   meets a road or another flight: there it may turn off the stair as a stair
+///   turns off it, up to four. Its wedge is filled with
 ///   flat pieces on the hammer's grid that <see cref="StairFiller"/> chooses
 ///   turn by turn: the fewest that cover it and show least. A single floor
 ///   at the half angle (33.75 degrees for a 67.5 degree turn) left the
@@ -187,7 +194,10 @@ public sealed class StairPlan
 /// * A switchback is a landing two lanes wide: the flight arrives on one
 ///   floor, a second floor lies beside it, and the next flight leaves that
 ///   one heading back the way it came. It is how a stair climbs ground too
-///   steep to cross in one traverse.
+///   steep to cross in one traverse: a through climb, one leg up from the pad
+///   and the other down, never both flat. Nor does a chain of two staircases
+///   double back alongside itself over a crest or through a pit
+///   (<see cref="StairChain.BackTracks"/>).
 /// * Every piece is supported down to the ground: stone loses its support
 ///   within a metre sideways, so a piece not sunk into the ground stands on
 ///   a column of pillars driven into it.
@@ -207,6 +217,13 @@ public static partial class StairLayout
 {
     [ThreadStatic] private static long s_ids;
 
+    /// <summary>
+    /// The version of this layout: how a staircase is searched and laid. Raised whenever a change would lay a run
+    /// differently, so a later build can tell the runs an older layout laid (<see cref="StairRun.Layout"/>).
+    /// <para>1: the first release's layout.</para>
+    /// </summary>
+    public const int LayoutVersion = 1;
+
     public const float PieceRun = 2f;
     public const float PieceRise = 1f;
     public const float HeadingStep = 22.5f;
@@ -222,10 +239,12 @@ public static partial class StairLayout
     /// <summary>A staircase's ends line up with the road within this many heading steps (45 degrees).</summary>
     public const int AlignSteps = 2;
     public const int MaxStairTurnSteps = 2;
-    /// <summary>How far a stair may turn as it leaves a landing. The landing
-    /// itself never turns: it lines up with the stair below it (a landing turned 45 degrees off the stair below left a gap
-    /// to the stair above).</summary>
-    public const int MaxTurnOffLandingSteps = 4;
+    /// <summary>How far a stair may turn as it leaves a flat run (0 to 90 degrees): a flat run is a stair run that does
+    /// not climb, so the stair pivots on its inside corner and the wedge is filled as between two stairs. The run itself
+    /// turns off the stair below it as far only as a staircase's last row (where it meets a road or another flight); elsewhere
+    /// it lines up with it (a landing turned 45 degrees off the stair below left a gap to the stair above), and turns floor
+    /// over floor.</summary>
+    public const int MaxJoinTurnSteps = 4;
     /// <summary>How far one floor may turn off the floor before it. Floors overlap
     /// at a turn instead of leaving a wedge (unlike stairs, two flat stones
     /// can overlap, which looks better): they pivot on the outside corner. Without it
@@ -252,9 +271,8 @@ public static partial class StairLayout
     public const float ReachRadius = 3.5f;
     public const float ReachHeight = 0.5f;
     /// <summary>A staircase that may finish anywhere near its goal finishes no lower than this
-    /// below the goal's ground: at 6 m from a cave's ledge, without it, one stopped on the
-    /// slope in front, 2.5 m under the ledge.</summary>
-    public const float ArriveBelow = 1f;
+    /// below the goal's ground: level with it (<see cref="RoadNetworkGenerator.ArrivalLevel"/>).</summary>
+    public const float ArriveBelow = RoadNetworkGenerator.ArrivalLevel;
     /// <summary>Headroom kept clear of rock above every walking surface: player height, as a road's (one owner,
     /// <see cref="RoadRockPolicy.ClearanceHeight"/>).</summary>
     public const float ClearanceHeight = RoadRockPolicy.ClearanceHeight;
@@ -563,7 +581,7 @@ public static partial class StairLayout
             if (Remaining(node, route) < Remaining(closest, route) - 0.01f) { closest = node; improved = expansions; }
             expansions++;
             children.Clear();
-            Expand(node, route, ground, width, children);
+            Expand(node, route, ground, width, children, final ? Done : null);
             foreach (Node child in children)
             {
                 child.Id = ++s_ids;
@@ -725,7 +743,9 @@ public static partial class StairLayout
 
     private static readonly StairPieceKind[] Kinds = { StairPieceKind.Stair, StairPieceKind.Landing };
 
-    private static void Expand(Node node, Route route, Func<float, float, float> ground, float width, List<Node> next)
+    /// <param name="finishes">Whether a piece finishes the staircase (its last leg's goal reached), if this leg is its last:
+    /// only there may a flat run turn off the stair below it.</param>
+    private static void Expand(Node node, Route route, Func<float, float, float> ground, float width, List<Node> next, Func<Node, bool>? finishes = null)
     {
         float half = width / 2f;
         Vector2 right = Right(node.Heading);
@@ -736,17 +756,25 @@ public static partial class StairLayout
             // ground steeper than a flight it has to start across the slope.
             bool first = node.Parent == null;
             if (first && kind == StairPieceKind.Landing && route.StairFirst) continue;
+            // A switchback's two legs are never both flat (StairChain.BackTracks): a pad come onto off a floor is left on a
+            // stair.
+            if (kind == StairPieceKind.Landing && node.Switchback != 0 && node.Parent!.Kind == StairPieceKind.Landing) continue;
             // Leaving a switchback the flight may bend one step off the
             // reverse heading, like any stair turn (a hand-built second switchback
             // turns 157.5 degrees). Three steps left a 67.5 degree wedge that
             // no filler covered, so the junction did not connect up well.
             bool floorOnFloor = kind == StairPieceKind.Landing && node.Kind == StairPieceKind.Landing && node.Switchback == 0 && !first;
+            // A flat run turned off the stair below it (a join, as a stair off a flat run): only as the staircase's last row,
+            // where it meets a road or another flight, or off a flight already laid that this one carries on from. Elsewhere it
+            // lines up with the stair below it and turns floor over floor: turned anywhere, the search's floors multiplied
+            // and its budgets ran out.
+            bool joinOff = kind == StairPieceKind.Landing && node.Kind == StairPieceKind.Stair && node.Switchback == 0 && !first;
             // Coming up out of the road on a stair (StairFirst), it may set off a step further off the road's heading than
             // a floor would: a foot at Hildir's cave left the road 55 degrees off its heading and turned on the stairs.
             int maxTurn = first ? (route.StartAligned ? AlignSteps + (route.StairFirst && kind == StairPieceKind.Stair ? 1 : 0) : 8)
                 : node.Switchback != 0 ? MaxSwitchbackBendSteps
-                : kind == StairPieceKind.Landing ? (floorOnFloor ? MaxFloorTurnSteps : 0)
-                : node.Kind == StairPieceKind.Landing ? MaxTurnOffLandingSteps
+                : kind == StairPieceKind.Landing ? (floorOnFloor ? MaxFloorTurnSteps : joinOff && (finishes != null || node.Placed) ? MaxJoinTurnSteps : 0)
+                : node.Kind == StairPieceKind.Landing ? MaxJoinTurnSteps
                 : MaxStairTurnSteps;
             if (route.Down && node.Placed) maxTurn = 0; // straight on from the top it carries down from: back to back
             for (int turn = first && !route.StartAligned && !route.Down ? -7 : -maxTurn; turn <= maxTurn; turn++)
@@ -758,11 +786,16 @@ public static partial class StairLayout
                 (Vector2 start, Vector2 pivot) = first ? (node.Edge, node.Edge) : TurnOff(node.Edge, node.Heading, heading, turn, half, floorOnFloor);
 
                 Vector2 edge = start + dir * PieceRun;
+                // Turned off the stair below, it must be the last row: within reach of the goal (Done says the rest below).
+                bool lastRowOnly = joinOff && turn != 0 && !node.Placed;
+                if (lastRowOnly && Vector2.Distance(edge, route.Final) > (route.ArriveWithin ?? ReachRadius)) continue;
                 Vector2 middle = start + dir * (PieceRun / 2f);
                 if (!route.InCorridor(middle)) continue;
 
                 float rise = kind == StairPieceKind.Stair ? (route.Down ? -PieceRise : PieceRise) : 0f;
-                Fit(start, dir, Right(heading), half, node.Height, rise, ground, out float floatGap, out float buried);
+                Fit(start, dir, Right(heading), half, node.Height, rise, ground, out float floatGap, out float buried, out float highest);
+                // A flat run on columns stands no higher over the ground than the walkway cap: above it the staircase climbs or goes round.
+                if (kind == StairPieceKind.Landing && highest > StairKit.WalkwayCap) continue;
                 // The wedge a turn opens is filled level with the piece before (StairFiller): it is walked
                 // too, and buried it needs earthwork as a piece does. Where a staircase is kept off earthwork
                 // (an approach, laid with less than StairCover.RoadStaircase: no cuts in a place's footprint), it is read
@@ -820,6 +853,7 @@ public static partial class StairLayout
                     + (kind == StairPieceKind.Landing ? LandingWeight : 0f);
                 if (offEdge > 0f) t_ledgePrices++;
                 child.Goal = route.Advance(node.Goal, child.Edge);
+                if (lastRowOnly && !finishes!(child)) continue;
                 child.Score = child.Cost + HeuristicWeight * Remaining(child, route);
                 next.Add(child);
             }
@@ -836,8 +870,8 @@ public static partial class StairLayout
             if (CrossesItself(node, node.Edge + forward * (PieceRun / 2f), node.Heading, width, padUnderside, 0, route.Kit)
                 || CrossesItself(node, centre + right * (side * width / 2f), node.Heading, width, padUnderside, 0, route.Kit)
                 || !route.InCorridor(centre + right * (side * width / 2f))) continue;
-            Fit(node.Edge, forward, right, half, node.Height, 0f, ground, out float floatA, out float buriedA);
-            Fit(returnStart, forward, right, half, node.Height, 0f, ground, out float floatB, out float buriedB);
+            Fit(node.Edge, forward, right, half, node.Height, 0f, ground, out float floatA, out float buriedA, out _);
+            Fit(returnStart, forward, right, half, node.Height, 0f, ground, out float floatB, out float buriedB, out _);
             float buried = Mathf.Max(buriedA, buriedB);
             if (buried > route.MaxBuried) continue;
             var setOff = BackRunAfter(node, Wrap(node.Heading + 180f), StairPieceKind.Landing, route);
@@ -880,21 +914,27 @@ public static partial class StairLayout
     }
 
     /// <summary>Tests: a flight of stairs laid out on the given headings from a foot, every stair held out from the
-    /// face on its <paramref name="side"/>, emitted as a search would emit it.</summary>
-    internal static StairPlan LayFlight(Vector2 foot, float footHeight, IReadOnlyList<float> headings, StairKit kit, Func<float, float, float> ground, int side)
+    /// face on its <paramref name="side"/>, emitted as a search would emit it; <paramref name="kinds"/>, if given, the
+    /// kind of each piece (a floor is a run that does not climb).</summary>
+    internal static StairPlan LayFlight(Vector2 foot, float footHeight, IReadOnlyList<float> headings, StairKit kit, Func<float, float, float> ground, int side,
+        IReadOnlyList<StairPieceKind>? kinds = null)
     {
         var plan = new StairPlan { Kit = kit.Name, Reached = true };
         Node node = new() { Edge = foot, Start = foot, Heading = headings[0], Height = footHeight };
-        foreach (float h in headings)
+        for (int i = 0; i < headings.Count; i++)
         {
+            float h = headings[i];
+            StairPieceKind kind = kinds?[i] ?? StairPieceKind.Stair;
             bool first = node.Parent == null;
+            bool floorOnFloor = !first && kind == StairPieceKind.Landing && node.Kind == StairPieceKind.Landing;
             int turn = first ? 0 : Mathf.RoundToInt((Wrap(h - node.Heading + 180f) - 180f) / HeadingStep);
-            (Vector2 start, Vector2 pivot) = first ? (node.Edge, node.Edge) : TurnOff(node.Edge, node.Heading, h, turn, PieceRun / 2f, false);
+            (Vector2 start, Vector2 pivot) = first ? (node.Edge, node.Edge) : TurnOff(node.Edge, node.Heading, h, turn, PieceRun / 2f, floorOnFloor);
+            bool stair = kind == StairPieceKind.Stair;
             node = new Node
             {
-                Parent = node, Kind = StairPieceKind.Stair, Start = start, Edge = start + Forward(h) * PieceRun, Heading = h,
-                Height = node.Height + PieceRise, TurnSteps = turn, Pivot = pivot, Centre = start + Forward(h) * (PieceRun / 2f),
-                Depth = node.Depth + 1, Cantilever = side,
+                Parent = node, Kind = kind, Start = start, Edge = start + Forward(h) * PieceRun, Heading = h,
+                Height = node.Height + (stair ? PieceRise : 0f), TurnSteps = turn, Overlaps = floorOnFloor && turn != 0, Pivot = pivot,
+                Centre = start + Forward(h) * (PieceRun / 2f), Depth = node.Depth + 1, Cantilever = stair ? side : 0,
             };
         }
         Emit(plan, node, ground, PieceRun, kit);
@@ -902,12 +942,13 @@ public static partial class StairLayout
     }
 
     /// <summary>How far the walking surface of a piece stands above the ground
-    /// (mean over its samples) and how deep the ground buries it (worst sample).</summary>
+    /// (mean over its samples, and <paramref name="highest"/> the most) and how deep the ground buries it (worst sample).</summary>
     private static void Fit(Vector2 start, Vector2 dir, Vector2 right, float half, float baseHeight, float rise,
-        Func<float, float, float> ground, out float floatGap, out float buried)
+        Func<float, float, float> ground, out float floatGap, out float buried, out float highest)
     {
         floatGap = 0f;
         buried = 0f;
+        highest = 0f;
         int n = 0;
         for (int i = 1; i <= 3; i++)
         {
@@ -918,6 +959,7 @@ public static partial class StairLayout
                 Vector2 p = start + dir * along + right * (s * half * 0.9f);
                 float g = ground(p.x, p.y);
                 floatGap += Mathf.Max(0f, surface - g);
+                highest = Mathf.Max(highest, surface - g);
                 buried = Mathf.Max(buried, g - surface);
                 n++;
             }
@@ -1039,7 +1081,9 @@ public static partial class StairLayout
             plan.MaxBuried = Mathf.Max(plan.MaxBuried, step.Buried);
             if (step.Switchback != 0)
             {
+                int pad = plan.Pieces.Count;
                 AddRow(plan, kit, StairPieceKind.Landing, kit.Floor, step.Start, parent.Heading, parent.Height, lanes, ground, mark: true);
+                plan.Pieces[pad].Turn = (0, false);
                 AddRow(plan, kit, StairPieceKind.Landing, kit.Floor, step.Edge, parent.Heading, parent.Height, lanes, ground, mark: true);
                 plan.Landings += 2 * lanes;
                 plan.Switchbacks++;
@@ -1059,16 +1103,14 @@ public static partial class StairLayout
                 // piece, held by an arch and a strip column, not stood on columns down the drop.
                 bool heldWedge = parent.Cantilever != 0 && kit.Cantilever != null && lanes == 1;
                 if (heldWedge) AddTurnSupport(plan, kit, parent.Start, parent.Heading, parent.Height, parent.Cantilever, step.TurnSteps, width, ground);
-                foreach (FillerPiece filler in StairFiller.Choose(step.Pivot, parent.Heading, step.TurnSteps, width, parent.Kind == StairPieceKind.Landing, kit.Fillers))
-                    AddPiece(plan, kit, StairPieceKind.Filler, filler.Prefab, filler.Back, filler.Heading, parent.Height, filler.Across, filler.Depth, ground, mark: false,
-                        held: heldWedge);
-                plan.Turns++;
-                plan.TurnSteps += System.Math.Abs(step.TurnSteps);
+                AddWedge(plan, kit, step.Pivot, parent.Heading, parent.Height, step.TurnSteps, width, parent.Kind == StairPieceKind.Landing, ground, heldWedge);
             }
             plan.LastRowPieces = plan.Pieces.Count; plan.LastRowClearances = plan.Clearances.Count;
             plan.LastRowKind = step.Kind; plan.LastRowStart = step.Start; plan.LastRowHeading = step.Heading; plan.LastRowHeight = parent.Height;
+            int row = plan.Pieces.Count;
             AddRow(plan, kit, step.Kind, step.Kind == StairPieceKind.Stair ? kit.Stair : kit.Floor, step.Start, step.Heading, parent.Height, lanes, ground, mark: true,
                 cantilever: lanes == 1 ? step.Cantilever : 0);
+            if (step.TurnSteps != 0 && step.Overlaps) plan.Pieces[row].Turn = (System.Math.Abs(step.TurnSteps), true);
             if (step.Cantilever != 0 && lanes == 1 && kit.Cantilever != null)
             {
                 plan.Cantilevered++;
@@ -1088,6 +1130,21 @@ public static partial class StairLayout
         plan.Rise = last.Height - first.Height;
         plan.End = new Vector3(last.Edge.x, last.Height, last.Edge.y);
         GuardEnds(plan, kit, first.Edge, last.Edge, ground, sunkPieces);
+    }
+
+    /// <summary>The wedge a piece turned <paramref name="turn"/> heading steps off one walking <paramref name="from"/> opens on
+    /// its outside, pivoting on <paramref name="pivot"/>: filled with flat pieces level with the piece before
+    /// (<see cref="StairFiller"/>), held on its turn's arch where <paramref name="held"/>.</summary>
+    private static void AddWedge(StairPlan plan, StairKit kit, Vector2 pivot, float from, float height, int turn, float width, bool offFloor,
+        Func<float, float, float> ground, bool held)
+    {
+        int wedge = plan.Pieces.Count;
+        foreach (FillerPiece filler in StairFiller.Choose(pivot, from, turn, width, offFloor, kit.Fillers))
+            AddPiece(plan, kit, StairPieceKind.Filler, filler.Prefab, filler.Back, filler.Heading, height, filler.Across, filler.Depth, ground, mark: false,
+                held: held);
+        if (plan.Pieces.Count > wedge) plan.Pieces[wedge].Turn = (System.Math.Abs(turn), false);
+        plan.Turns++;
+        plan.TurnSteps += System.Math.Abs(turn);
     }
 
     /// <summary>Highest a walking surface may stand over the ground a player walks onto it from:

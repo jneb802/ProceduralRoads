@@ -23,10 +23,11 @@ namespace ProceduralRoads;
 /// <para><b>Piers</b>: 16 m centre to centre as in vanilla.
 /// Off a known river, one at the crossing's midpoint and then every 16 m
 /// outward while inside the gap; a short crossing still gets the middle one.
-/// On a known river (<see cref="BridgeLayout.FairwayGap"/>'s fairway, the
-/// wooden kit's one test of "sailable"), the navigation bay first: two vanilla
-/// bays wide, piers at the fairway centre +-16 m with <see cref="NavigationGapFor"/>
-/// of deck missing between them (the wooden kit's <see cref="BridgeLayout.FairwayGap"/>),
+/// Over a river whose longship does not pass under the deck
+/// (<see cref="BridgeLayout.NavigationChannel"/>, every kit's one test of where
+/// boats pass), the navigation bay first: two vanilla
+/// bays wide, piers at the navigation channel +-16 m with <see cref="NavigationGap"/>
+/// of deck missing between them (<see cref="Ships.NavigationGapWidth"/>, in modules),
 /// then every 16 m outward. Each pier is four shafts in a
 /// diamond, (u +-2, v 0) and (u 0, v +-1): a blackmarble_column_3 footing, then
 /// blackmarble_2x2x2 stacks with a blackmarble_2x2_enforced band every 8 m,
@@ -41,10 +42,10 @@ namespace ProceduralRoads;
 /// goes onto the banks. Its height and each end are the one owner's of how a
 /// structure meets the road (<see cref="StructureEnds"/>): the deck at the
 /// height the road arrives at, an end lower than it walked off on
-/// blackmarble_stair steps (the wooden kit's run, <see cref="BridgeLayout.EmitSteps"/>),
+/// blackmarble_stair steps (the wooden kit's run, <see cref="BridgeLayout.LayEndStairs"/>),
 /// at most <see cref="MaxEndStairRise"/> of them (<see cref="Ends"/>), their foot on
 /// the road, which comes in along the deck's line over its levelled apron
-/// (<see cref="MeetTheRoad"/>); an end the road arrives level with has none.</para>
+/// (StructureEnds.MeetEnds); an end the road arrives level with has none.</para>
 ///
 /// <para><b>Price</b> (<see cref="Price"/>): dearer the
 /// lower its piers, steeply cheaper over 10 m (<see cref="HeightFactor"/>),
@@ -54,19 +55,18 @@ namespace ProceduralRoads;
 /// <para><b>Ruin</b> is the wooden kit's rule (<see cref="BridgeLayout.Ruin"/>,
 /// <see cref="BridgeLayout.SpanSurvival"/>, <see cref="BridgeLayout.PierSurvival"/>):
 /// fixed per crossing and world seed, survival falling toward mid-span, piers
-/// outliving the deck. Each part takes a share of wood's decay calibrated on the
-/// vanilla viaduct (<see cref="DeckRuinShare"/>, <see cref="CourseRuinShare"/>,
-/// <see cref="ArchRuinShare"/>, <see cref="HoleRuinShare"/>): few floors, a third
-/// of the course and nearly half the arches gone, now and then a whole module open.
+/// outliving the deck. Each part takes its share of the one ruin profile
+/// (<see cref="BridgeLayout.BridgeRuin"/>), calibrated on the vanilla viaduct: few floors, some of the course and about a
+/// third of the arches gone, now and then a whole module open.
 /// A pier's core (footing, shafts, bands, the corbel's 2x2x2s) never goes.
 /// The deck keeps a way across a player jumps: no two modules running are both open.</para>
 ///
 /// <para><b>Every piece is grounded or rests on one that is, by
 /// construction</b>, and no piece is wholly under the ground (the game breaks
 /// one there: <see cref="BuriedPieces"/>). Whether the game's support holds
-/// them has to be measured in game: the support formula puts one marble column at
-/// about 18.8 m, the vanilla piers stand about 21 m, and
-/// <see cref="PierCeiling"/> is a guess between them until it is measured.</para>
+/// them is read in game (cli_piece_support): a 21 m pier of this layout keeps 208 support at its deck (the game
+/// breaks a piece under 100), and a vanilla viaduct stands 27 m with 106 at its deck;
+/// <see cref="PierCeiling"/> keeps a margin under that.</para>
 /// </summary>
 public static class DvergrViaduct
 {
@@ -111,29 +111,32 @@ public static class DvergrViaduct
     /// <summary>
     /// The tallest pier, deck surface to the ground under its lowest shaft, a viaduct is built
     /// on; taller, the crossing keeps the wooden kit (on a river) or the road keeps its stairs
-    /// (over a dry valley). NOT MEASURED: by WearNTear's rule one marble column holds about
-    /// 18.8 m and the vanilla piers stand about 21 m (four shafts, enforced bands and iron
-    /// screens); the same arithmetic for wood came out 5 m short of what the game held. It
-    /// has to be measured in game (cli_piece_support on the tallest generated pier) before this is trusted.
+    /// (over a dry valley). Read in game with cli_piece_support: a 21 m pier keeps 208 support at
+    /// the deck, losing about 9 % a metre, so about 28 m before a deck piece falls under the
+    /// game's 100; a vanilla Mistlands viaduct stands 27 m with 106 at its deck. 26 m keeps a
+    /// margin under both. The tallest generated pier is to be read again in game.
     /// </summary>
-    public const float PierCeiling = 20f;
-    /// <summary>The navigation bay over a known river: two vanilla bays (32 m) centred on the fairway, the pier on the
-    /// fairway's line left out (a boat found a 16 m bay too tight, so the gap over a river is
+    public const float PierCeiling = 26f;
+    /// <summary>The pier ceiling the crossings saved without their kind (records of format 2 and older) were laid under: a
+    /// crossing read from one is a viaduct where it was then (RoadNetworkPersistence.DeserializeRoadCrossings).</summary>
+    public const float FormerPierCeiling = 20f;
+    /// <summary>The navigation bay over a river: two vanilla bays (32 m) centred on its navigation channel, the pier on that
+    /// line left out (a boat found a 16 m bay too tight, so the gap over a river is
     /// wider if possible).</summary>
     public const float NavigationBay = 2f * PierSpacing;
     /// <summary>Least deck kept out from each bay pier's centre: past its shafts, onto its corbels.</summary>
     public const float NavigationStub = 3f;
 
     /// <summary>
-    /// The deck missing over the fairway, centred on it: at least the wooden kit's gap
-    /// (<see cref="BridgeLayout.FairwayGap"/>, the one owner of how wide a boat's way is: 16 m or more, growing with the
-    /// river), in whole modules, an odd number of them centred on the fairway (4 k + 2 m), and never closer than
-    /// <see cref="NavigationStub"/> to a bay pier. At 16 m that is 18 m open and 7 m stubs; the corbels over the
-    /// fairway are kept for now.
+    /// The deck missing over a river, centred on its navigation channel: at least the ship's way
+    /// (<paramref name="shipWay"/>, <see cref="Ships.NavigationGapWidth"/>, the one owner of how wide a boat's way is), in
+    /// whole modules, an odd number of them centred on the river (4 k + 2 m), and never closer than
+    /// <see cref="NavigationStub"/> to a bay pier. Under the yard (9.8 m) that is 10 m open; at the yard's height (13.2 m)
+    /// 14 m. The corbels over the river are kept for now.
     /// </summary>
-    public static float NavigationGapFor(RoadCrossing crossing)
+    public static float NavigationGap(float shipWay)
     {
-        float want = Mathf.Max(BridgeLayout.FairwayGapWidth, BridgeLayout.FairwayGap(crossing));
+        float want = shipWay;
         int k = Mathf.CeilToInt((want - Module) / (2f * Module) - 1e-4f);
         int most = Mathf.FloorToInt((NavigationBay - 2f * NavigationStub - Module) / (2f * Module) + 1e-4f);
         return (2 * Mathf.Clamp(k, 0, most) + 1) * Module;
@@ -145,22 +148,12 @@ public static class DvergrViaduct
     public const float MinPier = 2f;
 
     // Ruin, like vanilla's damage to its viaducts: more deck and railing pieces missing and the iron showing through in
-    // some spots are fine, even if the player has to jump over a gap. Each is the share of the wooden kit's losses (BridgeLayout.SpanSurvival: 15 % at a bank, 60 % at
-    // mid-span, 37.5 % on average) a part takes, read off the vanilla Mistlands_Viaduct1 (24 modules): 3 of 48 iron floors missing (6 %), 21 of 69 deck course blocks
-    // (30 %), 21 of 46 arches (46 %), and one whole module open (floors and course), a 2 m gap a player jumps.
-    /// <summary>Iron floors: about 6 % gone on average (vanilla 6 %).</summary>
-    public const float DeckRuinShare = 0.15f;
-    // Too many missing blocks looked wrong on the 80 m viaduct, so each rate is halfway between a light ruin (course share
-    // 0.15 with the middle slot never taken, about 4 % gone; arches 0.5, about 19 %; no whole module open) and a heavy one
-    // (course 0.8, 30 %; arches 1.2, 45 %; holes 0.1). Floors were the same in both. The middle slot still goes,
-    // so the iron shows through in places.
-    /// <summary>The marble course on the floors: about 17 % gone (halfway between 4 % and 30 %).</summary>
-    public const float CourseRuinShare = 0.45f;
-    /// <summary>Arches: about 32 % gone (halfway between 19 % and 45 %).</summary>
-    public const float ArchRuinShare = 0.85f;
-    /// <summary>A whole module open, both floors and the course over them: about 2 % of modules (half of the heavy ruin's 0.1). Never two
-    /// running, so every gap is one module, 2 m, which a player jumps.</summary>
-    public const float HoleRuinShare = 0.05f;
+    // some spots are fine, even if the player has to jump over a gap. The shares are every kit's (BridgeLayout.BridgeRuin),
+    // read off the vanilla Mistlands_Viaduct1. Where this kit departs from them it says why: the pier's core never falls
+    // (vanilla's viaduct piers all stand), only its ornaments, at the columns' survival; and the arches along the deck's
+    // edges, though they are its railing, are lost at the support share with the heads beside them, as vanilla's viaduct
+    // loses its arches (46 %) more than its course (30 %).
+    private static BridgeLayout.RuinProfile Shares => BridgeLayout.BridgeRuin;
 
     // ------------------------------------------------------------- vines
     /// <summary>Vanilla's hanging vine: networked, WearNTear 20 / Wood, no support of its own to give; its box 1 x 1 x 0.3
@@ -287,6 +280,8 @@ public static class DvergrViaduct
 
     /// <summary>Heights relative to the deck surface D (the course's top).</summary>
     public const float FloorDrop = 2f, CourseDrop = 1f, ArchRise = 1f;
+    /// <summary>The viaduct's highest point over the deck surface: the parapet arches' tops.</summary>
+    public static float TopOverDeck => ArchRise + Extents(Arch).y;
     /// <summary>The corbel band's lowest level; the shafts stand below it.</summary>
     private const float ShaftTop = -8f;
 
@@ -356,7 +351,7 @@ public static class DvergrViaduct
         Screen => (0.05f, 1f, 1f),
         // Rip: blackmarble_head_big01 / big02 are 2 x 2 x 2 (were taken as 1 x 2 x 2).
         HeadLeft or HeadRight => (1f, 1f, 1f),
-        // Origin at the foot (Rip: y 0..1): only the stairs' own run (BridgeLayout.EmitSteps) lays it, never Add.
+        // Origin at the foot (Rip: y 0..1): only the stairs' own run (BridgeLayout.LayEndStairs) lays it, never Add.
         StepPrefab => (1f, 1f, 0.5f),
         _ => (0.5f, 0.5f, 0.5f),
     };
@@ -373,6 +368,9 @@ public static class DvergrViaduct
     /// </summary>
     public static bool Applies(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world) == null;
 
+    /// <summary><see cref="Applies(RoadCrossing, WorldGenerator)"/> under another pier ceiling.</summary>
+    public static bool Applies(RoadCrossing crossing, WorldGenerator world, float ceiling) => Refusal(crossing, world, ceiling) == null;
+
     /// <summary>Whether a crossing stands under the viaduct's floor: its deck under <see cref="MinClearance"/> over the
     /// ground or water, or its tallest pier under <see cref="MinViaductPier"/>, the same two tests <see cref="Refusal"/>
     /// makes, in its order. Where a low Mistlands bridge gets the Dvergr pier's wood (BridgeStructures.KitFor).</summary>
@@ -380,7 +378,9 @@ public static class DvergrViaduct
         Clearance(crossing, world) < MinClearance || TallestPier(crossing, world) < MinViaductPier - 1e-3f;
 
     /// <summary>Why <see cref="Applies"/> says no, or null.</summary>
-    public static string? Refusal(RoadCrossing crossing, WorldGenerator world)
+    public static string? Refusal(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world, PierCeiling);
+
+    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling)
     {
         if (crossing == null || world == null) return "no crossing";
         if (crossing.Kind != CrossingKind.Bridge) return "a ford";
@@ -388,9 +388,9 @@ public static class DvergrViaduct
         float clearance = Clearance(crossing, world);
         if (clearance < MinClearance) return FormattableString.Invariant($"deck {clearance:F1} m over the ground or water, under {MinClearance:F0} m");
         float tallest = TallestPier(crossing, world);
-        if (tallest > PierCeiling) return FormattableString.Invariant($"a pier {tallest:F1} m tall, over the {PierCeiling:F0} m ceiling");
+        if (tallest > ceiling) return FormattableString.Invariant($"a pier {tallest:F1} m tall, over the {ceiling:F0} m ceiling");
         if (tallest < MinViaductPier - 1e-3f) return FormattableString.Invariant($"tallest pier {tallest:F1} m, under the {MinViaductPier:F0} m floor");
-        var (near, far) = Ends(crossing, world);
+        var (near, far) = NaturalEnds(crossing, world);
         foreach (StructureEnds.End end in new[] { near, far })
             if (end.Rise > MaxEndStairRise + 1e-3f)
                 return FormattableString.Invariant($"end stairs {end.Rise:F0} m, over the {MaxEndStairRise:F0} m most");
@@ -400,19 +400,26 @@ public static class DvergrViaduct
     /// <summary>The deck's walking surface: the higher of the two heights the road arrives at its ends
     /// (<see cref="StructureEnds.Arrival"/> over the apron outward of each deck end), lifted clear of any water, not the
     /// bank points' own ground (a bank point can be 2-6 m off the road that comes to it).</summary>
-    public static float DeckHeight(RoadCrossing crossing, WorldGenerator world)
+    public static float DeckHeight(RoadCrossing crossing, WorldGenerator world) => DeckHeight(crossing, world, ShipWayUnder(crossing, world));
+
+    /// <summary><see cref="DeckHeight(RoadCrossing, WorldGenerator)"/> on the module grid hung on
+    /// <paramref name="way"/> (null: the grid off a river).</summary>
+    private static float DeckHeight(RoadCrossing crossing, WorldGenerator world, BridgeLayout.ShipWay? way)
     {
-        var (near, far) = EdgesOf(crossing);
+        var (near, far) = EdgesOf(crossing, world, way);
         Vector2 dir = crossing.Direction;
         float G(Vector2 p) => Ground(p, world);
         float deck = Mathf.Max(StructureEnds.Arrival(near, -dir, G), StructureEnds.Arrival(far, dir, G));
-        return Mathf.Max(deck, crossing.WaterLevel + BridgeLayout.DeckFreeboard);
+        return Mathf.Max(deck, BridgeLayout.MinDeck(crossing.WaterLevel));
     }
 
     /// <summary>The middles of the deck's two end edges, near then far: where its walking surface stops.</summary>
-    internal static (Vector2 near, Vector2 far) EdgesOf(RoadCrossing crossing)
+    internal static (Vector2 near, Vector2 far) EdgesOf(RoadCrossing crossing, WorldGenerator world) =>
+        EdgesOf(crossing, world, ShipWayUnder(crossing, world));
+
+    private static (Vector2 near, Vector2 far) EdgesOf(RoadCrossing crossing, WorldGenerator world, BridgeLayout.ShipWay? way)
     {
-        var (_, _, first, last) = DeckGrid(crossing);
+        var (_, _, first, last) = DeckGrid(crossing.Width, way);
         return (crossing.FromBank + crossing.Direction * (first - Module * 0.5f), crossing.FromBank + crossing.Direction * (last + Module * 0.5f));
     }
 
@@ -421,26 +428,28 @@ public static class DvergrViaduct
     public static float Clearance(RoadCrossing crossing, WorldGenerator world) =>
         DeckHeight(crossing, world) - Mathf.Max(crossing.RiverbedHeight, crossing.WaterLevel);
 
-    /// <summary>Whether the crossing is over a known, sailable river: the wooden kit's test
-    /// (<see cref="BridgeLayout.FairwayGap"/> reads the same field), not a second one.</summary>
-    public static bool OverKnownRiver(RoadCrossing crossing) =>
-        crossing.Kind == CrossingKind.Bridge && crossing.FairwayWidth > 0f && BridgeLayout.FairwayGap(crossing) > 0f;
+    /// <summary>Whether the viaduct leaves a navigation bay: over a river whose ship does not pass under its deck
+    /// (<see cref="BridgeLayout.NavigationChannel"/>, every kit's one test, not a second one).</summary>
+    public static bool HasNavigationBay(RoadCrossing crossing, WorldGenerator world) => ShipWayUnder(crossing, world)?.DeckWidth > 0f;
 
     // ---------------------------------------------------------------- piers
 
     /// <summary>
     /// Where the piers stand, metres along the crossing from its near bank, nearest first.
-    /// <paramref name="fairway"/>: the fairway centre along the crossing on a known river, else null.
+    /// <paramref name="way"/>: the ship's way under the viaduct over a river, else null.
     /// Off a river, the midpoint and then every <see cref="PierSpacing"/> outward while inside the
-    /// gap, at least the midpoint. On a river, the navigation bay's two piers at the fairway +- 16 m
+    /// gap, at least the midpoint. On a river, the navigation bay's two piers at the way +- 16 m
     /// (<see cref="NavigationBay"/>) first, then every 16 m outward; a bay pier that falls outside the gap is left out.
+    /// The same under a deck the ship passes under (no deck gap): a pier's corbels reach 6 m along the deck at the yard's
+    /// height, so +- 8 m would put them in the hull's way; at +- 16 m they stand 10 m out, clear of it and of the yard.
     /// </summary>
-    public static List<float> PierAlongs(float width, float? fairway)
+    public static List<float> PierAlongs(float width, BridgeLayout.ShipWay? way)
     {
         var piers = new List<float>();
         bool Inside(float a) => a >= PierBankMargin - 1e-3f && a <= width - PierBankMargin + 1e-3f;
-        if (fairway is float f)
+        if (way is BridgeLayout.ShipWay w)
         {
+            float f = w.Centre;
             float half = NavigationBay * 0.5f;
             for (float a = f - half; a >= -1e-3f; a -= PierSpacing)
                 if (Inside(a)) piers.Add(a);
@@ -458,11 +467,19 @@ public static class DvergrViaduct
         return piers;
     }
 
-    /// <summary>The fairway centre along the crossing on a known river, else null.</summary>
-    public static float? FairwayAlong(RoadCrossing crossing) =>
-        OverKnownRiver(crossing) ? crossing.Along(crossing.FairwayCenter) : null;
+    /// <summary>The ship's way under the viaduct (<see cref="BridgeLayout.NavigationChannel"/> for its deck: the walking
+    /// surface down to the iron floors, <see cref="FloorDrop"/>), or null off a river. The deck is measured as
+    /// laid without a bay: the bay hangs the module grid, and so the deck's ends, on the way it is deciding.</summary>
+    public static BridgeLayout.ShipWay? ShipWayUnder(RoadCrossing crossing, WorldGenerator world)
+    {
+        float deck = DeckHeight(crossing, world, null);
+        return BridgeLayout.NavigationChannel(crossing, world, deck - FloorDrop, deck, BridgeStructures.Kit.DvergrViaduct);
+    }
 
-    public static List<float> PierAlongs(RoadCrossing crossing) => PierAlongs(crossing.Width, FairwayAlong(crossing));
+    /// <summary>The middle of the ship's way along the crossing, else null.</summary>
+    public static float? FairwayAlong(RoadCrossing crossing, WorldGenerator world) => ShipWayUnder(crossing, world)?.Centre;
+
+    public static List<float> PierAlongs(RoadCrossing crossing, WorldGenerator world) => PierAlongs(crossing.Width, ShipWayUnder(crossing, world));
 
     /// <summary>The lowest ground under a pier's four shafts.</summary>
     public static float PierGround(RoadCrossing crossing, float along, WorldGenerator world)
@@ -482,7 +499,7 @@ public static class DvergrViaduct
     public static float TallestPier(RoadCrossing crossing, WorldGenerator world)
     {
         float deck = DeckHeight(crossing, world), tallest = 0f;
-        foreach (float a in PierAlongs(crossing))
+        foreach (float a in PierAlongs(crossing, world))
             tallest = Mathf.Max(tallest, deck - PierGround(crossing, a, world));
         return tallest;
     }
@@ -496,9 +513,9 @@ public static class DvergrViaduct
     {
         float deck = DeckHeight(crossing, world), tallest = 0f;
         Vector2 dir = crossing.Direction, side = new(-dir.y, dir.x);
-        var (nearEdge, farEdge) = EdgesOf(crossing);
+        var (nearEdge, farEdge) = EdgesOf(crossing, world);
         float first = Vector2.Dot(nearEdge - crossing.FromBank, dir) + StructureEnds.JoinOverlap, last = Vector2.Dot(farEdge - crossing.FromBank, dir) - StructureEnds.JoinOverlap;
-        foreach (float a in PierAlongs(crossing))
+        foreach (float a in PierAlongs(crossing, world))
         {
             float ground = PierGround(crossing, a, world);
             Vector2 at = crossing.FromBank + dir * a;
@@ -551,7 +568,7 @@ public static class DvergrViaduct
             Vector2 p = Vector2.Lerp(from, to, i / (float)samples);
             float g = Ground(p, world);
             lowest = Mathf.Min(lowest, g);
-            if (g < RoadPathfinder.LandingFloor) { reason = "water"; return null; }
+            if (g < RoadWater.LandingFloor) { reason = "water"; return null; }
             if (i % 2 == 0)
             {
                 world.GetRiverWeight(p.x, p.y, out float river, out _);
@@ -781,11 +798,10 @@ public static class DvergrViaduct
 
     /// <summary>The deck's module grid along the crossing: the piers, the anchor every module hangs on, and the first and
     /// last module centres (each reaching onto its bank: its centre within a metre of it, or behind it).</summary>
-    private static (List<float> piers, float anchor, float first, float last) DeckGrid(RoadCrossing crossing)
+    private static (List<float> piers, float anchor, float first, float last) DeckGrid(float width, BridgeLayout.ShipWay? way)
     {
-        float width = crossing.Width;
-        float? fairway = FairwayAlong(crossing);
-        List<float> piers = PierAlongs(width, fairway);
+        float? fairway = way?.Centre;
+        List<float> piers = PierAlongs(width, way);
         // Every module, pier and arch hangs on one grid: the piers' (vanilla's modules are centred on its piers).
         float anchor = piers.Count > 0 ? piers[0] : fairway ?? width * 0.5f;
         float first = anchor - Module * Mathf.CeilToInt((anchor - 1f) / Module - 1e-4f);
@@ -794,22 +810,23 @@ public static class DvergrViaduct
     }
 
     /// <summary>
-    /// Each end as it meets the road, near (from-bank) end first, decided by the one owner (<see cref="StructureEnds.Decide"/>):
-    /// the deck's edge, its height, and the stairs whose foot sits on the ground the road arrives on. <see cref="Solve"/>
-    /// lays exactly these, <see cref="Refusal"/> caps them (<see cref="MaxEndStairRise"/>) and <see cref="Price"/> charges
-    /// for them. A run always lands:
-    /// the road's apron is levelled to its foot (RoadSpatialGrid.LevelledEnds), and the generator refuses the viaduct where
-    /// the road as planned does not meet it.
+    /// Each end as the bank takes it (StructureEnds.Natural), near (from-bank) end first: the deck's edge, its height, and
+    /// the stairs whose foot sits nearest the ground the road arrives on (<see cref="StructureEnds.Decide"/>).
+    /// <see cref="Refusal"/> caps them (<see cref="MaxEndStairRise"/>) and <see cref="Price"/> charges for them; the road
+    /// meets them as the one owner decides (StructureEnds.MeetEnds), which may lay fewer.
     /// </summary>
-    public static (StructureEnds.End near, StructureEnds.End far) Ends(RoadCrossing crossing, WorldGenerator world)
+    internal static (StructureEnds.End near, StructureEnds.End far) NaturalEnds(RoadCrossing crossing, WorldGenerator world)
     {
         if (crossing == null || world == null || crossing.Width < Module) return default;
         Vector2 dir = crossing.Direction;
         float deck = DeckHeight(crossing, world);
-        var (nearEdge, farEdge) = EdgesOf(crossing);
+        var (nearEdge, farEdge) = EdgesOf(crossing, world);
         float G(Vector2 p) => Ground(p, world);
         return (StructureEnds.Decide(nearEdge, dir, deck, G), StructureEnds.Decide(farEdge, -dir, deck, G));
     }
+
+    /// <summary>Each end as it meets the road (StructureEnds.Of): what <see cref="Solve"/> lays.</summary>
+    public static (StructureEnds.End near, StructureEnds.End far) Ends(RoadCrossing crossing, WorldGenerator world) => StructureEnds.Of(crossing, world);
 
     // ----------------------------------------------------------------- price
 
@@ -824,7 +841,7 @@ public static class DvergrViaduct
     /// </summary>
     public static float Price(RoadCrossing crossing, WorldGenerator world, float fixedCost, float perMeter, float endStairPerMeter)
     {
-        var (near, far) = Ends(crossing, world);
+        var (near, far) = NaturalEnds(crossing, world);
         return (fixedCost + perMeter * crossing.Width) * HeightFactor(TallestPier(crossing, world)) + endStairPerMeter * (near.Rise + far.Rise);
     }
 
@@ -833,8 +850,8 @@ public static class DvergrViaduct
     /// <see cref="MinClearance"/> and <see cref="PierCeiling"/>).
     /// <para>Up to <see cref="PriceHeight"/> it is the plain inverse of the height (1 at 10 m, 1.67 at 6 m), so a low
     /// viaduct costs what it did and is never priced out into stairs: the fallback is the same search, not a second
-    /// pass. Over it the share falls geometrically to <see cref="CeilingPriceShare"/> at the ceiling (0.40 at 14 m,
-    /// 0.20 at 17 m, 0.10 at 20 m, against the inverse's 0.71, 0.59 and 0.5), and never above the inverse: a valley that
+    /// pass. Over it the share falls geometrically to <see cref="CeilingPriceShare"/> at the ceiling (0.56 at 14 m,
+    /// 0.37 at 17 m, 0.24 at 20 m, 0.10 at 26 m, against the inverse's 0.71, 0.59, 0.5 and 0.38), and never above the inverse: a valley that
     /// offers a high crossing and a low one has the high one win clearly. With <see cref="CeilingPriceShare"/> 0.5 it
     /// is the inverse price exactly.</para>
     /// </summary>
@@ -849,7 +866,7 @@ public static class DvergrViaduct
 
     /// <summary>The pier height at which a viaduct costs its base price (<see cref="Price"/>), and under which it is
     /// priced as the plain inverse. Its default, about the median tallest pier (9.8 m on six test
-    /// worlds): with the inverse price anchored at 20 m (the ceiling) 16 valley viaducts were left of 79, at 10 m
+    /// worlds): with the inverse price anchored at a 20 m ceiling 16 valley viaducts were left of 79, at 10 m
     /// 59.</summary>
     public const float DefaultPriceHeight = 10f;
     /// <summary>Settable for tests.</summary>
@@ -883,19 +900,22 @@ public static class DvergrViaduct
         float yaw = BridgeLayout.YawDegrees(dir);
         float deck = DeckHeight(crossing, world);
         float width = crossing.Width;
-        float? fairway = FairwayAlong(crossing);
-        float navigationGap = fairway.HasValue ? NavigationGapFor(crossing) : 0f;
+        BridgeLayout.ShipWay? way = ShipWayUnder(crossing, world);
+        float? fairway = way?.Centre;
+        float navigationGap = way is BridgeLayout.ShipWay w && w.DeckWidth > 0f ? NavigationGap(w.DeckWidth) : 0f;
         // The first module reaches onto the near bank (its centre within a metre of it, or behind it), the last onto the far.
-        var (piers, anchor, first, last) = DeckGrid(crossing);
+        var (piers, anchor, first, last) = DeckGrid(width, way);
         int modules = Mathf.RoundToInt((last - first) / Module) + 1;
         float Mid(float along) => width <= 0f ? 0f : Mathf.Clamp01(1f - Mathf.Abs(along - width * 0.5f) / (width * 0.5f));
-        float Survives(float along, float share) => 1f - (1f - BridgeLayout.SpanSurvival(Mid(along))) * share;
+        float Survives(float along, float share) => BridgeLayout.RuinProfile.Survives(BridgeLayout.SpanSurvival(Mid(along)), share);
 
         Vector2 At(float along, float v) => crossing.FromBank + dir * along + side * v;
-        // The ground as finished at the ends: cut to the meeting height where the road runs on under the end module
-        // (StructureEnds.JoinOverlap), so that module is not dropped as buried under a bank the road cuts away.
+        // The finished ground (StructureGround): raised or cut by the road's levelling, and cut to the meeting height where
+        // the road runs on under the end module (StructureEnds.JoinOverlap), so that module is not dropped as buried under a
+        // bank the road cuts away. The piers' shafts and screens reach it, and a piece wholly under it is not laid.
         var (nearEnd, farEnd) = Ends(crossing, world);
-        float G(Vector2 p) => StructureEnds.FinishedGround(p, Ground(p, world), nearEnd, farEnd, HalfWidth + BuriedPieces.Growth);
+        Func<Vector2, float> finished = StructureGround.Of(world, nearEnd, farEnd, HalfWidth + BuriedPieces.Growth);
+        float G(Vector2 p) => finished(p);
         // Every stone piece laid, on the bridge's axes, for the vines to hang from.
         var laid = new List<(string prefab, float along, float v, float y)>();
         void Add(StructurePieceKind kind, string prefab, float along, float v, float y, float turn, float health)
@@ -929,7 +949,7 @@ public static class DvergrViaduct
             }
             foreach (var (du, v, footingTurn) in Shafts)
             {
-                float ground = Ground(At(a + du, v), world);
+                float ground = G(At(a + du, v));
                 float bottom = deck + ShaftTop;
                 // Down from under the corbel band, a band every 8 m (vanilla's two at 9 and 17 m under the deck).
                 for (int level = 0; ; level++)
@@ -947,7 +967,7 @@ public static class DvergrViaduct
             // The iron screens through the pier, from the deck down until one is in the ground.
             foreach (float du in new[] { -1f, 1f })
             {
-                float ground = Ground(At(a + du, 0f), world);
+                float ground = G(At(a + du, 0f));
                 for (int level = 0; ; level++)
                 {
                     float centre = deck - FloorDrop - level * 2f;
@@ -968,14 +988,14 @@ public static class DvergrViaduct
             gap[m] = fairway is float f && Mathf.Abs(c - f) <= navigationGap * 0.5f - Module * 0.5f + 1e-3f;
             bool end = m == 0 || m == modules - 1;
             for (int lane = 0; lane < 2; lane++)
-                floor[m, lane] = !gap[m] && (!ruin || end || r.Roll(m, lane == 0 ? -1 : 1, RoleFloor) < Survives(c, DeckRuinShare));
+                floor[m, lane] = !gap[m] && (!ruin || end || r.Roll(m, lane == 0 ? -1 : 1, RoleFloor) < Survives(c, Shares.DeckShare));
         }
         // Now and then a whole module open, a gap a player jumps (never at an end, never two within three modules).
         var holes = new List<int>();
         if (ruin)
             for (int m = 1; m + 1 < modules; m++)
                 if (!gap[m] && (holes.Count == 0 || m - holes[holes.Count - 1] >= 3)
-                    && r.Roll(m, 0, RoleHole) >= Survives(first + m * Module, HoleRuinShare))
+                    && r.Roll(m, 0, RoleHole) >= Survives(first + m * Module, Shares.HoleShare))
                 {
                     holes.Add(m);
                     floor[m, 0] = floor[m, 1] = false;
@@ -1058,10 +1078,10 @@ public static class DvergrViaduct
                 {
                     if (!carried[m, lane]) continue;
                     int sideKey = lane == 0 ? -1 : 1;
-                    if (ruin && !joining && r.Roll(m, sideKey, RoleCourse) >= Survives(c, CourseRuinShare)) continue;
+                    if (ruin && !joining && r.Roll(m, sideKey, RoleCourse) >= Survives(c, Shares.CourseShare)) continue;
                     course[m, lane == 0 ? 0 : 2] = true;
                     Add(StructurePieceKind.ViaductDeck, Block, c, sideKey * 1f, deck - CourseDrop, 90f, 1f);
-                    if (!ruin || r.Roll(m, sideKey, RoleHead) < BridgeLayout.PierSurvival(Survives(c, ArchRuinShare)))
+                    if (!ruin || r.Roll(m, sideKey, RoleHead) < BridgeLayout.PierSurvival(Survives(c, Shares.SupportShare)))
                         Add(StructurePieceKind.ViaductParapet, sideKey > 0 ? HeadLeft : HeadRight, c, sideKey * 3f, deck - CourseDrop,
                             sideKey > 0 ? 270f : 90f, 1f);
                 }
@@ -1072,7 +1092,7 @@ public static class DvergrViaduct
                 int v = (slot - 1) * 2;
                 bool under = v < 0 ? carried[m, 0] : v > 0 ? carried[m, 1] : carried[m, 0] || carried[m, 1];
                 if (!under) continue;
-                if (ruin && !joining && r.Roll(m, v, RoleCourse) >= Survives(c, CourseRuinShare)) continue;
+                if (ruin && !joining && r.Roll(m, v, RoleCourse) >= Survives(c, Shares.CourseShare)) continue;
                 course[m, slot] = true;
                 Add(StructurePieceKind.ViaductDeck, Block, c, v, deck - CourseDrop, 90f, 1f);
             }
@@ -1089,7 +1109,7 @@ public static class DvergrViaduct
                 int slot = sideKey < 0 ? 0 : 2;
                 // Over a pier the course is at v +-1: its outer face carries the arch there.
                 if (!course[m, slot] && !course[m + 1, slot]) continue;
-                if (ruin && r.Roll(m, sideKey, RoleArch) >= Survives(a, ArchRuinShare)) continue;
+                if (ruin && r.Roll(m, sideKey, RoleArch) >= Survives(a, Shares.SupportShare)) continue;
                 Add(StructurePieceKind.ViaductParapet, Arch, a, sideKey * 2.5f, deck + ArchRise, phase == 1 ? 270f : 90f,
                     1f);
             }
@@ -1099,9 +1119,8 @@ public static class DvergrViaduct
         // where the bank is at the deck's height, and the road runs onto the deck).
         foreach (var (end, key) in new[] { (nearEnd, 0), (farEnd, modules) })
         {
-            if (end.Steps == 0) continue;
             var steps = new List<StructurePiece>();
-            BridgeLayout.EmitSteps(steps, world, end.Edge, end.Up, side, deck, r, key, StepPrefab, Block, end.Steps);
+            BridgeLayout.LayEndStairs(steps, finished, end, side, r, key, StepPrefab, Block);
             foreach (StructurePiece s in steps)
             {
                 s.HealthFraction = 1f;
@@ -1163,7 +1182,7 @@ public static class DvergrViaduct
     internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, WorldGenerator world) =>
         WhollyBuried(prefab, centre, dir, side, y, p => Ground(p, world));
 
-    /// <summary>As above, on <paramref name="ground"/> (the finished ground at the ends, StructureEnds.FinishedGround).</summary>
+    /// <summary>As above, on <paramref name="ground"/> (the finished ground, <see cref="StructureGround"/>).</summary>
     internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, Func<Vector2, float> ground)
     {
         var (hu, hv, hy) = Extents(prefab);
@@ -1183,8 +1202,9 @@ public static class DvergrViaduct
     public static string Describe(RoadCrossing crossing, WorldGenerator world)
     {
         float deck = DeckHeight(crossing, world);
-        List<float> piers = PierAlongs(crossing);
+        List<float> piers = PierAlongs(crossing, world);
+        bool river = HasNavigationBay(crossing, world), water = crossing.RiverbedHeight < crossing.WaterLevel;
         return FormattableString.Invariant(
-            $"viaduct at ({crossing.Center.x:F0}, {deck:F0}, {crossing.Center.y:F0}): {crossing.Width:F0} m from ({crossing.FromBank.x:F0}, {crossing.FromBank.y:F0}) to ({crossing.ToBank.x:F0}, {crossing.ToBank.y:F0}), deck {Clearance(crossing, world):F1} m over the {(OverKnownRiver(crossing) ? "water" : "ground")}, {piers.Count} pier(s), tallest {TallestPier(crossing, world):F1} m{(OverKnownRiver(crossing) ? ", navigation gap" : "")}");
+            $"viaduct at ({crossing.Center.x:F0}, {deck:F0}, {crossing.Center.y:F0}): {crossing.Width:F0} m from ({crossing.FromBank.x:F0}, {crossing.FromBank.y:F0}) to ({crossing.ToBank.x:F0}, {crossing.ToBank.y:F0}), deck {Clearance(crossing, world):F1} m over the {(water ? "water" : "ground")}, {piers.Count} pier(s), tallest {TallestPier(crossing, world):F1} m{(river ? ", navigation gap" : "")}");
     }
 }

@@ -4,7 +4,8 @@ using UnityEngine;
 
 namespace ProceduralRoads;
 
-/// <summary>A rock standing in a place's footprint: the place's own. Its colliders' box seen from above, turned with the rock
+/// <summary>A rock standing in a place's footprint: the place's own, read off its saved
+/// objects (PlacedSiteReader). Its colliders' box seen from above, turned with the rock
 /// about the vertical (<see cref="Yaw"/>, degrees, as Unity turns): a circle out to the box's
 /// corner made a long rock half as wide again as it is (rock1_mountain 17.5 m).</summary>
 public readonly struct SiteRock
@@ -100,11 +101,17 @@ public readonly struct SiteRock
         float r = yaw * Mathf.Deg2Rad, c = Mathf.Cos(r), s = Mathf.Sin(r);
         return new Vector2(local.x * c + local.y * s, local.y * c - local.x * s);
     }
+
+    /// <summary>A place none of whose rocks an approach may clear, small ones included: Hildir's
+    /// cave, whose boulder blocking the entrance is not disturbed (the landing near by is still
+    /// reached).</summary>
+    public static bool KeepsEveryRock(string placeName) => placeName.StartsWith("Hildir", StringComparison.Ordinal);
 }
 
 /// <summary>
-/// Where an approach to a placed place may go, for a staircase to it
-/// (<see cref="RoadStairRuns.PlanPlacedSiteApproach"/>): the landing in front of
+/// Where an approach to a placed place may go, for a road onto its landing
+/// (<see cref="RoadSiteEntry"/>) and a staircase to it
+/// (<see cref="RoadStairRuns.PlanPlacedSiteApproach"/>) alike: the landing in front of
 /// its floor, the entrance pit (the floor and its smoothing), the rock round it (its
 /// exterior radius, but for a cone in front of its floor) and its own boulders. Pure.
 /// </summary>
@@ -336,7 +343,8 @@ public sealed class PlacedSiteShape
     /// 10-20 m proud of the face below its mouth; if the landing is a big overhang that part of it cannot be reached, but
     /// coming up where it connects to the mountain it likely can be). The
     /// ground walked onto the landings (<see cref="Landings"/>; a metre to the next rising or falling
-    /// <see cref="WalkStep"/> at most, clear of the pit and rock, out to <see cref="LandingSearch"/> past the flat) is followed out to its edges; an edge is joined where the ground outside it falls no more than
+    /// <see cref="WalkStep"/> at most and level with the landing it is walked from, within
+    /// <see cref="RoadNetworkGenerator.ArrivalLevel"/>, clear of the pit and rock, out to <see cref="LandingSearch"/> past the flat) is followed out to its edges; an edge is joined where the ground outside it falls no more than
     /// <see cref="JoinGrade"/> over <see cref="JoinReach"/>, and overhangs where it falls further. Aims: up to
     /// <see cref="JoinedEdges"/> joined edges <see cref="JoinApart"/> apart (out of the water) and the landings that are
     /// themselves joined, nearest <paramref name="from"/> first, then the overhanging landings; at most <paramref name="tries"/>. The face below
@@ -353,23 +361,28 @@ public sealed class PlacedSiteShape
         bool Inside(int x, int z) => Vector2.Distance(new Vector2(x, z), FlatCentre) <= outer;
         bool Walkable(int x, int z) => Inside(x, z) && Refusal(new Vector2(x, z), clearance, clearance) == "";
         var region = new HashSet<(int, int)>();
-        var queue = new Queue<(int, int)>();
-        foreach (var (at, _) in landings)
+        var queue = new Queue<(int x, int z, float level)>();
+        foreach (var (at, height) in landings)
         {
             var cell = (Mathf.RoundToInt(at.x), Mathf.RoundToInt(at.y));
-            if (Walkable(cell.Item1, cell.Item2) && region.Add(cell)) queue.Enqueue(cell);
+            if (Walkable(cell.Item1, cell.Item2) && region.Add(cell)) queue.Enqueue((cell.Item1, cell.Item2, height));
         }
         var steps = new[] { (1, 0), (-1, 0), (0, 1), (0, -1) };
         while (queue.Count > 0)
         {
-            var (x, z) = queue.Dequeue();
+            var (x, z, level) = queue.Dequeue();
             float here = ground(x, z);
             foreach (var (dx, dz) in steps)
             {
                 var next = (x + dx, z + dz);
-                if (region.Contains(next) || !Walkable(next.Item1, next.Item2) || Mathf.Abs(ground(next.Item1, next.Item2) - here) > WalkStep) continue;
+                if (region.Contains(next) || !Walkable(next.Item1, next.Item2)) continue;
+                float there = ground(next.Item1, next.Item2);
+                // Level with the landing it is walked from (RoadNetworkGenerator.ArrivalLevel), not only a step from the
+                // last metre: stepping down WalkStep a metre, the edge aimed at at Hildir's cave lay a metre under its
+                // landing and 4 m short of it (at -2304,1536).
+                if (Mathf.Abs(there - here) > WalkStep || Mathf.Abs(there - level) > RoadNetworkGenerator.ArrivalLevel) continue;
                 region.Add(next);
-                queue.Enqueue(next);
+                queue.Enqueue((next.Item1, next.Item2, level));
             }
         }
         // Joined: the ground outside, away from the place and clear of its pit and rock, falls away no steeper than
@@ -396,7 +409,7 @@ public sealed class PlacedSiteShape
                     outward += new Vector2(dx, dz);
             if (outward.sqrMagnitude < 0.5f) continue;
             var at = new Vector2(x, z);
-            if (ground(x, z) >= RoadConstants.ShallowWaterHeight && Joined(at, outward.normalized))
+            if (RoadWater.BuiltDry(ground(x, z)) && Joined(at, outward.normalized))
                 aims.Add(("joined edge", at, true, Vector2.Distance(at, from)));
         }
         // At most JoinedEdges edges, JoinApart apart (one per side, not a row along one), then every landing:

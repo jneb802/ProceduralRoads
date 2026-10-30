@@ -4,29 +4,25 @@ using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
-/// Deterministic layout of a ruined wooden bridge at a recorded crossing
-/// (bridges prototype). Pure logic; the game places the returned plan later.
+/// The wooden kits' shared rules at a recorded crossing, which the stone kit fills too. Pure logic; the game places the
+/// planned pieces later. The kits themselves are the railed kits (<see cref="RailedKit"/>, every biome but the Mistlands),
+/// the stone kit (<see cref="StoneBay"/>, from the Black Forest on) and the Dvergr wood kit (<see cref="DvergrWoodBridge"/>);
+/// <see cref="BridgeStructures.KitFor"/> chooses.
 ///
-/// The bridge is a row of stations every <see cref="DeckSpan"/> metres from
+/// A wooden bridge is a row of stations every <see cref="DeckSpan"/> metres from
 /// bank to bank. THE DECK IS LEVEL: a wood_floor is placed by the vanilla
 /// hammer at Quaternion.Euler(0, yaw, 0) -- yaw only, and the snap path
 /// moves the ghost, never turns it -- so a pitched plate is one no player
 /// could ever put back. The deck therefore sits at ONE height, the higher
 /// bank's (both ends already lifted to the water plus a freeboard), and the
 /// drop to the lower bank is walked off by that end's stair run, which is
-/// as many snapped steps as the bank needs. A station is a pair of poles
-/// stacked down from just under the deck until buried in the riverbed, tied
-/// by two crossbeams; the deck is two lanes of plates, left and right of the
-/// crossing line, four metres wide like the road. Plates exist only where
-/// both end stations survive. Ruin is deterministic per (crossing, world seed):
-/// survival falls toward mid-span, piers outlive the deck, a removed
-/// station may leave a rotted stub or a toppled pole on the bed, and a
-/// navigation gap around the fairway is always left open so boats still
-/// pass. Every end is a stair down from the deck edge into the bank. A ford
-/// gets no pieces unless it is spanned: a low footbridge, lightly ruined.
-/// Every piece is grounded or rests on a grounded one by construction.
+/// as many snapped steps as the bank needs (<see cref="EmitSteps"/>). Ruin is
+/// deterministic per (crossing, world seed) (<see cref="Ruin"/>) and one
+/// profile for every kit (<see cref="BridgeRuin"/>), and a navigation gap over
+/// a river is always left open so boats still pass. A ford gets no pieces unless it is
+/// spanned: a low footbridge (<see cref="SpanDeckHeight"/>).
 /// </summary>
-public static class BridgeLayout
+public static partial class BridgeLayout
 {
     // Vanilla wood pieces; geometry as measured in-game.
     public const string PostPrefab = "wood_pole2";   // 2 m pole, origin at its centre
@@ -39,7 +35,6 @@ public static class BridgeLayout
     public const float PostSegment = 2f;      // vertical metres per pole
     public const float LaneOffset = 1f;       // the two lanes' centres, either side of the crossing line
     public const float DeckHalfWidth = 2f;    // two 2 m plates side by side: a 4 m deck, the road's width
-    public const float PostSideOffset = 1.75f; // post pairs under the outer halves of the beams, never in the walkway
     public const int MaxStairSteps = 12;      // a stair marches outward until its foot is in the dirt, at most this far
     public const float StairRun = 2f;         // one step: 2 m out, 1 m down
     public const float StairRise = 1f;
@@ -75,39 +70,53 @@ public static class BridgeLayout
     /// pieces it has.</para>
     ///
     /// <para>9: the Dvergr wood kit on the pieces' measured sizes (planks and stringers 0.8 m
-    /// deep, piles centred), damaged like the vanilla harbour (<see cref="DvergrWoodRuin"/>), on the Mistlands' ford spans
+    /// deep, piles centred), damaged like the vanilla harbour, on the Mistlands' ford spans
     /// too, its stair posts in the Dvergr pile, and no lanterns (the harbour's hang from its buildings). A world
     /// explored partly under layout 8 keeps the pieces it has.</para>
     ///
     /// <para>10: both Dvergr kits checked against the vanilla prefabs: the
     /// Dvergr wood stringers 0.3 m up into the planks as the harbour's, the viaduct's piece sizes measured, a piece's roll
     /// spawned; and the first flair. A world explored partly under layout 9 keeps the pieces it has.</para>
+    ///
+    /// <para>11: a Meadows, Black Forest, Swamp or Plains bridge whose columns stand within the wood support ceiling is built
+    /// in one of the railed wooden kits (<see cref="RailedKit"/>), half and half. A crossing saved with its kit keeps it, and a world explored
+    /// partly under layout 10 keeps the pieces it has.</para>
+    ///
+    /// <para>12: every bridge and every ford's span outside the Mistlands is built in a railed wooden kit: the plain wooden
+    /// kit is gone. A free span's railed deck is carried bank to bank, and a station whose column would stand over the wood
+    /// support ceiling has none. A railed kit's navigation gap is whole bays of its own grid. A world explored partly under
+    /// layout 11 keeps the pieces it has.</para>
+    ///
+    /// <para>13: a bridge or a ford's span outside the Meadows and the Mistlands that the stone kit fits
+    /// (<see cref="StoneFits"/>) may be built in it, at even odds with the railed kits. A crossing saved with its kit keeps it,
+    /// and a world explored partly under layout 12 keeps the pieces it has.</para>
     /// </summary>
-    public const int LayoutVersion = 10;
+    public const int LayoutVersion = 13;
     public const float DeckFreeboard = 0.5f;  // deck at least this far above the water
-    public const float PostTopBelowDeck = 0.2f;
+    /// <summary>How far under the walking surface a wooden deck's beams reach, and as far again their depth
+    /// (<see cref="DeckDepth"/>).</summary>
     public const float BeamBelowDeck = 0.13f;
 
-    // Ruin rule: station survival falls from BankSurvival at the banks to
-    // MidSurvival at mid-span; piers outlive the deck by PierPersistence, so
-    // a long span reads as a row of piers with a collapsed deck; a removed
-    // station leaves a stub or debris by StubChance / DebrisChance.
+    // The base curve of the one ruin profile (BridgeRuin): survival falls from BankSurvival at the banks to MidSurvival at
+    // mid-span; a column outlives the deck by PierPersistence, and a fallen one leaves a stub or debris by StubChance /
+    // DebrisChance.
     public const float BankSurvival = 0.85f;
     public const float MidSurvival = 0.4f;
     public const float PierPersistence = 0.85f;
     public const float StubChance = 0.5f;
     public const float DebrisChance = 0.5f;
+    /// <summary>The health range <see cref="Ruin.Health"/> draws a piece's from before the ruin wears it as a location's
+    /// (<see cref="Ruin.ApplyLocationDamage"/>); the complete plan keeps it.</summary>
     public const float RuinHealthMin = 0.05f;
     public const float RuinHealthMax = 0.70f;
 
-    /// <summary>The ruin rule's survival at a point of a span: <see cref="BankSurvival"/> at the
-    /// banks, falling to <see cref="MidSurvival"/> at mid-span. <paramref name="midCloseness"/> is 0
-    /// at a bank and 1 at mid-span. The one owner of the profile: the Dvergr viaduct
-    /// (<see cref="DvergrViaduct"/>) ruins by it too, at its own material's share.</summary>
-    public static float SpanSurvival(float midCloseness) => WoodRuin.Span(midCloseness);
+    /// <summary>The base curve's survival at a point of a span: <see cref="BankSurvival"/> at the banks, falling to
+    /// <see cref="MidSurvival"/> at mid-span. <paramref name="midCloseness"/> is 0 at a bank and 1 at mid-span. Each part
+    /// takes its share of the losses this leaves (<see cref="RuinProfile.Survives"/>).</summary>
+    public static float SpanSurvival(float midCloseness) => BridgeRuin.Span(midCloseness);
 
-    /// <summary>A pier's survival where the deck's is <paramref name="survival"/>: piers outlive the deck.</summary>
-    public static float PierSurvival(float survival) => WoodRuin.Pier(survival);
+    /// <summary>A column's survival where the base curve's is <paramref name="survival"/>: columns outlive the deck.</summary>
+    public static float PierSurvival(float survival) => BridgeRuin.Pier(survival);
 
     /// <summary>The health a vanilla location's piece is placed with, as a fraction of its prefab's: ZoneSystem.SpawnLocation
     /// sets WearNTear.m_randomInitialDamage for a location with Location.m_applyRandomDamage (the Mistlands viaducts and
@@ -117,54 +126,62 @@ public static class BridgeLayout
     public const float LocationDamageMin = 0.1f, LocationDamageMax = 0.6f;
 
     /// <summary>
-    /// How one kit ruins (vanilla's damage as closely as possible, to match the biome). The
-    /// plain wooden kit's is <see cref="WoodRuin"/> (the constants above); the Dvergr wood kit's is <see cref="DvergrWoodRuin"/>.
-    /// The rolls are <see cref="Ruin"/>'s, keyed by what they decide; a profile only says the rates.
+    /// How a bridge ruins: one profile for every kit (<see cref="BridgeRuin"/>), by the part a piece is, not by the kit. The
+    /// rolls are <see cref="Ruin"/>'s, keyed by what they decide; the profile only says the rates.
+    ///
+    /// <para>The base curve is <see cref="Span"/> (15 % lost at a bank, 60 % at mid-span, 37.5 % on average), and each part
+    /// takes a share of its losses (<see cref="Survives"/>). The shares are read off the vanilla Mistlands_Viaduct1 (24
+    /// modules), which vanilla ruins: 3 of 48 iron floors missing (6 %), 21 of 69 deck course blocks (30 %), 21 of 46 arches
+    /// (46 %), and one whole module open, a 2 m gap a player jumps.</para>
     /// </summary>
     public sealed class RuinProfile
     {
-        /// <summary>A deck piece's survival at a bank and at mid-span (<see cref="Span"/>).</summary>
+        /// <summary>The base curve's survival at a bank and at mid-span (<see cref="Span"/>).</summary>
         public readonly float BankSurvival, MidSurvival;
-        /// <summary>How much piers outlive the deck (<see cref="Pier"/>): 1 is a pier that never falls.</summary>
+        /// <summary>How much a column outlives the base curve (<see cref="Pier"/>).</summary>
         public readonly float PierPersistence;
-        /// <summary>Where a pier fell, the chance it leaves a stub, else a piece of debris on the bed.</summary>
+        /// <summary>Where a column fell, the chance it leaves a stub, else a piece of debris on the bed.</summary>
         public readonly float StubChance, DebrisChance;
+        /// <summary>The deck: planks, floors, iron.</summary>
+        public readonly float DeckShare;
+        /// <summary>The railing and the courses along the deck's edges.</summary>
+        public readonly float CourseShare;
+        /// <summary>What stands under the deck between its columns or piers: arches, braces.</summary>
+        public readonly float SupportShare;
+        /// <summary>A whole bay open from side to side; never two running, so every gap is one a player jumps.</summary>
+        public readonly float HoleShare;
 
-        public RuinProfile(float bankSurvival, float midSurvival, float pierPersistence, float stubChance, float debrisChance)
+        public RuinProfile(float bankSurvival, float midSurvival, float pierPersistence, float stubChance, float debrisChance,
+            float deckShare, float courseShare, float supportShare, float holeShare)
         {
             BankSurvival = bankSurvival; MidSurvival = midSurvival; PierPersistence = pierPersistence;
             StubChance = stubChance; DebrisChance = debrisChance;
+            DeckShare = deckShare; CourseShare = courseShare; SupportShare = supportShare; HoleShare = holeShare;
         }
 
-        /// <summary>The deck's survival at a point of a span, 0 at a bank, 1 at mid-span.</summary>
+        /// <summary>The base curve's survival at a point of a span, 0 at a bank, 1 at mid-span.</summary>
         public float Span(float midCloseness) => Mathf.Lerp(BankSurvival, MidSurvival, midCloseness);
-        /// <summary>A pier's survival where the deck's is <paramref name="survival"/>.</summary>
+        /// <summary>A column's survival where the base curve's is <paramref name="survival"/>.</summary>
         public float Pier(float survival) => survival + (1f - survival) * PierPersistence;
+        /// <summary>A part's survival where the base curve's is <paramref name="spanSurvival"/>, at its
+        /// <paramref name="share"/> of the losses.</summary>
+        public static float Survives(float spanSurvival, float share) => 1f - (1f - spanSurvival) * share;
     }
 
-    /// <summary>The plain wooden kit: a long span reads as a row of piers with a collapsed deck.</summary>
-    public static readonly RuinProfile WoodRuin = new(BankSurvival, MidSurvival, PierPersistence, StubChance, DebrisChance);
-
+    // Too many missing blocks looked wrong on an 80 m viaduct, so the course and support shares are halfway between a light
+    // ruin (course 0.15, about 4 % gone; arches 0.5, about 19 %; no whole module open) and a heavy one (course 0.8, 30 %;
+    // arches 1.2, 45 %; holes 0.1). The deck was the same in both.
     /// <summary>
-    /// A plank missing from a Dvergr wood deck, anywhere on the span: 5 in 36. Vanilla's harbour planks go missing by
-    /// RandomSpawn children (ZoneSystem.cs ~2810: each keeps its object at m_chanceToSpawn), not by damage; two
-    /// Mistlands_Harbour1 read in game (one at (4168.6, 6598.3)) had 36 and 31 dvergrprops_wood_beam, about
-    /// one in seven gone; planks should only rarely be missing. In the vanilla prefab
-    /// (Mistlands_Harbour1 fort (1)/pier) no plank carries a RandomSpawn of its own; the pier's two extensions
-    /// (random (1), random (2)) are kept or dropped whole at 50 %, which is where the two harbours' counts differ. The rate
-    /// stays "rarely" (a judgement call).
+    /// The ruin every kit gets: the deck about 6 % gone on average (vanilla's viaduct 6 %), the railing and edge courses
+    /// about 17 %, the supports under the deck about 32 %, and about 2 % of bays open whole, never two running. The ends,
+    /// their stairs and footing and the bank bays always stand; a fallen column leaves a stub or debris; every piece left is
+    /// worn as a vanilla location's (<see cref="LocationDamageMin"/> to <see cref="LocationDamageMax"/>,
+    /// <see cref="Ruin.ApplyLocationDamage"/>), and every piece left rests on a neighbour's snap points: where the rolls would
+    /// leave one with none, a neighbour is put back rather than the piece dropped. A kit departs from it only where it says
+    /// why.
     /// </summary>
-    public const float DvergrWoodPlankLoss = 5f / 36f;
-
-    /// <summary>The Dvergr wood kit, as the vanilla harbour it is copied from: every pile stands (the harbours' do), a plank
-    /// is missing <see cref="DvergrWoodPlankLoss"/> of the time, and every piece is worn <see cref="LocationDamageMin"/> to
-    /// <see cref="LocationDamageMax"/> (<see cref="Ruin.ApplyLocationDamage"/>). No pier falls, so none leaves a stub.</summary>
-    public static readonly RuinProfile DvergrWoodRuin = new(1f - DvergrWoodPlankLoss, 1f - DvergrWoodPlankLoss, 1f, 0f, 0f);
-
-    /// <summary>The navigation gap kept clear of piers and deck: at least
-    /// FairwayGapWidth (a longship plus room to line up), growing with the
-    /// span, never wider than the fairway itself, plus a clearance each side.</summary>
-    public const float FairwayGapWidth = 16f;
+    public static readonly RuinProfile BridgeRuin = new(BankSurvival, MidSurvival, PierPersistence, StubChance, DebrisChance,
+        deckShare: 0.15f, courseShare: 0.45f, supportShare: 0.85f, holeShare: 0.05f);
 
     /// <summary>
     /// A bridge no wider than this spans bank to bank with NO piers in the
@@ -184,14 +201,14 @@ public static class BridgeLayout
     /// themselves if they want to. So nothing here validates what a player may
     /// build across a gap, and nothing should start to.</para>
     ///
-    /// <para>It is also why the navigation gap above is 16 m rather than 20:
-    /// a longship needs about 6 m and 10 m is comfortable, so 16 m is
-    /// generous for boats and happens to be exactly what the kit can span.
-    /// A free-spanned bridge needs no navigation gap at all -- there is
-    /// nothing standing in the water to open.</para>
+    /// <para>The navigation gap over a river (<see cref="Ships.NavigationGapWidth"/>,
+    /// a longship's hull, or its yard at the yard's height, and room to line up)
+    /// stays within it. A free-spanned
+    /// bridge needs no navigation gap at all -- there is nothing standing in
+    /// the water to open.</para>
     /// </summary>
     public const float FreeSpanMaxWidth = 16f;
-    public const float FairwayGapFraction = 0.3f;
+    /// <summary>Clearance kept each side of the navigation gap: no piece stands closer to it.</summary>
     public const float FairwayClearance = 1f;
 
     /// <summary>A crossing shares a site only when its banks lie within this
@@ -244,7 +261,7 @@ public static class BridgeLayout
     /// sail, and a fairway test misses every channel like them.</para>
     ///
     /// <para>There is a SECOND way a channel refuses a pier, and it is the
-    /// commoner one: the boat lane covers the whole crossing, so there is
+    /// commoner one: over a river the boat lane covers the whole crossing, so there is
     /// nowhere a pier is allowed to stand. A 14 m bridge over a 14 m fairway
     /// is 100% navigation gap, and before this rule the generator emitted a
     /// bridge with no deck and no piers - two stair runs with open water
@@ -277,18 +294,21 @@ public static class BridgeLayout
         //     the generator emits a bridge with no deck and no piers at all --
         //     two stair runs and open water between them. That is a silent
         //     defect this rule now catches rather than causes.
-        return crossing.FairwayWidth > 0f
-            && FairwayGap(crossing) + FairwayClearance * 2f >= crossing.Width;
+        return NavigationGap(crossing, world) is ShipWay way
+            && way.PierWidth + FairwayClearance * 2f >= crossing.Width;
     }
 
-    public static float FairwayGap(RoadCrossing crossing) =>
-        Mathf.Min(crossing.FairwayWidth, Mathf.Max(FairwayGapWidth, crossing.Width * FairwayGapFraction));
+    /// <summary>The lowest a deck stands over water at <paramref name="waterLevel"/>: the water plus
+    /// <see cref="DeckFreeboard"/>, and a step (<see cref="StairRise"/>) over the floor every road on land is built up to
+    /// (RoadConstants.DryRoadFloor), so a low deck's end can take a step down to the road
+    /// (StructureEnds.OverTheFloor).</summary>
+    public static float MinDeck(float waterLevel) => Mathf.Max(waterLevel + DeckFreeboard, RoadConstants.DryRoadFloor + StairRise);
 
     /// <summary>Deck height where it meets each bank: the bank's ground,
-    /// lifted to the water plus freeboard where the ground is lower.</summary>
+    /// lifted to <see cref="MinDeck"/> where the ground is lower.</summary>
     public static (float from, float to) DeckEndHeights(RoadCrossing crossing, WorldGenerator world)
     {
-        float minDeck = crossing.WaterLevel + DeckFreeboard;
+        float minDeck = MinDeck(crossing.WaterLevel);
         return (Mathf.Max(BiomeBlendedHeight.GetBlendedHeight(crossing.FromBank.x, crossing.FromBank.y, world), minDeck),
                 Mathf.Max(BiomeBlendedHeight.GetBlendedHeight(crossing.ToBank.x, crossing.ToBank.y, world), minDeck));
     }
@@ -360,16 +380,181 @@ public static class BridgeLayout
         return alongs;
     }
 
-    /// <summary>Whether a point this far along the crossing lies in the
-    /// navigation gap: the run of bays left open on purpose so boats pass.
-    /// Not ruin -- the diagnostic reports the two separately.</summary>
-    public static bool InNavigationGap(RoadCrossing crossing, float along)
+    /// <summary>Whether a point this far along the crossing lies in the ship's way through the deck: the deck's gap
+    /// (<see cref="ShipWay.DeckWidth"/>) and the <see cref="FairwayClearance"/> each side of it, which every kit's open bays
+    /// hold. Not ruin -- the diagnostic reports the two separately.</summary>
+    public static bool InNavigationGap(RoadCrossing crossing, WorldGenerator world, float along) =>
+        InNavigationGap(NavigationGap(crossing, world), along);
+
+    /// <summary><see cref="InNavigationGap(RoadCrossing, WorldGenerator, float)"/> with the
+    /// crossing's <see cref="NavigationGap"/> already found (null: no gap): within the deck's gap
+    /// and the <see cref="FairwayClearance"/> each side of it. None under a deck the ship passes under.</summary>
+    public static bool InNavigationGap(ShipWay? way, float along) =>
+        way is ShipWay w && w.DeckWidth > 0f && Mathf.Abs(along - w.Centre) <= w.DeckWidth * 0.5f + FairwayClearance;
+
+    /// <summary>Whether a point this far along the crossing lies in the way kept free of piers
+    /// (<see cref="ShipWay.PierWidth"/>) and the <see cref="FairwayClearance"/> each side of it.</summary>
+    public static bool InPierOpening(ShipWay? way, float along) =>
+        way is ShipWay w && Mathf.Abs(along - w.Centre) <= w.PierWidth * 0.5f + FairwayClearance;
+
+    /// <summary>
+    /// The bays a kit leaves open over the ship's way: the first and how many, of <paramref name="bays"/> equal bays of
+    /// <paramref name="bay"/> metres along the deck from its near end, the supports standing at their ends. The fewest whole
+    /// bays whose opening holds the way kept free of piers (<see cref="ShipWay.PierWidth"/>, which the deck's gap is within)
+    /// and the <see cref="FairwayClearance"/> each side, clear of what reaches <paramref name="reach"/> past the supports
+    /// either side; the run nearest the way's centre, never a bank's bay where a middle run fits. The one owner of how a
+    /// kit's grid covers the ship's way: the way is the crossing's (<see cref="NavigationChannel"/>), the bays the kit's.
+    /// </summary>
+    public static (int first, int count) OpenBays(ShipWay way, float bay, int bays, float reach)
     {
-        if (crossing.Kind != CrossingKind.Bridge || crossing.FairwayWidth <= 0f)
-            return false;
-        float mid = crossing.Along(crossing.FairwayCenter);
-        float half = FairwayGap(crossing) * 0.5f + FairwayClearance;
-        return Mathf.Abs(along - mid) <= half;
+        int count = Mathf.Min(bays, Mathf.CeilToInt((way.PierWidth + 2f * FairwayClearance + 2f * reach) / bay - 1e-4f));
+        int lo = 1, hi = bays - 1 - count;
+        if (hi < lo) (lo, hi) = (0, bays - count);
+        return (Mathf.Clamp(Mathf.RoundToInt((way.Centre - count * bay * 0.5f) / bay), lo, hi), count);
+    }
+
+    /// <summary>Where a ship's way under a bridge lies: its middle, metres along the crossing from
+    /// the near bank, the deck missing over it (0 when the ship passes under the deck) and the way
+    /// kept free of piers (<see cref="Ships.NavigationGapWidth"/>).</summary>
+    public readonly struct ShipWay
+    {
+        public readonly float Centre, DeckWidth, PierWidth;
+
+        public ShipWay(float centre, float deckWidth, float pierWidth)
+        {
+            Centre = centre;
+            DeckWidth = deckWidth;
+            PierWidth = pierWidth;
+        }
+    }
+
+    /// <summary>A wooden deck from its walking surface to its underside, as the ship's way measures it: beams
+    /// <see cref="BeamBelowDeck"/> under the surface and as deep again under that, deeper than the railed kits' stringers
+    /// (<see cref="RailHalfDepth"/> under it), so a ship that clears it clears them.</summary>
+    public const float DeckDepth = 2f * BeamBelowDeck;
+
+    /// <summary>The wooden deck's ship's way: <see cref="NavigationChannel"/> for its deck
+    /// (<see cref="DeckHeight"/>, <see cref="DeckDepth"/>) and the railed kits' handrail over it.</summary>
+    public static ShipWay? NavigationGap(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (crossing == null || world == null || crossing.Kind != CrossingKind.Bridge) return null;
+        float deck = DeckHeight(crossing, world);
+        return NavigationChannel(crossing, world, deck - DeckDepth, deck, BridgeStructures.Kit.WoodRail);
+    }
+
+    /// <summary>Spacing of the pass along a crossing reading its river weight and its depth.</summary>
+    private const float ChannelSampleSpacing = 1f;
+
+    /// <summary>
+    /// The ship's way under a bridge whose deck has its <paramref name="underside"/> and walking
+    /// <paramref name="surface"/> at these heights, in <paramref name="kit"/>, whose structure stands
+    /// <see cref="BridgeStructures.TopOverDeck"/> over the surface: where it lies along the crossing and how wide it
+    /// is, or null when the bridge leaves no navigation gap. The one owner of whether and where every
+    /// kit opens one: only a river, as the world generator lays it (its river weight), is sailed
+    /// through; a lake, a swamp pool or a sea inlet gets a continuous deck and piers however deep it
+    /// is. How wide, in the deck and between the piers, is <see cref="Ships.NavigationGapWidth"/> for
+    /// the structure's heights over the water, from the deck's underside to its top: a deck high enough that the ship passes under it
+    /// (<see cref="Ships.Clears"/>) is continuous, its piers still clear of the hull's way.
+    ///
+    /// <para><b>The river's part</b> of the crossing: sampled every metre, the longest run of samples
+    /// that are both river (<see cref="RoadWater.River"/>) and water a ship floats in
+    /// (<see cref="RoadCrossingDetector.FairwayMinDepth"/>). The weight alone is not enough: it can pass
+    /// the river line over a bank the terrain lifted out of the water, and a gap there opens the deck
+    /// over dry ground. A crossing whose river part is narrower than the narrowest way a ship asks
+    /// (<see cref="Ships.NarrowestWay"/>) crosses no river a ship sails.</para>
+    ///
+    /// <para><b>Where in it:</b> over the deepest water a ship's way wide: the window whose SHALLOWEST water is deepest, since a
+    /// ship grounds on the shallowest water it crosses, not on the average; then the deeper on average;
+    /// then the nearer the river's centreline (the weight's peak, where a bed carved evenly is
+    /// deepest). Depth is the water level over the ground the crossing measured its bed on
+    /// (<see cref="BiomeBlendedHeight"/>). A river part narrower than the ship's way centres the gap on
+    /// it. Read from the world, which is fixed per seed, so a saved crossing needs nothing new.</para>
+    /// </summary>
+    public static ShipWay? NavigationChannel(RoadCrossing crossing, WorldGenerator world, float underside, float surface, BridgeStructures.Kit kit)
+    {
+        if (crossing == null || world == null || crossing.Kind != CrossingKind.Bridge || crossing.Width <= 0f)
+            return null;
+        float structureTop = surface + BridgeStructures.TopOverDeck(kit);
+        var (deckWidth, shipWay) = Ships.NavigationGapWidth(underside - crossing.WaterLevel, structureTop - crossing.WaterLevel);
+        Vector2 At(float along) => crossing.FromBank + crossing.Direction * along;
+        float Weight(float along)
+        {
+            Vector2 p = At(along);
+            world.GetRiverWeight(p.x, p.y, out float weight, out _);
+            return weight;
+        }
+        int samples = Mathf.Max(1, Mathf.CeilToInt(crossing.Width / ChannelSampleSpacing));
+        float step = crossing.Width / samples;
+        var weights = new float[samples + 1];
+        var depth = new float[samples + 1];
+        int first = -1, last = -2;
+        for (int i = 0, run = -1; i <= samples; i++)
+        {
+            weights[i] = Weight(i * step);
+            Vector2 p = At(i * step);
+            depth[i] = crossing.WaterLevel - BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+            if (!RoadWater.River(weights[i]) || depth[i] < RoadCrossingDetector.FairwayMinDepth)
+            {
+                run = -1;
+                continue;
+            }
+            if (run < 0) run = i;
+            if (i - run > last - first) (first, last) = (run, i);
+        }
+        if ((last - first) * step < Ships.NarrowestWay)
+            return null;
+        if ((last - first) * step < shipWay)
+            return new ShipWay((first + last) * 0.5f * step, deckWidth, shipWay);
+
+        // The centreline: the middle of a run of equal highest weights, or a single peak narrowed to its place.
+        int peak = first;
+        for (int i = first; i <= last; i++) if (weights[i] > weights[peak]) peak = i;
+        float centreline;
+        int top = peak;
+        while (top < last && weights[top + 1] >= weights[peak] - 1e-5f) top++;
+        if (top > peak)
+            centreline = (peak + top) * 0.5f * step;
+        else
+        {
+            float lo = Mathf.Max(0f, (peak - 1) * step), hi = Mathf.Min(crossing.Width, (peak + 1) * step);
+            for (int k = 0; k < 24; k++)
+            {
+                float x = lo + (hi - lo) / 3f, y = hi - (hi - lo) / 3f;
+                if (Weight(x) < Weight(y)) lo = x; else hi = y;
+            }
+            centreline = (lo + hi) * 0.5f;
+        }
+
+        // Slide a ship's way along the river's part to its deepest water.
+        float from = first * step + shipWay * 0.5f, to = last * step - shipWay * 0.5f;
+        float best = from, bestMin = float.MinValue, bestMean = float.MinValue;
+        void Try(float centre)
+        {
+            float min = float.MaxValue, sum = 0f;
+            int count = 0;
+            int i0 = Mathf.Max(first, Mathf.CeilToInt((centre - shipWay * 0.5f) / step - 1e-4f));
+            int i1 = Mathf.Min(last, Mathf.FloorToInt((centre + shipWay * 0.5f) / step + 1e-4f));
+            for (int i = i0; i <= i1; i++)
+            {
+                min = Mathf.Min(min, depth[i]);
+                sum += depth[i];
+                count++;
+            }
+            if (count == 0) return;
+            float mean = sum / count;
+            const float same = 1e-3f;
+            bool better = min > bestMin + same
+                || (min >= bestMin - same && (mean > bestMean + same
+                    || (mean >= bestMean - same && Mathf.Abs(centre - centreline) < Mathf.Abs(best - centreline))));
+            if (!better) return;
+            best = centre;
+            bestMin = min;
+            bestMean = mean;
+        }
+        for (float c = from; c < to; c += step) Try(c);
+        Try(to);
+        if (centreline > from && centreline < to) Try(centreline);
+        return new ShipWay(best, deckWidth, shipWay);
     }
 
     // ---------------------------------------------------------- snap points
@@ -383,6 +568,34 @@ public static class BridgeLayout
     private static readonly Vector3[] BeamSnaps = { new(-1, 0, 0), new(1, 0, 0) };
     private static readonly Vector3[] PoleSnaps = { new(0, 1, 0), new(0, -1, 0) };
     private static readonly Vector3[] StairSnaps = { new(-1, 1, -1), new(1, 1, -1), new(-1, 0, 1), new(1, 0, 1) };
+    // The railed kits' (read off the vanilla prefabs' snappoint children, ValheimRIP):
+    //   wood_pole     snaps top and bottom           (0, +-0.5, 0)
+    //   wood_beam_26  snaps LOW (-1, 0, 0), HIGH (1, 1, 0)
+    //   wood_beam_67  snaps LOW (-1, 0, 0), HIGH (1, 4, 0)
+    private static readonly Vector3[] ShortPoleSnaps = { new(0, 0.5f, 0), new(0, -0.5f, 0) };
+    private static readonly Vector3[] StairRailSnaps = { new(-1, 0, 0), new(1, 1, 0) };
+    private static readonly Vector3[] BraceSnaps = { new(-1, 0, 0), new(1, 4, 0) };
+    // The stone kit's (read off the vanilla prefabs' snappoint children, ValheimRIP):
+    //   stone_floor_2x2  snaps at its eight corners          (+-1, +-0.5, +-1)
+    //   stone_wall_2x1   snaps at its eight corners          (+-1, +-0.5, +-0.5)
+    //   stone_arch       snaps at its tall end, top and bottom (1, +-0.5, +-0.5), on its crown (-1, 0.5, +-0.5)
+    //   stone_stair      snaps HIGH (+-1, 1, -1), LOW (+-1, 0, 1), under its top edge (+-1, 0, -1)
+    //   stone_pillar     snaps at its eight corners          (+-0.5, +-1, +-0.5)
+    private static readonly Vector3[] StoneFloorSnaps = Corners(1f, 0.5f, 1f);
+    private static readonly Vector3[] StoneBlockSnaps = Corners(1f, 0.5f, 0.5f);
+    private static readonly Vector3[] StoneArchSnaps =
+        { new(1, 0.5f, 0.5f), new(1, 0.5f, -0.5f), new(1, -0.5f, 0.5f), new(1, -0.5f, -0.5f), new(-1, 0.5f, 0.5f), new(-1, 0.5f, -0.5f) };
+    private static readonly Vector3[] StoneStairSnaps = { new(-1, 1, -1), new(1, 1, -1), new(-1, 0, 1), new(1, 0, 1), new(-1, 0, -1), new(1, 0, -1) };
+    private static readonly Vector3[] StonePillarSnaps = Corners(0.5f, 1f, 0.5f);
+
+    /// <summary>A box's eight corners, half its size along each axis from its centre.</summary>
+    private static Vector3[] Corners(float x, float y, float z)
+    {
+        var corners = new Vector3[8];
+        for (int i = 0; i < 8; i++)
+            corners[i] = new Vector3((i & 1) == 0 ? -x : x, (i & 2) == 0 ? -y : y, (i & 4) == 0 ? -z : z);
+        return corners;
+    }
 
     /// <summary>
     /// A piece's snap points in the world, from the prefab's measured local
@@ -400,6 +613,14 @@ public static class BridgeLayout
             BeamPrefab => BeamSnaps,
             StairPrefab or DvergrWoodBridge.StairPrefab => StairSnaps,
             PostPrefab => PoleSnaps,
+            RailPostPrefab => ShortPoleSnaps,
+            StairRailPrefab => StairRailSnaps,
+            BracePrefab => BraceSnaps,
+            StoneFloorPrefab => StoneFloorSnaps,
+            StonePierBlock => StoneBlockSnaps,
+            StoneArchPrefab => StoneArchSnaps,
+            StoneStairPrefab => StoneStairSnaps,
+            StonePillarPrefab => StonePillarSnaps,
             _ => System.Array.Empty<Vector3>(),
         };
         Vector3[] world = new Vector3[local.Length];
@@ -470,14 +691,15 @@ public static class BridgeLayout
         public float Health(int bay, int side, int role, int extra = 0) =>
             RuinHealthMin + Roll(bay, side, role, extra) * (RuinHealthMax - RuinHealthMin);
 
-        /// <summary>Its own role, apart from every kit's (wood 1-10, Dvergr wood 11-14, viaduct 21-27).</summary>
+        /// <summary>Its own role, apart from every kit's (wood 1-10, Dvergr wood 11-14, railed 15-19 and 32-34, viaduct 21-28,
+        /// stone 29-31).</summary>
         private const int RoleLocationHealth = 35;
 
         /// <summary>
         /// Every piece damaged as vanilla damages a location's pieces (<see cref="LocationDamageMin"/> to
         /// <see cref="LocationDamageMax"/> of its health), fixed per crossing and world seed: the roll is keyed by the piece's
-        /// place and prefab, not drawn from Unity's random state, so the server and every reload agree. The Dvergr viaduct and
-        /// the Dvergr wood kit both damage their pieces here.
+        /// place and prefab, not drawn from Unity's random state, so the server and every reload agree. Every kit's ruin
+        /// damages its pieces here (<see cref="BridgeRuin"/>).
         /// </summary>
         public void ApplyLocationDamage(List<StructurePiece> pieces)
         {
@@ -516,226 +738,23 @@ public static class BridgeLayout
 
     // --------------------------------------------------------------- solve
 
-    /// <summary>
-    /// The bridge as it would stand with nothing missing: every station, every
-    /// plate in both lanes, both stairs, the navigation gap filled in too.
-    /// Diagnostic and test-only -- the game always builds the ruined plan --
-    /// and the reference the repairability checks compare against. The
-    /// fairway gap is included deliberately: it is not ruin, but it is a run
-    /// of bays a player COULD fill, and if the grid did not continue across it
-    /// they could not.
-    /// </summary>
-    internal static List<StructurePiece> SolveComplete(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
-        Solve(crossing, world, worldSeed, ruin: false);
-
-    public static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
-        Solve(crossing, world, worldSeed, ruin: true);
-
-    private static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin)
-    {
-        List<StructurePiece> pieces = new();
-        if (crossing == null || world == null || crossing.Width < DeckSpan)
-            return pieces;
-
-        Ruin r = new(worldSeed, crossing);
-
-        if (crossing.Kind == CrossingKind.Ford)
-        {
-            // Wading and raised fords are road, not pieces; a span is a short
-            // low footbridge with steps.
-            if (crossing.Style == FordStyle.Span)
-                EmitShallowSpan(pieces, crossing, world, r, ruin);
-            return pieces;
-        }
-
-        Vector2 from = crossing.FromBank;
-        Vector2 dir = crossing.Direction;
-        Vector2 side = new(-dir.y, dir.x);
-        float yaw = YawDegrees(dir);
-        float deckH = DeckHeight(crossing, world);
-
-        // Short enough to hold itself up, over water deep enough that piers
-        // are the wrong answer: abutments only, nothing in the channel.
-        //
-        // Both halves matter. Water a ford may not wade is what makes a pier
-        // bad: it would stand in real water, tall and in the way. A short
-        // crossing over a shallow bed keeps its piers, which look better and
-        // give a player more to repair against, and the first version of this
-        // rule took those away too -- a test that asks every deck plate to
-        // rest on a beam at each end failed, correctly, on a short shallow
-        // bridge that had just lost its middle.
-        //
-        // Depth rather than a SAILABLE fairway, deliberately. On one measured
-        // world the two narrowest bridges were 20 m over water with no fairway at all: too
-        // deep for a ford to wade, not deep enough to sail. Those are exactly
-        // the channels not worth standing a pier in, and a fairway test misses
-        // every one of them.
-        bool freeSpan = IsFreeSpan(crossing, world);
-
-        float[] alongs = StationsAlong(crossing.Width);
-        int stationCount = alongs.Length;
-        // The deck ends here, a remainder short of the far bank at most. Both
-        // stairs are anchored at a DECK END so their top snap meets the deck
-        // edge; anchoring the far one at the bank instead would leave exactly
-        // the gap that anchoring here removes.
-        Vector2 deckEnd = from + dir * alongs[stationCount - 1];
-        bool[] stationAlive = new bool[stationCount];
-        Vector2[] stationPos = new Vector2[stationCount];
-        float mid = (stationCount - 1) * 0.5f;
-
-        for (int i = 0; i < stationCount; i++)
-        {
-            float along = alongs[i];
-            stationPos[i] = from + dir * along;
-
-            // The navigation gap is intentional and permanent, not ruin -- but
-            // it is still a section a player may fill in, so the complete
-            // layout includes it: "fully repaired" means every bay on the grid.
-            // A free span has no navigation gap to open: nothing of it stands
-            // in the water, so the whole channel under it is already clear.
-            bool inGap = ruin && !freeSpan && InNavigationGap(crossing, along);
-            bool isBankStation = i == 0 || i == stationCount - 1;
-
-            float midCloseness = mid > 0f ? 1f - Mathf.Abs(i - mid) / mid : 0f;
-            float survival = SpanSurvival(midCloseness);
-            float pierSurvival = PierSurvival(survival);
-            stationAlive[i] = !inGap && (freeSpan
-                ? isBankStation
-                : !ruin || isBankStation || r.Roll(i, Ruin.Centre, Ruin.RoleStation) < pierSurvival);
-
-            float ground = BiomeBlendedHeight.GetBlendedHeight(stationPos[i].x, stationPos[i].y, world);
-            if (stationAlive[i])
-            {
-                EmitStation(pieces, world, stationPos[i], side, deckH, yaw, r, i);
-            }
-            // No stubs or debris under a free span. Both are the remains of a
-            // pier, and this crossing never had one in the water -- leaving
-            // them there tells the player a story about a structure that was
-            // never built.
-            else if (freeSpan)
-            {
-                // nothing: the channel stays clear
-            }
-            else if (ruin && !inGap && r.Roll(i, Ruin.Centre, Ruin.RoleStub) < StubChance)
-            {
-                // Rotted stub: a single buried segment poking out near the waterline.
-                EmitColumn(pieces, stationPos[i], ground,
-                    Mathf.Min(ground + PostSegment, crossing.WaterLevel + 0.3f), yaw,
-                    0.25f + r.Roll(i, Ruin.Centre, Ruin.RoleStub, 1) * 0.15f);
-            }
-            else if (ruin && !inGap && r.Roll(i, Ruin.Centre, Ruin.RoleDebris) < DebrisChance)
-            {
-                EmitDebris(pieces, stationPos[i], dir, world, r, i);
-            }
-        }
-
-        // A plate needs both of its stations standing, so every surviving
-        // plate rests on a beam at each end. Beyond that the two lanes of a
-        // bay are ruined on their own: left and right may each be present or
-        // missing, and carry their own health.
-        for (int i = 0; i + 1 < stationCount; i++)
-        {
-            // A plate normally needs both of its stations standing. A free
-            // span has none in the middle by design, and its deck is carried
-            // from the two ends instead.
-            if (!freeSpan && (!stationAlive[i] || !stationAlive[i + 1]))
-                continue;
-            float midCloseness = mid > 0f ? 1f - Mathf.Abs(i + 0.5f - mid) / mid : 0f;
-            float survival = SpanSurvival(midCloseness);
-            bool endBay = i == 0 || i + 2 == stationCount;
-            foreach (int lane in new[] { Ruin.Left, Ruin.Right })
-            {
-                if (ruin && !endBay && r.Roll(i, lane, Ruin.RoleDeck) >= survival)
-                    continue;
-                EmitDeck(pieces, stationPos[i], stationPos[i + 1], deckH,
-                    side * (lane * LaneOffset), yaw, r.Health(i, lane, Ruin.RoleDeckHealth));
-            }
-        }
-
-        // Every end is a stair down from the level deck into its bank, two
-        // abreast like the deck: as many steps as that bank's drop needs.
-        EmitSteps(pieces, world, from, dir, side, deckH, r, 0);
-        EmitSteps(pieces, world, deckEnd, -dir, side, deckH, r, stationCount);
-
-        return pieces;
-    }
-
-    /// <summary>
-    /// Ford span: a continuous low deck from shore to shore, one station per
-    /// DeckSpan with posts to the bed, deck at least FordSpanDeckClearance
-    /// above the water and FordSpanDeckRise above the higher bank, lightly
-    /// ruined (it is a footbridge, not a monument), a stair at each end. The
-    /// same two-lane grid as a bridge: a footbridge a player cannot repair
-    /// with an ordinary wood_floor is no better than one they cannot walk.
-    /// </summary>
-    private static void EmitShallowSpan(List<StructurePiece> pieces, RoadCrossing crossing, WorldGenerator world, Ruin r, bool ruin)
-    {
-        Vector2 from = crossing.FromBank;
-        Vector2 to = crossing.ToBank;
-        Vector2 dir = crossing.Direction;
-        Vector2 side = new(-dir.y, dir.x);
-        float yaw = YawDegrees(dir);
-
-        float deckH = SpanDeckHeight(crossing, world);
-
-        float[] alongs = StationsAlong(crossing.Width);   // the deck is level
-        int stationCount = alongs.Length;
-        Vector2 deckEnd = from + dir * alongs[stationCount - 1];
-        bool[] alive = new bool[stationCount];
-        Vector2[] pos = new Vector2[stationCount];
-        for (int i = 0; i < stationCount; i++)
-        {
-            pos[i] = from + dir * alongs[i];
-            bool isEnd = i == 0 || i == stationCount - 1;
-            alive[i] = !ruin || isEnd || r.Roll(i, Ruin.Centre, Ruin.RoleStation) < BankSurvival;
-            if (alive[i])
-                EmitStation(pieces, world, pos[i], side, deckH, yaw, r, i);
-        }
-        for (int i = 0; i + 1 < stationCount; i++)
-        {
-            if (!alive[i] || !alive[i + 1])
-                continue;
-            foreach (int lane in new[] { Ruin.Left, Ruin.Right })
-            {
-                if (ruin && r.Roll(i, lane, Ruin.RoleDeck) >= BankSurvival)
-                    continue;
-                EmitDeck(pieces, pos[i], pos[i + 1], deckH, side * (lane * LaneOffset), yaw,
-                    r.Health(i, lane, Ruin.RoleDeckHealth));
-            }
-        }
-
-        EmitSteps(pieces, world, from, dir, side, deckH, r, 0);
-        EmitSteps(pieces, world, deckEnd, -dir, side, deckH, r, stationCount);
-    }
-
     // ---------------------------------------------------------------- emit
 
     /// <summary>A ford span's deck height: clear of the higher bank by
-    /// FordSpanDeckRise and of the water by FordSpanDeckClearance.</summary>
+    /// FordSpanDeckRise and of the water by FordSpanDeckClearance, and no lower
+    /// than any deck (<see cref="MinDeck"/>).</summary>
     public static float SpanDeckHeight(RoadCrossing crossing, WorldGenerator world)
     {
         float bankFromH = BiomeBlendedHeight.GetBlendedHeight(crossing.FromBank.x, crossing.FromBank.y, world);
         float bankToH = BiomeBlendedHeight.GetBlendedHeight(crossing.ToBank.x, crossing.ToBank.y, world);
         return Mathf.Max(Mathf.Max(bankFromH, bankToH) + RoadConstants.FordSpanDeckRise,
-            crossing.WaterLevel + RoadConstants.FordSpanDeckClearance);
+            Mathf.Max(crossing.WaterLevel + RoadConstants.FordSpanDeckClearance, MinDeck(crossing.WaterLevel)));
     }
 
-    /// <summary>One deck plate between two stations, offset to its lane. Its
-    /// centre is the midpoint and it is LEVEL -- yaw only, the one orientation
-    /// a player's hammer can reproduce -- so its two ends land on the stations
-    /// that are DeckSpan apart.</summary>
-    private static void EmitDeck(List<StructurePiece> pieces, Vector2 a, Vector2 b, float deckH, Vector2 laneOffset, float yaw, float health)
-    {
-        Vector2 mid2 = (a + b) * 0.5f + laneOffset;
-        pieces.Add(new StructurePiece
-        {
-            Kind = StructurePieceKind.Deck,
-            Prefab = DeckPrefab,
-            Position = new Vector3(mid2.x, deckH, mid2.y),
-            YawDegrees = yaw,
-            HealthFraction = health,
-        });
-    }
+    /// <summary>A wooden kit's walking surface: a ford span's footbridge (<see cref="SpanDeckHeight"/>), else the bridge's
+    /// (<see cref="DeckHeight"/>).</summary>
+    public static float WoodDeckHeight(RoadCrossing crossing, WorldGenerator world) =>
+        crossing.Kind == CrossingKind.Ford ? SpanDeckHeight(crossing, world) : DeckHeight(crossing, world);
 
     /// <summary>
     /// Steps down from a deck edge into the bank, two abreast: each step's
@@ -756,16 +775,26 @@ public static class BridgeLayout
     /// steps emitted in that case are still each supported to the ground --
     /// nothing floats -- but the walk stops above the dirt, and the caller
     /// is told so rather than the comment claiming every run reaches it.
+    ///
+    /// <para><paramref name="carry"/> false: no post under a step; the caller carries the steps its own way (the railed
+    /// kits on columns under the stair's edges, <see cref="RailedKit"/>).</para>
+    /// <para>The kits lay their end stairs through <see cref="LayEndStairs"/>, never here: <paramref name="count"/> null
+    /// marches the run as the bank takes it (<see cref="NaturalEnds"/> asks so), else lays that many.</para>
+    /// <para><paramref name="ground"/>: the ground the steps stand on, the generator's where the ends are decided, the
+    /// finished ground (<see cref="StructureGround"/>) where they are laid.</para>
     /// </summary>
-    internal static bool EmitSteps(List<StructurePiece> pieces, WorldGenerator world,
+    private static bool EmitSteps(List<StructurePiece> pieces, System.Func<Vector2, float> ground,
         Vector2 anchor, Vector2 inward, Vector2 side, float deckH, Ruin r, int bayKey,
-        string stairPrefab = StairPrefab, string postPrefab = PostPrefab, int? count = null, float postSegment = PostSegment)
+        string stairPrefab = StairPrefab, string postPrefab = PostPrefab, int? count = null, float postSegment = PostSegment,
+        bool carry = true)
     {
         float stepYaw = YawDegrees(inward) + 180f; // the stair prefab rises toward local -z
         float yaw = YawDegrees(inward);
         Vector2 outward = -inward;
         bool landed = false;
-        // A run of a given count (StructureEnds decided it; the road's apron is levelled to its foot) is laid whole.
+        System.Func<int, int, float> vertex = (x, z) => ground(new Vector2(x, z));
+        // A run of a given count (StructureEnds decided it; the road's apron is levelled to its foot) is laid whole, but a
+        // step wholly in the ground (BuriedPieces), which the game breaks.
         for (int k = 0; count.HasValue ? k < count.Value : k < MaxStairSteps && !landed; k++)
         {
             Vector2 c = anchor - inward * (StairHalfRun + k * StairRun);
@@ -775,24 +804,26 @@ public static class BridgeLayout
             {
                 Vector2 p = c + side * (lane * LaneOffset);
                 float health = r.Health(bayKey, lane, Ruin.RoleStairHealth, k);
-                pieces.Add(new StructurePiece
-                {
-                    Kind = StructurePieceKind.Stair,
-                    Prefab = stairPrefab,
-                    Position = new Vector3(p.x, foot, p.y),
-                    YawDegrees = stepYaw,
-                    HealthFraction = health,
-                });
+                var at = new Vector3(p.x, foot, p.y);
+                if (!count.HasValue || !BuriedPieces.Buried(stairPrefab, at, stepYaw, vertex))
+                    pieces.Add(new StructurePiece
+                    {
+                        Kind = StructurePieceKind.Stair,
+                        Prefab = stairPrefab,
+                        Position = at,
+                        YawDegrees = stepYaw,
+                        HealthFraction = health,
+                    });
                 // Two separate questions. Is the step itself carried? (if not,
                 // a post carries it.) And has the run ARRIVED -- is the edge a
                 // walker steps off onto in the dirt? A run ends only when both
                 // are true of both lanes: the old rule asked the first alone
                 // and stopped with the exit edge in the air.
-                float under = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+                float under = ground(p);
                 bool centreGrounded = foot <= under + StairFootTolerance;
-                if (!centreGrounded)
+                if (!centreGrounded && carry)
                     EmitColumn(pieces, p, under, foot, yaw, health, postPrefab, postSegment);
-                if (!centreGrounded || !FootEdgeIsGrounded(world, p, outward, side, foot))
+                if (!centreGrounded || !FootEdgeIsGrounded(ground, p, outward, side, foot))
                     bothLanded = false;
             }
             landed = bothLanded;
@@ -800,28 +831,52 @@ public static class BridgeLayout
         return count.HasValue || landed;
     }
 
+    /// <summary>
+    /// The one way a structure's end stairs are laid, by every kit (the railed and Dvergr wood kits, the viaduct, a ford's
+    /// span): from the end as the road meets it (<see cref="StructureEnds.Of"/>, decided by StructureEnds.MeetEnds),
+    /// its <see cref="StructureEnds.End.Steps"/> down from its edge along its line at its height: the whole run where the
+    /// road comes to the run's foot, down to the row the road lands on, none where it meets the end level. The generator,
+    /// the paint rule (<see cref="StructureEnds.Unpainted"/>) and the repair command read the same end, so they see the
+    /// stairs laid. The kit supplies only its pieces: <paramref name="stairPrefab"/>, and a column of
+    /// <paramref name="postPrefab"/> under a step over the ground (<paramref name="carry"/> false: none, the kit carries
+    /// its steps its own way), down to <paramref name="ground"/>: the finished ground (<see cref="StructureGround"/>), so a
+    /// step on the road's landing or apron needs no column, and one over ground the road cut away has its column carried down
+    /// to it. Returns the steps laid.
+    /// </summary>
+    internal static int LayEndStairs(List<StructurePiece> pieces, System.Func<Vector2, float> ground, StructureEnds.End end, Vector2 side,
+        Ruin r, int bayKey, string stairPrefab = StairPrefab, string postPrefab = PostPrefab, float postSegment = PostSegment,
+        bool carry = true)
+    {
+        if (!end.IsSet || end.Steps <= 0) return 0;
+        EmitSteps(pieces, ground, end.Edge, end.Up, side, end.Height, r, bayKey, stairPrefab, postPrefab, end.Steps, postSegment, carry);
+        return end.Steps;
+    }
+
+    /// <summary>The generator's ground, which a structure's ends are decided on (the road's levelling is made from them).</summary>
+    internal static System.Func<Vector2, float> Generator(WorldGenerator world) => p => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+
     /// <summary>Both corners of one step's foot edge, in the dirt.</summary>
-    private static bool FootEdgeIsGrounded(WorldGenerator world, Vector2 stepPos, Vector2 outward, Vector2 side, float foot)
+    private static bool FootEdgeIsGrounded(System.Func<Vector2, float> ground, Vector2 stepPos, Vector2 outward, Vector2 side, float foot)
     {
         foreach (float lat in new[] { -StairHalfWidth, StairHalfWidth })
         {
             Vector2 corner = stepPos + outward * StairHalfRun + side * lat;
-            if (foot > BiomeBlendedHeight.GetBlendedHeight(corner.x, corner.y, world) + StairFootTolerance)
+            if (foot > ground(corner) + StairFootTolerance)
                 return false;
         }
         return true;
     }
 
     /// <summary>
-    /// The two ends of a wooden bridge or a ford's spanned footbridge (either kit) as they meet the road
-    /// (<see cref="StructureEnds"/>), near end first: each stair run from its deck end as it marches until its foot lands
-    /// (<see cref="EmitSteps"/>; the wooden kit's runs are laid on the ground), its foot where the road is brought to, as
-    /// every structure's end is.
+    /// The two ends of a bridge or a ford's spanned footbridge in every kit but the viaduct, as the bank takes them
+    /// (StructureEnds.Natural), near end first: each stair run from its deck end as it marches until its foot lands
+    /// (<see cref="EmitSteps"/>). The road meets them as the one owner decides (StructureEnds.MeetEnds), which may lay
+    /// fewer. Unset for a span too short for a deck.
     /// </summary>
-    public static (StructureEnds.End near, StructureEnds.End far) Ends(RoadCrossing crossing, WorldGenerator world)
+    internal static (StructureEnds.End near, StructureEnds.End far) NaturalEnds(RoadCrossing crossing, WorldGenerator world)
     {
         bool span = crossing != null && crossing.Kind == CrossingKind.Ford && crossing.Style == FordStyle.Span;
-        if (crossing == null || world == null || (crossing.Kind != CrossingKind.Bridge && !span) || crossing.Width < DeckSpan) return default;
+        if (crossing == null || world == null || !BridgeStructures.HasDeck(crossing) || crossing.Width < DeckSpan) return default;
         Vector2 dir = crossing.Direction, side = new(-dir.y, dir.x);
         float deckH = span ? SpanDeckHeight(crossing, world) : DeckHeight(crossing, world);
         Vector2 deckEnd = crossing.FromBank + dir * BuiltLength(crossing.Width);
@@ -829,7 +884,7 @@ public static class BridgeLayout
         StructureEnds.End End(Vector2 anchor, Vector2 inward)
         {
             var scratch = new List<StructurePiece>();
-            EmitSteps(scratch, world, anchor, inward, side, deckH, r, 0);
+            EmitSteps(scratch, Generator(world), anchor, inward, side, deckH, r, 0);
             int steps = scratch.FindAll(p => p.Kind == StructurePieceKind.Stair).Count / 2;
             return new StructureEnds.End(anchor, inward, deckH, steps);
         }
@@ -840,7 +895,8 @@ public static class BridgeLayout
     /// Whether each of a crossing's two stair runs reaches the dirt, near end
     /// first. The answer is geometry, not ruin -- a missing step is a repair,
     /// a run that never lands is a crossing this layout cannot walk off --
-    /// so the diagnostic reports it apart from the missing pieces.
+    /// so the diagnostic reports it apart from the missing pieces. An end the
+    /// road met (<see cref="RoadCrossing.FromEnd"/>) lands on the road.
     /// </summary>
     public static (bool near, bool far) StairRunsLand(RoadCrossing crossing, WorldGenerator world)
     {
@@ -852,47 +908,23 @@ public static class BridgeLayout
 
         Vector2 dir = crossing.Direction;
         Vector2 side = new(-dir.y, dir.x);
-        float deckH = span ? SpanDeckHeight(crossing, world) : DeckHeight(crossing, world);
-        Vector2 deckEnd = crossing.FromBank + dir * BuiltLength(crossing.Width);
         Ruin r = new(0, crossing);   // ruin sets health, never a position
         List<StructurePiece> scratch = new();
-        return (EmitSteps(scratch, world, crossing.FromBank, dir, side, deckH, r, 0),
-                EmitSteps(scratch, world, deckEnd, -dir, side, deckH, r, 1));
-    }
-
-    /// <summary>One surviving station: two post pairs stacked down into the
-    /// riverbed under the outer halves of the deck, tied by two crossbeams
-    /// just under it -- one per lane, meeting at the centre seam.</summary>
-    private static void EmitStation(List<StructurePiece> pieces, WorldGenerator world,
-        Vector2 pos, Vector2 side, float deckH, float yaw, Ruin r, int bay)
-    {
-        float postTop = deckH - PostTopBelowDeck;
-        foreach (float s in new[] { -PostSideOffset, PostSideOffset })
-        {
-            Vector2 postPos = pos + side * s;
-            EmitColumn(pieces, postPos, BiomeBlendedHeight.GetBlendedHeight(postPos.x, postPos.y, world), postTop, yaw,
-                r.Health(bay, s < 0 ? Ruin.Left : Ruin.Right, Ruin.RolePostHealth));
-        }
-        foreach (int lane in new[] { Ruin.Left, Ruin.Right })
-        {
-            Vector2 beamPos = pos + side * (lane * LaneOffset);
-            pieces.Add(new StructurePiece
-            {
-                Kind = StructurePieceKind.Beam,
-                Prefab = BeamPrefab,
-                Position = new Vector3(beamPos.x, deckH - BeamBelowDeck, beamPos.y),
-                YawDegrees = yaw, // the beam runs along its local x: across the deck
-                HealthFraction = r.Health(bay, lane, Ruin.RoleBeamHealth),
-            });
-        }
+        var (near, far) = StructureEnds.Of(crossing, world);
+        bool Lands(StructureEnds.End end, bool met) =>
+            met || EmitSteps(scratch, Generator(world), end.Edge, end.Up, side, end.Height, r, 0);
+        return (Lands(near, crossing.FromEnd != null), Lands(far, crossing.ToEnd != null));
     }
 
     /// <summary>A column of <paramref name="segment"/>-long posts (origin at their centre) from topHeight down until one
-    /// is buried in the ground (grounded by construction).</summary>
+    /// is buried in the ground (grounded by construction).
+    /// <para><paramref name="toFoot"/>: stop instead at the first post whose foot is in the ground (within
+    /// <see cref="BuriedPieces.Growth"/> of it, where the game grounds it), and lay none where the top already is; the
+    /// railed kits' columns (<see cref="RailedKit"/>) stand on the ground as the hand-built reference's do.</para></summary>
     private static void EmitColumn(List<StructurePiece> pieces, Vector2 pos, float ground, float topHeight, float yaw, float health,
-        string postPrefab = PostPrefab, float segment = PostSegment)
+        string postPrefab = PostPrefab, float segment = PostSegment, bool toFoot = false)
     {
-        if (topHeight <= ground - segment)
+        if (toFoot ? topHeight <= ground + BuriedPieces.Growth : topHeight <= ground - segment)
             return;
         for (float top = topHeight; ; top -= segment)
         {
@@ -905,21 +937,22 @@ public static class BridgeLayout
                 YawDegrees = yaw,
                 HealthFraction = health,
             });
-            if (center <= ground)
+            if (toFoot ? top - segment <= ground + BuriedPieces.Growth : center <= ground)
                 break;
         }
     }
 
     /// <summary>A toppled pole settled into the bed, displaced to the side of
-    /// the crossing line (never along it toward the fairway).</summary>
-    private static void EmitDebris(List<StructurePiece> pieces, Vector2 station, Vector2 dir, WorldGenerator world, Ruin r, int bay)
+    /// the crossing line (never along it toward the fairway), on <paramref name="groundAt"/>, the ground the kit is laid
+    /// on.</summary>
+    private static void EmitDebris(List<StructurePiece> pieces, Vector2 station, Vector2 dir, System.Func<Vector2, float> groundAt, Ruin r, int bay)
     {
         Vector2 side = new(-dir.y, dir.x);
         float offset = 1f + r.Roll(bay, Ruin.Centre, Ruin.RoleDebris, 1) * 2f;
         if (r.Roll(bay, Ruin.Centre, Ruin.RoleDebris, 2) < 0.5f) offset = -offset;
 
         Vector2 pos = station + side * offset;
-        float ground = BiomeBlendedHeight.GetBlendedHeight(pos.x, pos.y, world);
+        float ground = groundAt(pos);
         pieces.Add(new StructurePiece
         {
             Kind = StructurePieceKind.Debris,

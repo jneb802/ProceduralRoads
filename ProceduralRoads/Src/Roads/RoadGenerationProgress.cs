@@ -98,7 +98,7 @@ public static partial class RoadLifecycleManager
         m_initialAttempted = true;
         m_generation = new Generation(WorldGenerator.instance!, ZoneSystem.instance!);
         m_nextRun++;
-        m_generation.Preparation=RoadNetworkGenerator.BeginPreparation(false);
+        m_generation.Preparation=RoadNetworkGenerator.BeginPreparation(false, placeSitesFirst: true);
         m_generation.Preparation.Cancellation=m_generation.Cancellation.Token;
         SetProgress("Preparing", 0, 0);
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo("Preparing road network generation…");

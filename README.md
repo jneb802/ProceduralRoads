@@ -6,7 +6,7 @@ A Valheim mod that generates procedural roads connecting locations across your w
 
 - Connects a seeded mix of dungeons, settlements, ruins, bosses and quest sites across selected islands
 - Terrain-aware routing that holds a maximum grade and protects the terrain of locations
-- River fords and ruined wooden bridges; Dvergr viaducts and bridges in the Mistlands
+- River fords and ruined wooden and stone bridges; Dvergr viaducts and bridges in the Mistlands
 - Staircases where the ground is too steep for a road
 - Bridges and staircases are built from vanilla pieces, so players can repair them
 - Server-side: players without the mod see and walk the same roads
@@ -46,6 +46,7 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 | ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
 | ExistingWorldFirstLoadRoads | Ask | First load of a world explored before it had roads: Ask, IncludeExplored, NewZonesOnly or Skip |
+| AttemptRoadsToHildirQuestSites | false | Roads to Hildir's cave, crypt and tower |
 
 Settings apply when a network is generated, not to a saved one. Not every selected destination gets a road: some cannot be reached within the grade and site rules.
 

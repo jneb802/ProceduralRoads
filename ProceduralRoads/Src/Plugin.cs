@@ -46,6 +46,7 @@ namespace ProceduralRoads
         public static ConfigEntry<RockClearingMode> RockClearing = null!;
         public static ConfigEntry<string> CustomLocations = null!;
         public static ConfigEntry<Heightmap.Biome> ExcludedRoadBiomes = null!;
+        public static ConfigEntry<bool> AttemptRoadsToHildirQuestSites = null!;
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
@@ -89,10 +90,26 @@ namespace ProceduralRoads
             // placed; roads are built before that happens, so the generator
             // needs a way to ask what that ground will be.
             LocationPrefabLevelling.Install();
+            PlacedSiteReader.Install();
+            SitesFirstLoad.Install();
             ExcludedRoadBiomes = Config.Bind("Locations", "ExcludedRoadBiomes",
                 Heightmap.Biome.AshLands | Heightmap.Biome.DeepNorth,
                 "Biomes excluded from every destination source, including API registrations and required sites. " +
                 "This filters destinations; it does not forbid a route passing through a biome.");
+            AttemptRoadsToHildirQuestSites = Config.Bind("Locations", "AttemptRoadsToHildirQuestSites", RoadNetworkOptions.DefaultHildirQuestSites,
+                "Build roads to Hildir's three quest sites (her cave, crypt and tower; not her camp). On, they are always " +
+                "destinations, like the bosses, and the cave is placed when the world loads so its road can reach its " +
+                "entrance; each site still appears on the map only once a player comes near, as without this mod. " +
+                "Off, no road goes to them. Takes effect when the roads are next generated.");
+            // Read when the roads are generated: a change before then (the config manager, or a test run's
+            // ProceduralRoads.RunConfig plugin, tools/run-config) counts.
+            AttemptRoadsToHildirQuestSites.SettingChanged += (_, _) =>
+            {
+                // A generation reads the options it started with: a change during one waits for it to end.
+                if (RoadLifecycleManager.IsGenerating) m_configurationPending = true;
+                else RoadNetworkGenerator.NetworkOptions.HildirQuestSites = AttemptRoadsToHildirQuestSites.Value;
+                ProceduralRoadsLogger.LogInfo($"Locations.AttemptRoadsToHildirQuestSites = {AttemptRoadsToHildirQuestSites.Value}");
+            };
             RockClearing = Config.Bind("Roads", "RockClearing", RockClearingMode.Carve,
                 "Natural rocks that clip a road's surface. Off leaves them; Remove takes away a rock that blocks " +
                 "at least half the road's width; Carve takes only the pieces of a rock that stand in the road, as a " +
@@ -181,6 +198,7 @@ namespace ProceduralRoads
             RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions
             {
                 ExcludedBiomes = ExcludedRoadBiomes.Value,
+                HildirQuestSites = AttemptRoadsToHildirQuestSites.Value,
             };
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
             // CustomLocations is parsed at generation time to preserve API registrations

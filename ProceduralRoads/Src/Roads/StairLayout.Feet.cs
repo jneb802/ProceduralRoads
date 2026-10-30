@@ -80,6 +80,28 @@ public static partial class StairLayout
         float over = foot.y - back - cap * run;
         if (over <= StepUp) return null;
         int steps = Mathf.Min(MostLowered, Mathf.CeilToInt((over - StepUp) / PieceRise));
+        return AddFootStairs(plan, ground, width, steps);
+    }
+
+    /// <summary>
+    /// A staircase's foot carried on down to the road at <paramref name="height"/>: as many stairs on down from the foot
+    /// along its first heading as bring its low edge to that height within half a rise, the sunk step under the foot
+    /// becoming the first of them (a staircase whose foot is a short stretch of road from a crossing's end, the road there
+    /// level at the end's height). Returns the new foot (low edge, height), or null where the foot is within half a rise
+    /// already or has none.
+    /// </summary>
+    public static Vector3? LowerFootTo(StairPlan plan, Func<float, float, float> ground, float width, float height)
+    {
+        if (plan.Foot is not Vector3 foot) return null;
+        int steps = Mathf.RoundToInt((foot.y - height) / PieceRise);
+        return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
+    }
+
+    /// <summary><paramref name="steps"/> stairs added on down from a plan's foot along its first heading, the sunk step
+    /// under the foot taken away; the new foot.</summary>
+    private static Vector3 AddFootStairs(StairPlan plan, Func<float, float, float> ground, float width, int steps)
+    {
+        Vector3 foot = plan.Foot!.Value;
         StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
         int lanes = Mathf.Max(1, Mathf.RoundToInt(width / PieceRun));
         Vector2 dir = Forward(plan.StartHeading), at = new Vector2(foot.x, foot.z);
@@ -93,11 +115,11 @@ public static partial class StairLayout
             AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, at, plan.StartHeading, base_, lanes, ground, mark: true);
             plan.Stairs += lanes;
         }
-        plan.FootLowered = steps;
+        plan.FootLowered += steps;
         plan.Rise += steps * PieceRise;
         plan.WalkedLength += steps * PieceRun;
         plan.Foot = new Vector3(at.x, base_, at.y);
-        return plan.Foot;
+        return plan.Foot.Value;
     }
 
     /// <summary>How many stairs from a flight's foot pay for standing out past a ledge's edge (<see cref="HangsOverEdge"/>): the bottom step

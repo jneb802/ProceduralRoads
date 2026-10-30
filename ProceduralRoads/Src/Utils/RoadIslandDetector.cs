@@ -66,7 +66,7 @@ public static class RoadIslandDetector
                 // swamps.
                 float h = wg.GetHeight(wx, wy);
                 height[x * gridSize + y] = h;
-                if (h >= RoadPathfinder.FloorFor(wg.GetBiome(wx, wy)))
+                if (RoadWater.OnLand(wg, new Vector2(wx, wy), h))
                 {
                     walkable[x * gridSize + y] = true;
                     landCells++;
@@ -155,7 +155,7 @@ public static class RoadIslandDetector
 
                 // Two shores meet in this cell: the gap is both walks plus it.
                 float gap = (d + 1 + steps[nb]) * cellSize;
-                float depth = RoadPathfinder.LandingFloor - height[nb];
+                float depth = RoadWater.LandingFloor - height[nb];
                 bool ford = gap <= fordMetres && depth <= RoadConstants.FordWadeDepth;
                 bool bridge = false;
                 if (!ford && gap <= bridgeMetres)

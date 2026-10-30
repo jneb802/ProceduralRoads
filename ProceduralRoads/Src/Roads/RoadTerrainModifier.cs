@@ -505,6 +505,17 @@ public static class RoadTerrainModifier
         public int PaintedTexels;
     }
 
+    /// <summary>The ground a place the game placed (not first, so with no preload) leaves at a point in its footprint,
+    /// rebuilt from its saved placement (PlacedSiteReader.PlacedGroundAt, main thread); null where unknown.</summary>
+    internal static System.Func<Vector2, float?>? PlacedGround;
+
+    /// <summary>The ground a place leaves at <paramref name="p"/> in its footprint, as the game draws it under the
+    /// compiler's deltas: a place placed before its roads, its preload (<see cref="PlacedSites.GroundAt"/>, the ground
+    /// <see cref="FinishedGround"/> predicts on); any other placed place, rebuilt from its saved placement
+    /// (<see cref="PlacedGround"/>). Null where unknown. The writer and the predictor both read it, so a piece is judged
+    /// on the ground that is written.</summary>
+    internal static float? PlacedBaseAt(Vector2 p) => PlacedSites.GroundAt(p) ?? PlacedGround?.Invoke(p);
+
     private static ModificationStats ModifyVertexHeights(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
     {
         ModificationStats stats = new ModificationStats { PaintedCells = new HashSet<Vector2i>() };
@@ -517,6 +528,9 @@ public static class RoadTerrainModifier
         // A staircase's cuts (cut-only points): the ground within each one's
         // reach is lowered to its height where it stands higher, never raised.
         var cuts = roadPoints.FindAll(rp => rp.cutOnly);
+        // A road onto a place's landing (RoadSiteEntry): the only points that level
+        // the ground inside a place's footprint, and there only close to them.
+        var entering = roadPoints.FindAll(rp => rp.intoSite && rp.IsRoad);
 
         for (int vz = 0; vz < context.GridSize; vz++)
         {
@@ -529,7 +543,8 @@ public static class RoadTerrainModifier
                     0f,
                     context.HeightmapPosition.z + (vz - context.TerrainComp.m_width / 2f) * context.VertexSpacing);
                 Vector2 vertexPos2D = new Vector2(vertexWorldPos.x, vertexWorldPos.z);
-                if (RoadSiteProtection.Contains(vertexPos2D)) continue;
+                bool inside = RoadSiteProtection.Contains(vertexPos2D);
+                if (inside && entering.Count == 0) continue;
                 // Next to a zone left as it is, the road fades in from its border (NetworkCutoff.SeamWeight).
                 float seam = seamNear ? NetworkCutoff.SeamWeight(vertexPos2D) : 1f;
                 if (seam <= 0f)
@@ -542,7 +557,7 @@ public static class RoadTerrainModifier
                 // added later must lower it from there, never lift it back up.
                 float current = baseHeight + (context.TerrainComp.m_modifiedHeight[index]
                     ? context.TerrainComp.m_levelDelta[index] + context.TerrainComp.m_smoothDelta[index] : 0f);
-                if (WrittenDelta(vertexPos2D, baseHeight, current, roadPoints, fillExtra, cuts, out BlendResult blendResult) is float delta)
+                if (WrittenDelta(vertexPos2D, baseHeight, current, inside, roadPoints, fillExtra, cuts, entering, out BlendResult blendResult) is float delta)
                 {
                     if (seam >= 1f)
                     {
@@ -566,16 +581,35 @@ public static class RoadTerrainModifier
     }
 
     /// <summary>
-    /// The delta <see cref="ModifyVertexHeights"/> writes at a vertex outside every footprint, null where it writes
-    /// none: the road's earthwork, then a staircase's cut where it stands lower. <paramref name="current"/>: the height
-    /// the vertex holds before this write, which a cut with no road point here lowers from. Any thread: reads only its
-    /// arguments.
+    /// The delta <see cref="ModifyVertexHeights"/> writes at a vertex, null where it writes none: the road's earthwork
+    /// (inside a place's footprint only that of a road onto its landing, <paramref name="entering"/>), then a staircase's
+    /// cut where it stands lower. <paramref name="current"/>: the height the vertex holds before this write, which a cut
+    /// with no road point here lowers from. Where a saved structure stands, the ground it was laid on
+    /// (<see cref="StructureGround.Held"/>) instead, whatever the road would make of it. Any thread: reads only its
+    /// arguments and the held ground.
     /// </summary>
-    private static float? WrittenDelta(Vector2 vertex, float baseHeight, float current, List<RoadSpatialGrid.RoadPoint> roadPoints,
-        float[]? fillExtra, List<RoadSpatialGrid.RoadPoint> cuts, out BlendResult blend)
+    private static float? WrittenDelta(Vector2 vertex, float baseHeight, float current, bool inside, List<RoadSpatialGrid.RoadPoint> roadPoints,
+        float[]? fillExtra, List<RoadSpatialGrid.RoadPoint> cuts, List<RoadSpatialGrid.RoadPoint> entering, out BlendResult blend)
     {
-        blend = CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
-        float cut = cuts.Count > 0 ? LowestCut(cuts, vertex) : float.PositiveInfinity;
+        blend = default;
+        if (inside && entering.Count == 0) return null;
+        float? road = RoadDelta(vertex, baseHeight, current, inside, roadPoints, fillExtra, cuts, entering, out blend);
+        if (StructureGround.Held(vertex) is not float held) return road;
+        // The road's own delta where it leaves the held ground exactly: the ground a structure was laid on by this writer.
+        if (road is float same && baseHeight + same == held) return same;
+        float delta = Mathf.Clamp(held - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        return road.HasValue || Writes(delta, 0f) ? delta : null;
+    }
+
+    /// <summary>The road's earthwork and a staircase's cut at a vertex (<see cref="WrittenDelta"/>), null where they write
+    /// none.</summary>
+    private static float? RoadDelta(Vector2 vertex, float baseHeight, float current, bool inside, List<RoadSpatialGrid.RoadPoint> roadPoints,
+        float[]? fillExtra, List<RoadSpatialGrid.RoadPoint> cuts, List<RoadSpatialGrid.RoadPoint> entering, out BlendResult blend)
+    {
+        blend = inside
+            ? CalculateBlendedHeight(entering, vertex, baseHeight, bounded: true)
+            : CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
+        float cut = !inside && cuts.Count > 0 ? LowestCut(cuts, vertex) : float.PositiveInfinity;
         if (blend.InfluencingPoints == 0 && float.IsPositiveInfinity(cut)) return null;
         float finalHeight = blend.InfluencingPoints == 0 ? current : RoadTarget(blend, vertex, baseHeight);
         bool cutHere = cut < finalHeight;
@@ -587,31 +621,34 @@ public static class RoadTerrainModifier
 
     /// <summary>
     /// The ground the terrain writer will leave at whole-metre vertices (the game's heightmap vertices), for a
-    /// zone no player has dug, built from the network as it now stands: the natural height, then the road's
-    /// earthwork and the staircases' cuts, exactly as <see cref="ModifyVertexHeights"/> writes them from the zone's
-    /// points. NaN inside any place's footprint, whose own levelling is not known until it spawns. Cached per vertex
-    /// and per zone; one caller at a time (built for a pass after generation).
+    /// zone no player has dug, built from the network as it now stands: the natural height, or inside a place
+    /// placed before its roads the ground it leaves (<see cref="PlacedSites"/>); then the road's earthwork and the
+    /// staircases' cuts, exactly as <see cref="ModifyVertexHeights"/> writes them from the zone's points. NaN inside
+    /// any other place's footprint, whose own levelling is not known until it spawns. Cached per vertex and per
+    /// zone; one caller at a time (built for a pass after generation, or an append on the main thread).
     /// </summary>
     internal static System.Func<int, int, float> FinishedGround(System.Func<int, int, float> natural)
     {
-        var zones = new Dictionary<Vector2s, (List<RoadSpatialGrid.RoadPoint> all, float[]? fill, List<RoadSpatialGrid.RoadPoint> cuts)>();
+        var zones = new Dictionary<Vector2s, (List<RoadSpatialGrid.RoadPoint> all, float[]? fill, List<RoadSpatialGrid.RoadPoint> cuts, List<RoadSpatialGrid.RoadPoint> entering)>();
         var heights = new Dictionary<(int, int), float>();
         return (x, z) =>
         {
             if (heights.TryGetValue((x, z), out float known)) return known;
             var v = new Vector2(x, z);
-            float h = float.NaN;
-            if (!RoadSiteProtection.Contains(v))
+            bool inside = RoadSiteProtection.Contains(v);
+            float baseHeight;
+            if (!inside) baseHeight = natural(x, z);
+            else baseHeight = PlacedSites.GroundAt(v) ?? float.NaN;
+            float h = baseHeight;
+            if (!float.IsNaN(baseHeight))
             {
-                float baseHeight = natural(x, z);
-                h = baseHeight;
                 Vector2s zone = ZoneSystem.GetZone(new Vector3(x, 0f, z));
                 if (!zones.TryGetValue(zone, out var points))
                 {
                     var all = RoadSpatialGrid.GetRoadPointsInZone(zone);
-                    zones[zone] = points = (all, FillExtras(all, WorldGenerator.instance), all.FindAll(rp => rp.cutOnly));
+                    zones[zone] = points = (all, FillExtras(all, WorldGenerator.instance), all.FindAll(rp => rp.cutOnly), all.FindAll(rp => rp.intoSite && rp.IsRoad));
                 }
-                if (WrittenDelta(v, baseHeight, baseHeight, points.all, points.fill, points.cuts, out _) is float delta)
+                if (WrittenDelta(v, baseHeight, baseHeight, inside, points.all, points.fill, points.cuts, points.entering, out _) is float delta)
                     h = baseHeight + delta;
             }
             heights[(x, z)] = h;
@@ -648,15 +685,21 @@ public static class RoadTerrainModifier
 
     /// <summary>The fill spread per road point (null when it is off): it samples the
     /// natural ground round each point, so it is worked out once per set of points.</summary>
+    /// <remarks>Also the shoulder a road lays over shallows it was let through on beside a place
+    /// (<see cref="RoadShoreFill.Reach"/>), the wider of the two: a fill spread too, within its
+    /// widest (<see cref="RoadEarthworkNoise.FillSpreadMax"/>, the zone gather's pad), and off with it.</remarks>
     internal static float[]? FillExtras(List<RoadSpatialGrid.RoadPoint> roadPoints, WorldGenerator? world)
     {
         if (!(RoadEarthworkNoise.FillSpread > 0f) || world == null) return null;
+        bool shore = RoadShoreFill.FillDepth > 0f && RoadPathfinder.SqueezeCorridor > 0f;
         var fillExtra = new float[roadPoints.Count];
         for (int k = 0; k < roadPoints.Count; k++)
             if (roadPoints[k].IsRoad)
             {
                 fillExtra[k] = RoadEarthworkNoise.FillExtra(roadPoints[k].p, roadPoints[k].h,
                     (x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world));
+                if (shore)
+                    fillExtra[k] = Mathf.Max(fillExtra[k], RoadShoreFill.Reach(world, roadPoints[k].p, roadPoints[k].w));
             }
         return fillExtra;
     }
@@ -668,6 +711,20 @@ public static class RoadTerrainModifier
     /// <summary>Whether a vertex is written at all, for a change this big at this blend.</summary>
     private static bool Writes(float delta, float maxBlend) =>
         Mathf.Abs(delta) > RoadConstants.MinHeightDeltaThreshold || maxBlend > RoadConstants.MinBlendForModification;
+
+    /// <summary>
+    /// The height a road's earthwork leaves at a vertex outside every footprint, from
+    /// <paramref name="baseHeight"/>: what <see cref="ModifyVertexHeights"/> writes there
+    /// on a zone no player has dug and no staircase cuts. For a ground rebuilt before its
+    /// zone loads (<see cref="PlacedSiteGround"/>). Any thread: reads only its arguments.
+    /// </summary>
+    internal static float ModelledHeight(List<RoadSpatialGrid.RoadPoint> roadPoints, Vector2 vertex, float baseHeight, float[]? fillExtra)
+    {
+        BlendResult blend = CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
+        if (blend.InfluencingPoints == 0) return baseHeight;
+        float delta = Mathf.Clamp(RoadTarget(blend, vertex, baseHeight) - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        return Writes(delta, blend.MaxBlend) ? baseHeight + delta : baseHeight;
+    }
 
     private struct BlendResult
     {
@@ -732,6 +789,26 @@ public static class RoadTerrainModifier
     /// and the unit suite alike; a test turns it off for the cull's reference (every point judged in full).</summary>
     internal static bool CullFarPoints = true;
 
+    /// <summary>
+    /// The road surface height at a vertex, from the road points within reach.
+    /// The points sit on the centreline, so the surface is fitted as a LINE
+    /// along the road (weighted least squares, the blend weights) and read
+    /// at the vertex. A weighted mean would do mid-road,
+    /// where the points lie on both sides of the vertex, but at a road end
+    /// every point lies on one side: on a slope the mean of their heights is
+    /// the height some way back along the road, and the terrain at the end,
+    /// and for the blend margin beyond it, came out on a shelf. The fit
+    /// follows the road's own gradient through the end instead.
+    ///
+    /// The sums gathered below are the ones a plane fit would need, but they
+    /// are used to find the road's direction, not to fit a plane: the height
+    /// is regressed along that direction alone and the gradient across the
+    /// road is zero by construction. See FitHeightAtVertex, which explains why
+    /// a free plane fit was tried and abandoned.
+    /// </summary>
+    /// <param name="bounded">Inside a place's footprint: each point reaches its half width and
+    /// <see cref="RoadSiteEntry.InsideMargin"/>, no further (no batter, noise or fill spread),
+    /// so a road onto a place's landing never levels its entrance or its rocks.</param>
     private static BlendResult CalculateBlendedHeight(List<RoadSpatialGrid.RoadPoint> roadPoints, Vector2 vertexPos,
         float groundHere, float[]? fillExtra = null, bool bounded = false)
     {
@@ -764,7 +841,8 @@ public static class RoadTerrainModifier
             // release, so the cut is walked out on a slope instead of ending
             // in a wall. The ground under the vertex stands in for the ground
             // under the point: they are metres apart, and this costs no query.
-            float margin = RoadConstants.TerrainBlendMargin * RoadEarthworkNoise.MarginFactor(rp.p)
+            float margin = bounded ? RoadSiteEntry.InsideMargin
+                         : RoadConstants.TerrainBlendMargin * RoadEarthworkNoise.MarginFactor(rp.p)
                          + BatterExtra(BatterDivergence(rp.h, groundHere))
                          + (fillExtra != null ? fillExtra[k] : 0f);
             float influenceRadius = (rp.w * 0.5f) + margin;
@@ -950,7 +1028,7 @@ public static class RoadTerrainModifier
                     Vector2 paintPosition = new Vector2(
                         terrainPos.x + (vx - halfWidth) * scale,
                         terrainPos.z + (vy - halfWidth) * scale);
-                    if (RoadSiteProtection.Contains(paintPosition)) continue;
+                    if (!roadPoint.intoSite && RoadSiteProtection.Contains(paintPosition)) continue;
 
                     // From the road point itself, not its snapped vertex; the cell is centred on its vertex
                     // the way vanilla reads a paint cell (Heightmap.WorldToVertexMask).

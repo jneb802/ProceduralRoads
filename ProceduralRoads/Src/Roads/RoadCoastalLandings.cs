@@ -41,7 +41,7 @@ public static class RoadCoastalLandings
             try
             {
             float h = H(cell.x, cell.y);
-            if (!Known(h) || h < RoadPathfinder.LandingFloor || h > Sea + 6) continue;
+            if (!Known(h) || h < RoadWater.LandingFloor || h > Sea + 6) continue;
             // First screen is entirely in memory; query the biome only at a low shore.
             int shoreReach = Mathf.CeilToInt(32 / spacing);
             if (!Directions.Any(d => Known(H(cell.x+d.x*shoreReach, cell.y+d.z*shoreReach))

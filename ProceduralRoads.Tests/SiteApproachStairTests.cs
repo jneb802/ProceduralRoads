@@ -25,7 +25,9 @@ public class SiteApproachStairTests : IDisposable
             float r = new Vector2(wx, wy).magnitude;
             return 40f + Mathf.Clamp((22f - r) * 1.2f, 0f, 12f);
         }
-        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
+        /// <summary>The Mountains, where a place gets an approach staircase (<see cref="RoadNetworkGenerator.ApproachStairsAt"/>).</summary>
+        public Heightmap.Biome Biome = Heightmap.Biome.Mountain;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Biome;
         public override int GetSeed() => 77;
     }
 
@@ -58,7 +60,7 @@ public class SiteApproachStairTests : IDisposable
     {
         var path = new List<Vector2> { end + new Vector2(-30f, 0f), end };
         return RoadStairRuns.LaySiteApproach(end, _world.GetHeight(end.x, end.y), StairLayout.Bearing(path[0], end),
-            new Vector2(0f, 0f), 52f, ops, path, 1, new List<RoadStairSpan>(), _world, out why);
+            new Vector2(0f, 0f), 52f, ops, false, path, 1, new List<RoadStairSpan>(), _world, out why);
     }
 
     [Fact]
@@ -93,7 +95,7 @@ public class SiteApproachStairTests : IDisposable
         var end = new Vector2(-24f, 0f);
         var path = new List<Vector2> { end + new Vector2(-30f, 0f), end };
         RoadStairSpan? span = RoadStairRuns.LaySiteApproach(end, world.GetHeight(end.x, end.y), StairLayout.Bearing(path[0], end),
-            new Vector2(0f, 0f), 52f, sunk, path, 1, new List<RoadStairSpan>(), world, out string why);
+            new Vector2(0f, 0f), 52f, sunk, false, path, 1, new List<RoadStairSpan>(), world, out string why);
 
         Assert.True(span != null, why);
         // Laid from the pit floor up: its top, with the landing the road meets, at the road's end.
@@ -179,16 +181,6 @@ public class SiteApproachStairTests : IDisposable
         Assert.Contains(RoadSpatialGrid.GetRoadPointsNearPosition(foot, 2f), p => p.IsRoad && Mathf.Abs(p.h - 40f) < 0.6f);
     }
 
-    [Fact]
-    public void WithoutStairsAGeneratedRoadToThePlaceStopsAsBefore()
-    {
-        LocationLevelling.Source = c => c.magnitude < 0.5f ? Apron : null;
-        SetPathfinder(new RoadPathfinder(_world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f });
-
-        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the apron"));
-
-        Assert.Empty(StairStructures.Runs);
-    }
     /// <summary>Ground falling at 0.8 towards +x from 12 m behind to 14 m in front, then at 0.3 (where a
     /// road can reach); level behind (a road can end there too); sea past 200 m.</summary>
     private sealed class HillsideWorld : WorldGenerator
@@ -226,6 +218,40 @@ public class SiteApproachStairTests : IDisposable
             Centre = new Vector2(0f, 0f), RoadTail = new List<Vector2> { before, end },
         };
         return RoadStairRuns.PlanPlacedSiteApproach(request, 90f, CaveFloor, CaveGround, (x, z) => Heightmap.Biome.Mountain, 77, out why, rock);
+    }
+
+    [Fact]
+    public void AnOffCentreFloorWaitsForThePlaceToBePlaced()
+    {
+        var world = new HillsideWorld();
+        _scope.WithWorld(world);
+        var end = new Vector2(24f, 0f);
+        var path = new List<Vector2> { new Vector2(54f, 0f), end };
+        Assert.Null(RoadStairRuns.LaySiteApproach(end, world.GetHeight(end.x, end.y), 270f, new Vector2(0f, 0f), 50f, CaveFloor, true,
+            path, 1, new List<RoadStairSpan>(), world, out string why));
+        Assert.Equal(RoadStairRuns.NotPlacedBeforeItsRoad, why);
+        Assert.Null(RoadStairRuns.LaySiteApproach(end, world.GetHeight(end.x, end.y), 270f, new Vector2(0f, 0f), 50f, CaveFloor, false,
+            path, 1, new List<RoadStairSpan>(), world, out why));
+        Assert.Equal("flat off its centre, turned at random", why);
+    }
+
+    [Fact]
+    public void AStaircaseOntoAPlaceWithADoorLandingEndsAtTheDoor()
+    {
+        const string prefab = "Mistlands_DvergrBossEntrance1";
+        Vector2 end = new Vector2(40f, 0f), before = end + end.normalized * 30f;
+        var request = new SiteApproachRequest
+        {
+            RoadEnd = end, RoadHeight = CaveGround(end.x, end.y), Arriving = StairLayout.Bearing(before, end),
+            Centre = new Vector2(0f, 0f), RoadTail = new List<Vector2> { before, end },
+        };
+        PlacedSiteShape shape = PlacedSiteShape.Of(request.Centre, 90f, CaveFloor[0], 0f, null, CaveGround, prefab: prefab);
+        RoadStairSpan? span = RoadStairRuns.PlanPlacedSiteApproach(request, 90f, CaveFloor, CaveGround, (x, z) => Heightmap.Biome.Mountain, 77,
+            out string why, placed: shape);
+
+        Assert.True(span != null, why);
+        Vector2 top = new Vector2(span!.Plan.End.x, span.Plan.End.z);
+        Assert.InRange(Vector2.Distance(top, shape.Door!.Value), 0f, RoadStairRuns.LedgeReach + RoadStairRuns.FinishReach);
     }
 
     [Fact]
@@ -404,6 +430,31 @@ public class SiteApproachStairTests : IDisposable
             Assert.True(piece.Position.y >= height - 0.01f, $"{piece.Kind} at {piece.Position} under the row at {height:F2}");
     }
 
+    /// <summary>A cave not placed in time gets no approach (nothing is laid later; a cave left for a player to find is never
+    /// a destination at all, <see cref="PlacedSites.PlayerDecides"/>): its road's end at the ring, 12 m under its mouth, is
+    /// not level with it, so the road is refused and the cave left unreached (a road always ends
+    /// level, even at the cost of a POI). Before, the ring end was kept and counted the cave reached.</summary>
+    [Fact]
+    public void ACaveNotPlacedInTimeIsNotReachedFromItsRing()
+    {
+        LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
+        LocationLevelling.FacesDownhillSource = c => c.magnitude < 0.5f;
+        try
+        {
+            RoadNetworkGenerator.Reset();
+            RoadSpatialGrid.Clear();
+            PlacedSites.Reset();
+            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(0f, 0f), Footprint) });
+            SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
+
+            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(-120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave"));
+            Assert.Equal(RoadNetworkGenerator.NotLevelRefusal, RoadSpatialGrid.LastRefusal);
+            Assert.Empty(StairStructures.Runs);
+            Assert.False(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
+        }
+        finally { LocationLevelling.FacesDownhillSource = null; PlacedSites.Reset(); }
+    }
+
     /// <summary>A place a staircase reaches is reached, with no road near it: the network counts its
     /// staircases (MountainCave02 -2560,1536: its staircase's top 38.8 m out, the nearest road
     /// 52 m, counted unreached).</summary>
@@ -420,98 +471,103 @@ public class SiteApproachStairTests : IDisposable
         Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
     }
 
-    /// <summary>A road's end far under its place's own ground does not reach the place: a 100 m
-    /// staircase ended 45 m under Hildir's cave, counted connected (the stairs climbed
-    /// far and ended short of the goal). An end an approach can climb from does.</summary>
+    /// <summary>A road's end not level with its place (<see cref="RoadNetworkGenerator.ArrivalLevel"/>), over or under it,
+    /// does not reach the place unless an approach staircase was laid from it onto the place (a road does not end
+    /// below or above these places). Before, only an end more than 20 m under was refused: a 100 m staircase ended
+    /// 45 m under Hildir's cave.</summary>
     [Fact]
-    public void ARoadEndingFurtherUnderItsPlaceThanAnApproachClimbsDoesNotReachIt()
+    public void ARoadEndNotLevelWithItsPlaceDoesNotReachItWithoutAnApproach()
     {
         LocationLevelling.Source = c => c.magnitude < 0.5f ? Apron : null;
-        var endOutOfClimb = typeof(RoadNetworkGenerator).GetMethod("EndOutOfClimb", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var endNotLevel = typeof(RoadNetworkGenerator).GetMethod("EndNotLevel", BindingFlags.NonPublic | BindingFlags.Static)!;
         var path = new List<Vector2>();
         for (int x = -120; x <= -24; x += 8) path.Add(new Vector2(x, 0f));
         RoadSpatialGrid.PlannedPath plan = RoadSpatialGrid.PlanRoadPath(path, 4f, _world)!;
         Assert.NotNull(plan);
-        string? Why(List<RoadStairSpan> stairs) => (string?)endOutOfClimb.Invoke(null, new object[] {
-            path, new List<RoadSpatialGrid.PlannedPath> { plan }, stairs, path[0], 0f, new Vector2(0f, 0f), 10f, false, true, null!, null! });
-        // The platform is at 52 m; the road ends on the ground at 40 m, 12 m under it.
+        string? Why(List<RoadStairSpan> stairs, List<RoadStairSpan>? approaches = null) => (string?)endNotLevel.Invoke(null, new object[] {
+            path, new List<RoadSpatialGrid.PlannedPath> { plan }, stairs, approaches ?? new List<RoadStairSpan>(), path[0], 0f, new Vector2(0f, 0f), 10f, false, true });
+        RoadStairSpan EndsOn(float height) => new() { FromIndex = path.Count - 3, ToIndex = path.Count - 1, FromPoint = path[path.Count - 3],
+            FromHeight = 5f, ToPoint = path[path.Count - 1], ToHeight = height };
+        // The platform is at 52 m; the road ends on the ground at 40 m, 12 m under it (20 m was allowed before).
+        Assert.Contains("ends 12.0 m under its place", Why(new List<RoadStairSpan>()));
+        // An approach staircase laid from that end onto the place: reached by it.
+        Assert.Null(Why(new List<RoadStairSpan>(), new List<RoadStairSpan> { new() { FromIndex = path.Count - 1, ToIndex = path.Count - 1 } }));
+        // The road ends on a staircase's top: level with the platform, a step over it, 45 m under it.
+        Assert.Null(Why(new List<RoadStairSpan> { EndsOn(52f + RoadNetworkGenerator.ArrivalLevel) }));
+        Assert.Contains("ends 1.0 m over its place", Why(new List<RoadStairSpan> { EndsOn(53f) }));
+        Assert.Contains("ends 45.0 m under its place", Why(new List<RoadStairSpan> { EndsOn(7f) }));
+        // Outside the Mountains an end off level is kept as it is.
+        _world.Biome = Heightmap.Biome.Swamp;
         Assert.Null(Why(new List<RoadStairSpan>()));
-        // The road ends on a staircase's top 45 m under it.
-        var under = new List<RoadStairSpan> { new() { FromIndex = path.Count - 3, ToIndex = path.Count - 1, FromPoint = path[path.Count - 3], FromHeight = 5f, ToPoint = path[path.Count - 1], ToHeight = 7f } };
-        Assert.Contains("ends 45 m under its place", Why(under));
-        float saved = RoadNetworkGenerator.MaxApproachClimb;
-        try
-        {
-            RoadNetworkGenerator.MaxApproachClimb = 1000f;
-            Assert.Null(Why(under));
-        }
-        finally { RoadNetworkGenerator.MaxApproachClimb = saved; }
+        Assert.Null(Why(new List<RoadStairSpan> { EndsOn(7f) }));
     }
 
-    /// <summary>A road refused only for ending further under its place than an approach climbs is the
-    /// place's last resort: built when nothing else reaches it, and the place then counts as reached
-    /// (Hildir's cave lost its 100 m staircase).</summary>
+    /// <summary>A road whose end stands under its place and from which no approach can be laid is refused, and the place
+    /// left unreached: there is no last-resort road for it any more (it was built ending under its place, and the place
+    /// counted reached by it).</summary>
     [Fact]
-    public void ARoadEndingPastAnApproachsClimbIsBuiltAsItsPlacesLastResort()
+    public void ARoadEndingUnderItsPlaceWithNoApproachIsRefused()
     {
-        // A platform raised 15 m over the apron (67 m): a road from the flat ends well under it.
+        // A platform raised 15 m over the apron (67 m): a road from the flat ends well under it, 40 m and more out.
         IReadOnlyList<LevelOp> raised = new[] { new LevelOp(0f, 0f, 15f, LevelRadius, false) };
         LocationLevelling.Source = c => c.magnitude < 0.5f ? raised : null;
-        float savedClimb = RoadNetworkGenerator.MaxApproachClimb;
-        try
-        {
-            RoadNetworkGenerator.MaxApproachClimb = 5f;
-            RoadNetworkGenerator.Reset();
-            RoadSpatialGrid.Clear();
-            SetPathfinder(new RoadPathfinder(_world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f });
+        RoadNetworkGenerator.Reset();
+        RoadSpatialGrid.Clear();
+        SetPathfinder(new RoadPathfinder(_world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f });
 
-            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(-120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the apron"));
-            Assert.Contains("climb of its place", RoadSpatialGrid.LastRefusal);
-            Assert.False(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
-
-            Assert.True(RoadNetworkGenerator.BuildLastResort(new Vector3(0f, 0f, 0f)));
-            Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
-        }
-        finally { RoadNetworkGenerator.MaxApproachClimb = savedClimb; }
+        Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(-120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the apron"));
+        Assert.Equal(RoadNetworkGenerator.NotLevelRefusal, RoadSpatialGrid.LastRefusal);
+        Assert.False(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
     }
 
-    /// <summary>The planner gives a place its last resort only when every edge and the join failed, and
-    /// a place another road reaches keeps that road.</summary>
+    /// <summary>Outside the Mountains (<see cref="RoadNetworkGenerator.ApproachStairsAt"/>) a road that comes close to its place is
+    /// enough: one ending well under its platform, with no approach staircase, is kept, not refused, and the place is reached
+    /// by it.</summary>
     [Fact]
-    public void ThePlannerTurnsToAPlacesLastResortOnlyWhenNothingElseReachesIt()
+    public void ARoadEndingUnderItsPlaceOutsideTheMountainsIsKeptWithNoApproach()
     {
-        var places = new List<RoadConnectionPlanner.Place>
-        {
-            new("Start", new Vector3(0f, 0f, 0f), 0f),
-            new("Cave", new Vector3(100f, 0f, 0f), 10f),
-            new("Ruin", new Vector3(0f, 0f, 100f), 10f),
-        };
-        var reports = new Dictionary<string, string>();
-        var resorted = new List<string>();
-        void Plan(Func<RoadConnectionPlanner.Place, bool>? lastResort)
-        {
-            reports.Clear(); resorted.Clear();
-            RoadConnectionPlanner.Connect(places,
-                (a, b) => 100f,
-                (a, b) => (a.Name == "Ruin" || b.Name == "Ruin") && (a.Name == "Start" || b.Name == "Start"), // only Start - Ruin builds
-                _ => false, _ => 0,
-                (place, result) => reports[place.Name] = result,
-                lastResort: lastResort);
-        }
+        _world.Biome = Heightmap.Biome.Meadows;
+        IReadOnlyList<LevelOp> raised = new[] { new LevelOp(0f, 0f, 15f, LevelRadius, false) };
+        LocationLevelling.Source = c => c.magnitude < 0.5f ? raised : null;
+        RoadNetworkGenerator.Reset();
+        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(0f, 0f), Footprint) });
+        SetPathfinder(new RoadPathfinder(_world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f });
 
-        Plan(p => { resorted.Add(p.Name); return true; });
-        Assert.Equal("connected by its last-resort road", reports["Cave"]);
-        Assert.Equal("connected", reports["Ruin"]);
-        Assert.Equal(new[] { "Cave" }, resorted);
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the apron"),
+            "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
 
-        Plan(null);
-        Assert.Equal("new component; no priced connection to network", reports["Cave"]);
+        Assert.Empty(StairStructures.Runs);
+        Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
     }
 
-    /// <summary>Only network an approach could climb from reaches a place: a road 25 m under its
-    /// platform within reach does not, one 12 m under does.</summary>
+    /// <summary>An approach staircase is laid onto a place in the Mountains only: the same road to the same apron climbs its
+    /// last stretch on stairs there, and ends at the foot of the face elsewhere, reaching the place.</summary>
     [Fact]
-    public void OnlyNetworkWithinAnApproachsClimbServesAPlace()
+    public void AnApproachStaircaseIsLaidOnlyAtAPlaceInTheMountains()
+    {
+        LocationLevelling.Source = c => c.magnitude < 0.5f ? Apron : null;
+        float? Top(Heightmap.Biome biome)
+        {
+            _world.Biome = biome;
+            RoadNetworkGenerator.Reset();
+            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(0f, 0f), Footprint) });
+            SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the apron"),
+                $"{biome}: last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
+            Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f), $"{biome}: not reached");
+            return StairStructures.Runs.Count == 0 ? null
+                : StairStructures.Runs.SelectMany(r => r.Pieces).Where(p => p.Kind != StructurePieceKind.StairSupport).Max(p => p.Position.y);
+        }
+
+        Assert.InRange(Top(Heightmap.Biome.Mountain) ?? 0f, 51f, 52.5f);
+        Assert.Null(Top(Heightmap.Biome.Meadows));
+    }
+
+    /// <summary>Only network level with a place (<see cref="RoadNetworkGenerator.ArrivalLevel"/>) within its reach serves it:
+    /// a road 25 m under its platform does not (it did with no height guard), nor one a metre under or 8 m over it; one level
+    /// with it does.</summary>
+    [Fact]
+    public void OnlyNetworkLevelWithAPlaceServesIt()
     {
         LocationLevelling.Source = c => c.magnitude < 0.5f ? Apron : null;
         RoadSpatialGrid.PlannedPath Road(float z, float height)
@@ -522,14 +578,62 @@ public class SiteApproachStairTests : IDisposable
         }
         RoadSpatialGrid.Commit(Road(0f, 27f));
         Assert.False(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
-        float saved = RoadNetworkGenerator.MaxApproachClimb;
+        RoadSpatialGrid.Commit(Road(4f, 51f));
+        Assert.False(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
+        RoadSpatialGrid.Commit(Road(-4f, 60f));
+        Assert.False(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
+        RoadSpatialGrid.Commit(Road(6f, 52f + 0.4f));
+        Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
+    }
+    /// <summary>The stub drop case: a road 25 m under a place's platform, within reach of it, does not
+    /// reach it, so a new road to the place keeps its own stub where it merges with that low road (the one reached
+    /// test, <see cref="RoadNetworkGenerator.Reached"/>). Before, the stub drop had its own test with no height guard:
+    /// it cut the stub, the place was left with no access and then counted unreached.</summary>
+    [Fact]
+    public void ARoadUnderAPlaceDoesNotDropTheStubOfTheRoadToIt()
+    {
+        LocationLevelling.Source = c => c.magnitude < 0.5f ? Apron : null;
+        RoadSpatialGrid.PlannedPath low = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { new(-40f, 0f), new(-26f, 0f) }, 4f, _world)!;
+        for (int i = 0; i < low.Heights.Count; i++) low.Heights[i] = 27f;
+        RoadSpatialGrid.Commit(low);
+        // A road to the place along z = 0, over the low road 7 m before its end at the place's edge.
+        var path = new List<Vector2> { new(-120f, 0f), new(-90f, 0f), new(-60f, 0f), new(-33f, 0f), new(-20f, 0f) };
+        float snap = RoadNetworkGenerator.RoadSnap;
         try
         {
-            RoadNetworkGenerator.MaxApproachClimb = 1000f;
-            Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
+            RoadNetworkGenerator.RoadSnap = 6f;
+            Assert.False(RoadNetworkGenerator.EndReached(new Vector2(0f, 0f), 10f));
+            Assert.Equal(path.Count, RoadNetworkGenerator.DropStubs(path, true, RoadNetworkGenerator.EndReached(new Vector2(0f, 0f), 10f))!.Count);
+            // Control: a road level with the place within its reach reaches it, and the stub is dropped.
+            RoadSpatialGrid.PlannedPath level = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { new(-40f, 8f), new(-26f, 8f) }, 4f, _world)!;
+            for (int i = 0; i < level.Heights.Count; i++) level.Heights[i] = 52f;
+            RoadSpatialGrid.Commit(level);
+            Assert.True(RoadNetworkGenerator.EndReached(new Vector2(0f, 0f), 10f));
+            Assert.True(RoadNetworkGenerator.DropStubs(path, true, RoadNetworkGenerator.EndReached(new Vector2(0f, 0f), 10f))!.Count < path.Count);
         }
-        finally { RoadNetworkGenerator.MaxApproachClimb = saved; }
-        RoadSpatialGrid.Commit(Road(6f, 40f));
-        Assert.True(RoadNetworkGenerator.Reached(new Vector3(0f, 0f, 0f), 10f));
+        finally
+        {
+            RoadNetworkGenerator.RoadSnap = snap;
+        }
+    }
+    /// <summary>The earthwork re-route plans through the one pipeline (PlanFromPath), so it refuses what preparation
+    /// missed as the road's own build does: before, its own copy built the re-route anyway.</summary>
+    [Fact]
+    public void AReRouteIsRefusedWherePreparationMissedAsTheRoadIs()
+    {
+        var finder = new RoadPathfinder(_world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f };
+        SetPathfinder(finder);
+        Vector2 from = new(-180f, -100f), to = new(-80f, -100f);
+        try
+        {
+            LocationLevelling.PreparationMissedHere = false;
+            Assert.NotNull(RoadNetworkGenerator.Replan(finder, from, to, from, 0f, to, 0f, 4f, null, null, true, true));
+            LocationLevelling.PreparationMissedHere = true;
+            Assert.Null(RoadNetworkGenerator.Replan(finder, from, to, from, 0f, to, 0f, 4f, null, null, true, true));
+            var path = finder.FindPath(from, to)!;
+            Assert.Equal(RoadNetworkGenerator.PlanStop.Preparation,
+                RoadNetworkGenerator.PlanFromPath(finder, path, from, 0f, to, 0f, false, false, true, true, 4f).Stop);
+        }
+        finally { LocationLevelling.PreparationMissedHere = false; }
     }
 }

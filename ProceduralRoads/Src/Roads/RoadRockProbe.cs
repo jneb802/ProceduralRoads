@@ -147,7 +147,7 @@ public static class RoadRockProbe
         {
             if (!s.IsBox) continue;
             probed++;
-            foreach (var root in Judge(new RockClearance(s.Centre, s.Half, Quaternion.Euler(0f, s.YawDegrees, 0f), s.Surface), sites, mist, cliffs, carve, natural, hits, otherZone))
+            foreach (var root in Judge(new RockClearance(s.Centre, s.Half, Quaternion.Euler(0f, s.YawDegrees, 0f), s.Surface), sites, mist, cliffs, carve, natural, hits, otherZone, s.KeepsSiteRocks))
                 if (s.WholeOnly) onDeck.Add(root);
         }
         foreach (var (point, surface, height, line, deck) in all)
@@ -155,7 +155,7 @@ public static class RoadRockProbe
             long clearance = RoadRockStats.Now;
             RoadClearance(point, surface, line, out var boxCentre, out var boxHalf, out var boxTurn, height);
             RoadRockStats.ClearanceTicks += RoadRockStats.Now - clearance;
-            foreach (var root in Judge(new RockClearance(boxCentre, boxHalf, boxTurn, surface), sites, mist, cliffs, carve, natural, hits, otherZone))
+            foreach (var root in Judge(new RockClearance(boxCentre, boxHalf, boxTurn, surface), sites, mist, cliffs, carve, natural, hits, otherZone, point.intoSite))
             {
                 if (deck) onDeck.Add(root);
                 if (partial)
@@ -195,6 +195,45 @@ public static class RoadRockProbe
         return lines;
     }
 
+    private static string KeptForApproach(string why) => $"keep: the place's own rock ({why}), on its approach";
+
+    /// <summary>A rock's whole box across, corner to corner: a fractured one's largest chunk is small.</summary>
+    private static float Across(GameObject root)
+    {
+        Bounds? whole = null;
+        foreach (var part in root.GetComponentsInChildren<Collider>())
+            if (whole == null) whole = part.bounds; else { Bounds u = whole.Value; u.Encapsulate(part.bounds); whole = u; }
+        return whole?.size.magnitude ?? 0f;
+    }
+
+    /// <summary>Whether a rock in a site area is kept on an approach to the place: a large one
+    /// (<see cref="SiteRock.LargeRock"/> or more across), any round its mouth (inside its exterior
+    /// radius), or any at a
+    /// place that keeps every rock (<see cref="SiteRock.KeepsEveryRock"/>: Hildir's cave). Small
+    /// ones further out are cleared out of the way, and a boulder that is not one of the place's
+    /// parts (<see cref="LocationPrefabLevelling.IsPart"/>) is any road's. <paramref name="why"/>:
+    /// what made it the place's own, for the verdict.</summary>
+    private static bool KeptOnApproach(GameObject root, float size, out string why)
+    {
+        Vector3 at = root.transform.position;
+        Location? place = Location.GetLocation(at, checkDungeons: false);
+        why = "";
+        // No location round it: not one of a place's parts, though it stands in a protected area that
+        // reaches further than the location itself. Kept for being large, a 55 m rock1_mountain beside
+        // a frost cave's approach was left whole over its steps (MountainCave02 -2560,1536:
+        // rocks not part of the prefab are fair game to clear).
+        if (place == null) return false;
+        // A boulder of the world's in the place's footprint, not one of its parts: as on any road.
+        bool? part = LocationPrefabLevelling.IsPart(Utils.GetPrefabName(place.gameObject), place.transform.position, place.transform.rotation, at);
+        if (part == false) return false;
+        string kind = part == true ? "one of its parts" : "its parts not known";
+        if (size >= SiteRock.LargeRock) { why = kind + ", large"; return true; }
+        Vector3 d = at - place.transform.position;
+        if (SiteRock.KeepsEveryRock(place.name)) { why = kind + ", a place keeping every rock"; return true; }
+        if (new Vector2(d.x, d.z).magnitude <= place.m_exteriorRadius) { why = kind + ", round its mouth"; return true; }
+        return false;
+    }
+
     /// <summary>What a judged object is to the road: cleared (and whether it stands in a site area), or kept, and kept
     /// because another peer owns it. Decisions read this; <see cref="Hit.Verdict"/> is the log's wording.</summary>
     private enum HitKind { Keep, KeepNotOwner, Clear, ClearInSiteArea }
@@ -219,9 +258,12 @@ public static class RoadRockProbe
     /// Which objects stand in one clearance box, each judged once (into
     /// <paramref name="hits"/>) by the clearing policy. Returns the objects the
     /// box touched, judged now or before, so a caller can note where.
+    /// <paramref name="keepSiteRocks"/>: the box is an approach to a place (a staircase to its
+    /// landing, a road onto it), and a rock in a site area is the place's own: kept, whatever
+    /// another box decided.
     /// </summary>
     private static List<GameObject> Judge(RockClearance box, bool sites, bool mist, bool cliffs, bool carve,
-        HashSet<string> natural, Dictionary<GameObject, Hit> hits, HashSet<GameObject> otherZone)
+        HashSet<string> natural, Dictionary<GameObject, Hit> hits, HashSet<GameObject> otherZone, bool keepSiteRocks = false)
     {
         var touchedHere = new List<GameObject>();
         long t = RoadRockStats.Now;
@@ -250,7 +292,12 @@ public static class RoadRockProbe
             // they are still here, and were found and cleared twice.
             if (RoadRockCarve.GhostSpawned != null && !RoadRockCarve.GhostSpawned.Contains(root)) { otherZone.Add(root); continue; }
             touchedHere.Add(root);
-            if (hits.ContainsKey(root)) continue;
+            if (hits.TryGetValue(root, out Hit before))
+            {
+                if (keepSiteRocks && before.Kind == HitKind.ClearInSiteArea && KeptOnApproach(root, Across(root), out string keptBefore))
+                    hits[root] = new Hit(before.Name, KeptForApproach(keptBefore), before.Size, before.Listed);
+                continue;
+            }
             // A rock in a zone explored before the road network is left
             // whole, even when a neighbouring zone's pass reaches it.
             if (!RoadRockPolicy.MayTouch(root.transform.position))
@@ -282,7 +329,9 @@ public static class RoadRockProbe
             // was kept whole for one edge in an area, and chunks were left in
             // a road's last metres at a site. Parts of a location are still
             // never touched.
-            bool protectedSite = locationChild || (inSiteArea && !sites && !carve);
+            string keptWhy = "";
+            bool keptOnApproach = inSiteArea && keepSiteRocks && KeptOnApproach(root, Across(root), out keptWhy);
+            bool protectedSite = locationChild || keptOnApproach || (inSiteArea && !sites && !carve);
             var biome = Heightmap.FindBiome(root.transform.position);
             bool listed = false, ok = false;
             foreach (string judged in RoadRockPolicy.PolicyNames(name, RoadRockCarve.FracturedFrom()))
@@ -297,10 +346,11 @@ public static class RoadRockProbe
                 !listed ? (RoadRockPolicy.IsMistlandsBoulder(name) ? "keep: Mistlands rock (add 'mist' to include)" :
                     RoadRockPolicy.IsMistlandsCliff(name) ? "keep: Mistlands cliff (add 'cliffs' to include)" : "keep: not a listed natural boulder") :
                 locationChild ? "keep: part of a location" :
+                keptOnApproach ? KeptForApproach(keptWhy) :
                 protectedSite ? "keep: protected site area (add 'sites' to include)" : piece ? "keep: player piece" :
                 view != null && !view.IsOwner() ? "keep: not owner" : "keep: biome or vegetation rule";
             HitKind kind = ok ? (inSiteArea ? HitKind.ClearInSiteArea : HitKind.Clear)
-                : listed && !locationChild && !protectedSite && !piece && view != null && !view.IsOwner() ? HitKind.KeepNotOwner
+                : listed && !locationChild && !keptOnApproach && !protectedSite && !piece && view != null && !view.IsOwner() ? HitKind.KeepNotOwner
                 : HitKind.Keep;
             hits[root] = new Hit(name, verdict, size, listed, kind);
             RoadRockStats.JudgeTicks += RoadRockStats.Now - judging;

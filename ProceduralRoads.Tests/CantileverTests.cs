@@ -237,14 +237,18 @@ public class CantileverTests
         }
     }
 
-    /// <summary>The price per metre climbed rises from 1:1 to its maximum at the steepest step offered.</summary>
+    /// <summary>The price per metre climbed rises from 1:1 to its maximum where flights are held out from the face, and
+    /// stays there up to the steepest step offered: a sheer wall costs what a cantilever face does.</summary>
     [Fact]
     public void AStairStepsPriceRisesWithItsGrade()
     {
         Assert.Equal(1f, RoadPathfinder.SteepStairFactor(0.5f));
         Assert.Equal(1f, RoadPathfinder.SteepStairFactor(RoadPathfinder.StairMaxGrade));
         Assert.True(RoadPathfinder.SteepStairFactor(2f) > RoadPathfinder.SteepStairFactor(1.5f));
+        Assert.Equal(RoadPathfinder.SteepStairPriceMax, RoadPathfinder.SteepStairFactor(StairLayout.CantileverFromGrade), 3);
         Assert.Equal(RoadPathfinder.SteepStairPriceMax, RoadPathfinder.SteepStairFactor(RoadPathfinder.StairCantileverMaxGrade), 3);
+        Assert.True(RoadPathfinder.StairCantileverMaxGrade >= StairLayout.CantileverFromGrade,
+            "the search would refuse faces the layout holds flights out from");
     }
 
     /// <summary>The wedge a turn opens is read where its filler lies: a turn left off a flight climbing +z on
@@ -792,25 +796,29 @@ public class CantileverTests
         return 31f + 1.1f * Mathf.Abs(Vector2.Dot(new Vector2(x, z) - l1, along) - 3.7f);
     }
 
+    /// <summary>The second flight's top edge in <see cref="SharedFloorValley"/>: where it is laid again up to.</summary>
+    internal static readonly Vector2 SharedFloorValleyTop = new(4401.59f, 6442.82f);
+
     /// <summary>A valley (4392-4398,6438-6444): both flights went down to a shared floor at 32.5 and doubled
-    /// back. Taking off the bottom two stairs of each, the floor and its fillers, and laying four blackmarble_floor at 34.5
-    /// on 112.5 from the first's stair at 34.5 to the second's is smoother, with no 180 degree turn.</summary>
+    /// back. Taking off the bottom two stairs of each, the floor and its fillers, and laying floors at 34.5
+    /// on from the first's stair at 34.5 toward the second's is smoother, with no 180 degree turn.</summary>
     [Fact]
     public void AValleyIsSpannedInLineAboveItsSwitchback()
     {
         StairKit kit = StairKit.BlackMarble;
         var (first, second) = SharedFloorValley();
-        Assert.True(RoadStairRuns.SpanTheValley(first, second, kit, SharedFloorValleyGround, 32.5f, 2f, (_, _) => true, out Vector2 from));
+        Assert.True(RoadStairRuns.SpanTheValley(first, second, kit, SharedFloorValleyGround, 32.5f, 2f,
+            FlatRunJoinTests.Relay(SharedFloorValleyGround, SharedFloorValleyTop, kit), (_, _) => true, out StairPlan spanned, out Vector2 from));
         Assert.DoesNotContain(first.Pieces, p => p.Kind != StairPieceKind.Support && p.Position.y < 34.4f);
-        Assert.DoesNotContain(second.Pieces, p => p.Kind != StairPieceKind.Support && p.Position.y + (p.Kind == StairPieceKind.Stair ? 0f : kit.FloorTop) < 34.4f);
-        var floors = second.Pieces.Where(p => p.Kind == StairPieceKind.Landing).ToList();
-        Assert.Equal(4, floors.Count);
-        Assert.All(floors, f => { Assert.Equal(34.5f, f.Position.y + kit.FloorTop, 2); Assert.Equal(112.5f, f.YawDegrees, 2); });
-        Assert.True(Vector2.Distance(new Vector2(floors[0].Position.x, floors[0].Position.z), new Vector2(4392.143f, 6443.993f)) < 0.1f, $"first floor at {floors[0].Position}");
-        // Its first stair kept in both, the 2x1 wedge of the cut turn gone.
+        Assert.DoesNotContain(spanned.Pieces, p => p.Kind != StairPieceKind.Support && p.Position.y + (p.Kind == StairPieceKind.Stair ? 0f : kit.FloorTop) < 34.4f);
+        var floors = spanned.Pieces.Where(p => p.Kind == StairPieceKind.Landing).ToList();
+        Assert.NotEmpty(floors);
+        Assert.All(floors, f => Assert.True(f.Position.y + kit.FloorTop > 34.49f, $"floor at {f.Position}"));
+        Assert.True(Vector2.Distance(from, new Vector2(4391.22f, 6444.376f)) < 0.1f, $"span from {from}");
+        // Its first stair kept in the first, the 2x1 wedge of the cut turn gone; the second's pieces snapped to it.
         Assert.Contains(first.Pieces, p => p.Kind == StairPieceKind.Stair && Mathf.Abs(p.Position.y - 34.5f) < 0.01f);
-        Assert.Contains(second.Pieces, p => p.Kind == StairPieceKind.Stair && Mathf.Abs(p.Position.y - 34.5f) < 0.01f);
         Assert.DoesNotContain(first.Pieces, p => p.Kind == StairPieceKind.Filler);
+        Assert.Empty(FlatRunJoinTests.JoinFaults(first.Pieces.Concat(spanned.Pieces).ToList(), kit));
     }
 
     /// <summary>At the mountain cave (-2556.7,1554.2): the stairs must not stick out past the edge of the cliff, only the bottom step. A foot on a ledge

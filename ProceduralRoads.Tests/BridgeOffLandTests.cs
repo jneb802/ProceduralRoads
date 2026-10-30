@@ -33,7 +33,7 @@ public class BridgeOffLandTests
             Vector2 bank = new(0f, 0f), other = new(60f, 0f);
             Vector2 moved = RoadCrossingDetector.OffLand(bank, other, 31.6f, world);
             Assert.InRange(moved.x, 26f, 30f);
-            Assert.True(BiomeBlendedHeight.GetBlendedHeight(moved.x, moved.y, world) >= RoadPathfinder.LandingFloor);
+            Assert.True(BiomeBlendedHeight.GetBlendedHeight(moved.x, moved.y, world) >= RoadWater.LandingFloor);
         }
     }
 

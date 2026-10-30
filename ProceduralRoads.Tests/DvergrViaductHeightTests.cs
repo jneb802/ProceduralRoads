@@ -11,7 +11,7 @@ namespace ProceduralRoads.Tests;
 /// <summary>
 /// The height rules of the Dvergr viaducts (the vanilla viaducts look taller). Height pays more, with a lower crossing
 /// as the fallback if nothing is found: over 10 m a viaduct's price falls
-/// steeply, to a quarter at the 20 m ceiling (DvergrViaduct.HeightFactor), and never above the plain inverse price (10 / h), so a low one is
+/// steeply, to a tenth at the 26 m ceiling (DvergrViaduct.HeightFactor), and never above the plain inverse price (10 / h), so a low one is
 /// never priced out. And a lower limit: no viaduct whose tallest
 /// pier is under DvergrViaduct.MinViaductPier (12 m); a valley then keeps its road or stairs, a river its wooden kit.
 /// </summary>
@@ -54,9 +54,10 @@ public sealed class DvergrViaductHeightTests : IDisposable
     {
         Assert.Equal(10f / 6f, DvergrViaduct.HeightFactor(6f), 3);
         Assert.Equal(1f, DvergrViaduct.HeightFactor(10f), 3);
-        Assert.Equal(0.1f, DvergrViaduct.HeightFactor(20f), 3);
-        Assert.Equal(0.1f, DvergrViaduct.HeightFactor(25f), 3);
-        for (float h = 6f; h < 20f; h += 0.5f)
+        Assert.Equal(0.1f, DvergrViaduct.HeightFactor(26f), 3);
+        Assert.Equal(0.1f, DvergrViaduct.HeightFactor(30f), 3);
+        Assert.Equal(Mathf.Pow(0.1f, 10f / 16f), DvergrViaduct.HeightFactor(20f), 3);
+        for (float h = 6f; h < 26f; h += 0.5f)
         {
             // Never dearer than the inverse price (10 / h): a viaduct it builds is not priced out.
             Assert.True(DvergrViaduct.HeightFactor(h) <= 10f / h + 1e-4f, $"{h} m");
@@ -66,7 +67,35 @@ public sealed class DvergrViaductHeightTests : IDisposable
         Assert.True(DvergrViaduct.HeightFactor(14f) < 0.6f && DvergrViaduct.HeightFactor(17f) < 0.4f);
         // At a half share at the ceiling it is the inverse price.
         DvergrViaduct.CeilingPriceShare = 0.5f;
-        for (float h = 6f; h <= 20f; h += 0.5f) Assert.Equal(10f / h, DvergrViaduct.HeightFactor(h), 4);
+        for (float h = 6f; h <= 26f; h += 0.5f) Assert.Equal(10f / h, DvergrViaduct.HeightFactor(h), 4);
+    }
+
+    /// <summary>The same 64 m span costs less the taller its piers stand, all the way to the ceiling: 26 m under 20 m under 12 m.</summary>
+    [Fact]
+    public void ASpanOnTwentySixMetrePiersCostsLessThanOnTwentyAndTwentyLessThanOnTwelve()
+    {
+        float PriceAt(float depth)
+        {
+            var w = new DvergrViaductTests.MistValley { Top = 80f, Depth = depth };
+            _scope.WithWorld(w);
+            RoadCrossing c = DvergrViaduct.ValleyCrossing(new Vector2(-32f, 0f), new Vector2(32f, 0f), w, out string why)!;
+            Assert.True(c != null, why);
+            return DvergrViaduct.Price(c, w, RoadConstants.DefaultViaductCostFixed, RoadConstants.DefaultViaductCostPerMeter, 0f);
+        }
+        float p12 = PriceAt(12.5f), p20 = PriceAt(20.5f), p26 = PriceAt(25.5f);
+        Assert.True(p26 < p20 && p20 < p12, $"26 m {p26:F0}, 20 m {p20:F0}, 12 m {p12:F0}");
+    }
+
+    /// <summary>One valley, 25 m deep south of z = 0 and 13 m north of it, walls too steep to walk; the road runs
+    /// along z = 100: it goes 100 m south to the 25 m piers rather than cross where it is.</summary>
+    [Fact]
+    public void OfATallAndALowCrossingNearTheCeilingTheTallOneIsChosen()
+    {
+        var world = new StepValley { Top = 80f, Face = 2f, Depth = z => z < 0f ? 25f : 13f };
+        _scope.WithWorld(world);
+        var jump = Jump(world, 100f);
+        Assert.True(jump.HasValue, "no viaduct");
+        Assert.True(Tallest(world, jump!.Value) >= 25f, $"crossed on {Tallest(world, jump.Value):F1} m piers");
     }
 
     /// <summary>One valley, 18 m deep south of z = 0 and 13 m north of it; the road runs along z = 100. The inverse price

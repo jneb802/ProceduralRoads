@@ -8,13 +8,10 @@ namespace ProceduralRoads;
 /// <summary>
 /// Console commands for looking at the network's staircases in a world: road_stairs_scan (highest and lowest ground
 /// round a point, from the world generator) and road_stairs_list (the staircases, tallest first). Registered only with
-/// PROCEDURALROADS_DEV_COMMANDS on; off by default. Read-only.
+/// PROCEDURALROADS_DEV_COMMANDS on (<see cref="ConsoleCommands.DevCommands"/>); off by default. Read-only.
 /// </summary>
 public static class StairCommands
 {
-    /// <summary>PROCEDURALROADS_DEV_COMMANDS: register the staircase commands. Off by default.</summary>
-    internal static readonly bool Enabled = DebugSwitches.Flag("DEV_COMMANDS", false);
-
     public static void Register()
     {
         new Terminal.ConsoleCommand("road_stairs_list",

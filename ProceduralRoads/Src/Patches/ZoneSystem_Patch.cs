@@ -136,10 +136,42 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static bool Prefix() => !RoadLifecycleManager.HoldsLoadingScreen;
 
+        private static float s_nextReveal;
+
         [HarmonyPostfix]
-        public static void Postfix()
+        public static void Postfix(ZoneSystem __instance)
         {
             if (!RoadLifecycleManager.IsGenerating) ServerTerrainBake.Tick();
+            RevealSiteIcons(__instance);
+        }
+
+        /// <summary>A place placed before its roads goes on the map once a player has come as near as the
+        /// game would have placed it from (<see cref="HiddenSiteIcons"/>): checked twice a second, as the
+        /// game's own zone creation for each player and the server's own position.</summary>
+        private static void RevealSiteIcons(ZoneSystem zones)
+        {
+            if (HiddenSiteIcons.Count == 0 || ZNet.instance == null || !ZNet.instance.IsServer() || Time.time < s_nextReveal) return;
+            s_nextReveal = Time.time + 0.5f;
+            var references = new List<Vector3> { ZNet.instance.GetReferencePosition() };
+            foreach (ZNetPeer peer in ZNet.instance.GetPeers()) references.Add(peer.GetRefPos());
+            List<Vector3> shown = HiddenSiteIcons.Reveal(references, zones.m_simulationDistance.TotalSimulationDistance, zones.m_simulationDistance.IsClassic);
+            if (shown.Count == 0) return;
+            if (RoadNetworkGenerator.RoadsLog)
+                foreach (Vector3 p in shown)
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[SITES] icon at {p} on the map: a player came near enough for the game to have placed it");
+            zones.SendLocationIcons(0L);
+        }
+    }
+
+    /// <summary>The server's map icons without the places placed before their roads that no player has come
+    /// near yet (<see cref="HiddenSiteIcons"/>); the list the server sends every player is built here too.</summary>
+    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.GetLocationIcons))]
+    public static class ZoneSystem_GetLocationIcons_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Dictionary<Vector3, string> icons)
+        {
+            if (ZNet.instance != null && ZNet.instance.IsServer()) HiddenSiteIcons.Filter(icons);
         }
     }
 

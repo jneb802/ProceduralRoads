@@ -7,16 +7,13 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// Approach staircases laid with the roads (one owner): from a road's end at a place up (or down) to the flat apron the place
-/// levels round its centre, climbing and coming down again over a crest or a valley between, crossing a shallow dip level, and
+/// levels round its centre, climbing and coming down again over a crest or a valley between, crossing a dip within the walkway cap level, and
 /// stopping where the ground to the apron is walkable.
 /// </summary>
 public static partial class RoadStairRuns
 {
     /// <summary>A site's flat ground this far or less from the road's end is in reach of an approach staircase.</summary>
     public const float SiteReach = 40f;
-
-    /// <summary>An approach staircase is laid only where the road's end and the site's flat ground differ by this much.</summary>
-    public const float SiteMinClimb = 2f;
 
     /// <summary>It is aimed this far inside the edge of the site's flat ground.</summary>
     public const float ApronInset = 1f;
@@ -29,13 +26,17 @@ public static partial class RoadStairRuns
     /// <summary>The road's end must stand this close to the ground the staircase starts from.</summary>
     public const float SiteFootTolerance = 0.5f;
 
+    /// <summary>What <see cref="LaySiteApproach"/> answers for a flat the place's turn decides: the place was not
+    /// placed before its road, so its end keeps the ring.</summary>
+    public const string NotPlacedBeforeItsRoad = "flat off its centre: not placed before its road";
+
     /// <summary>
     /// A staircase from a road's end at a place up to the place's flat ground. A road stops
     /// outside a place's whole terrain footprint (at a frost cave 30 m from its
     /// centre), and nothing builds the last stretch, which is often too steep
     /// for road anyway. Where the place levels a single flat round its centre
-    /// (an apron), the road's end is <see cref="SiteMinClimb"/> or more above
-    /// or below it and within <see cref="SiteReach"/> of it, this lays a
+    /// (an apron), the road's end is not level with it (more than
+    /// <see cref="RoadNetworkGenerator.ArrivalLevel"/> above or below it; 2 m before the end-level rule) and within <see cref="SiteReach"/> of it, this lays a
     /// staircase from the road's end to just inside the apron's edge on the
     /// side the road comes from, over the ground the place leaves
     /// (<see cref="LocationLevelling.PlacedGroundAt"/>). It may cross the
@@ -46,14 +47,14 @@ public static partial class RoadStairRuns
     /// refused where anything is buried deeper than <see cref="StairCover.ApproachRefusal"/>.
     ///
     /// A flat off the centre lies wherever the place is turned, which is not
-    /// known until the place is placed, as its zone first loads: none is laid to it.
-    /// A model of that ground, from an estimated turn, buried six stairs of the
-    /// first one in the cliff below a frost cave's ledge; the
-    /// staircase onto a placed place's landing is <see cref="PlanPlacedSiteApproach"/>.
-    /// Null, with <paramref name="why"/>, where none is laid; the road is then as it was.
+    /// known until the place is placed: for a place that turns to face downhill
+    /// (a frost cave's floor dug behind its mouth) the answer is
+    /// <see cref="NotPlacedBeforeItsRoad"/>; a place placed first gets its
+    /// staircase from the ground the game made (<see cref="PlanPlacedSiteApproach"/>).
+    /// Null, with <paramref name="why"/>, where none is laid now; the road is then as it was.
     /// </summary>
     public static RoadStairSpan? LaySiteApproach(Vector2 roadEnd, float roadHeight, float arriving, Vector2 centre,
-        float centreGround, IReadOnlyList<LevelOp>? ops, List<Vector2> path, int endIndex,
+        float centreGround, IReadOnlyList<LevelOp>? ops, bool facesDownhill, List<Vector2> path, int endIndex,
         IReadOnlyList<RoadStairSpan> stairs, WorldGenerator world, out string why)
     {
         why = "";
@@ -61,7 +62,7 @@ public static partial class RoadStairRuns
         if (!LocationLevelling.PlatformHeight(centreGround, ops).HasValue) { why = "no single flat level"; return null; }
         LevelOp? flat = Flat(ops);
         if (flat == null) { why = "no flat ground"; return null; }
-        if (!flat.Value.Concentric) { why = "flat off its centre"; return null; }
+        if (!flat.Value.Concentric) { why = facesDownhill ? NotPlacedBeforeItsRoad : "flat off its centre, turned at random"; return null; }
         Vector2 outward = roadEnd - centre;
         if (outward.sqrMagnitude < 1e-4f) { why = "road ends at its centre"; return null; }
         float Ground(float x, float z) =>
@@ -107,8 +108,8 @@ public static partial class RoadStairRuns
     private static string AimRefused(Vector2 roadEnd, float roadHeight, Vector2 target, float apron, bool roadRefused = false,
         float reach = SiteReach) =>
         Vector2.Distance(roadEnd, target) > reach ? "too far"
-        : !roadRefused && Mathf.Abs(apron - roadHeight) < SiteMinClimb ? "level enough"
-        : apron < RoadConstants.ShallowWaterHeight ? "flat under water"
+        : !roadRefused && Mathf.Abs(apron - roadHeight) <= RoadNetworkGenerator.ArrivalLevel ? "level enough"
+        : !RoadWater.BuiltDry(apron) ? "flat under water"
         : "";
 
     /// <summary>The chain's (<see cref="StairChain.CrestRise"/>).</summary>
@@ -122,8 +123,14 @@ public static partial class RoadStairRuns
     /// more over both ends (a ridge: <c>crest</c> true), else the lowest when it lies that
     /// much under both (a valley), and <see cref="CrestFromEnd"/> or more from each end: a
     /// line a staircase, which only climbs, cannot take in one.</summary>
-    internal static (Vector2 at, bool crest)? Turn(Vector2 a, Vector2 b, Func<float, float, float> ground)
+    internal static (Vector2 at, bool crest)? Turn(Vector2 a, Vector2 b, Func<float, float, float> ground) =>
+        Turn(a, b, ground, out _);
+
+    /// <param name="level">The lowest point of a valley the line crosses level, within the walkway cap: where the
+    /// walkway is, once laid.</param>
+    internal static (Vector2 at, bool crest)? Turn(Vector2 a, Vector2 b, Func<float, float, float> ground, out Vector2? level)
     {
+        level = null;
         float length = Vector2.Distance(a, b);
         if (length < 2f * CrestFromEnd) return null;
         float ha = ground(a.x, a.y), hb = ground(b.x, b.y);
@@ -135,12 +142,18 @@ public static partial class RoadStairRuns
         }
         float high = along.Max(s => s.h), low = along.Min(s => s.h);
         bool crest = high >= Mathf.Max(ha, hb) + CrestRise;
-        // A shallow valley is crossed level, not down stairs to its floor and up again: the chain's one rule (StairChain).
-        if (!crest && StairChain.CrossesLevel(low, ha, hb)) return null;
         // The middle of a flat top or floor, not its edge.
         float extreme = crest ? high : low;
         var at = along.FindAll(s => Mathf.Abs(s.h - extreme) <= 0.1f);
-        return (at[at.Count / 2].p, crest);
+        Vector2 middle = at[at.Count / 2].p;
+        // A valley within the walkway cap is crossed level, not down stairs to its floor and up again: the chain's one
+        // rule (StairChain).
+        if (!crest && StairChain.CrossesLevel(low, ha, hb))
+        {
+            if (low < Mathf.Min(ha, hb) - CrestRise) level = middle;
+            return null;
+        }
+        return (middle, crest);
     }
 
     /// <summary>Where the walk to <paramref name="target"/> from <paramref name="roadEnd"/> stops
@@ -259,7 +272,4 @@ public static partial class RoadStairRuns
         }
         return false;
     }
-
-    /// <summary>The chain's (<see cref="StairChain.ShallowDip"/>).</summary>
-    public const float ShallowDip = StairChain.ShallowDip;
 }

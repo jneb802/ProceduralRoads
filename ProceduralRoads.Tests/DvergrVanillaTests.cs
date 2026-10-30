@@ -67,7 +67,8 @@ public sealed class DvergrWoodLightTests : IDisposable
     [Fact]
     public void OnlySomeBridgesAndOnThemOnlySomePilesHaveMistLights()
     {
-        int lit = 0, tops = 0, lights = 0;
+        int lit = 0, lights = 0;
+        float harbour = 0f;
         const int seeds = 600;
         for (int s = 1; s <= seeds; s++)
         {
@@ -78,16 +79,17 @@ public sealed class DvergrWoodLightTests : IDisposable
             // Every top pile of the bridge, where a light may stand.
             var topPiles = pieces.Where(p => p.Prefab == DvergrWoodBridge.Pile && p.Kind == StructurePieceKind.Post)
                 .GroupBy(p => (Mathf.Round(p.Position.x * 100f), Mathf.Round(p.Position.z * 100f))).Select(g => g.OrderByDescending(p => p.Position.y).First())
-                .Where(p => !BridgeLayout.InNavigationGap(_crossing, DvergrViaductTests.Along(_crossing, p))
+                .Where(p => !DvergrWoodBridge.InNavigationGap(_crossing, _world, DvergrViaductTests.Along(_crossing, p))
                     && DvergrViaductTests.Along(_crossing, p) > -0.01f && DvergrViaductTests.Along(_crossing, p) < BridgeLayout.BuiltLength(_crossing.Width) + 0.01f).ToList();
             Assert.True(l.Count < topPiles.Count, "every pile lit");
-            tops += topPiles.Count - 1;      // one always carries a light
-            lights += l.Count - 1;
+            harbour += 1f + DvergrWoodBridge.LightChance * (topPiles.Count - 1); // the harbour's: one always, a third of the rest
+            lights += l.Count;
         }
         // About one bridge in three (DvergrWoodBridge.LitBridgeChance) ...
         Assert.InRange(lit / (float)seeds, 1f / 3f - 0.06f, 1f / 3f + 0.06f);
-        // ... and on those a third of the other piles: the harbour's RandomSpawn 33 %.
-        Assert.InRange(lights / (float)tops, 0.33f - 0.04f, 0.33f + 0.04f);
+        // ... and on those half the piles the harbour's RandomSpawn (one always, 33 % of the rest) would light: every
+        // other one of them (DvergrWoodBridge.LightSpacing), the first always, so a little over half.
+        Assert.InRange(lights / harbour, 0.5f - 0.04f, 0.5f + 0.1f);
     }
 
     [Fact]
@@ -130,7 +132,7 @@ public sealed class DvergrWoodLightTests : IDisposable
     }
 
     [Fact]
-    public void AMistlandsFordSpanMayHaveThemTooAndThePlainKitNever()
+    public void AMistlandsFordSpanMayHaveThemTooAndARailedKitNever()
     {
         RoadCrossing ford = RoadCrossing.Between(new Vector2(-31f, 0f), new Vector2(31f, 0f), 26f, new Vector2(-6f, 0f), 20f, CrossingKind.Ford, FordStyle.Span);
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(ford, _world));
@@ -210,7 +212,7 @@ public sealed class DvergrViaductVineTests : IDisposable
     {
         var (c, w) = River();     // piers about 19 m: the curtains' lower vines too
         float deck = DvergrViaduct.DeckHeight(c, w), yaw = BridgeLayout.YawDegrees(c.Direction);
-        List<float> piers = DvergrViaduct.PierAlongs(c);
+        List<float> piers = DvergrViaduct.PierAlongs(c, w);
         // A sample of Mistlands_Viaduct1's middle pier, read from the game's assets (GameObject/GameObject/pillar/vines*/vines*: x, y,
         // z, pitch, yaw, roll), on the bridge's axes (du = z - 0.25, v = -x, dy = y - 17).
         var sample = new (float du, float v, float dy, float pitch, float yaw, float roll)[]
@@ -245,7 +247,7 @@ public sealed class DvergrViaductVineTests : IDisposable
     {
         var (c, w) = River();
         float deck = DvergrViaduct.DeckHeight(c, w);
-        List<float> piers = DvergrViaduct.PierAlongs(c);
+        List<float> piers = DvergrViaduct.PierAlongs(c, w);
         string Sig(List<StructurePiece> ps) => string.Join("|", Vines(ps).Select(p => FormattableString.Invariant($"{p.Position.x:F2},{p.Position.y:F2},{p.Position.z:F2}/{p.YawDegrees:F1}/{p.RollDegrees:F0}/{p.HealthFraction:F3}")));
         int curtains = 0, could = 0;
         for (int s = 1; s <= 200; s++)

@@ -41,8 +41,11 @@ public sealed class DvergrViaductTests : IDisposable
     internal sealed class MistRiver : WorldGenerator
     {
         public float Bank = 45f, Bed = 26f;
+        /// <summary>How fast the ground falls away west of the near bank (x = -31), to 6 m under it.</summary>
+        public float NearFall;
         public Heightmap.Biome Biome = Heightmap.Biome.Mistlands;
-        public override float GetHeight(float wx, float wy) => Mathf.Abs(wx) <= 30f ? Bed : Bank;
+        public override float GetHeight(float wx, float wy) =>
+            Mathf.Abs(wx) <= 30f ? Bed : wx < -31f ? Bank - Mathf.Min(NearFall * (-31f - wx), 6f) : Bank;
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Biome;
         public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
         {
@@ -74,21 +77,6 @@ public sealed class DvergrViaductTests : IDisposable
     internal static bool IsDvergr(StructurePiece p) => p.Prefab.StartsWith("blackmarble_", StringComparison.Ordinal) || p.Prefab.StartsWith("iron_", StringComparison.Ordinal)
         || p.Prefab == DvergrViaduct.Vine;   // the vines it hangs, as the vanilla viaduct's
 
-    [Fact]
-    public void AValleyViaductsUnmetEndIsFoundBeforeAnEarlierStructuresOnTheRoad()
-    {
-        // A structure earlier on the road whose end is not met does not hide a valley viaduct's: the viaduct's is the one
-        // a re-route can drop, and the one a road is refused for.
-        var world = new MistValley();
-        _scope.WithWorld(world);
-        RoadCrossing? jump = DvergrViaduct.ValleyCrossing(new Vector2(-20f, 0f), new Vector2(20f, 0f), world, out string why);
-        Assert.True(jump != null, why);
-        RoadCrossing earlier = RoadCrossing.Between(new Vector2(-140f, 0f), new Vector2(-110f, 0f), 50f, new Vector2(-125f, 0f), 10f, CrossingKind.Ford, FordStyle.Span);
-        Assert.True(RoadNetworkGenerator.MeetsTheRoad(earlier) && RoadNetworkGenerator.MeetsTheRoad(jump!));
-        var plans = new List<RoadSpatialGrid.PlannedPath> { RoadSpatialGrid.PlanRoadPath(new List<Vector2> { new(-180f, 60f), new(180f, 60f) }, 4f, world)! };
-        Assert.Same(jump, RoadNetworkGenerator.UnreachableEnd(plans, new List<RoadCrossing> { earlier, jump! }, out _));
-    }
-
     // ---------------------------------------------------------------- piers
 
     [Fact]
@@ -101,7 +89,7 @@ public sealed class DvergrViaductTests : IDisposable
         _scope.WithWorld(notch);
         RoadCrossing? c = DvergrViaduct.ValleyCrossing(new Vector2(-8f, 0f), new Vector2(8f, 0f), notch, out string why);
         Assert.True(c != null, why);
-        Assert.Equal(new[] { 8f }, DvergrViaduct.PierAlongs(c!));
+        Assert.Equal(new[] { 8f }, DvergrViaduct.PierAlongs(c!, notch));
     }
 
     [Fact]
@@ -120,31 +108,37 @@ public sealed class DvergrViaductTests : IDisposable
     }
 
     [Fact]
-    public void OnAKnownRiverTheNavigationBayComesFirst()
+    public void OnARiverTheNavigationBayComesFirst()
     {
-        var world = new MistRiver();
+        // Its iron floors 6 m over the water, under a longship's yard: a navigation bay. (Its default 45 m banks stand the
+        // floors over the ship, which needs none: ShipGapTests.ADeckOverTheShipLeavesNoGapInAnyKit.)
+        var world = new MistRiver { Bank = 38f, Bed = 20f };
         _scope.WithWorld(world);
         RoadCrossing c = River();
-        Assert.True(DvergrViaduct.OverKnownRiver(c));
-        float f = c.Along(c.FairwayCenter);
-        Assert.Equal(25f, f, 3);
-        // The bay's two piers at the fairway +- 16 m (two vanilla bays), then every 16 m outward while inside
-        // the gap (-7 m is not).
-        Assert.Equal(new[] { 9f, 41f, 57f }, DvergrViaduct.PierAlongs(c));
+        Assert.True(DvergrViaduct.HasNavigationBay(c, world));
+        // The bay is centred on the river (x 0, 31 m out), not on the fairway the crossing measured (25 m out).
+        Assert.Equal(25f, c.Along(c.FairwayCenter), 3);
+        float f = DvergrViaduct.FairwayAlong(c, world)!.Value;
+        Assert.Equal(31f, f, 3);
+        // The bay's two piers at the river +- 16 m (two vanilla bays), then every 16 m outward while inside
+        // the gap (-1 m and 63 m are not).
+        Assert.Equal(new[] { 15f, 47f }, DvergrViaduct.PierAlongs(c, world));
         Assert.True(DvergrViaduct.Applies(c, world), DvergrViaduct.Refusal(c, world));
 
-        // The deck is missing over the fairway: at least the wooden kit's gap (BridgeLayout.FairwayGap, 18.6 m here), in
-        // whole modules centred on it (22 m), and stands 5 m out from each bay pier.
-        Assert.Equal(18.6f, BridgeLayout.FairwayGap(c), 3);
-        Assert.Equal(22f, DvergrViaduct.NavigationGapFor(c), 3);
+        // The deck is missing over the river: at least a longship's way at the structure's heights (Ships.NavigationGapWidth,
+        // its parapet arches at the yard's: 13.2 m), in whole modules centred on it (14 m), and stands 9 m out from each bay
+        // pier.
+        float way = DvergrViaduct.ShipWayUnder(c, world)!.Value.DeckWidth;
+        Assert.Equal(13.2f, way, 3);
+        Assert.Equal(14f, DvergrViaduct.NavigationGap(way), 3);
         List<StructurePiece> complete = DvergrViaduct.SolveComplete(c, world, 1);
         var floors = complete.Where(p => p.Prefab == DvergrViaduct.Floor).Select(p => Along(c, p)).ToList();
         float nearEdge = floors.Where(a => a < f).Max() + 1f, farEdge = floors.Where(a => a > f).Min() - 1f;
-        Assert.Equal(22f, farEdge - nearEdge, 3);
+        Assert.Equal(14f, farEdge - nearEdge, 3);
         Assert.Equal(f, (nearEdge + farEdge) * 0.5f, 3);
-        Assert.True(farEdge - nearEdge >= BridgeLayout.FairwayGap(c));
-        Assert.Equal(5f, nearEdge - (f - 16f), 3);
-        Assert.Equal(5f, (f + 16f) - farEdge, 3);
+        Assert.True(farEdge - nearEdge >= way);
+        Assert.Equal(9f, nearEdge - (f - 16f), 3);
+        Assert.Equal(9f, (f + 16f) - farEdge, 3);
         // No pier piece in the bay between them: nothing stands in the boat's way.
         Assert.DoesNotContain(complete, p => p.Kind == StructurePieceKind.ViaductPier && Mathf.Abs(Along(c, p) - f) < 16f - 6.01f);
         // The bay's piers stand: pier pieces under both of them.
@@ -152,8 +146,8 @@ public sealed class DvergrViaductTests : IDisposable
             Assert.Contains(complete, p => p.Kind == StructurePieceKind.ViaductPier && Mathf.Abs(Along(c, p) - pier) <= 2.01f && p.Prefab == DvergrViaduct.Footing);
         // The ruined one keeps the gap open too, and its piers.
         List<StructurePiece> built = DvergrViaduct.Solve(c, world, 1);
-        Assert.DoesNotContain(built, p => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(Along(c, p) - f) < 11f);
-        Assert.Equal(3 * 4, built.Count(p => p.Prefab == DvergrViaduct.Footing));
+        Assert.DoesNotContain(built, p => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(Along(c, p) - f) < 7f);
+        Assert.Equal(2 * 4, built.Count(p => p.Prefab == DvergrViaduct.Footing));
     }
 
     [Fact]
@@ -163,7 +157,7 @@ public sealed class DvergrViaductTests : IDisposable
         _scope.WithWorld(world);
         RoadCrossing c = DvergrViaduct.ValleyCrossing(new Vector2(-24f, 0f), new Vector2(24f, 0f), world, out string why)!;
         Assert.True(c != null, why);
-        Assert.False(DvergrViaduct.OverKnownRiver(c!));
+        Assert.False(DvergrViaduct.HasNavigationBay(c!, world));
         // The deck's modules, floors and course: the floors that would lie wholly in the bank are left out, the course
         // over them is flush with the bank.
         var deck = DvergrViaduct.SolveComplete(c!, world, 1).Where(p => p.Kind == StructurePieceKind.ViaductDeck).Select(p => Mathf.Round(Along(c!, p) * 2f) / 2f).OrderBy(a => a).Distinct().ToList();
@@ -178,7 +172,7 @@ public sealed class DvergrViaductTests : IDisposable
     public void UnderSixMetresAWoodenKitStays()
     {
         // A Mistlands river whose deck stands 4 m over the water: a wooden bridge, of the Dvergr pier's wood since layout 8
-        // (DvergrWoodBridgeTests); only its bank stairs are the plain kit's.
+        // (DvergrWoodBridgeTests); only its bank stairs are the wooden kits'.
         var low = new MistRiver { Bank = 34f };
         _scope.WithWorld(low);
         RoadCrossing c = River();
@@ -211,19 +205,19 @@ public sealed class DvergrViaductTests : IDisposable
     [Fact]
     public void PiersOverTheCeilingAreNoViaduct()
     {
-        // A valley 26 m deep: at the rim its middle pier would stand 26 m, over the 20 m ceiling: no viaduct there.
-        var deep = new MistValley { Depth = 26f };
+        // A valley 34 m deep: at the rim its middle pier would stand 34 m, over the 26 m ceiling: no viaduct there.
+        var deep = new MistValley { Top = 80f, Depth = 34f };
         _scope.WithWorld(deep);
         Assert.Null(DvergrViaduct.ValleyCrossing(new Vector2(-32f, 0f), new Vector2(32f, 0f), deep, out string why));
         Assert.Contains("ceiling", why);
 
         // On a river the crossing stays a bridge of the Dvergr pier's wood.
-        var deepRiver = new MistRiver { Bed = 20f };
+        var deepRiver = new MistRiver { Bank = 62f, Bed = 20f };
         _scope.WithWorld(deepRiver);
         RoadCrossing c = River();
         Assert.Contains("ceiling", DvergrViaduct.Refusal(c, deepRiver));
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(c, deepRiver));
-        Assert.True(DvergrViaduct.PierCeiling >= 18.8f && DvergrViaduct.PierCeiling <= 21f, "the ceiling is a named guess between the formula and vanilla");
+        Assert.True(DvergrViaduct.PierCeiling <= 27f, "the ceiling stays under what the game was read to hold");
     }
 
 
@@ -238,6 +232,7 @@ public sealed class DvergrViaductTests : IDisposable
         yield return new object[] { "river", 1 };
         yield return new object[] { "river", 9 };
         yield return new object[] { "sloped", 2 };
+        yield return new object[] { "tall", 4 };
     }
 
     private (RoadCrossing crossing, WorldGenerator world) Case(string name)
@@ -258,6 +253,15 @@ public sealed class DvergrViaductTests : IDisposable
                 // 96 m of flat-floored valley 12 m deep: six bays.
                 var w = new MistValley { Depth = 12f, FloorHalf = 36f, Face = 1f }; _scope.WithWorld(w);
                 return (DvergrViaduct.ValleyCrossing(new Vector2(-48f, 0f), new Vector2(48f, 0f), w, out _)!, w);
+            }
+            case "tall":
+            {
+                // 25 m deep: piers taller than 20 m, under the ceiling.
+                var w = new MistValley { Depth = 25f }; _scope.WithWorld(w);
+                RoadCrossing t = DvergrViaduct.ValleyCrossing(new Vector2(-32f, 0f), new Vector2(32f, 0f), w, out string why)!;
+                Assert.True(t != null, why);
+                Assert.InRange(DvergrViaduct.TallestPier(t, w), 21f, DvergrViaduct.PierCeiling);
+                return (t, w);
             }
             case "sloped":
             {

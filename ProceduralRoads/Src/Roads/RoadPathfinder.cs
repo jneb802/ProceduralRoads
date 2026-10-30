@@ -43,17 +43,13 @@ public class RoadPathfinder
 
     /// <summary>
     /// Whether a road may jump a river too long or too deep to ford, on a
-    /// bridge. The cost levers are "Bridges/CostFixed" and
-    /// "Bridges/CostPerMeter"; how dear a bridge is decides how often one
-    /// appears, which is the lever a player actually wants.
+    /// bridge. How dear a bridge is (<see cref="BridgeCostFixed"/>,
+    /// <see cref="BridgeCostPerMeter"/>) decides how often one appears.
     /// </summary>
     public bool Bridges = true;
 
-    public static float ConfiguredBridgeCostFixed = RoadConstants.DefaultBridgeCostFixed;
-    public static float ConfiguredBridgeCostPerMeter = RoadConstants.DefaultBridgeCostPerMeter;
-
-    public float BridgeCostFixed = ConfiguredBridgeCostFixed;
-    public float BridgeCostPerMeter = ConfiguredBridgeCostPerMeter;
+    public float BridgeCostFixed = RoadConstants.DefaultBridgeCostFixed;
+    public float BridgeCostPerMeter = RoadConstants.DefaultBridgeCostPerMeter;
 
     /// <summary>
     /// Whether a road may cross a dry Mistlands valley at the high level on a Dvergr viaduct
@@ -61,8 +57,8 @@ public class RoadPathfinder
     /// Mistlands cell at a valley's rim the search looks straight on, in the eight principal
     /// directions, for ground back at the rim's height within DvergrViaduct.MaxValleySpan, and
     /// buys the jump where DvergrViaduct.ValleyCrossing builds it, at DvergrViaduct.Price: dearer
-    /// the lower its piers and the more end stairs it has. The road is put
-    /// through each end's stair foot after the search (StructureEnds.MeetTheRoad). Needs
+    /// the lower its piers and the more end stairs it has. The road is brought to each end's foot
+    /// as the one owner of a crossing's ends decides (StructureEnds.MeetEnds). Needs
     /// <see cref="Bridges"/>. On by default; PROCEDURALROADS_VIADUCTS=off for a control run.
     /// </summary>
     public bool Viaducts = ConfiguredViaducts;
@@ -85,10 +81,10 @@ public class RoadPathfinder
     /// little from site to site so a world gets long traverses, staircases and
     /// both. The steps bought are kept in
     /// <see cref="LastStairSteps"/>; the generator lays them with StairLayout.
-    /// The levers are "Stairs/Enabled", "Stairs/CostFixed" and "Stairs/CostPerMeterClimbed".
+    /// Both costs are fixed (no config for them). Stairs are always on for generated
+    /// roads (no setting for them); a search may be made without them (manual roads).
     /// </summary>
-    public bool Stairs = ConfiguredStairs;
-    public static bool ConfiguredStairs = true;
+    public bool Stairs = true;
     public float StairCostFixed = RoadConstants.DefaultStairCostFixed;
     public float StairCostPerMeterClimbed = RoadConstants.DefaultStairCostPerMeterClimbed;
     /// <summary>Largest step between a network road's surface and the ground a road joining it
@@ -106,18 +102,13 @@ public class RoadPathfinder
     /// StairKit.Cantilever), up to <see cref="StairCantileverMaxGrade"/>.</summary>
     public const float StairMaxGrade = 1f;
     /// <summary>
-    /// Steeper than <see cref="StairMaxGrade"/>, a staircase whose stairs can be held out from the
-    /// face on cantilevers (a wall almost a sheer cliff can still be built on) is offered up to this grade between two
-    /// cells, its price per metre climbed rising from 1 times at <see cref="StairMaxGrade"/> to
-    /// <see cref="SteepStairPriceMax"/> times here (over a certain grade it is more
-    /// expensive but still possible: cheaper lesser grades first, then up to a maximum).
-    /// Between two 8 m cells 2 is 16 m of climb: the flights cross the face, turning on the ground
-    /// gentler round it (StairLayout's tree-well pricing).
-    /// 3 (24 m) bought steps straight up faces the layout then could not lay (through a place), and
-    /// the retry with those cells closed found no way: Hildir's cave (-2304,1536) lost its 106 m
-    /// staircase. At 2 it keeps it, and reaches one more place on RoadSeedA-E than 1:1 does.
+    /// Steeper than <see cref="StairMaxGrade"/>, a staircase whose stairs can be held out from the face on cantilevers
+    /// is offered up to this grade between two cells: effectively a sheer wall (between two 8 m cells, 64 m of climb).
+    /// The layout holds a flight out from any face of <see cref="StairLayout.CantileverFromGrade"/>:1 or steeper, so
+    /// the search does not cap below what the layout builds. Over six worlds a cap of 2, 3, 4 or 8 builds the same
+    /// network, and Hildir's cave (-2304,1536) keeps its staircase.
     /// </summary>
-    public const float StairCantileverMaxGrade = 2f;
+    public const float StairCantileverMaxGrade = 8f;
     public const float SteepStairPriceMax = 2.5f;
 
     /// <summary>The steepest step a staircase is offered on at <paramref name="at"/> in <paramref name="biome"/>: what the kit
@@ -126,11 +117,23 @@ public class RoadPathfinder
     /// columns, so <see cref="StairMaxGrade"/>. The Black Forest's kit is drawn per 4 m cell, so a step there is offered the
     /// steeper grade only where stone would be built.</summary>
     internal float StairGradeLimit(Heightmap.Biome biome, Vector2 at) =>
-        StairKit.ForSite(biome, at, m_worldGen.GetSeed()).Cantilever != null ? StairCantileverMaxGrade : StairMaxGrade;
+        StairGradeLimit(StairKit.ForSite(biome, at, m_worldGen.GetSeed()));
 
-    /// <summary>Times the price per metre climbed for a stair step this steep.</summary>
+    internal static float StairGradeLimit(StairKit kit) => kit.Cantilever != null ? StairCantileverMaxGrade : StairMaxGrade;
+
+    /// <summary>Slack over <see cref="StairGradeLimit(StairKit)"/> before a step is too steep for its kit.</summary>
+    internal const float StairGradeTolerance = 0.01f;
+
+    /// <summary>Whether a stair step of <paramref name="grade"/> is too steep for <paramref name="kit"/>: the one test for
+    /// the search's offer of a step and the layout's check of the steps the search bought.</summary>
+    internal static bool StairStepTooSteep(float grade, StairKit kit) => grade > StairGradeLimit(kit) + StairGradeTolerance;
+
+    /// <summary>Times the price per metre climbed for a stair step this steep: 1 up to <see cref="StairMaxGrade"/>, rising to
+    /// <see cref="SteepStairPriceMax"/> on a face steep enough that its flights are held out
+    /// (<see cref="StairLayout.CantileverFromGrade"/>), and that price on any steeper face (over a certain grade it is
+    /// more expensive but still possible: cheaper lesser grades first, then up to a maximum).</summary>
     public static float SteepStairFactor(float slope) =>
-        Mathf.Lerp(1f, SteepStairPriceMax, Mathf.Clamp01((slope - StairMaxGrade) / (StairCantileverMaxGrade - StairMaxGrade)));
+        Mathf.Lerp(1f, SteepStairPriceMax, Mathf.Clamp01((slope - StairMaxGrade) / (StairLayout.CantileverFromGrade - StairMaxGrade)));
 
     /// <summary>The site wobble on <see cref="StairCostFixed"/>: from (1 - this) to (1 + this) times it.</summary>
     public const float StairCostWobble = 0.3f;
@@ -143,18 +146,22 @@ public class RoadPathfinder
     /// (RoadNetworkGenerator.GenerateRoad). Cleared, with <see cref="m_stairOpen"/>, when that road is done.</summary>
     private readonly HashSet<Vector2i> m_noStairs = new(RoadGridComparer.Instance);
     public int NoStairCells => m_noStairs.Count;
-    public void ClearNoStairs() { m_noStairs.Clear(); m_stairOpen.Clear(); m_noViaducts.Clear(); }
+    public void ClearNoStairs() { m_noStairs.Clear(); m_stairOpen.Clear(); m_noJumps.Clear(); }
 
-    /// <summary>Viaduct jumps (from cell, to cell, either way) the road being built may not buy: one whose end the road as
-    /// planned did not meet (StructureEnds; RoadNetworkGenerator), searched again without it. Cleared with the stair closings
-    /// when that road is done.</summary>
-    private readonly HashSet<(Vector2i, Vector2i)> m_noViaducts = new();
-    public int NoViaducts => m_noViaducts.Count / 2;
-    public void BanViaduct(Vector2 from, Vector2 to)
+    /// <summary>Crossings the road being built may not take, either way: one with an end no way of meeting reaches
+    /// (StructureEnds.MeetEnds), or a valley viaduct the built road did not allow (RoadNetworkGenerator), searched again
+    /// without it. A jump, or a step over shallow water, from within a cell of one end to within a cell of the other is the
+    /// same site. Cleared with the stair closings when that road is done.</summary>
+    private readonly List<(Vector2 from, Vector2 to)> m_noJumps = new();
+    public int NoJumps => m_noJumps.Count;
+    public void BanJump(Vector2 from, Vector2 to) => m_noJumps.Add((from, to));
+    private bool Banned(Vector2 from, Vector2 to)
     {
-        Vector2i a = WorldToGrid(from), b = WorldToGrid(to);
-        m_noViaducts.Add((a, b));
-        m_noViaducts.Add((b, a));
+        foreach (var (a, b) in m_noJumps)
+            if ((Vector2.Distance(from, a) <= CellSize && Vector2.Distance(to, b) <= CellSize)
+                || (Vector2.Distance(from, b) <= CellSize && Vector2.Distance(to, a) <= CellSize))
+                return true;
+        return false;
     }
 
     /// <summary>Cells opened to stairs for the road being built: its switchback turns there were
@@ -185,13 +192,6 @@ public class RoadPathfinder
         }
     }
 
-    /// <summary>Ground a crossing may land on: the shallow-water line plus the bank clearance.</summary>
-    public const float LandingFloor = RoadConstants.ShallowWaterHeight + RoadConstants.BankClearance;
-
-    /// <summary>The floor for road ground in a biome: swamps wade down to DeepWaterHeight.</summary>
-    public static float FloorFor(Heightmap.Biome biome) =>
-        biome == Heightmap.Biome.Swamp ? RoadConstants.DeepWaterHeight : LandingFloor;
-
     /// <summary>
     /// The steepest ground a road may climb, as rise over run; 0 for no cap.
     /// A step over it is refused outright rather than priced, so the search
@@ -200,7 +200,7 @@ public class RoadPathfinder
     /// here is a large but finite price and so is never a refusal, which is
     /// why a destination on a cliff got the direct climb: it was the cheapest
     /// of the expensive lines. Held per instance so a test can pathfind
-    /// without it. The lever is "Roads/MaxGrade".
+    /// without it. The cap is <see cref="RoadGrade.Configured"/>.
     /// </summary>
     public float MaxGrade = RoadGrade.Configured;
 
@@ -419,14 +419,15 @@ public class RoadPathfinder
     {
         long began = SearchStats.Enabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
         m_lastIterations = 0;
-        List<Vector2>? path = FindPathToNetworkCore(start, reach, hints, targetAllowed);
+        List<Vector2>? path = FindPathToNetworkCore(start, reach, hints, targetAllowed, served);
         FoldSqueezes();
         if (SearchStats.Enabled)
             SearchStats.Record(SearchStats.Joining, path != null || AlreadyOnNetwork, m_lastIterations >= MaxIterations, m_lastIterations, began);
         return path;
     }
 
-    private List<Vector2>? FindPathToNetworkCore(Vector2 start, float reach, IReadOnlyList<Vector2>? hints, System.Func<Vector2, bool>? targetAllowed)
+    private List<Vector2>? FindPathToNetworkCore(Vector2 start, float reach, IReadOnlyList<Vector2>? hints, System.Func<Vector2, bool>? targetAllowed,
+        System.Func<bool>? served)
     {
         using var activity = new RoadSearchActivity(Activity);
         LastPathCost = 0;
@@ -487,7 +488,7 @@ public class RoadPathfinder
             !RoadSpatialGrid.TryGetRoadHeightWithin(junction, 1f, out float surface)
             || Mathf.Abs(surface - Ground(before)) <= 2f * JunctionStep;
 
-        if (Join(startGrid, out _))
+        if (served != null ? served() : Join(startGrid, out _))
         {
             // Already within reach. This is not a failure, and returning null
             // for it made the caller build a road to a place the network
@@ -807,17 +808,20 @@ public class RoadPathfinder
     internal int PenalizedWaypoints(List<Vector2> path) { int n = 0; foreach (var p in path) if (m_earthworkPenalty.Contains(WorldToGrid(p))) n++; return n; }
 
     /// <summary>
-    /// On gentle ground, a smooth low-frequency cost field adds up to this
-    /// share of the base step price, so long flat runs bend instead of running
-    /// dead straight. It fades out by <see cref="MeanderFlat"/> so climbs,
-    /// contouring and switchbacks are priced as before. It only adds, so the
-    /// heuristic's BaseCost-per-metre bound still holds. 0 is off.
+    /// A smooth low-frequency cost field adds up to this share of the base
+    /// step price, so long runs bend instead of running dead straight. It
+    /// fades out with the step's slope, gone by <see cref="MeanderFlat"/>, so
+    /// climbs keep a slow wander while the steepest ground (switchbacks,
+    /// pitches past the sustained grade, staircases) is priced without it.
+    /// It only adds, so the heuristic's BaseCost-per-metre bound still holds.
+    /// 0 is off.
     /// </summary>
     public float Meander = DefaultMeander;
     /// <summary>Settable for tests; 0 is no meander.</summary>
     internal static float DefaultMeander = 3f;
-    /// <summary>Slope at which the meander field has faded out. Validation switch MEANDER_FLAT.</summary>
-    public static readonly float MeanderFlat = DebugSwitches.Number("MEANDER_FLAT", 0.12f, 0.02f, 1f);
+    /// <summary>Slope at which the meander field has faded out: the top of the 20-28 % climbs,
+    /// below <see cref="RoadPitches.Sustained"/>. Validation switch MEANDER_FLAT.</summary>
+    public static readonly float MeanderFlat = DebugSwitches.Number("MEANDER_FLAT", 0.28f, 0.02f, 1f);
     internal float MeanderCost(Vector2 from, Vector2 to, Vector2i toCell, float slope, float dist)
     {
         if (slope >= MeanderFlat || Meander <= 0f) return 0f;
@@ -926,25 +930,10 @@ public class RoadPathfinder
     /// </summary>
     internal static float SqueezeCorridor = 12f;
 
-    /// <summary>Whether <paramref name="p"/> lies between a place's footprint
-    /// and water less than <see cref="SqueezeCorridor"/> apart. Inside a
-    /// footprint it is not: the search's own ends reach their centres there,
-    /// and every other footprint is refused anyway.</summary>
-    internal bool SiteShoreSqueeze(Vector2 p)
-    {
-        if (SqueezeCorridor <= 0f) return false;
-        float gap = RoadSiteProtection.EdgeDistance(p, SqueezeCorridor);
-        if (gap < 0f || gap >= SqueezeCorridor) return false;
-        float reach = SqueezeCorridor - gap;
-        for (int i = 0; i < 8; i++)
-        {
-            float a = i * Mathf.PI / 4f;
-            var dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
-            for (float r = reach * 0.5f; r <= reach + 0.01f; r += reach * 0.5f)
-                if (Wet(p + dir * r)) return true;
-        }
-        return false;
-    }
+    /// <summary>Whether <paramref name="p"/> lies between a place's footprint and water less than
+    /// <see cref="SqueezeCorridor"/> apart, water the road can build out not counted
+    /// (<see cref="RoadShoreFill"/>).</summary>
+    internal bool SiteShoreSqueeze(Vector2 p) => RoadShoreFill.Squeezed(m_worldGen, p, buildable: true, out _, Fords);
 
     /// <summary>Whether a crossing's line runs over water within <see cref="SqueezeCorridor"/> of a
     /// place's footprint (sampled every 4 m, 8 m clear of each bank).</summary>
@@ -975,8 +964,26 @@ public class RoadPathfinder
     {
         if (SqueezeCorridor <= 0f) return false;
         if (!m_squeezed.TryGetValue(cell, out bool squeezed))
-            m_squeezed[cell] = squeezed = SiteShoreSqueeze(GridToWorld(cell));
+        {
+            Vector2 p = GridToWorld(cell);
+            m_squeezed[cell] = squeezed = SiteShoreSqueeze(p);
+            // Let through only because the shallows beside it are built out: counted once per cell.
+            if (!squeezed && RoadShoreFill.FillDepth > 0f && RoadShoreFill.Squeezed(m_worldGen, p, buildable: false, out _, Fords))
+                RecordShoreFill(p);
+        }
         return squeezed;
+    }
+
+    /// <summary>Where the squeeze let the search through on shallows a road builds out, by the place beside
+    /// them: (centre x, centre z) -> cells. Folded once per search, as <see cref="SqueezeHits"/> is.</summary>
+    internal static readonly System.Collections.Concurrent.ConcurrentDictionary<(int x, int z), int> ShoreFillCells = new();
+    private readonly Dictionary<(int x, int z), int> m_shoreFills = new();
+    private void RecordShoreFill(Vector2 p)
+    {
+        if (!RoadSiteProtection.NearestFootprint(p, SqueezeCorridor, out var f)) return;
+        var key = (Mathf.RoundToInt(f.Centre.x), Mathf.RoundToInt(f.Centre.y));
+        m_shoreFills.TryGetValue(key, out int n);
+        m_shoreFills[key] = n + 1;
     }
 
     /// <summary>Where the squeeze refused something this generation, by the
@@ -994,21 +1001,16 @@ public class RoadPathfinder
     }
     private void FoldSqueezes()
     {
+        foreach (var fill in m_shoreFills) ShoreFillCells.AddOrUpdate(fill.Key, fill.Value, (_, n) => n + fill.Value);
+        m_shoreFills.Clear();
         if (m_squeezeHits.Count == 0) return;
         foreach (var hit in m_squeezeHits)
             SqueezeHits.AddOrUpdate(hit.Key, hit.Value, (_, n) => (n.steps + hit.Value.steps, n.landings + hit.Value.landings));
         m_squeezeHits.Clear();
     }
 
-    /// <summary>Water the search would not walk: a river, or ground under the
-    /// shallows (swamp shallows are waded, so there the deep line).</summary>
-    private bool Wet(Vector2 p)
-    {
-        m_worldGen.GetRiverWeight(p.x, p.y, out float river, out _);
-        if (river > RoadConstants.RiverImpassableThreshold) return true;
-        float h = m_worldGen.GetHeight(p.x, p.y);
-        return h < (m_worldGen.GetBiome(p.x, p.y) == Heightmap.Biome.Swamp ? RoadConstants.DeepWaterHeight : RoadConstants.ShallowWaterHeight);
-    }
+    /// <summary>Water the search would not walk (<see cref="RoadWater.Walked"/>).</summary>
+    private bool Wet(Vector2 p) => !RoadWater.Walked(m_worldGen, p, Fords);
 
     /// <summary>The road's price for a step, or the staircase's where that is
     /// cheaper (<paramref name="stair"/> is then +1 for a step up, -1 down);
@@ -1016,6 +1018,9 @@ public class RoadPathfinder
     /// <paramref name="from"/> on was going, or 0.</summary>
     private float GetMoveCost(Vector2i from, Vector2i to, int directionIndex, int arriving, out int stair)
     {
+        stair = 0;
+        // A banned crossing walked cell by cell (a ford over shallow water) is banned as its jump is.
+        if (m_noJumps.Count > 0 && Banned(GridToWorld(from), GridToWorld(to))) return float.PositiveInfinity;
         float road = RoadMoveCost(from, to, directionIndex, arriving, out float stairCost, out int climb, out bool tooSteep);
         // A staircase only where the road cannot climb: where it can, it
         // traverses and switches back as it always did (where it is steep we
@@ -1049,19 +1054,14 @@ public class RoadPathfinder
         float slope = Mathf.Abs(h2 - h1) / dist;
 
         float riverWeight = m_terrain.River(to);
-        if (riverWeight > RoadConstants.RiverImpassableThreshold)
-            return RiverPenalty;
-
-        float biomeHeight = h2;
-        if (biomeHeight < RoadConstants.DeepWaterHeight)
-            return WaterPenalty * 2f;
-        // With fords on, swamp shallows are waded at a price.
+        // The one water test (RoadWater); with fords on, swamp shallows are waded at a price.
         float wadeCost = 0f;
-        if (biomeHeight < RoadConstants.ShallowWaterHeight)
+        switch (RoadWater.Of(h2, riverWeight, m_worldGen, toWorld, Fords))
         {
-            if (!Fords || m_worldGen.GetBiome(toWorld.x, toWorld.y) != Heightmap.Biome.Swamp)
-                return WaterPenalty;
-            wadeCost = SwampShallowWaterPenalty;
+            case RoadWater.Kind.River: return RiverPenalty;
+            case RoadWater.Kind.Deep: return WaterPenalty * 2f;
+            case RoadWater.Kind.Shallow: return WaterPenalty;
+            case RoadWater.Kind.Waded: wadeCost = SwampShallowWaterPenalty; break;
         }
 
         if (SqueezedCell(to))
@@ -1077,7 +1077,7 @@ public class RoadPathfinder
         // the two as two staircases. A staircase an earlier road laid here is
         // walked on at the reuse share, like road.
         climb = h2 >= h1 ? 1 : -1;
-        if (Stairs && wadeCost == 0f && riverWeight <= 0f && slope >= StairMinGrade && slope <= StairGradeLimit(m_terrain.Biome(to), GridToWorld(to))
+        if (Stairs && wadeCost == 0f && riverWeight <= 0f && slope >= StairMinGrade && !StairStepTooSteep(slope, StairKit.ForSite(m_terrain.Biome(to), GridToWorld(to), m_worldGen.GetSeed()))
             && (m_noStairs.Count == 0 || !(m_noStairs.Contains(from) || m_noStairs.Contains(to))))
         {
             bool laid = StairStructures.OnLaidStair(from.x, from.y) && StairStructures.OnLaidStair(to.x, to.y);
@@ -1206,8 +1206,8 @@ public class RoadPathfinder
         }
         if (!found.HasValue) return false;
         (Vector2i to, float price) = found.Value;
-        if (m_noViaducts.Count > 0 && m_noViaducts.Contains((from, to))) return false;
         Vector2 a = GridToWorld(from), b = GridToWorld(to);
+        if (m_noJumps.Count > 0 && Banned(a, b)) return false;
         // Clear of the viaducts other roads laid (DvergrViaduct.TooClose, the one owner): never back to back, nor in one's
         // deck or approach. A shared viaduct (both banks the same) is the same structure.
         if (DvergrViaduct.IsTooClose(a, b)) return false;
@@ -1265,7 +1265,7 @@ public class RoadPathfinder
             var check = new Vector2i(from.x + step.x * s, from.y + step.y * s);
             if (m_terrain.River(check) > 0f) return null;   // a river is a bridge's crossing
             float h = m_terrain.Height(check);
-            if (h < LandingFloor) return null;
+            if (h < RoadWater.LandingFloor) return null;
             if (h < rim - RoadConstants.MaxBridgeBankDelta) continue;
             if (h > rim + RoadConstants.MaxBridgeBankDelta) return null;
             Vector2 a = GridToWorld(from), b = GridToWorld(check);
@@ -1314,8 +1314,8 @@ public class RoadPathfinder
             Vector2 world = GridToWorld(check);
             float height = m_terrain.Height(check);
             float riverWeight = m_terrain.River(check);
-            bool water = height < LandingFloor;
-            bool riverCore = riverWeight > RoadConstants.RiverImpassableThreshold;
+            bool water = height < RoadWater.LandingFloor;
+            bool riverCore = RoadWater.River(riverWeight);
 
             // Keep scanning over water and over the river band (its dry
             // shores included: a road cannot stand there either).
@@ -1377,6 +1377,8 @@ public class RoadPathfinder
                 return false;
             }
 
+            if (m_noJumps.Count > 0 && Banned(fromWorld, world))
+                return false;
             landing = check;
             // Both ends already on road (a finished road's banks): the
             // crossing exists, so using it costs a fraction of its price,
@@ -1465,8 +1467,10 @@ public static class SearchStats
     /// tally lines. Off by default.</summary>
     internal static readonly bool Enabled = DebugSwitches.Flag("TIMINGS", false);
 
-    public const int Pricing = 0, Building = 1, Joining = 2, StairLayout = 3;
-    private static readonly string[] Names = { "pricing searches", "build searches", "join searches", "stair layouts" };
+    /// <summary>Kinds; a landing entry (the way onto a placed place's landing, every start tried) includes the
+    /// stair layouts it ran, which are also counted as stair layouts.</summary>
+    public const int Pricing = 0, Building = 1, Joining = 2, StairLayout = 3, LandingEntry = 4;
+    private static readonly string[] Names = { "pricing searches", "build searches", "join searches", "stair layouts", "landing entries" };
     private static readonly long[] s_count = new long[Names.Length], s_found = new long[Names.Length], s_maxed = new long[Names.Length], s_iterations = new long[Names.Length];
     private static readonly long[] s_ticks = new long[Names.Length], s_maxedTicks = new long[Names.Length];
 

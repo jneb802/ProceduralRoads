@@ -16,6 +16,10 @@ public static partial class RoadStairRuns
     /// <summary>Staircase feet lowered toward their road this generation (StairLayout.LowerFoot).</summary>
     public static int FeetLowered;
 
+    /// <summary>Staircase feet carried on down to a crossing's end a short stretch of road away this generation
+    /// (<see cref="EndUnderFoot"/>).</summary>
+    public static int FeetLoweredToEnds;
+
     /// <summary>How far back along the road from a foot its ground is read for LowerFoot.</summary>
     public const float FootBackReach = 5f;
 
@@ -136,6 +140,66 @@ public static partial class RoadStairRuns
     /// <summary>The flight's heading this many stair pieces up from its foot: past any swing its first
     /// pieces make onto the road's heading (Ruin1 -> Hildir_cave: 247.5, 270, then 315).</summary>
     public const int SettledPieces = 3;
+
+    /// <summary>
+    /// The structure's end of a crossing (StructureEnds) a staircase's <paramref name="foot"/>, at
+    /// <paramref name="footHeight"/>, stands over by more than the road between can climb, with its index on the path, or
+    /// null. The road from the end runs level at the end's height over its last StructureEnds.ApronLength (and on under
+    /// its joining piece, RoadSpatialGrid.LevelledEnds), then within the grade cap; a stretch shorter than
+    /// StructureEnds.StubLength is all one level landing (within StructureEnds.StepTolerance). Measured along
+    /// <paramref name="path"/> from <paramref name="footIndex"/>, stepping by <paramref name="step"/>, to the end's foot,
+    /// wherever the end's way of meeting the road (StructureEnds.MeetEnds) put it. The staircase is carried on down to it.
+    /// </summary>
+    internal static (int index, StructureEnds.End end)? EndUnderFoot(List<Vector2> path, Vector2 foot, int footIndex, int step,
+        IReadOnlyList<RoadCrossing> crossings, WorldGenerator world, float footHeight)
+    {
+        float cap = RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured : float.PositiveInfinity;
+        float Climbs(float run) => run < StructureEnds.StubLength ? StructureEnds.StepTolerance
+            : Mathf.Max(StructureEnds.StepTolerance, cap * (run - StructureEnds.ApronLength));
+        float run = Vector2.Distance(foot, path[footIndex]);
+        for (int i = footIndex; i >= 0 && i < path.Count; i += step)
+        {
+            if (i != footIndex) run += Vector2.Distance(path[i - step], path[i]);
+            // No end stands under the sea: past where the road could climb from there, none is too low.
+            if (Climbs(run) >= footHeight - RoadConstants.SeaLevel) return null;
+            foreach (RoadCrossing c in crossings)
+            {
+                if ((step < 0 ? c.ToIndex : c.FromIndex) != i) continue;
+                var (near, far) = BridgeStructures.Ends(c, world);
+                StructureEnds.End end = step < 0 ? far : near;
+                if (end.IsStructure && footHeight - end.MeetHeight > Climbs(run)) return (i, end);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A road staircase over path[<paramref name="from"/>..<paramref name="to"/>] laid again from its foot at
+    /// <paramref name="end"/>'s height (<see cref="EndUnderFoot"/>), on the ground the road levels to that height between the
+    /// end's foot and the staircase's (<paramref name="foot"/>, a road's width across): the flight starts at the road's
+    /// height where it starts. Null where no such layout is usable.
+    /// </summary>
+    private static StairPlan? FromTheEndsHeight(List<Vector2> path, int from, int to, StairKit kit, Func<float, float, float> ground,
+        StructureEnds.End end, Vector2 foot, WorldGenerator world, List<RoadStairSpan> spans)
+    {
+        Vector2 a = path[from], b = path[to];
+        float Levelled(float x, float z)
+        {
+            float g = ground(x, z);
+            return DistanceToSegment(new Vector2(x, z), end.Meet, foot) <= RoadNetworkGenerator.RoadWidth / 2f ? Mathf.Min(g, end.MeetHeight) : g;
+        }
+        var corridor = new List<Vector2> { a };
+        corridor.AddRange(path.GetRange(from, to - from + 1));
+        corridor.Add(b);
+        float arriving = StairLayout.Bearing(from > 0 ? path[from - 1] : a, from > 0 ? a : path[from + 1]);
+        float leaving = StairLayout.Bearing(to + 1 < path.Count ? b : path[to - 1], to + 1 < path.Count ? path[to + 1] : b);
+        StairPlan plan = Plan(a, b, kit, Levelled, arriving, leaving, corridor, footHeight: end.MeetHeight,
+            facing: FootFacing(path, from, to, Levelled), topFacing: TopFacing(path, from, to, Levelled));
+        if (!Usable(plan, path, from, to, world, spans, null, Levelled))
+            plan = Plan(a, b, kit, Levelled, null, null, corridor, footHeight: end.MeetHeight);
+        bool ok = Usable(plan, path, from, to, world, spans, null, Levelled);
+        return ok && !InExcludedZone(plan) ? plan : null;
+    }
 
     /// <summary>The point <paramref name="reach"/> metres along <paramref name="path"/> from index
     /// <paramref name="from"/>, stepping by <paramref name="step"/> (+1 or -1); its far end if shorter.</summary>

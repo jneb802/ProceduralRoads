@@ -34,6 +34,7 @@ public interface IStructureSource
 /// <see cref="Height"/> tall: a bridge deck. A box (<see cref="IsBox"/>) is
 /// given whole, turned by <see cref="YawDegrees"/>: a stretch of a staircase.
 /// <see cref="WholeOnly"/>: a rock here is removed whole, never carved.
+/// <see cref="KeepsSiteRocks"/>: a rock standing in a place's footprint is kept.
 /// </summary>
 public readonly struct StructureClearance
 {
@@ -46,16 +47,17 @@ public readonly struct StructureClearance
     public readonly Vector3 Centre;
     public readonly Vector3 Half;
     public readonly float YawDegrees;
+    public readonly bool KeepsSiteRocks;
 
     public StructureClearance(RoadSpatialGrid.RoadPoint point, List<RoadSpatialGrid.RoadPoint> line, float surface, float height, bool wholeOnly)
     {
         Point = point; Line = line; Surface = surface; Height = height; WholeOnly = wholeOnly;
-        IsBox = false; Centre = default; Half = default; YawDegrees = 0f;
+        IsBox = false; Centre = default; Half = default; YawDegrees = 0f; KeepsSiteRocks = false;
     }
 
-    public StructureClearance(Vector3 centre, Vector3 half, float yawDegrees, float surface)
+    public StructureClearance(Vector3 centre, Vector3 half, float yawDegrees, float surface, bool keepsSiteRocks = false)
     {
         Point = default; Line = null; Surface = surface; Height = half.y * 2f; WholeOnly = false;
-        IsBox = true; Centre = centre; Half = half; YawDegrees = yawDegrees;
+        IsBox = true; Centre = centre; Half = half; YawDegrees = yawDegrees; KeepsSiteRocks = keepsSiteRocks;
     }
 }

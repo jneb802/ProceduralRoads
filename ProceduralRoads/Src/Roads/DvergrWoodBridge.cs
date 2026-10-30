@@ -10,7 +10,7 @@ namespace ProceduralRoads;
 /// <see cref="BridgeStructures.KitFor"/>'s choice, nowhere else.
 ///
 /// <para><b>Only the look changes.</b> The deck height, its length and both ends are the wooden kit's
-/// (<see cref="BridgeLayout.DeckHeight"/>, <see cref="BridgeLayout.BuiltLength"/>, <see cref="BridgeLayout.Ends"/>), so the
+/// (<see cref="BridgeLayout.DeckHeight"/>, <see cref="BridgeLayout.BuiltLength"/>, <see cref="BridgeLayout.NaturalEnds"/>), so the
 /// road meets the bridge where it met the wooden one and the network is the same on the same world (ideally at
 /// similar locations, so before and after can be compared). The bank stairs are the wooden kit's run, laid in
 /// <see cref="StairPrefab"/>.</para>
@@ -32,17 +32,20 @@ namespace ProceduralRoads;
 /// The walking surface is the planks' top, the wooden kit's deck height; the stringers lie under the planks; the piles'
 /// tops stand <see cref="PileAboveDeck"/> over the walking surface and the lowest pile's foot is in the ground.</para>
 ///
-/// <para><b>The navigation gap and the free span</b> are the wooden kit's rules (<see cref="BridgeLayout.InNavigationGap"/>,
-/// <see cref="BridgeLayout.IsFreeSpan"/>): a bent in the gap is never built, and a free span has bents only at its banks with
-/// its stringers carried bank to bank. <b>The ruin</b> is the vanilla harbour's (<see cref="BridgeLayout.DvergrWoodRuin"/>,
-/// in the one ruin owner): every piece worn 10 to 60 %, a plank missing now and then, every pile standing; fixed per
-/// crossing and world seed.</para>
+/// <para><b>The navigation gap and the free span</b> are the wooden kit's rules (<see cref="BridgeLayout.NavigationChannel"/>,
+/// <see cref="BridgeLayout.IsFreeSpan"/>), the gap opened in whole bays (<see cref="NavigationBays"/>): a bent in it is
+/// never built, and a free span has bents only at its banks with
+/// its stringers carried bank to bank. <b>The ruin</b> is every kit's (<see cref="BridgeLayout.BridgeRuin"/>): every piece
+/// worn as a vanilla location's, a plank missing at the deck share, more toward mid-span, never two running and never
+/// over an end bay; fixed per crossing and world seed. Where it departs from that profile, the plan says why.</para>
 ///
-/// <para><b>Mistlands ford spans</b> are laid the same way on the plain footbridge's deck
-/// height (<see cref="BridgeLayout.SpanDeckHeight"/>), length and stairs, so the road meets them where it met the plain one.</para>
+/// <para><b>Mistlands ford spans</b> are laid the same way on the wooden footbridge's deck
+/// height (<see cref="BridgeLayout.SpanDeckHeight"/>), length and stairs, so the road meets them as it meets any ford span.</para>
 ///
 /// <para><b>Every piece is grounded or rests on one that is, by construction</b>: a bent's piles go down until the lowest
-/// one's foot is in the ground, a stringer lies under planks that rest on a bent's piles (as on the vanilla pier, where the
+/// one's foot is in the ground, and no bent stands where they would stand over the wood support ceiling (the railed kits'
+/// <see cref="BridgeLayout.RailedMaxColumn"/>: the deck carried over such a run within the free span, else the run left
+/// open), a stringer lies under planks that rest on a bent's piles (as on the vanilla pier, where the
 /// stringers stand inside the piles and hang from the planks), and a plank is laid only over a bay whose two bents stand.</para>
 /// </summary>
 public static class DvergrWoodBridge
@@ -58,8 +61,8 @@ public static class DvergrWoodBridge
     /// origin at its centre.</summary>
     public const string Pile = "dvergrprops_wood_pole";
     /// <summary>The bank stairs: the Dvergr wooden stair, the same collider and origin as wood_stair, laid on the wooden
-    /// kit's 2 m run and 1 m rise (<see cref="BridgeLayout.Ends"/>); a step over the ground is carried on a
-    /// <see cref="Pile"/> column (<see cref="BridgeLayout.EmitSteps"/>).</summary>
+    /// kit's 2 m run and 1 m rise (<see cref="BridgeLayout.NaturalEnds"/>); a step over the ground is carried on a
+    /// <see cref="Pile"/> column (<see cref="BridgeLayout.LayEndStairs"/>).</summary>
     public const string StairPrefab = "dvergrprops_wood_stair";
 
     // -------------------------------------------------- the pier, read off
@@ -90,36 +93,81 @@ public static class DvergrWoodBridge
     /// <summary>A mist light's origin over the top of the pile it stands on, as on the pier: its box sits 0.15 m into the
     /// pile's top.</summary>
     public const float LightOverPile = 0.5f;
+    /// <summary>A mist light's box top over its origin.</summary>
+    public const float LightBoxTop = 0.09f;
+    /// <summary>The kit's highest point over the walking surface: a mist light's box on a pile's top.</summary>
+    public const float TopOverDeck = PileAboveDeck + LightOverPile + LightBoxTop;
     /// <summary>The share of Dvergr wood bridges that have mist lights at all (only some do, as in the harbour).</summary>
     public const float LitBridgeChance = 1f / 3f;
     /// <summary>On a bridge that has them, the chance each top pile carries one (the pier's demisters' RandomSpawn); one
     /// pile always carries one.</summary>
     public const float LightChance = 0.33f;
+    /// <summary>Of the top piles that rate lights, in order along the bridge, every this many carries its light (the
+    /// first always): half the harbour's, which strung a long bridge with them.</summary>
+    public const int LightSpacing = 2;
     /// <summary>Ruin roles of the mist lights (this kit's 11-14).</summary>
     public const int RoleLitBridge = 12, RoleLight = 13;
 
     // ------------------------------------------------------------ the ruin
-    /// <summary>The kit's ruin, in the one ruin owner: the vanilla harbour's (<see cref="BridgeLayout.DvergrWoodRuin"/>).</summary>
-    public static BridgeLayout.RuinProfile Profile => BridgeLayout.DvergrWoodRuin;
+    /// <summary>The kit's ruin: every kit's (<see cref="BridgeLayout.BridgeRuin"/>).</summary>
+    public static BridgeLayout.RuinProfile Profile => BridgeLayout.BridgeRuin;
     /// <summary>Ruin roles of this kit's own decisions, past <see cref="BridgeLayout.Ruin"/>'s.</summary>
     public const int RolePlank = 11;
 
     /// <summary>Whether the crossing is laid in this kit's shape at all: a bridge, or a ford's spanned footbridge.</summary>
     private static bool IsSpanFord(RoadCrossing crossing) => crossing.Kind == CrossingKind.Ford && crossing.Style == FordStyle.Span;
 
-    /// <summary>The planks' walking surface: the plain kit's deck for the same crossing (a bridge's
+    /// <summary>The planks' walking surface: the wooden kits' deck for the same crossing (a bridge's
     /// <see cref="BridgeLayout.DeckHeight"/>, a ford span's <see cref="BridgeLayout.SpanDeckHeight"/>), so the ends do not move.</summary>
     public static float DeckHeight(RoadCrossing crossing, WorldGenerator world) =>
         IsSpanFord(crossing) ? BridgeLayout.SpanDeckHeight(crossing, world) : BridgeLayout.DeckHeight(crossing, world);
 
     /// <summary>The bents along the deck, from the near deck end (0) to the far one (<see cref="BridgeLayout.BuiltLength"/>):
-    /// as many equal bays as keep each at most <see cref="BentSpacing"/>.</summary>
+    /// as many equal bays as keep each at most <see cref="BentSpacing"/>. The same over a river: the navigation gap opens
+    /// whole bays of it (<see cref="NavigationBays"/>), so the complete bridge is one regular structure.</summary>
     public static float[] BentAlongs(float builtLength)
     {
         int bays = Mathf.Max(1, Mathf.CeilToInt(builtLength / BentSpacing - 1e-3f));
         var a = new float[bays + 1];
         for (int i = 0; i <= bays; i++) a[i] = builtLength * i / bays;
         return a;
+    }
+
+    /// <summary>The deck from the planks' top (the walking surface) to the stringers' bottom.</summary>
+    public const float DeckDepth = BeamDepth + StringerDrop;
+
+    /// <summary>
+    /// The bays left open over a river: the first, how many, and whether their deck is open too (<paramref name="deck"/>
+    /// false: the ship passes under the deck, and only its bents are left out, the deck carried over within the free span),
+    /// or null with no
+    /// navigation gap (off a river, a free span). The fewest whole bays of the bent grid whose opening holds the ship's way
+    /// for this kit's deck (<see cref="BridgeLayout.NavigationChannel"/>) as every kit's bays do
+    /// (<see cref="BridgeLayout.OpenBays"/>), clear of what reaches past the bents either side (half a pile; with the deck
+    /// open, a bay's stringer, centred on its bay, past both its bents).
+    /// </summary>
+    public static (int first, int count, bool deck)? NavigationBays(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (crossing == null || world == null || crossing.Kind != CrossingKind.Bridge || BridgeLayout.IsFreeSpan(crossing, world))
+            return null;
+        float deckH = DeckHeight(crossing, world);
+        if (BridgeLayout.NavigationChannel(crossing, world, deckH - DeckDepth, deckH, BridgeStructures.Kit.DvergrWood) is not BridgeLayout.ShipWay way)
+            return null;
+        float[] bents = BentAlongs(BridgeLayout.BuiltLength(crossing.Width));
+        int bays = bents.Length - 1;
+        float bay = bents[1] - bents[0];
+        bool deck = way.DeckWidth > 0f;
+        float reach = deck ? Mathf.Max(PileWidth * 0.5f, (BeamLength - bay) * 0.5f) : PileWidth * 0.5f;
+        var (first, count) = BridgeLayout.OpenBays(way, bay, bays, reach);
+        return (first, count, deck);
+    }
+
+    /// <summary>Whether a point this far along the deck lies in the navigation gap's open bays (<see cref="NavigationBays"/>),
+    /// strictly between the bents that bound it. None under a deck the ship passes under.</summary>
+    public static bool InNavigationGap(RoadCrossing crossing, WorldGenerator world, float along)
+    {
+        if (NavigationBays(crossing, world) is not (int first, int count, true)) return false;
+        float[] bents = BentAlongs(BridgeLayout.BuiltLength(crossing.Width));
+        return along > bents[first] + 1e-3f && along < bents[first + count] - 1e-3f;
     }
 
     internal static List<StructurePiece> SolveComplete(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
@@ -131,7 +179,7 @@ public static class DvergrWoodBridge
     private static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin)
     {
         var pieces = new List<StructurePiece>();
-        if (crossing == null || world == null || (crossing.Kind != CrossingKind.Bridge && !IsSpanFord(crossing))
+        if (crossing == null || world == null || !BridgeStructures.HasDeck(crossing)
             || crossing.Width < BridgeLayout.DeckSpan)
             return pieces;
 
@@ -142,65 +190,68 @@ public static class DvergrWoodBridge
         float deckH = DeckHeight(crossing, world);            // the wooden kit's, so the ends are its own
         float length = BridgeLayout.BuiltLength(crossing.Width);
         bool freeSpan = crossing.Kind == CrossingKind.Bridge && BridgeLayout.IsFreeSpan(crossing, world);
+        (int first, int count, bool deck)? gap = IsSpanFord(crossing) ? null : NavigationBays(crossing, world);
+        // Under a deck the ship passes under, the opening's bents are never built, repaired or not, and its deck is carried
+        // over them from the bents either side within the free span.
+        bool deckCarried = gap is (_, _, false);
         BridgeLayout.RuinProfile profile = Profile;
+        // The finished ground (StructureGround): the piles stand on it, and the end stairs' columns are carried down to it.
+        var (nearEnd, farEnd) = StructureEnds.Of(crossing, world);
+        System.Func<Vector2, float> groundAt = StructureGround.Of(world, nearEnd, farEnd, BeamLength * 0.5f + BuriedPieces.Growth);
 
         float[] bents = BentAlongs(length);
         int n = bents.Length;
-        float mid = (n - 1) * 0.5f;
+        // No bent where its piles would stand over the wood support ceiling (BridgeLayout.OverWoodCeiling, the railed kits'
+        // rule). The deck is carried over a run of bents left out (too tall, or under a deck the ship passes under) from
+        // the bents either side within the free span (BridgeLayout.RunCarried), as the railed kits carry theirs; a longer run
+        // is left open.
+        var tooTall = new bool[n];
+        var carriedOver = new bool[n];
+        if (!freeSpan)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                Vector2 at = from + dir * bents[i];
+                tooTall[i] = BridgeLayout.OverWoodCeiling(deckH - Mathf.Min(groundAt(at + side * PileSideOffset), groundAt(at - side * PileSideOffset)));
+            }
+        }
         var alive = new bool[n];
         // Each standing bent's top piles outside the navigation gap, where a mist light may stand: the same in the complete
         // and the ruined bridge (every Dvergr wood bent outside the gap stands).
         var tops = new List<(int bent, int side, Vector3 top)>();
+        // Every bent outside the navigation gap stands, ruined or not: the kit departs from the profile's falling columns
+        // because the vanilla harbour it is copied from keeps every pile, and its stringers, which are its deck's frame, stand
+        // with them. So no bent leaves a stub or debris.
         for (int i = 0; i < n; i++)
         {
             Vector2 at = from + dir * bents[i];
             bool bank = i == 0 || i == n - 1;
-            bool inGap = ruin && !freeSpan && BridgeLayout.InNavigationGap(crossing, bents[i]);
-            float closeness = mid > 0f ? 1f - Mathf.Abs(i - mid) / mid : 0f;
-            float pierSurvival = profile.Pier(profile.Span(closeness));
-            alive[i] = !inGap && (freeSpan ? bank : !ruin || bank || r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleStation) < pierSurvival);
-            float ground = BiomeBlendedHeight.GetBlendedHeight(at.x, at.y, world);
-            if (alive[i])
+            bool gapBent = gap is (int g0, int gn, _) && i > g0 && i < g0 + gn;
+            bool inGap = gapBent && (ruin || deckCarried);
+            alive[i] = !inGap && (!freeSpan || bank) && !tooTall[i];
+            if (!alive[i]) continue;
+            foreach (int s in new[] { BridgeLayout.Ruin.Left, BridgeLayout.Ruin.Right })
             {
-                bool gapBent = !freeSpan && BridgeLayout.InNavigationGap(crossing, bents[i]);
-                foreach (int s in new[] { BridgeLayout.Ruin.Left, BridgeLayout.Ruin.Right })
-                {
-                    Vector2 p = at + side * (s * PileSideOffset);
-                    EmitPiles(pieces, p, BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world), deckH + PileAboveDeck, yaw);
-                    if (!gapBent) tops.Add((i, s, new Vector3(p.x, deckH + PileAboveDeck, p.y)));
-                }
-            }
-            // A free span never stood in the water, and the gap is kept open on purpose: neither leaves a ruin.
-            else if (ruin && !freeSpan && !inGap)
-            {
-                if (r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleStub) < profile.StubChance)
-                {
-                    // A rotted pile: one, its top near the waterline, its foot in the bed.
-                    float top = Mathf.Min(ground + PileLength * 0.5f, crossing.WaterLevel + 0.3f);
-                    if (top > ground + 0.25f)
-                        EmitPiles(pieces, at + side * (r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleStub, 1) < 0.5f ? -PileSideOffset : PileSideOffset),
-                            ground, top, yaw);
-                }
-                else if (r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleDebris) < profile.DebrisChance)
-                {
-                    // A plank fallen onto the bed, beside the line (never along it, toward the fairway).
-                    float off = 1f + r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleDebris, 1) * 2f;
-                    if (r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleDebris, 2) < 0.5f) off = -off;
-                    Vector2 p = at + side * off;
-                    pieces.Add(new StructurePiece
-                    {
-                        Kind = StructurePieceKind.Debris,
-                        Prefab = Plank,
-                        Position = new Vector3(p.x, BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world) + BeamDepth * 0.5f, p.y),
-                        YawDegrees = r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleDebris, 3) * 360f,
-                        PitchDegrees = r.Roll(i, BridgeLayout.Ruin.Centre, BridgeLayout.Ruin.RoleDebris, 4) * 25f, // lying, a little askew
-                    });
-                }
+                Vector2 p = at + side * (s * PileSideOffset);
+                EmitPiles(pieces, p, groundAt(p), deckH + PileAboveDeck, yaw);
+                if (!gapBent) tops.Add((i, s, new Vector3(p.x, deckH + PileAboveDeck, p.y)));
             }
         }
 
-        // A bay is carried when both its bents stand; a free span's one bay is carried from its two banks.
-        bool Carried(int bay) => freeSpan || (alive[bay] && alive[bay + 1]);
+        bool LeftOut(int bent) => !alive[bent] && (tooTall[bent] || (deckCarried && gap is (int g0, int gn, _) && bent > g0 && bent < g0 + gn));
+        for (int i = 0; i < n; i++)
+        {
+            if (!LeftOut(i)) continue;
+            int j = i;
+            while (j < n - 1 && LeftOut(j + 1)) j++;
+            bool held = BridgeLayout.RunCarried(bents, i, j) && alive[i - 1] && alive[j + 1];
+            for (int k = i; k <= j; k++) carriedOver[k] = held;
+            i = j;
+        }
+
+        // A bay is carried when both its bents stand or are carried over; a free span's one bay is carried from its two banks.
+        bool Held(int bent) => alive[bent] || carriedOver[bent];
+        bool Carried(int bay) => freeSpan || (Held(bay) && Held(bay + 1));
         int BayOf(float along)
         {
             for (int i = 0; i + 1 < n; i++) if (along <= bents[i + 1] + 1e-3f) return i;
@@ -224,7 +275,9 @@ public static class DvergrWoodBridge
         }
 
         // Planks: one across the deck every metre, end for end in turn, over carried bays only. The end bays keep every
-        // plank (the way on from the stairs); elsewhere a plank goes by the kit's profile (the vanilla harbour's rate).
+        // plank (the way on from the stairs); elsewhere a plank is lost at the profile's deck share. A plank spans the deck
+        // from side to side, so a lost one is already a whole bay open: the kit rolls no holes of its own, and keeps the
+        // profile's rule for them instead, never two running (where two would be, the second is put back).
         int planks = Mathf.RoundToInt(length / PlankPitch);
         var plankAt = new bool[planks];
         for (int j = 0; j < planks; j++)
@@ -234,7 +287,10 @@ public static class DvergrWoodBridge
             if (!Carried(bay)) continue;
             bool endBay = bay == 0 || bay == n - 2;
             float closeness = length > 0f ? 1f - Mathf.Abs(along - length * 0.5f) / (length * 0.5f) : 0f;
-            if (ruin && !endBay && r.Roll(j, BridgeLayout.Ruin.Centre, RolePlank) >= profile.Span(closeness)) continue;
+            bool lost = ruin && !endBay
+                && r.Roll(j, BridgeLayout.Ruin.Centre, RolePlank) >= BridgeLayout.RuinProfile.Survives(profile.Span(closeness), profile.DeckShare);
+            bool lastLost = j > 0 && !plankAt[j - 1] && Carried(BayOf((j - 0.5f) * PlankPitch));
+            if (lost && !lastLost) continue;
             plankAt[j] = true;
             Vector2 p = from + dir * along;
             pieces.Add(new StructurePiece
@@ -246,12 +302,10 @@ public static class DvergrWoodBridge
             });
         }
 
-        // The bank stairs: the wooden kit's run, laid exactly as the wooden bridge's (its ends are what the road meets).
-        Vector2 deckEnd = from + dir * length;
-        // A step over the ground stands on a Dvergr pile column, carried to the ground as the plain kit's pole is.
-        BridgeLayout.EmitSteps(pieces, world, from, dir, side, deckH, r, 0, StairPrefab, Pile, postSegment: PileLength);
-        BridgeLayout.EmitSteps(pieces, world, deckEnd, -dir, side, deckH, r, BridgeLayout.Bays(crossing.Width) + 1, StairPrefab, Pile,
-            postSegment: PileLength);
+        // The bank stairs: the wooden kits' ends as the road meets them (BridgeLayout.LayEndStairs); a step over the ground
+        // stands on a Dvergr pile column, carried to the ground.
+        BridgeLayout.LayEndStairs(pieces, groundAt, nearEnd, side, r, 0, StairPrefab, Pile, PileLength);
+        BridgeLayout.LayEndStairs(pieces, groundAt, farEnd, side, r, BridgeLayout.Bays(crossing.Width) + 1, StairPrefab, Pile, PileLength);
 
         EmitLights(pieces, r, tops, yaw);
 
@@ -262,17 +316,20 @@ public static class DvergrWoodBridge
 
     /// <summary>
     /// Mist lights on a bridge's top piles, as the harbour has them (only some bridges have them, and on those only some posts): a bridge has them at <see cref="LitBridgeChance"/>;
-    /// on one that does, one top pile always carries one and each other at <see cref="LightChance"/>, the light
-    /// <see cref="LightOverPile"/> over the pile's top, turned as the pile. Fixed per crossing and world seed.
+    /// on one that does, one top pile always carries one and each other at <see cref="LightChance"/>, and of those, in order
+    /// along the bridge, every <see cref="LightSpacing"/>th keeps its light, <see cref="LightOverPile"/> over the pile's
+    /// top, turned as the pile. Fixed per crossing and world seed.
     /// </summary>
     private static void EmitLights(List<StructurePiece> pieces, BridgeLayout.Ruin r, List<(int bent, int side, Vector3 top)> tops, float yaw)
     {
         if (tops.Count == 0 || r.Roll(0, BridgeLayout.Ruin.Centre, RoleLitBridge) >= LitBridgeChance) return;
         int always = Mathf.Min(tops.Count - 1, Mathf.FloorToInt(r.Roll(0, BridgeLayout.Ruin.Centre, RoleLight) * tops.Count));
+        int lit = 0;
         for (int k = 0; k < tops.Count; k++)
         {
             var (bent, s, top) = tops[k];
             if (k != always && r.Roll(bent, s, RoleLight, 1) >= LightChance) continue;
+            if (lit++ % LightSpacing != 0) continue;
             pieces.Add(new StructurePiece
             {
                 Kind = StructurePieceKind.Flair,

@@ -111,6 +111,10 @@ public class BridgeRepairabilityTests
 
     private static bool Coincide(Vector3 a, Vector3 b, float tol = 0.01f) => Vector3.Distance(a, b) <= tol;
 
+    /// <summary>Whether a plate's two outer corners are the two snaps of one stringer at the walking surface on its side.</summary>
+    private static bool RestsOnItsStringer(StructurePiece plate, List<StructurePiece> beams) =>
+        beams.Any(b => b.Prefab == BridgeLayout.BeamPrefab && Mathf.Abs(b.Position.y - plate.Position.y) < 0.01f && SharedSnaps(plate, b) == 2);
+
     /// <summary>How many snap points of a land on snap points of b.</summary>
     private static int SharedSnaps(StructurePiece a, StructurePiece b, float tol = 0.01f)
     {
@@ -249,7 +253,7 @@ public class BridgeRepairabilityTests
     private List<StructurePiece> AssertRepairable((RoadCrossing crossing, CrossingWorld world) site)
     {
         (RoadCrossing crossing, CrossingWorld world) = site;
-        var plan = BridgeLayout.SolveComplete(crossing, world, 4242);
+        var plan = BridgeStructures.SolveComplete(crossing, world, 4242);
         Assert.NotEmpty(plan);
 
         float spacing = BridgeLayout.StationSpacing();
@@ -350,40 +354,15 @@ public class BridgeRepairabilityTests
             }
         }
 
-        // 7. Support: every plate rests on a beam at each end (a beam under
-        //    each of its end edges, in its lane), every beam has a post column
-        //    reaching the ground beneath its outer half, and posts chain on
-        //    their 2 m snap.
-        //
-        //    A FREE SPAN is exempt from this check, and not by weakening it:
-        //    it has no stations in the channel by design, so its deck is
-        //    carried from the two abutments and there are no mid-span beams
-        //    for a plate to rest on. Everything else here still applies to one
-        //    -- the deck is level, the stairs land, the grid is placeable, and
-        //    check 8 below still holds because its only posts are at the
-        //    abutments, under beams. BridgeFreeSpanTests says what IS asserted
-        //    of a span. We do not check what a PLAYER could build across it:
-        //    players get better materials that span further, so that is
-        //    deliberately not our problem.
+        // 7. Support: every plate rests on the stringer along its outer edge (its two outer corners on the stringer's two
+        //    snaps), and every column's poles chain on their snaps down to the ground beneath it. A free span's stringers
+        //    are carried from its abutments the same way. (The railing posts stand on the deck and the stairs' stringers:
+        //    RailedBridgeTests asks every piece to be on a neighbour's snap.)
         var beams = Of(plan, StructurePieceKind.Beam);
-        var posts = Of(plan, StructurePieceKind.Post);
-        if (!BridgeLayout.IsFreeSpan(crossing, world))
-        {
-            foreach (var plate in decks)
-            {
-                var edges = BridgeLayout.SnapPoints(plate);
-                int supported = 0;
-                foreach (var b in beams)
-                {
-                    if (Mathf.Abs(LateralOf(crossing, b.Position) - LateralOf(crossing, plate.Position)) > 0.1f) continue;
-                    if (edges.Any(e => Mathf.Abs(AlongOf(crossing, new Vector3(e.x, 0, e.z)) - AlongOf(crossing, b.Position)) < 0.05f
-                                       && e.y - b.Position.y >= BridgeLayout.BeamBelowDeck - 0.02f
-                                       && e.y - b.Position.y <= BridgeLayout.BeamBelowDeck + 0.15f))
-                        supported++;
-                }
-                Assert.True(supported >= 2, $"plate at along {AlongOf(crossing, plate.Position):F2} rests on {supported} beam(s), not 2");
-            }
-        }
+        var posts = Of(plan, StructurePieceKind.Post).Where(p => p.Prefab == BridgeLayout.PostPrefab).ToList();
+        foreach (var plate in decks)
+            Assert.True(RestsOnItsStringer(plate, beams),
+                $"plate at along {AlongOf(crossing, plate.Position):F2} rests on no stringer along its outer edge");
         foreach (var group in posts.GroupBy(p => (Mathf.Round(p.Position.x * 100f), Mathf.Round(p.Position.z * 100f))))
         {
             var column = group.OrderByDescending(p => p.Position.y).ToList();
@@ -394,36 +373,14 @@ public class BridgeRepairabilityTests
                 "a post column does not reach the ground");
         }
 
-        // 8. Cart clearance: nothing but deck plates above the WALKING
-        //    SURFACE within the lanes, over the whole built length. The
-        //    surface is the plate's measured collider top, 0.097 above its
-        //    origin; a beam's top (0.2 above its centre, itself 0.13 below the
-        //    deck) ends inside the plate's thickness, under the surface.
-        const float floorTop = 0.097f, beamHalfHeight = 0.2f;
-        foreach (var piece in plan.Where(p => p.Kind != StructurePieceKind.Deck && p.Kind != StructurePieceKind.Stair))
+        // 8. Cart clearance: between the deck's edge lines (where the stringers, rails, posts and columns stand), nothing
+        //    but deck plates over the whole built length.
+        foreach (var piece in plan.Where(p => p.Kind != StructurePieceKind.Deck && p.Kind != StructurePieceKind.Stair && p.Kind != StructurePieceKind.Debris))
         {
             float along = AlongOf(crossing, piece.Position);
             if (along < 0f || along > built) continue;
-            if (Mathf.Abs(LateralOf(crossing, piece.Position)) > BridgeLayout.DeckHalfWidth) continue;
-            if (piece.Kind == StructurePieceKind.Beam)
-            {
-                // A beam sits BeamBelowDeck under its own station's deck height;
-                // on a pitched deck that is not the nearest plate's centre, so
-                // the surface it must stay under is the one over its station.
-                float surface = piece.Position.y + BridgeLayout.BeamBelowDeck + floorTop;
-                Assert.True(piece.Position.y + beamHalfHeight <= surface + 0.005f,
-                    $"beam at along {along:F2} rises {piece.Position.y + beamHalfHeight - surface:F3} m above the walking surface");
-            }
-            else if (piece.Kind == StructurePieceKind.Post)
-            {
-                // A post only ever stands under a beam; it must not poke through it.
-                var beamAbove = beams.Where(b => Mathf.Abs(AlongOf(crossing, b.Position) - along) < 0.05f
-                                                 && Mathf.Abs(LateralOf(crossing, b.Position)) <= BridgeLayout.DeckHalfWidth)
-                                     .OrderBy(b => b.Position.y).FirstOrDefault();
-                Assert.True(beamAbove != null, $"post at along {along:F2} stands under no beam");
-                Assert.True(piece.Position.y + BridgeLayout.PostSegment * 0.5f <= beamAbove!.Position.y + 0.005f,
-                    $"post at along {along:F2} rises through its beam");
-            }
+            Assert.True(Mathf.Abs(LateralOf(crossing, piece.Position)) >= BridgeLayout.DeckHalfWidth - 0.01f,
+                $"{piece.Prefab} at along {along:F2}, {LateralOf(crossing, piece.Position):F2} across stands in the lanes");
         }
 
         return plan;
@@ -455,8 +412,8 @@ public class BridgeRepairabilityTests
         for (int seed = 1; seed <= 40 && (both == 0 || leftOnly == 0 || rightOnly == 0 || neither == 0); seed++)
         {
             var (crossing, world) = Crossing(60f);
-            var plan = BridgeLayout.Solve(crossing, world, seed);
-            var complete = BridgeLayout.SolveComplete(crossing, world, seed);
+            var plan = BridgeStructures.Solve(crossing, world, seed);
+            var complete = BridgeStructures.SolveComplete(crossing, world, seed);
             int bays = BridgeLayout.Bays(crossing.Width);
             var decks = Of(plan, StructurePieceKind.Deck);
             for (int i = 1; i + 1 < bays; i++)
@@ -466,7 +423,10 @@ public class BridgeRepairabilityTests
                 float along = (i + 0.5f) * BridgeLayout.StationSpacing();
                 var l = decks.FirstOrDefault(d => Mathf.Abs(AlongOf(crossing, d.Position) - along) < 0.05f && LateralOf(crossing, d.Position) < 0f);
                 var r = decks.FirstOrDefault(d => Mathf.Abs(AlongOf(crossing, d.Position) - along) < 0.05f && LateralOf(crossing, d.Position) > 0f);
-                bool stationsStand = Of(plan, StructurePieceKind.Beam).Count(b => Mathf.Abs(AlongOf(crossing, b.Position) - i * 2f) < 0.05f || Mathf.Abs(AlongOf(crossing, b.Position) - (i + 1) * 2f) < 0.05f) == 4;
+                // The bay stands when both its stringers are laid (both its stations carry the deck).
+                float deckH = BridgeLayout.DeckHeight(crossing, world);
+                bool stationsStand = Of(plan, StructurePieceKind.Beam).Count(b => Mathf.Abs(AlongOf(crossing, b.Position) - along) < 0.05f
+                    && Mathf.Abs(b.Position.y - deckH) < 0.01f) == 2;
                 if (!stationsStand) continue;
                 if (l != null && r != null) { both++; healthPairs.Add((l.HealthFraction, r.HealthFraction)); }
                 else if (l != null) leftOnly++;
@@ -480,23 +440,17 @@ public class BridgeRepairabilityTests
     }
 
     [Fact]
-    public void EverySurvivingPlateStillRestsOnTwoBeams()
+    public void EverySurvivingPlateStillRestsOnItsStringer()
     {
         // Asymmetric ruin must not leave a plate hanging: a plate exists only
-        // where both its stations stand, whatever happened to the other lane.
+        // where its bay's stringers are laid, whatever happened to the other lane.
         for (int seed = 1; seed <= 12; seed++)
         {
             var (crossing, world) = Crossing(77.51f, fairwayWidth: 30f);
-            var plan = BridgeLayout.Solve(crossing, world, seed);
+            var plan = BridgeStructures.Solve(crossing, world, seed);
             var beams = Of(plan, StructurePieceKind.Beam);
             foreach (var plate in Of(plan, StructurePieceKind.Deck))
-            {
-                var edges = BridgeLayout.SnapPoints(plate);
-                int under = beams.Count(b =>
-                    Mathf.Abs(LateralOf(crossing, b.Position) - LateralOf(crossing, plate.Position)) < 0.1f &&
-                    edges.Any(e => Mathf.Abs(AlongOf(crossing, new Vector3(e.x, 0, e.z)) - AlongOf(crossing, b.Position)) < 0.05f));
-                Assert.True(under >= 2, $"seed {seed}: a surviving plate rests on {under} beam(s)");
-            }
+                Assert.True(RestsOnItsStringer(plate, beams), $"seed {seed}: a surviving plate at along {AlongOf(crossing, plate.Position):F2} rests on no stringer");
         }
     }
 
@@ -504,8 +458,8 @@ public class BridgeRepairabilityTests
     public void RuinIsStableUnderReplayAndKeyedByPiece()
     {
         var (crossing, world) = Crossing(77.51f, fairwayWidth: 30f);
-        var a = BridgeLayout.Solve(crossing, world, 99);
-        var b = BridgeLayout.Solve(crossing, world, 99);
+        var a = BridgeStructures.Solve(crossing, world, 99);
+        var b = BridgeStructures.Solve(crossing, world, 99);
         Assert.Equal(a.Count, b.Count);
         for (int i = 0; i < a.Count; i++)
         {
@@ -520,7 +474,7 @@ public class BridgeRepairabilityTests
         Assert.NotEqual(r.Roll(5, BridgeLayout.Ruin.Left, BridgeLayout.Ruin.RoleDeck), r.Roll(5, BridgeLayout.Ruin.Right, BridgeLayout.Ruin.RoleDeck));
         Assert.NotEqual(r.Roll(5, BridgeLayout.Ruin.Left, BridgeLayout.Ruin.RoleDeck), r.Roll(6, BridgeLayout.Ruin.Left, BridgeLayout.Ruin.RoleDeck));
         // and a different seed ruins differently
-        var c = BridgeLayout.Solve(crossing, world, 100);
+        var c = BridgeStructures.Solve(crossing, world, 100);
         Assert.True(c.Count != a.Count || c.Where((p, i) => !Coincide(p.Position, a[i].Position) || p.HealthFraction != a[i].HealthFraction).Any());
     }
 
@@ -528,12 +482,12 @@ public class BridgeRepairabilityTests
     public void TheNavigationGapIsReportedApartFromRuin()
     {
         var (crossing, world) = Crossing(77.51f, fairwayWidth: 30f);
-        var plan = BridgeLayout.Solve(crossing, world, 7);
+        var plan = BridgeStructures.Solve(crossing, world, 7);
         float mid = crossing.Along(crossing.FairwayCenter);
-        Assert.True(BridgeLayout.InNavigationGap(crossing, mid));
-        Assert.False(BridgeLayout.InNavigationGap(crossing, 1f));
-        Assert.DoesNotContain(plan, p => p.Kind == StructurePieceKind.Deck && BridgeLayout.InNavigationGap(crossing, AlongOf(crossing, p.Position)));
-        Assert.Contains(BridgeLayout.SolveComplete(crossing, world, 7), p => p.Kind == StructurePieceKind.Deck && BridgeLayout.InNavigationGap(crossing, AlongOf(crossing, p.Position)));
+        Assert.True(BridgeLayout.InNavigationGap(crossing, world, mid));
+        Assert.False(BridgeLayout.InNavigationGap(crossing, world, 1f));
+        Assert.DoesNotContain(plan, p => p.Kind == StructurePieceKind.Deck && BridgeLayout.InNavigationGap(crossing, world, AlongOf(crossing, p.Position)));
+        Assert.Contains(BridgeStructures.SolveComplete(crossing, world, 7), p => p.Kind == StructurePieceKind.Deck && BridgeLayout.InNavigationGap(crossing, world, AlongOf(crossing, p.Position)));
     }
 
     [Theory]
@@ -541,8 +495,8 @@ public class BridgeRepairabilityTests
     public void EveryPieceTheGameBuildsStandsWhereTheCompletedBridgeHasOne(float width)
     {
         var (crossing, world) = Crossing(width, fairwayWidth: 30f);
-        var complete = BridgeLayout.SolveComplete(crossing, world, 99);
-        var built = BridgeLayout.Solve(crossing, world, 99);
+        var complete = BridgeStructures.SolveComplete(crossing, world, 99);
+        var built = BridgeStructures.Solve(crossing, world, 99);
         Assert.True(complete.Count > built.Count);
         foreach (StructurePiece piece in built.Where(p => p.Kind is StructurePieceKind.Deck or StructurePieceKind.Beam or StructurePieceKind.Stair))
             Assert.True(complete.Any(c => c.Prefab == piece.Prefab && Coincide(c.Position, piece.Position)),
@@ -581,9 +535,13 @@ public class BridgeRepairabilityTests
         // Layout 8: a Mistlands bridge under the viaduct floor is built from the Dvergr pier's wood (DvergrWoodBridge).
         // Layout 9: the Dvergr wood kit on its pieces' measured sizes, damaged like the vanilla harbour, on Mistlands ford spans.
         // Layout 10: both Dvergr kits checked against the vanilla prefabs (stringers into the planks, measured sizes, roll), and flair.
+        // Layout 11: a low Meadows, Black Forest or Plains bridge is one of the two railed wooden kits (BridgeLayout.RailedKit).
+        // Layout 12: every bridge and every ford span outside the Mistlands is railed (the plain kit retired), free spans and
+        // stations over the support ceiling without columns, the navigation gap in whole bays of the kit's grid.
+        // Layout 13: from the Black Forest on, a bridge or ford span the stone kit fits may be stone (BridgeLayout.StoneFits).
         // If you are here because this failed, the question
         // is "did the emitted shape move?", and if it did the answer is a bump.
-        Assert.Equal(10, BridgeLayout.LayoutVersion);
+        Assert.Equal(13, BridgeLayout.LayoutVersion);
         // What a bump does to a saved world: BridgeLayoutTests.AStaleLayoutLeavesSpawnedZonesAlone.
     }
 

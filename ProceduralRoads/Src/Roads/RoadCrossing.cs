@@ -26,8 +26,8 @@ public sealed class RoadCrossing
     public FordStyle Style = FordStyle.None;
 
     /// <summary>Path vertices bracketing the water: the crossing is the path
-    /// segment [FromIndex, ToIndex]. Not persisted; only the generation pass
-    /// that paints the crossing needs them.</summary>
+    /// segment [FromIndex, ToIndex]; once its ends are met (StructureEnds.MeetEnds), a structure's
+    /// are its two feet. Not persisted; only the generation pass that paints the crossing needs them.</summary>
     public int FromIndex;
     public int ToIndex;
 
@@ -48,16 +48,44 @@ public sealed class RoadCrossing
     public bool Invalid;
     /// <summary>Why this shallow ford got its style (length, depth, heading, eligible styles). Not persisted.</summary>
     public string? ShallowNote;
-    /// <summary>The road that built this crossing, for logs and road_crossings.</summary>
-    public string? Road;
     /// <summary>A Mistlands viaduct the search bought over a dry valley (DvergrViaduct.ValleyCrossing),
     /// not a river jump. Saved with the crossing (RoadNetworkPersistence.CrossingsFormat 2), so a loaded
     /// network knows its valley viaducts: their keep-out comes back with them. Its pieces are planned
     /// the same either way, by DvergrViaduct.Applies, from its banks and bed.</summary>
     public bool ValleyJump;
-    /// <summary>The kit it is built in, decided once when the crossing is stored (BridgeStructures.KitFor) and saved with
-    /// it; null until then, and for a record saved without it (decided again from the crossing).</summary>
+    /// <summary>The kit it is built in, saved with it. Its kind is decided when the crossing is stored
+    /// (BridgeStructures.DecideKind): a viaduct's kit, or Undecided for any other deck until it is first built, when its
+    /// kit is chosen among the kits installed then (BridgeStructures.ChooseKit) and kept from then on. Null for a crossing
+    /// that is road, until it is stored, and for a record saved without it (chosen as an undecided one is).</summary>
     public BridgeStructures.Kit? Kit;
+    /// <summary>Its two ends as the road meets them, near (from-bank) end first: each a point and height on the road, the
+    /// foot of the stairs laid down to it (or the deck's edge, or the bank where the crossing is road). Decided by the one
+    /// owner (StructureEnds.MeetEnds) when the road is searched, among the ways the road reaches, and saved with the
+    /// crossing: every kit lays its stairs down to them. Null until decided, and for a record saved without them (each
+    /// end then as the bank takes it, StructureEnds.Natural).</summary>
+    public StructureEnds.End? FromEnd, ToEnd;
+    /// <summary>Other roads on the ground the landing at an end takes, and the height each point is raised to
+    /// (RoadStairRuns.RaiseOthers): moved in the network when the road is laid with the crossing (RoadNetworkGenerator).
+    /// Decided with the end; not saved, the network saves them as raised.</summary>
+    internal List<(RoadSpatialGrid.RoadPoint at, float to)>? FromRaised, ToRaised;
+    /// <summary>The search's own moves the crossing lies on: its path's steps and jumps from <see cref="FromIndex"/> to
+    /// <see cref="ToIndex"/> as searched, before its ends were met (RoadNetworkGenerator.PlanFromPath). A crossing not built
+    /// with the road is searched again round them (RoadPathfinder.BanJump): its banks alone match no move of a ford walked
+    /// cell by cell, nor of a bridge whose end was moved along the path. Not saved.</summary>
+    internal List<(Vector2 from, Vector2 to)>? Searched;
+    /// <summary>An end met by earthwork: its landing filled over ground under the road's floor (StructureEnds.MeetEnds).
+    /// Decided with the end, counted when the road is laid; not saved.</summary>
+    internal bool FromEarthwork, ToEarthwork;
+    /// <summary>An end the road leaves from its landing pad, off its line (StructureEnds.PadLength). Decided with the end,
+    /// counted when the road is laid; not saved.</summary>
+    internal bool FromPad, ToPad;
+    /// <summary>An end the road meets where its last point before the next structure or its own end stands, no point of
+    /// it clear of the end's apron or pad (StructureEnds.Approach). Decided with the end, counted when the road is laid;
+    /// not saved.</summary>
+    internal bool FromStands, ToStands;
+    /// <summary>An end met on a landing it shares with the facing end of the next structure along the road
+    /// (StructureEnds.Share). Decided with the end, counted when the road is laid; not saved.</summary>
+    internal bool FromShared, ToShared;
 
     public override string ToString() => System.FormattableString.Invariant(
         $"{Kind}{(Kind == CrossingKind.Ford ? "/" + Style : "")} {FromBank} -> {ToBank}, {Width:F1} m{(Kit is BridgeStructures.Kit k ? ", " + k : "")}{(ValleyJump ? ", valley" : "")}");
@@ -91,11 +119,14 @@ public sealed class RoadCrossing
 
     public static bool SameBanks(RoadCrossing a, RoadCrossing b) => SameBanks(a, b, SharedBankRadius);
 
-    public static bool SameBanks(RoadCrossing a, RoadCrossing b, float radius)
+    public static bool SameBanks(RoadCrossing a, RoadCrossing b, float radius) => SameBanks(a, b.FromBank, b.ToBank, radius);
+
+    /// <summary>Whether a crossing's banks are these two, either way round, within <paramref name="radius"/>.</summary>
+    public static bool SameBanks(RoadCrossing a, Vector2 fromBank, Vector2 toBank, float radius)
     {
         float r2 = radius * radius;
-        return ((a.FromBank - b.FromBank).sqrMagnitude <= r2 && (a.ToBank - b.ToBank).sqrMagnitude <= r2)
-            || ((a.FromBank - b.ToBank).sqrMagnitude <= r2 && (a.ToBank - b.FromBank).sqrMagnitude <= r2);
+        return ((a.FromBank - fromBank).sqrMagnitude <= r2 && (a.ToBank - toBank).sqrMagnitude <= r2)
+            || ((a.FromBank - toBank).sqrMagnitude <= r2 && (a.ToBank - fromBank).sqrMagnitude <= r2);
     }
 
     /// <summary>
@@ -119,6 +150,10 @@ public sealed class RoadCrossing
         Kind = existing.Kind;
         Style = existing.Style;
         Kit = existing.Kit;
+        FromEnd = sameOrder ? existing.FromEnd : existing.ToEnd;
+        ToEnd = sameOrder ? existing.ToEnd : existing.FromEnd;
+        FromRaised = ToRaised = null;
+        FromEarthwork = ToEarthwork = false;
         // These describe the adopted crossing, not the discarded candidate.
         // Otherwise an invalid shallow ford stays invalid after it has been
         // replaced by a valid bridge already carrying the network.
@@ -356,10 +391,9 @@ public static class RoadCrossingDetector
     private const float MinTrimmedPier = 2f;
     private const float ShoreStep = 0.5f;
 
-    /// <summary>Player-facing levers (config "Fords/WadeWeight", "RaiseWeight",
-    /// "SpanWeight"): relative odds of each ford style among the styles a
-    /// site allows. 0 removes a style; when every allowed style is 0 the site
-    /// raises the road (always allowed). Set at config read.</summary>
+    /// <summary>Relative odds of each ford style among the styles a site
+    /// allows, equal by default. 0 removes a style; when every allowed style
+    /// is 0 the site raises the road (always allowed). Settable for tests.</summary>
     public static float ConfiguredWadeWeight = RoadConstants.DefaultFordStyleWeight;
     public static float ConfiguredRaiseWeight = RoadConstants.DefaultFordStyleWeight;
     public static float ConfiguredSpanWeight = RoadConstants.DefaultFordStyleWeight;
@@ -421,7 +455,7 @@ public static class RoadCrossingDetector
     /// </summary>
     internal static void KeepStructuresApart(List<RoadCrossing> crossings)
     {
-        static bool Structure(RoadCrossing c) => c.Kind == CrossingKind.Bridge || c.Style == FordStyle.Span;
+        static bool Structure(RoadCrossing c) => BridgeStructures.HasDeck(c);
         for (int k = 1; k < crossings.Count; k++)
         {
             RoadCrossing a = crossings[k - 1], b = crossings[k];
@@ -577,7 +611,7 @@ public static class RoadCrossingDetector
     /// DeepWaterHeight, so everything shallower is road, not crossing.
     /// </summary>
     public static bool IsRoadGround(Vector2 p, WorldGenerator world) =>
-        BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world) >= RoadPathfinder.FloorFor(world.GetBiome(p.x, p.y));
+        RoadWater.OnLand(world, p, BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world));
 
     /// <summary>A segment with river water under it somewhere: the jump the
     /// pathfinder made. A splined road dipping into a puddle between two dry
@@ -592,7 +626,7 @@ public static class RoadCrossingDetector
             float x = a.x + (b.x - a.x) * t;
             float y = a.y + (b.y - a.y) * t;
             world.GetRiverWeight(x, y, out float weight, out _);
-            if (weight > RoadConstants.RiverImpassableThreshold
+            if (RoadWater.River(weight)
                 && BiomeBlendedHeight.GetBlendedHeight(x, y, world) < RoadConstants.SeaLevel)
                 return true;
         }
@@ -838,7 +872,7 @@ public static class RoadCrossingDetector
         {
             // Along the same line, so the heading and its placeability hold.
             float deck = Mathf.Max(Mathf.Max(BiomeBlendedHeight.GetBlendedHeight(from.x, from.y, world),
-                BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world)), RoadConstants.SeaLevel + BridgeLayout.DeckFreeboard);
+                BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world)), BridgeLayout.MinDeck(RoadConstants.SeaLevel));
             Vector2 newFrom = OffLand(from, to, deck, world);
             Vector2 newTo = OffLand(to, newFrom, deck, world);
             if (newFrom != from) { fromLand = from; from = newFrom; }
@@ -1152,7 +1186,7 @@ public static class RoadCrossingDetector
     public static (Vector2 from, Vector2 to) ExtendOverSwampShelf(Vector2 from, Vector2 to, WorldGenerator world)
     {
         Vector2 direction = (to - from).normalized;
-        float dryFloor = RoadPathfinder.LandingFloor;
+        float dryFloor = RoadWater.LandingFloor;
         if (BiomeBlendedHeight.GetBlendedHeight(from.x, from.y, world) < dryFloor)
             from = FirstDryAlongLine(from, -direction, RoadConstants.SwampBridgeDryReach, world, dryFloor);
         if (BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world) < dryFloor)

@@ -347,7 +347,8 @@ public class RoadStairTests : IDisposable
     /// <summary>Over a ridge or through a gully the road climbs one staircase and
     /// descends another (stairs can go downhill too): a
     /// layout climbs from its lower end, so one staircase cannot cross a crest,
-    /// and joined into one the road was refused.</summary>
+    /// and joined into one the road was refused. Where they meet, edge to edge: in the gully the shared floor was laid on
+    /// along the stair above the first's foot floor, 22.5 degrees off that floor, sharing no corner with it.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -364,12 +365,18 @@ public class RoadStairTests : IDisposable
         // laid to meet the first, with floors between.
         Assert.Contains(StairStructures.Runs, r => r.Pieces.Any(p => p.Position.x < -20f) && r.Pieces.All(p => p.Position.x < 1f));
         Assert.Contains(StairStructures.Runs, r => r.Pieces.Any(p => p.Position.x > 20f));
-        // Their tops meet, not one inside the other.
+        // Their tops meet, not one inside the other (save floors level with each other, which overlap at a turn).
         var walked0 = StairStructures.Runs[0].Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport).ToList();
         var walked1 = StairStructures.Runs[1].Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport).ToList();
         foreach (var p in walked0)
             Assert.DoesNotContain(walked1, q => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), new Vector2(q.Position.x, q.Position.z)) < RoadStairRuns.StairOverlap
-                && Mathf.Abs(p.Position.y - q.Position.y) < 2f);
+                && Mathf.Abs(p.Position.y - q.Position.y) < 2f
+                && !(p.Kind == StructurePieceKind.StairFloor && q.Kind == StructurePieceKind.StairFloor && Mathf.Abs(p.Position.y - q.Position.y) < 0.05f));
+        // And every join between them, and within each, edge to edge (FlatRunJoinTests' rule).
+        var walked = StairStructures.Runs.SelectMany(r => r.Pieces).Where(p => p.Kind == StructurePieceKind.StairStep || p.Kind == StructurePieceKind.StairFloor)
+            .Select(p => new StairPiece { Kind = p.Kind == StructurePieceKind.StairStep ? StairPieceKind.Stair : StairPieceKind.Landing, Prefab = p.Prefab,
+                Position = p.Position, YawDegrees = p.YawDegrees }).ToList();
+        Assert.Empty(FlatRunJoinTests.JoinFaults(walked, StairStructures.Runs[0].Kit ?? StairKit.Stone));
     }
 
     /// <summary>Over a ridge, the staircase down from the crest is carried on to the top row of the
@@ -642,8 +649,8 @@ public class RoadStairTests : IDisposable
             var road = new List<Vector2>();
             for (float x = -36f; x <= 36f; x += 1f) for (float z = -60f; z <= 60f; z += 1f)
                 if (RoadSpatialGrid.TryGetRoadWithin(new Vector2(x, z), 0.5f, out Vector2 at)) road.Add(at);
-            int joined = RoadStairRuns.RidgesSnapped + RoadStairRuns.RidgesBridged + RoadStairRuns.CrestStubsJoined;
-            laid = $"built {built}, {StairStructures.Runs.Count} staircase(s) {string.Join(" | ", StairStructures.Runs.Select(r => r.From + "->" + r.To))}, ridges snapped {RoadStairRuns.RidgesSnapped}, bridged {RoadStairRuns.RidgesBridged}, stubs joined {RoadStairRuns.CrestStubsJoined}, refused {RoadStairRuns.CrestStubs}, valleys {RoadStairRuns.ValleysMet}, road off the flats at {string.Join(" ", road.Distinct().Take(8))}";
+            int joined = RoadStairRuns.RidgesSnapped + RoadStairRuns.RidgesBridged;
+            laid = $"built {built}, {StairStructures.Runs.Count} staircase(s) {string.Join(" | ", StairStructures.Runs.Select(r => r.From + "->" + r.To))}, ridges snapped {RoadStairRuns.RidgesSnapped}, bridged {RoadStairRuns.RidgesBridged}, refused {RoadStairRuns.CrestStubs}, valleys {RoadStairRuns.ValleysMet}, road off the flats at {string.Join(" ", road.Distinct().Take(8))}";
             // Four staircases, up, down, up, down, both crests joined, and no road anywhere between the outer feet (x = -40 and
             // 40): the two in the valley meet on a shared floor.
             return built && StairStructures.Runs.Count == 4 && joined >= 2 && RoadStairRuns.ValleysMet >= 1 && road.Count == 0;
@@ -685,6 +692,266 @@ public class RoadStairTests : IDisposable
         Assert.False(GoesOn(trunk: false), "the arriving road's own end was taken for another road");
     }
 
+    /// <summary>The walked pieces of the staircase at the foot -6951.1,3360.4 as laid (6952 m west and 3360 m north of where
+    /// they stood, raised <paramref name="up"/>): up from the road's middle on 247.5, round to the north and onto the floors at
+    /// 40 at its top. Its road came to the foot straight on from the north-east; its columns are left out.</summary>
+    private static StairRun JunctionFootRun(float up)
+    {
+        var run = new StairRun { From = new Vector2(0f, 0f), To = new Vector2(-8f, 8f), Width = RoadStairRuns.Width, Kit = StairKit.BlackMarble };
+        void Add(StructurePieceKind kind, string prefab, float x, float y, float z, float yaw) =>
+            run.Pieces.Add(new StructurePiece { Kind = kind, Prefab = prefab, Position = new Vector3(x, y + up, z), YawDegrees = yaw });
+        void S(float x, float y, float z, float yaw) => Add(StructurePieceKind.StairStep, StairKit.BlackMarble.Stair, x, y, z, yaw);
+        void B(float x, float y, float z, float yaw) => Add(StructurePieceKind.StairFiller, "blackmarble_2x1x1", x, y, z, yaw);
+        void C(float x, float y, float z, float yaw) => Add(StructurePieceKind.StairFiller, "blackmarble_1x1", x, y, z, yaw);
+        void F(float x, float y, float z, float yaw) => Add(StructurePieceKind.StairFloor, StairKit.BlackMarble.Floor, x, y, z, yaw);
+        S(0.924f, 31.477f, 0.383f, 67.5f); S(-0.924f, 32.477f, -0.383f, 67.5f); B(-2.310f, 32.977f, -0.957f, 67.5f);
+        S(-3.230f, 33.477f, -0.842f, 90f); B(-4.730f, 33.977f, -0.842f, 90f); S(-5.537f, 34.477f, -0.383f, 112.5f);
+        S(-7.385f, 35.477f, 0.383f, 112.5f); B(-8.771f, 35.977f, 0.957f, 112.5f); S(-9.340f, 36.477f, 1.689f, 135f);
+        S(-10.754f, 37.477f, 3.104f, 135f); B(-11.814f, 37.977f, 4.164f, 135f); C(-12.254f, 37.977f, 4.018f, 180f);
+        S(-11.754f, 38.477f, 5.518f, 180f); B(-11.754f, 38.977f, 7.018f, 180f); S(-11.295f, 39.477f, 7.824f, 202.5f);
+        F(-8.683f, 39.977f, 8.906f, 292.5f); F(-10.530f, 39.977f, 9.672f, 22.5f);
+        return run;
+    }
+
+    /// <summary>A road meets a staircase laid before it only at its foot or top, straight on, never on or under its flight: a
+    /// road laid later joined the network at the foot at -6951.1,3360.4 from the south-west, levelled to the foot's height,
+    /// and ran on under the first stairs, which stood in its middle (the spur rule, <see cref="AFootOnARoadGoingOnPastItIsASpur"/>,
+    /// sees only the roads laid before the staircase). That road, as stored there, is refused; the staircase's own road, straight
+    /// on from the north-east, is not. Generated, a road to the foot from the south-west stores nothing on the flight.</summary>
+    [Fact]
+    public void ARoadLaidLaterNeverRunsUnderAStaircasesFlight()
+    {
+        RoadSpatialGrid.PlannedPath Road(params (float x, float z, float h)[] points) => new(points.Select(p => new Vector2(p.x, p.z)).ToList(),
+            points.Select(p => p.h).ToList(), points.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 40f, false);
+        RoadNetworkGenerator.Reset();
+        _scope.WithWorld(new FlatWorld());
+        StairStructures.Add(JunctionFootRun(0f));
+        // As stored on the integration build: down the slope to the foot's height 7 m short of it, level from there.
+        var underIt = Road((-15.09f, -7.54f, 36.02f), (-13.15f, -6.57f, 35.12f), (-11.11f, -5.55f, 34.14f), (-9.04f, -4.52f, 33.34f),
+            (-7.00f, -3.50f, 32.48f), (-6.01f, -3.01f, 32.48f), (-5.06f, -2.53f, 32.48f), (-4.15f, -2.07f, 32.48f), (-3.28f, -1.64f, 32.48f),
+            (-2.48f, -1.24f, 32.48f), (-1.74f, -0.87f, 32.48f), (-1.08f, -0.54f, 32.48f), (-0.49f, -0.25f, 32.48f), (0f, 0f, 32.48f));
+        Assert.Equal(RoadNetworkGenerator.OnAFlightRefusal, RoadNetworkGenerator.MeetingRefusal(new() { underIt }, out Vector2 at));
+        Assert.InRange(Vector2.Distance(at, new Vector2(-5f, -2.5f)), 0f, 4f);
+        var straightOn = Road((0f, 0f, 32.48f), (0.85f, 0.42f, 32.48f), (1.70f, 0.85f, 32.48f), (2.54f, 1.27f, 32.51f),
+            (3.39f, 1.70f, 32.57f), (4.24f, 2.12f, 32.66f), (5.09f, 2.54f, 32.78f), (5.94f, 2.97f, 32.94f), (6.78f, 3.39f, 33.13f));
+        Assert.Null(RoadNetworkGenerator.MeetingRefusal(new() { straightOn }, out _));
+
+        // Generated on flat ground at 40 (the staircase raised to stand on it): the road from the south-west to the foot.
+        RoadNetworkGenerator.Reset();
+        var world = new FlatWorld();
+        _scope.WithWorld(world);
+        SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f });
+        StairRun laid = JunctionFootRun(40f - 32.48f);
+        StairStructures.Add(laid);
+        StairStructures.MarkStanding(laid);
+        RoadNetworkGenerator.GenerateRoad(new Vector2(-60f, -30f), 0f, new Vector2(0f, 0f), 0f, 4f, "to the foot");
+        var stored = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(-6f, 0f, 2f), 20f).Where(rp => rp.IsRoad).ToList();
+        Assert.False(RoadStairRuns.OnALaidFlight(stored.Select(rp => rp.p).ToList(), stored.Select(rp => rp.h).ToList(), out Vector2 onIt),
+            FormattableString.Invariant($"road stored on the flight at ({onIt.x:F1}, {onIt.y:F1})"));
+    }
+
+    /// <summary>The road from the south-west onto the lower stairs of the staircase at the foot -6951.1,3360.4 (as stored on
+    /// the integration build, <see cref="ARoadLaidLaterNeverRunsUnderAStaircasesFlight"/>), the staircase laid
+    /// <paramref name="up"/> higher than it stood.</summary>
+    private static RoadSpatialGrid.PlannedPath OntoTheLowerStairs(float up = 0f)
+    {
+        var points = new (float x, float z, float h)[] { (-15.09f, -7.54f, 36.02f), (-13.15f, -6.57f, 35.12f), (-11.11f, -5.55f, 34.14f),
+            (-9.04f, -4.52f, 33.34f), (-7.00f, -3.50f, 32.48f), (-6.01f, -3.01f, 32.48f), (-5.06f, -2.53f, 32.48f), (-4.15f, -2.07f, 32.48f),
+            (-3.28f, -1.64f, 32.48f), (-2.48f, -1.24f, 32.48f), (-1.74f, -0.87f, 32.48f), (-1.08f, -0.54f, 32.48f), (-0.49f, -0.25f, 32.48f), (0f, 0f, 32.48f) };
+        return new(points.Select(p => new Vector2(p.x, p.z)).ToList(), points.Select(p => p.h + up).ToList(),
+            points.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 40f, false);
+    }
+
+    /// <summary>A road laid later onto a staircase's lower stairs, not its foot, is not refused where a landing fits: the
+    /// flight is cut back from below to the row the road reaches and the road's ground there filled level with that row, the
+    /// road meeting its foot. The south-west road at the foot -6951.1,3360.4 lands on the row whose base stands at 34.48 (two
+    /// metres over the foot), its fill within the cap; the three stairs under it, their two wedges and their cuts go, the staircase's
+    /// record keeps its foot where the road meets it, and the road runs on or under no flight. Generated on flat ground, a
+    /// road from the south-west to the foot lands on the same row: nothing stored on the flight, the road level with the
+    /// row at its new foot.</summary>
+    [Fact]
+    public void ARoadOntoAStaircasesLowerStairsLandsOnTheRowItReaches()
+    {
+        RoadNetworkGenerator.Reset();
+        _scope.WithWorld(new FlatWorld());
+        StairRun standing = JunctionFootRun(0f);
+        StairStructures.Add(standing);
+        StairStructures.MarkStanding(standing);
+        var road = OntoTheLowerStairs();
+        var plans = new List<RoadSpatialGrid.PlannedPath> { road };
+        Assert.Null(RoadNetworkGenerator.MeetingRefusal(plans, out _, out var landing, landOnFlight: true));
+        Assert.NotNull(landing);
+        Assert.Equal(34.477f, landing!.Height, 3);
+        Assert.Equal(5, landing.Removed.Count);
+        foreach (var (p, h) in road.Points.Zip(landing.Heights, (p, h) => (p, h)))
+            Assert.InRange(Mathf.Abs(h - 40f), 0f, RoadConstants.TerrainDeltaMax);
+        // Level with the row where it meets the row's foot.
+        var atFoot = Enumerable.Range(0, road.Points.Count).Where(i => Vector2.Distance(road.Points[i], landing.Foot) <= RoadStairRuns.JoiningStep).ToList();
+        Assert.NotEmpty(atFoot);
+        Assert.All(atFoot, i => Assert.Equal(landing.Height, landing.Heights[i], 3));
+
+        // Its cuts as laid, one under the second stair, one under the sixth (a road far off: the network stands).
+        var far = new List<Vector2> { new(300f, 300f), new(340f, 300f) };
+        RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(far, far.Select(_ => 40f).ToList(), far.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 40f, false));
+        RoadSpatialGrid.CommitCuts(new[] { new Vector3(-0.924f, 32.327f, -0.383f), new Vector3(-9.34f, 36.327f, 1.689f) }, StairLayout.CutRadius * 2f);
+        Assert.Null(RoadNetworkGenerator.MeetingRefusal(plans, out _, out landing, landOnFlight: true));
+
+        RoadNetworkGenerator.LandOnTheFlight(plans, landing!);
+        Assert.True(RoadStairRuns.LayLanding(landing!));
+        // The cut under the stair taken away would dig through the landing's fill: it goes; the one up the flight stays.
+        List<float> Cuts(float x, float z) => RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, z), 0.1f).Where(rp => rp.cutOnly).Select(rp => rp.h).ToList();
+        Assert.Empty(Cuts(-0.924f, -0.383f));
+        Assert.NotEmpty(Cuts(-9.34f, 1.689f));
+        StairRun trimmed = Assert.Single(StairStructures.Runs);
+        Assert.Same(landing.Trimmed, trimmed);
+        Assert.Equal(landing.Foot, trimmed.From);
+        Assert.Equal(standing.To, trimmed.To);
+        Assert.Equal(standing.Pieces.Count - 5, trimmed.Pieces.Count);
+        Assert.DoesNotContain(trimmed.Pieces, p => p.Kind == StructurePieceKind.StairStep && p.Position.y < landing.Height - 0.01f);
+        Assert.False(RoadStairRuns.OnALaidFlight(road.Points, road.Heights, out Vector2 onIt),
+            FormattableString.Invariant($"landed road on the flight at ({onIt.x:F1}, {onIt.y:F1})"));
+        // Saved and read back as cut back.
+        StairRun read = Assert.Single(StairStructures.Parse(StairStructures.Serialize()));
+        Assert.Equal(trimmed.From, read.From);
+        Assert.Equal(trimmed.Pieces.Select(p => p.Position), read.Pieces.Select(p => p.Position));
+        // The cells under the stairs taken away are open to road again.
+        foreach (Vector2 r in landing.Removed.Where(r => Vector2.Distance(r, trimmed.From) > RoadPathfinder.CellSize))
+            Assert.False(StairStructures.Standing(Mathf.RoundToInt(r.x / RoadPathfinder.CellSize), Mathf.RoundToInt(r.y / RoadPathfinder.CellSize)));
+
+        // Generated on flat ground at 40 (the staircase raised to stand on it): the road from the south-west to the foot.
+        RoadNetworkGenerator.Reset();
+        var world = new FlatWorld();
+        _scope.WithWorld(world);
+        SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f });
+        StairRun laid = JunctionFootRun(40f - 32.48f);
+        StairStructures.Add(laid);
+        StairStructures.MarkStanding(laid);
+        RoadNetworkGenerator.GenerateRoad(new Vector2(-60f, -30f), 0f, new Vector2(0f, 0f), 0f, 4f, "to the foot");
+        var stored = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(-6f, 0f, 2f), 20f).Where(rp => rp.IsRoad).ToList();
+        Assert.False(RoadStairRuns.OnALaidFlight(stored.Select(rp => rp.p).ToList(), stored.Select(rp => rp.h).ToList(), out onIt),
+            FormattableString.Invariant($"road stored on the flight at ({onIt.x:F1}, {onIt.y:F1})"));
+        // It landed on the same row, 34.48 + 7.52: the staircase cut back to it and the road stored level with it at its foot.
+        Assert.Equal(1, RoadStairRuns.FlightLandings);
+        StairRun cutBack = Assert.Single(StairStructures.Runs);
+        Assert.Equal(laid.Pieces.Count - 5, cutBack.Pieces.Count);
+        var footRoad = stored.Where(rp => Vector2.Distance(rp.p, cutBack.From) <= RoadStairRuns.JoiningStep).ToList();
+        Assert.NotEmpty(footRoad);
+        Assert.All(footRoad, rp => Assert.Equal(42f, rp.h, 2));
+    }
+
+    /// <summary>The staircase's own road at the foot -6951.1,3360.4, laid before the road from the south-west: from the
+    /// east to the foot, at the foot's height.</summary>
+    private static RoadSpatialGrid.PlannedPath StaircasesOwnRoad()
+    {
+        var own = new List<Vector2> { new(10.17f, 5.09f), new(6.78f, 3.39f), new(3.39f, 1.70f), new(0f, 0f) };
+        return new RoadSpatialGrid.PlannedPath(own, own.Select(_ => 32.48f).ToList(), own.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 11.4f, false);
+    }
+
+    /// <summary>At -6952,3360 the staircase's own road meets its old foot about two metres under the row the south-west road
+    /// lands on. That road is raised to the landing as well, its end level with the row on the landing's ground and eased
+    /// down to where it was at the road grade, within the earthwork cap: both roads end level on the landing, and the
+    /// network and the staircase save and read back so.</summary>
+    [Fact]
+    public void TheRoadAtTheOldFootIsRaisedToTheLandingToo()
+    {
+        RoadNetworkGenerator.Reset();
+        _scope.WithWorld(new FlatWorld());
+        StairRun standing = JunctionFootRun(0f);
+        StairStructures.Add(standing);
+        StairStructures.MarkStanding(standing);
+        RoadSpatialGrid.Commit(StaircasesOwnRoad());
+        var road = OntoTheLowerStairs();
+        var plans = new List<RoadSpatialGrid.PlannedPath> { road };
+        Assert.Null(RoadNetworkGenerator.MeetingRefusal(plans, out _, out var landing, landOnFlight: true));
+        Assert.NotNull(landing);
+        Assert.Equal(34.477f, landing!.Height, 3);
+        // The old road's end at the old foot goes up the two metres; on along it, eased at the road grade.
+        Assert.Contains(landing.Others, o => o.at.p == default(Vector2) && Mathf.Abs(o.to - landing.Height) < 1e-3f);
+        foreach (var (at, to) in landing.Others)
+        {
+            float off = landing.Removed.Min(r => Vector2.Distance(r, at.p));
+            Assert.True(to >= at.h && to <= landing.Height + 1e-3f, FormattableString.Invariant($"the old road at {at.p} goes from {at.h:F2} to {to:F2}"));
+            Assert.True(Mathf.Abs(to - 40f) <= RoadConstants.TerrainDeltaMax);
+            if (off >= RoadStairRuns.OnRoad) Assert.True(landing.Height - to <= RoadGrade.Configured * Vector2.Distance(at.p, default) + 1e-3f, FormattableString.Invariant($"the old road at {at.p} stands {landing.Height - to:F2} under the landing"));
+        }
+
+        RoadNetworkGenerator.LandOnTheFlight(plans, landing);
+        Assert.True(RoadStairRuns.LayLanding(landing));
+        RoadSpatialGrid.Commit(road);
+        // Both roads end level on the landing: every stored road point on its ground stands at the row's height.
+        void AssertLevel(string when)
+        {
+            var onLanding = landing.Removed.SelectMany(r => RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(r.x, 0f, r.y), 0.5f))
+                .Concat(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(0f, 0f, 0f), 0.1f)).Where(rp => rp.IsRoad).ToList();
+            Assert.NotEmpty(onLanding);
+            Assert.All(onLanding, rp => Assert.True(Mathf.Abs(rp.h - landing.Height) < 0.01f,
+                FormattableString.Invariant($"{when}: road at {rp.p} stands {rp.h:F2}, the landing {landing.Height:F2}")));
+            var old = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(3.39f, 0f, 1.70f), 0.1f).Where(rp => rp.IsRoad).ToList();
+            Assert.NotEmpty(old);
+            Assert.All(old, rp => Assert.True(rp.h > 32.48f + 0.1f, FormattableString.Invariant($"{when}: the old road at {rp.p} still at {rp.h:F2}")));
+        }
+        AssertLevel("laid");
+        // Saved and read back.
+        byte[]? roads = RoadSpatialGrid.SerializeAllRoadPoints();
+        byte[] stairs = StairStructures.Serialize();
+        RoadSpatialGrid.Clear();
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(roads!));
+        AssertLevel("read back");
+        StairRun read = Assert.Single(StairStructures.Parse(stairs));
+        Assert.Equal(landing.Foot, read.From);
+        Assert.Equal(landing.Trimmed.Pieces.Select(p => p.Position), read.Pieces.Select(p => p.Position));
+    }
+
+    /// <summary>A landing whose fill would pass the earthwork cap, or that would fill into water or a place, is not laid: the
+    /// road is refused as before. The south-west road onto the lower stairs at -6951.1,3360.4: on ground at 50 every row's
+    /// landing is past the 8 m cap (with no cap, the row at 34.48 is taken); on ground at 30, under the shallows, and on
+    /// ground at 40 with a place over the stairs, or with the staircase's own road at its foot under the landing's ground
+    /// and a place over that road where it would be raised, none is laid; with nothing in the way, one is.</summary>
+    [Fact]
+    public void ALandingPastTheCapOrIntoWaterOrAPlaceIsRefused()
+    {
+        RoadNetworkGenerator.Reset();
+        _scope.WithWorld(new FlatWorld());
+        StairRun standing = JunctionFootRun(0f);
+        StairStructures.Add(standing);
+        StairStructures.MarkStanding(standing);
+        var road = OntoTheLowerStairs();
+        RoadStairRuns.FlightLanding? Landing(float ground, float cap) => RoadStairRuns.LandingOnto(road.Points, road.Heights, (_, _) => ground, cap);
+        Assert.NotNull(Landing(40f, RoadConstants.TerrainDeltaMax));
+        Assert.Null(Landing(50f, RoadConstants.TerrainDeltaMax));
+        Assert.Equal(34.477f, Landing(50f, float.PositiveInfinity)!.Height, 3);
+        Assert.Null(Landing(30f, float.PositiveInfinity));
+        try
+        {
+            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(-3f, -1.5f), 3f) });
+            Assert.Null(Landing(40f, float.PositiveInfinity));
+            Assert.Equal(RoadNetworkGenerator.OnAFlightRefusal, RoadNetworkGenerator.MeetingRefusal(new() { road }, out _, out var none, landOnFlight: true));
+            Assert.Null(none);
+        }
+        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
+        // Nor where the staircase's own road comes to its foot at the foot's height and cannot be raised to the landing: a
+        // place stands over it where it would be.
+        RoadSpatialGrid.Commit(StaircasesOwnRoad());
+        Assert.NotNull(Landing(40f, RoadConstants.TerrainDeltaMax));
+        try
+        {
+            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(4f, 2f), 1.5f) });
+            Assert.Null(Landing(40f, RoadConstants.TerrainDeltaMax));
+        }
+        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
+        // Nothing laid: the staircase stands as it was.
+        Assert.Same(standing, Assert.Single(StairStructures.Runs));
+    }
+
+    /// <summary>A boss's entrance is reached only by a road onto its own landing (at the Queen's entrance
+    /// 7552,3392: a passing road counted as reaching it); any other place still by a road passing within reach.</summary>
+    [Fact]
+    public void ABossEntranceIsReachedOnlyAtItsOwnLanding()
+    {
+        Assert.True(RoadNetworkGenerator.OwnLandingOnly("Mistlands_DvergrBossEntrance1"));
+        Assert.False(RoadNetworkGenerator.OwnLandingOnly("Crypt4"));
+    }
+
     /// <summary>A narrow valley along z: faces of 1.2 down to a bottom 5 m wide at x = 0, 24 m under the flats either side.</summary>
     private sealed class SharpValleyWorld : WorldGenerator
     {
@@ -699,11 +966,12 @@ public class RoadStairTests : IDisposable
 
     /// <summary>Through a narrow valley the two staircases meet at their feet on a shared floor at the bottom, with no road
     /// between them (the same rule applies to valleys); laid as before, the
-    /// second set off from the first's foot point.</summary>
+    /// second set off from the first's foot point. Where the second, kept within the walkway cap, comes back close enough
+    /// higher up, the valley is spanned there instead, the second setting off from the first's cut-back foot.</summary>
     [Fact]
     public void TwoStaircasesThroughASharpValleyMeetOnASharedFloor()
     {
-        string Lay(out int shared)
+        string Lay(out int shared, out int spanned)
         {
             RoadNetworkGenerator.Reset();
             var world = new SharpValleyWorld();
@@ -711,19 +979,28 @@ public class RoadStairTests : IDisposable
             SetPathfinder(new RoadPathfinder(world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
             bool built = RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, 0f), 0f, new Vector2(80f, 0f), 0f, 4f, "valley");
             shared = RoadStairRuns.ValleysMet;
+            spanned = RoadStairRuns.ValleysSpanned;
             var low = new List<Vector2>();
             for (float x = -12f; x <= 12f; x += 1f) for (float z = -30f; z <= 30f; z += 1f)
                 if (world.GetHeight(x, z) < 50f && RoadSpatialGrid.TryGetRoadWithin(new Vector2(x, z), 0.5f, out Vector2 at)) low.Add(at);
             Assert.True(built, "not built");
             return $"{StairStructures.Runs.Count} staircase(s), road in the valley at {string.Join(" ", low.Distinct().Take(6))}";
         }
-        string laid = Lay(out int met);
+        string laid = Lay(out int met, out int spans);
         Assert.True(met >= 1, "not met on a shared floor: " + laid);
         // Snapped: the shared floor straight on from the first's foot, its heading the first flight's turned round (the two runs
         // must line up where they connect in the valley).
         StairRun downRun = StairStructures.Runs[0], upRun = StairStructures.Runs[1];
         StructurePiece footStair = downRun.Pieces.Where(p => p.Kind == StructurePieceKind.StairStep).OrderBy(p => p.Position.y).First();
         var footAt = new Vector2(footStair.Position.x, footStair.Position.z);
+        if (spans >= 1)
+        {
+            // Spanned: the second's first piece on the first's foot, edge to edge (the span's own joins: ValleySpanRoadTests).
+            Assert.InRange(upRun.Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport)
+                .Min(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), footAt)), 0f, StairLayout.PieceRun + 0.3f);
+            Assert.EndsWith("at ", laid);
+            return;
+        }
         StructurePiece floor = upRun.Pieces.Where(p => p.Kind == StructurePieceKind.StairFloor)
             .OrderBy(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), footAt)).First();
         var at = new Vector2(floor.Position.x, floor.Position.z);
@@ -744,7 +1021,7 @@ public class RoadStairTests : IDisposable
     [Fact]
     public void ABossEntrancesLandingIsAtTheFootOfItsOwnStairs()
     {
-        var flat = new LevelOp(0f, 6.5f, 1f, 15f, false, 24f, 3f);
+        var flat = new LevelOp(0f, 6.5f, 1f, 15f, false, 24f, 3f, 1);
         var centre = new Vector2(7552f, 3392f);
         PlacedSiteShape queen = PlacedSiteShape.Of(centre, 315f, flat, 32f, null, (x, z) => 46f, prefab: "Mistlands_DvergrBossEntrance1");
         Assert.True(Vector2.Distance(queen.Landing, new Vector2(7538f, 3409f)) < 1f, $"landing at {queen.Landing}");
@@ -755,13 +1032,15 @@ public class RoadStairTests : IDisposable
 
     /// <summary>A Queen approach: from the road's end at 41.5 over a dip to 39.5 and up to the entrance at 46,
     /// laid as stairs down, a floor and stairs up; it should be a straight run of floors over the dip. A valley no
-    /// deeper than RoadStairRuns.ShallowDip under both ends is no turn: the approach crosses it level.</summary>
+    /// deeper than the walkway cap under both ends is no turn: the approach crosses it level, on columns.</summary>
     [Fact]
-    public void AnApproachCrossesAShallowDipLevel()
+    public void AnApproachCrossesADipWithinTheWalkwayCapLevel()
     {
         float Ground(float x, float z) => x < 4f ? 41.5f - x * 0.4f : x < 8f ? 39.9f : Mathf.Min(46f, 39.9f + (x - 8f) * 0.8f);
         Assert.Null(RoadStairRuns.Turn(new Vector2(0f, 0f), new Vector2(20f, 0f), Ground));
-        float Deep(float x, float z) => x < 4f ? 41.5f - x * 1.2f : x < 8f ? 36.5f : Mathf.Min(46f, 36.5f + (x - 8f) * 1.2f);
+        float Within(float x, float z) => x < 4f ? 41.5f - x * 1.2f : x < 8f ? 36.5f : Mathf.Min(46f, 36.5f + (x - 8f) * 1.2f);
+        Assert.Null(RoadStairRuns.Turn(new Vector2(0f, 0f), new Vector2(20f, 0f), Within));
+        float Deep(float x, float z) => x < 4f ? 41.5f - x * 1.75f : x < 8f ? 34.5f : Mathf.Min(46f, 34.5f + (x - 8f) * 1.2f);
         Assert.NotNull(RoadStairRuns.Turn(new Vector2(0f, 0f), new Vector2(20f, 0f), Deep));
     }
 }

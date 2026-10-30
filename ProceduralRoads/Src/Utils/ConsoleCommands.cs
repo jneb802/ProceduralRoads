@@ -21,7 +21,7 @@ namespace ProceduralRoads;
 public static class ConsoleCommands
 {
     /// <summary>PROCEDURALROADS_DEV_COMMANDS: register the developer commands (<see cref="RegisterDevCommands"/>,
-    /// <see cref="StairCommands"/>, <see cref="ViaductCommands"/>). Off by default.</summary>
+    /// <see cref="StairCommands"/>, <see cref="SiteCommands"/>, <see cref="ViaductCommands"/>). Off by default.</summary>
     internal static readonly bool DevCommands = DebugSwitches.Flag("DEV_COMMANDS", false);
 
     private static bool s_commandsRegistered = false;
@@ -53,6 +53,7 @@ public static class ConsoleCommands
         {
             RegisterDevCommands();
             StairCommands.Register();
+            SiteCommands.Register();
             ViaductCommands.Register();
         }
         new Terminal.ConsoleCommand(
@@ -273,7 +274,7 @@ public static class ConsoleCommands
 
         new Terminal.ConsoleCommand(
             "road_bridges",
-            "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are.",
+            "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are. road_bridges respawn older does so only for the crossing sites an older bridge layout built, solving them again in this build's layout.",
             (args) => { if (!GenerationBusy(args)) BridgesCommand(args); },
             isCheat: true,
             isNetwork: false,
@@ -739,7 +740,8 @@ public static class ConsoleCommands
 
     /// <summary>road_bridges reports the plans; road_bridges respawn destroys every
     /// spawned bridge piece and spawns the current plans again into the loaded
-    /// zones (fixture iteration).</summary>
+    /// zones (fixture iteration); road_bridges respawn older, only the sites an
+    /// older layout built.</summary>
     private static void BridgesCommand(Terminal.ConsoleEventArgs args)
     {
         if (!RoadNetworkGenerator.RoadsAvailable)
@@ -750,8 +752,11 @@ public static class ConsoleCommands
 
         if (args.Length > 1 && args[1] == "respawn")
         {
-            (int destroyed, int zones) = StructurePlacement.RespawnFromPlans();
-            args.Context.AddString($"Destroyed {destroyed} bridge pieces; spawned the current plans into {zones} zone(s). Zones the world has not generated yet get theirs when it does.");
+            bool older = args.Length > 2 && args[2] == "older";
+            int stale = older ? BuiltBridges.OlderLayout().Count : 0;
+            (int destroyed, int zones) = StructurePlacement.RespawnFromPlans(older);
+            args.Context.AddString((older ? $"{stale} site(s) built by a layout older than {BridgeLayout.LayoutVersion}: " : "") +
+                $"Destroyed {destroyed} bridge pieces; spawned the current plans into {zones} zone(s). Zones the world has not generated yet get theirs when it does.");
             return;
         }
 
@@ -810,20 +815,27 @@ public static class ConsoleCommands
         int seed = WorldGenerator.instance.GetSeed();
         if (site.Kind == CrossingKind.Bridge && BridgeStructures.KitFor(site, WorldGenerator.instance) == BridgeStructures.Kit.DvergrViaduct)
         {
-            // The wooden kit's repair diagnostic does not describe a viaduct.
+            // The railed kits' repair diagnostic does not describe a viaduct.
             args.Context.AddString("The nearest crossing is a Dvergr viaduct: " + DvergrViaduct.Describe(site, WorldGenerator.instance) +
                 $"; {DvergrViaduct.Solve(site, WorldGenerator.instance, seed).Count} of {DvergrViaduct.SolveComplete(site, WorldGenerator.instance, seed).Count} pieces stand.");
             return;
         }
         if (BridgeStructures.KitFor(site, WorldGenerator.instance) == BridgeStructures.Kit.DvergrWood)
         {
-            // The wooden kit's repair diagnostic describes its own plates and poles, not the Dvergr pier's planks and piles.
+            // The railed kits' repair diagnostic describes their own plates and poles, not the Dvergr pier's planks and piles.
             args.Context.AddString("The nearest crossing is a Dvergr wood bridge: " + DvergrWoodBridge.Describe(site, WorldGenerator.instance) +
                 $"; {DvergrWoodBridge.Solve(site, WorldGenerator.instance, seed).Count} of {DvergrWoodBridge.SolveComplete(site, WorldGenerator.instance, seed).Count} pieces stand.");
             return;
         }
-        List<StructurePiece> complete = BridgeLayout.SolveComplete(site, WorldGenerator.instance, seed);
-        List<StructurePiece> shipped = BridgeLayout.Solve(site, WorldGenerator.instance, seed);
+        BridgeStructures.Kit? kit = BridgeStructures.KitFor(site, WorldGenerator.instance);
+        BridgeLayout.RailedKit? railed = BridgeStructures.RailedKitOf(kit);
+        if (railed == null && kit != BridgeStructures.Kit.Stone)
+        {
+            args.Context.AddString($"The nearest crossing is a {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")} laid as road: no pieces to repair.");
+            return;
+        }
+        List<StructurePiece> complete = BridgeStructures.SolveComplete(site, WorldGenerator.instance, seed);
+        List<StructurePiece> shipped = BridgeStructures.PiecesOf(site, WorldGenerator.instance, seed);
 
         (float dropFrom, float dropTo) = BridgeLayout.BankDrop(site, WorldGenerator.instance);
         (bool nearLands, bool farLands) = BridgeLayout.StairRunsLand(site, WorldGenerator.instance);
@@ -853,7 +865,8 @@ public static class ConsoleCommands
                 continue;
             // Two reasons a piece is missing, reported apart: the navigation
             // gap is left open on purpose for boats, the rest is ruin.
-            bool inGap = BridgeLayout.InNavigationGap(site, site.Along(new Vector2(piece.Position.x, piece.Position.z)));
+            // The stone kit's complete plan leaves its river opening open too (BridgeLayout.StoneNavigationBays).
+            bool inGap = railed != null && BridgeLayout.InRailedNavigationGap(site, WorldGenerator.instance, railed, site.Along(new Vector2(piece.Position.x, piece.Position.z)));
             if (inGap) gap++; else ruined++;
             lines.Add(string.Format(CultureInfo.InvariantCulture,
                 "REPAIR {0} {1} {2:F3} {3:F3} {4:F3} yaw={5:F2} pitch={6:F2} why={7}",

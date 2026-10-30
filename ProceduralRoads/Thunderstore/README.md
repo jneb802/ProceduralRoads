@@ -60,7 +60,7 @@ All commands require cheats enabled (`devcommands`).
 |---------|-------------|
 | `road_generate` | Generate roads for an existing world. Use after adding mod to an existing save. |
 | `road_pins` | Place map pins at road start points for visualization. |
-| `road_islands` | Detect islands and place pins at their centers. Optional args: `[cellSize] [minCells]` |
+| `road_islands` | Detect islands and place pins at their centers. |
 | `road_clearpins` | Remove all map pins added by ProceduralRoads. |
 | `road_debug` | Show road point info near player position (for troubleshooting terrain issues). |
 

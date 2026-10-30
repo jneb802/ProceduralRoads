@@ -119,6 +119,8 @@ private static void RegisterRoadLocation(string locationName)
 - Register locations during mod initialization (Awake/Start)
 - Location names must match the prefab name exactly (e.g., `Runestone_Boars`, not `Runestone Boars`)
 - Both API registrations and config entries are merged at generation time
+- A registered or configured place that shows a map icon (a village, a port) can be a destination; its icon stays
+  off the map until a player comes near enough for the game to place it. A unique place (a trader) never is
 
 ## Development
 

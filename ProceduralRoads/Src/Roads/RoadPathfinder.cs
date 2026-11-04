@@ -76,11 +76,114 @@ public class RoadPathfinder
     /// <summary>The viaduct jumps of the last path found, bank cell to bank cell, in path order.</summary>
     public List<(Vector2 from, Vector2 to)> LastViaductJumps { get; } = new();
 
+    /// <summary>
+    /// Whether a road may climb ground too steep for it on a staircase. A step
+    /// steeper than <see cref="StairMinGrade"/> (and no steeper than
+    /// <see cref="StairMaxGrade"/>) may be bought as a stair step instead of
+    /// road: <see cref="StairCostPerMeterClimbed"/> for every metre it climbs,
+    /// and <see cref="StairCostFixed"/> where a staircase starts, varied a
+    /// little from site to site so a world gets long traverses, staircases and
+    /// both. The steps bought are kept in
+    /// <see cref="LastStairSteps"/>; the generator lays them with StairLayout.
+    /// The levers are "Stairs/Enabled", "Stairs/CostFixed" and "Stairs/CostPerMeterClimbed".
+    /// </summary>
+    public bool Stairs = ConfiguredStairs;
+    public static bool ConfiguredStairs = true;
+    public float StairCostFixed = RoadConstants.DefaultStairCostFixed;
+    public float StairCostPerMeterClimbed = RoadConstants.DefaultStairCostPerMeterClimbed;
     /// <summary>Largest step between a network road's surface and the ground a road joining it
     /// arrives on (<see cref="RoadSpatialGrid.TryGetRoadAtGradeWithin"/>). 0 joins anywhere:
     /// settable for tests (the unit suite's plain roads).</summary>
     internal static float JunctionStep = DefaultJunctionStep;
     public const float DefaultJunctionStep = 1.5f;
+    /// <summary>Gentler than this a road is fine and a staircase is not offered. 0.25: over five RoadSeed worlds (grade sweep) it lays 261 staircases where 0.30 laid 146, and
+    /// connects 8 more destinations; the road cap stays 0.35 (lower caps lose destinations). More stairs
+    /// are wanted within reason.</summary>
+    public const float StairMinGrade = 0.25f;
+    /// <summary>Steeper than this between two cells no staircase is offered where its stairs
+    /// stand on columns (wood: Meadows and the Black Forest's wood): the layout climbs a 1:1 face with
+    /// switchbacks, not a cliff. Where they can be held out from the face (stone, black marble:
+    /// StairKit.Cantilever), up to <see cref="StairCantileverMaxGrade"/>.</summary>
+    public const float StairMaxGrade = 1f;
+    /// <summary>
+    /// Steeper than <see cref="StairMaxGrade"/>, a staircase whose stairs can be held out from the
+    /// face on cantilevers (a wall almost a sheer cliff can still be built on) is offered up to this grade between two
+    /// cells, its price per metre climbed rising from 1 times at <see cref="StairMaxGrade"/> to
+    /// <see cref="SteepStairPriceMax"/> times here (over a certain grade it is more
+    /// expensive but still possible: cheaper lesser grades first, then up to a maximum).
+    /// Between two 8 m cells 2 is 16 m of climb: the flights cross the face, turning on the ground
+    /// gentler round it (StairLayout's tree-well pricing).
+    /// 3 (24 m) bought steps straight up faces the layout then could not lay (through a place), and
+    /// the retry with those cells closed found no way: Hildir's cave (-2304,1536) lost its 106 m
+    /// staircase. At 2 it keeps it, and reaches one more place on RoadSeedA-E than 1:1 does.
+    /// </summary>
+    public const float StairCantileverMaxGrade = 2f;
+    public const float SteepStairPriceMax = 2.5f;
+
+    /// <summary>The steepest step a staircase is offered on at <paramref name="at"/> in <paramref name="biome"/>: what the kit
+    /// built there can hold. One owner, the kit (<see cref="StairKit.ForSite"/>): stone and black marble
+    /// cantilever, so up to <see cref="StairCantileverMaxGrade"/>; wood (the Meadows, the Black Forest's wood share) stands on
+    /// columns, so <see cref="StairMaxGrade"/>. The Black Forest's kit is drawn per 4 m cell, so a step there is offered the
+    /// steeper grade only where stone would be built.</summary>
+    internal float StairGradeLimit(Heightmap.Biome biome, Vector2 at) =>
+        StairKit.ForSite(biome, at, m_worldGen.GetSeed()).Cantilever != null ? StairCantileverMaxGrade : StairMaxGrade;
+
+    /// <summary>Times the price per metre climbed for a stair step this steep.</summary>
+    public static float SteepStairFactor(float slope) =>
+        Mathf.Lerp(1f, SteepStairPriceMax, Mathf.Clamp01((slope - StairMaxGrade) / (StairCantileverMaxGrade - StairMaxGrade)));
+
+    /// <summary>The site wobble on <see cref="StairCostFixed"/>: from (1 - this) to (1 + this) times it.</summary>
+    public const float StairCostWobble = 0.3f;
+
+    /// <summary>The stair steps of the last path found, from cell centre to cell centre.</summary>
+    public List<(Vector2 from, Vector2 to)> LastStairSteps { get; } = new();
+
+    /// <summary>Cells closed to stairs for the road being built: a staircase the search bought
+    /// there could not be laid, so the road is searched again with stairs open everywhere else
+    /// (RoadNetworkGenerator.GenerateRoad). Cleared, with <see cref="m_stairOpen"/>, when that road is done.</summary>
+    private readonly HashSet<Vector2i> m_noStairs = new(RoadGridComparer.Instance);
+    public int NoStairCells => m_noStairs.Count;
+    public void ClearNoStairs() { m_noStairs.Clear(); m_stairOpen.Clear(); m_noViaducts.Clear(); }
+
+    /// <summary>Viaduct jumps (from cell, to cell, either way) the road being built may not buy: one whose end the road as
+    /// planned did not meet (StructureEnds; RoadNetworkGenerator), searched again without it. Cleared with the stair closings
+    /// when that road is done.</summary>
+    private readonly HashSet<(Vector2i, Vector2i)> m_noViaducts = new();
+    public int NoViaducts => m_noViaducts.Count / 2;
+    public void BanViaduct(Vector2 from, Vector2 to)
+    {
+        Vector2i a = WorldToGrid(from), b = WorldToGrid(to);
+        m_noViaducts.Add((a, b));
+        m_noViaducts.Add((b, a));
+    }
+
+    /// <summary>Cells opened to stairs for the road being built: its switchback turns there were
+    /// too close to fit their curves, so the road is searched again climbing that stretch on stairs
+    /// and back to road beyond it. In them a staircase is offered on any step steep
+    /// enough for one, not only where road cannot climb, with no entry price and at
+    /// <see cref="OpenStairPrice"/> of the rest: at half its price, entry included, the search kept
+    /// the switchbacks it had (the 1000 entry outweighs a 24 m climb of road).</summary>
+    private readonly HashSet<Vector2i> m_stairOpen = new(RoadGridComparer.Instance);
+    public int OpenStairCells => m_stairOpen.Count;
+    /// <summary>A staircase's price in cells opened to stairs, entry aside, as a share of its price elsewhere.</summary>
+    internal const float OpenStairPrice = 0.5f;
+    private bool OpenToStairsAt(Vector2i from, Vector2i to) =>
+        m_stairOpen.Count > 0 && (m_stairOpen.Contains(from) || m_stairOpen.Contains(to));
+    /// <summary>Open the cells of these points, and <paramref name="reachCells"/> round each, to stairs.</summary>
+    public void OpenToStairs(IEnumerable<Vector2> points, int reachCells) => MarkCells(m_stairOpen, points, reachCells);
+    /// <summary>Close the cells of these points, and <paramref name="reachCells"/> round each, to stairs.</summary>
+    public void CloseToStairs(IEnumerable<Vector2> points, int reachCells) => MarkCells(m_noStairs, points, reachCells);
+
+    private void MarkCells(HashSet<Vector2i> cells, IEnumerable<Vector2> points, int reachCells)
+    {
+        foreach (Vector2 p in points)
+        {
+            Vector2i c = WorldToGrid(p);
+            for (int dx = -reachCells; dx <= reachCells; dx++)
+                for (int dz = -reachCells; dz <= reachCells; dz++)
+                    cells.Add(new Vector2i(c.x + dx, c.y + dz));
+        }
+    }
 
     /// <summary>Ground a crossing may land on: the shallow-water line plus the bank clearance.</summary>
     public const float LandingFloor = RoadConstants.ShallowWaterHeight + RoadConstants.BankClearance;
@@ -180,6 +283,7 @@ public class RoadPathfinder
         m_searchEnd = end;
 
         LastPathCost = 0;
+        LastStairSteps.Clear();
         LastViaductJumps.Clear();
         Vector2i startGrid = WorldToGrid(start);
         Vector2i endGrid = WorldToGrid(end);
@@ -187,19 +291,15 @@ public class RoadPathfinder
         if (startGrid == endGrid)
             return new List<Vector2> { start, end };
 
-        SortedSet<(float priority, Vector2i pos)> openSet = new SortedSet<(float, Vector2i)>(
-            Comparer<(float priority, Vector2i pos)>.Create((a, b) =>
-            {
-                int cmp = a.priority.CompareTo(b.priority);
-                if (cmp != 0) return cmp;
-                cmp = a.pos.x.CompareTo(b.pos.x);
-                if (cmp != 0) return cmp;
-                return a.pos.y.CompareTo(b.pos.y);
-            }));
-
-        Dictionary<Vector2i, float> gCosts = new Dictionary<Vector2i, float>(RoadGridComparer.Instance);
-        Dictionary<Vector2i, Vector2i> cameFrom = new Dictionary<Vector2i, Vector2i>(RoadGridComparer.Instance);
-        HashSet<Vector2i> closedSet = new HashSet<Vector2i>(RoadGridComparer.Instance);
+        SearchState state = RentSearchState();
+        try
+        {
+        OpenHeap openSet = state.Open;
+        Dictionary<Vector2i, float> gCosts = state.GCosts;
+        Dictionary<Vector2i, Vector2i> cameFrom = state.CameFrom;
+        HashSet<Vector2i> closedSet = state.Closed;
+        // The cells reached on a staircase, and which way it was going there (+1 up, -1 down).
+        Dictionary<Vector2i, int> byStair = state.ByStair;
         // The cells reached by a viaduct's jump.
         HashSet<Vector2i> byViaduct = state.ByViaduct;
 
@@ -218,7 +318,7 @@ public class RoadPathfinder
             if (currentPos == endGrid)
             {
                 LastPathCost = gCosts[currentPos];
-                return ReconstructPath(cameFrom, currentPos, start, end);
+                return ReconstructPath(cameFrom, byStair, byViaduct, currentPos, start, end);
             }
 
             closedSet.Add(currentPos);
@@ -233,7 +333,7 @@ public class RoadPathfinder
                 if (closedSet.Contains(neighborPos))
                     continue;
 
-                float moveCost = GetMoveCost(currentPos, neighborPos, i);
+                float moveCost = GetMoveCost(currentPos, neighborPos, i, arriving, out int stair);
                 if (!float.IsPositiveInfinity(moveCost) && moveCost < RiverPenalty)
                     moveCost += TurnCost(cameFrom, currentPos, i);
                 // Refused outright, not merely dear: kept apart from the price
@@ -252,6 +352,7 @@ public class RoadPathfinder
                         continue;
                     neighborPos = landing;
                     moveCost = crossingCost;
+                    stair = 0;
                 }
 
                 float tentativeG = currentG + moveCost;
@@ -259,6 +360,7 @@ public class RoadPathfinder
                 if (!gCosts.TryGetValue(neighborPos, out float existingG) || tentativeG < existingG)
                 {
                     cameFrom[neighborPos] = currentPos;
+                    if (stair != 0) byStair[neighborPos] = stair; else byStair.Remove(neighborPos);
                     byViaduct.Remove(neighborPos);
                     gCosts[neighborPos] = tentativeG;
                     openSet.Push((tentativeG + Heuristic(neighborPos, endGrid), neighborPos));
@@ -313,6 +415,7 @@ public class RoadPathfinder
         m_searchStart = start;
         m_searchEnd = null;
         AlreadyOnNetwork = false;
+        LastStairSteps.Clear();
         LastViaductJumps.Clear();
         Vector2i startGrid = WorldToGrid(start);
         SearchState state = RentSearchState();
@@ -376,39 +479,72 @@ public class RoadPathfinder
             return null;
         }
 
-        SortedSet<(float priority, Vector2i pos)> openSet = new SortedSet<(float, Vector2i)>(
-            Comparer<(float priority, Vector2i pos)>.Create((a, b) =>
-            {
-                int cmp = a.priority.CompareTo(b.priority);
-                if (cmp != 0) return cmp;
-                cmp = a.pos.x.CompareTo(b.pos.x);
-                if (cmp != 0) return cmp;
-                return a.pos.y.CompareTo(b.pos.y);
-            }));
-        Dictionary<Vector2i, float> gCosts = new(RoadGridComparer.Instance);
-        Dictionary<Vector2i, Vector2i> cameFrom = new(RoadGridComparer.Instance);
-        HashSet<Vector2i> closedSet = new(RoadGridComparer.Instance);
-        HashSet<Vector2i> byViaduct = new(RoadGridComparer.Instance);
+        OpenHeap openSet = state.Open;
+        Dictionary<Vector2i, float> gCosts = state.GCosts;
+        Dictionary<Vector2i, Vector2i> cameFrom = state.CameFrom;
+        HashSet<Vector2i> closedSet = state.Closed;
+        Dictionary<Vector2i, int> byStair = state.ByStair;
+        HashSet<Vector2i> byViaduct = state.ByViaduct;
 
-        openSet.Add((NetworkHeuristic(startGrid), startGrid));
+        openSet.Push((NetworkHeuristic(startGrid), startGrid));
         gCosts[startGrid] = 0f;
         int iterations = 0;
-
-        while (openSet.Count > 0 && iterations < MaxIterations)
+        // A junction is judged per arrival, not per cell: the step into a network cell that arrives level with
+        // the road there may end the search there (a goal, kept here until it is the cheapest thing left);
+        // one arriving off grade may not (it is refused, not priced), and the cell stays open to every other
+        // direction (off-grade arrival directions are disallowed, not priced; a different arrival direction that is
+        // on grade is still allowed).
+        // Judged when the cell was popped, its cheapest arrival decided for all of them, and the cell was
+        // closed: a level arrival from another neighbour was never tried.
+        (float priority, Vector2i pos) goalKey = default;
+        bool haveGoal = false;
+        float goalCost = 0f;
+        Vector2i goalBefore = default;
+        Vector2 goalJunction = default;
+        int goalStair = 0;
+        // Network cells already found to hold a junction (or not), so the road grid is read once per cell.
+        var joins = state.Joins;
+        Vector2? JoinAt(Vector2i cell)
         {
+            if (!joins.TryGetValue(cell, out Vector2? at))
+                joins[cell] = at = Join(cell, out Vector2 junction) ? junction : null;
+            return at;
+        }
+        // Whether the path to `from` already passes through `cell`: arriving at it again would be a loop.
+        bool OnPathTo(Vector2i from, Vector2i cell)
+        {
+            for (Vector2i c = from; ; c = cameFrom[c])
+            {
+                if (RoadGridComparer.Instance.Equals(c, cell)) return true;
+                if (!cameFrom.ContainsKey(c)) return false;
+            }
+        }
+
+        List<Vector2> TakeGoal()
+        {
+            LastPathCost = goalCost;
+            cameFrom[goalKey.pos] = goalBefore;
+            if (goalStair != 0) byStair[goalKey.pos] = goalStair; else byStair.Remove(goalKey.pos);
+            byViaduct.Remove(goalKey.pos); // the goal is reached by a step or a crossing, never by a viaduct's jump
+            return ReconstructPath(cameFrom, byStair, byViaduct, goalKey.pos, start, goalJunction);
+        }
+
+        while (iterations < MaxIterations)
+        {
+            bool open = openSet.TrimClosed(closedSet);
+            if (haveGoal && (!open || OpenHeap.Compare(goalKey, openSet.Min) <= 0))
+                return TakeGoal();
+            if (openSet.Count == 0) break;
             iterations++;
             var current = openSet.Min;
             openSet.Remove(current);
             Vector2i currentPos = current.pos;
 
-            // At the network, and arriving level with it: the cell before the junction, within the
-            // band the new road is held to the network's height over, at grade too (the junctions
-            // still pulled furthest were roads arriving over sloping ground).
-            if (Join(currentPos, out Vector2 junction)
-                && (JunctionStep <= 0f || !cameFrom.TryGetValue(currentPos, out Vector2i before) || ArrivesLevel(junction, before)))
+            // The start itself at the network (no arrival to judge), or the plain rule without a junction step.
+            if ((JunctionStep <= 0f || !cameFrom.ContainsKey(currentPos)) && JoinAt(currentPos) is Vector2 junction)
             {
                 LastPathCost = gCosts.TryGetValue(currentPos, out float cost) ? cost : 0f;
-                return ReconstructPath(cameFrom, currentPos, start, junction);
+                return ReconstructPath(cameFrom, byStair, byViaduct, currentPos, start, junction);
             }
 
             closedSet.Add(currentPos);
@@ -419,10 +555,12 @@ public class RoadPathfinder
             for (int i = 0; i < Directions.Length; i++)
             {
                 Vector2i neighborPos = new Vector2i(currentPos.x + Directions[i].x, currentPos.y + Directions[i].y);
-                if (closedSet.Contains(neighborPos))
+                // A closed cell is still a junction for a level arrival from here.
+                bool closed = closedSet.Contains(neighborPos);
+                if (closed && (JunctionStep <= 0f || JoinAt(neighborPos) == null))
                     continue;
 
-                float moveCost = GetMoveCost(currentPos, neighborPos, i);
+                float moveCost = GetMoveCost(currentPos, neighborPos, i, arriving, out int stair);
                 if (!float.IsPositiveInfinity(moveCost) && moveCost < RiverPenalty)
                     moveCost += TurnCost(cameFrom, currentPos, i);
                 if (moveCost >= RiverPenalty)
@@ -433,18 +571,36 @@ public class RoadPathfinder
                     }
                     if (!TryGetRiverCrossing(currentPos, Directions[i], out Vector2i landing, out float crossingCost))
                         continue;
-                    if (closedSet.Contains(landing))
+                    closed = closedSet.Contains(landing);
+                    if (closed && (JunctionStep <= 0f || JoinAt(landing) == null))
                     {
                         continue;
                     }
                     neighborPos = landing;
                     moveCost = crossingCost;
+                    stair = 0;
                 }
 
-                float tentativeG = gCosts[currentPos] + moveCost;
+                float tentativeG = currentG + moveCost;
+                // Arriving level at a junction: the search may end there (but not back along its own path).
+                if (JunctionStep > 0f && JoinAt(neighborPos) is Vector2 meets)
+                {
+                    float goalPriority = tentativeG + NetworkHeuristic(neighborPos);
+                    if ((!haveGoal || goalPriority < goalKey.priority) && ArrivesLevel(meets, currentPos) && !OnPathTo(currentPos, neighborPos))
+                    {
+                        haveGoal = true;
+                        goalKey = (goalPriority, neighborPos);
+                        goalCost = tentativeG;
+                        goalBefore = currentPos;
+                        goalJunction = meets;
+                        goalStair = stair;
+                    }
+                }
+                if (closed) continue;
                 if (!gCosts.TryGetValue(neighborPos, out float existingG) || tentativeG < existingG)
                 {
                     cameFrom[neighborPos] = currentPos;
+                    if (stair != 0) byStair[neighborPos] = stair; else byStair.Remove(neighborPos);
                     byViaduct.Remove(neighborPos);
                     gCosts[neighborPos] = tentativeG;
                     openSet.Push((tentativeG + NetworkHeuristic(neighborPos), neighborPos));
@@ -468,6 +624,8 @@ public class RoadPathfinder
             }
         }
 
+        // The budget spent with a level junction already found: the best one found, not none.
+        if (haveGoal) return TakeGoal();
         LastPathCost = 0f;
         return null;
         }
@@ -829,8 +987,31 @@ public class RoadPathfinder
         return h < (m_worldGen.GetBiome(p.x, p.y) == Heightmap.Biome.Swamp ? RoadConstants.DeepWaterHeight : RoadConstants.ShallowWaterHeight);
     }
 
-    private float GetMoveCost(Vector2i from, Vector2i to, int directionIndex)
+    /// <summary>The road's price for a step, or the staircase's where that is
+    /// cheaper (<paramref name="stair"/> is then +1 for a step up, -1 down);
+    /// <paramref name="arriving"/>: the way the staircase the search arrived at
+    /// <paramref name="from"/> on was going, or 0.</summary>
+    private float GetMoveCost(Vector2i from, Vector2i to, int directionIndex, int arriving, out int stair)
     {
+        float road = RoadMoveCost(from, to, directionIndex, arriving, out float stairCost, out int climb, out bool tooSteep);
+        // A staircase only where the road cannot climb: where it can, it
+        // traverses and switches back as it always did (where it is steep we
+        // build stairs, where it is gentle we don't, so the switchbacks stay). Offered wherever it was
+        // cheaper, stairs took 1197 stretches of one world's roads.
+        // Once on a staircase it may carry on over any ground steeper than
+        // StairMinGrade: held to ground too steep for road all the way, a climb
+        // broke into short staircases a cell of road apart, which piled into
+        // each other on switchback legs (RoadSeedA kept 36 of them),
+        // and the long runs were lost.
+        stair = (tooSteep || arriving != 0 || OpenToStairsAt(from, to)) && stairCost < road ? climb : 0;
+        return stair != 0 ? stairCost : road;
+    }
+
+    private float RoadMoveCost(Vector2i from, Vector2i to, int directionIndex, int arriving, out float stairCost, out int climb, out bool tooSteep)
+    {
+        climb = 0;
+        tooSteep = false;
+        stairCost = float.PositiveInfinity;
         Vector2 fromWorld = GridToWorld(from);
         Vector2 toWorld = GridToWorld(to);
         if (RoadSiteProtection.BlocksSegment(fromWorld, toWorld, SiteClearance, m_searchStart, m_searchEnd))
@@ -863,6 +1044,42 @@ public class RoadPathfinder
             return Impassable;
         }
 
+        // Steep dry ground may be climbed on a staircase. Water, rivers, sites
+        // and squeezes were refused above, for stairs as for road. Stairs go
+        // down as well as up where it makes sense for path finding, and over a crest the climb
+        // runs on into the descent at no new start price; the generator lays
+        // the two as two staircases. A staircase an earlier road laid here is
+        // walked on at the reuse share, like road.
+        climb = h2 >= h1 ? 1 : -1;
+        if (Stairs && wadeCost == 0f && riverWeight <= 0f && slope >= StairMinGrade && slope <= StairGradeLimit(m_terrain.Biome(to), GridToWorld(to))
+            && (m_noStairs.Count == 0 || !(m_noStairs.Contains(from) || m_noStairs.Contains(to))))
+        {
+            bool laid = StairStructures.OnLaidStair(from.x, from.y) && StairStructures.OnLaidStair(to.x, to.y);
+            float biomePrice = StairBiomeFactor(m_terrain.Biome(to));
+            bool open = OpenToStairsAt(from, to);
+            stairCost = BaseCost * dist + biomePrice * (StairCostPerMeterClimbed * SteepStairFactor(slope) * Mathf.Abs(h2 - h1)
+                + (arriving != 0 || laid || open ? 0f : StairEntryCost(from)));
+            if (laid) stairCost *= ReuseFactor;
+            if (open) stairCost *= OpenStairPrice;
+            if (m_earthworkPenalty.Count > 0 && m_earthworkPenalty.Contains(to)) stairCost += EarthworkPenalty;
+        }
+
+        // A viaduct laid this generation stands over this cell: no road under its deck or through
+        // its piers; a road uses it by its own jump, bank to bank.
+        if (DvergrViaduct.Standing(to.x, to.y))
+            return Impassable;
+
+        // A laid staircase stands here: no road through it, only up or down it.
+        // Roads built after one ran under and across it, and their earthworks
+        // undermined its columns (broken stairs, overlapping roads).
+        if (StairStructures.Standing(to.x, to.y))
+        {
+            bool walking = StairStructures.OnLaidStair(from.x, from.y) && StairStructures.OnLaidStair(to.x, to.y);
+            if (!walking) stairCost = float.PositiveInfinity;
+            tooSteep = walking;
+            return Impassable;
+        }
+
         // A grade cap is a refusal, not a price: above it there is no road, so
         // the search crosses the slope or gives the destination up. The slope
         // terms below still price everything under the cap.
@@ -871,17 +1088,26 @@ public class RoadPathfinder
         // still be refused when its profile is built. A cap switched off
         // (MaxGrade <= 0) stays off - the margin never becomes a cap.
         if (MaxGrade > 0f && slope > MaxGrade + RoadConstants.SearchGradeMargin)
+        {
+            tooSteep = true;
             return Impassable;
+        }
 
         if (slope > SteepSlopeThreshold)
+        {
+            tooSteep = true;
             return SteepSlopePenalty;
+        }
 
         if (TerrainVariancePenalty > 0f && m_terrain.Variance(to) > TerrainVarianceThreshold)
             return TerrainVariancePenalty;
 
         Heightmap.Biome biome = m_terrain.Biome(to);
         if (biome == Heightmap.Biome.Mountain && slope > RoadConstants.MountainSlopeThreshold)
+        {
+            tooSteep = true;
             return WaterPenalty;
+        }
 
         float riverCost = riverWeight > 0 ? WaterPenalty * riverWeight : 0f;
         bool reuse = ReuseFactor < 1f && OnExistingRoad(toWorld) && FromOnExistingRoad(from, fromWorld);
@@ -890,6 +1116,39 @@ public class RoadPathfinder
              + (reuse ? 0f : MeanderCost(fromWorld, toWorld, to, slope, dist));
         if (reuse) cost *= ReuseFactor;
         return cost + (m_earthworkPenalty.Count > 0 && m_earthworkPenalty.Contains(to) ? EarthworkPenalty : 0f);
+    }
+
+    /// <summary>
+    /// How dear a staircase is in a biome, times the stair prices. Stairs are a
+    /// style of road, wanted more in the mountains than elsewhere, hence a cost per
+    /// biome; the Mistlands' cliffs get short runs.
+    /// </summary>
+    internal static float StairBiomeFactor(Heightmap.Biome biome) => biome switch
+    {
+        // Mountains are cheaper: stairs are wanted there most.
+        Heightmap.Biome.Mountain => 0.5f,
+        Heightmap.Biome.DeepNorth => 0.5f,
+        Heightmap.Biome.Mistlands => 1f,
+        Heightmap.Biome.BlackForest => 2f,
+        Heightmap.Biome.AshLands => 2f,
+        Heightmap.Biome.Meadows => 2f,
+        Heightmap.Biome.Plains => 2f,
+        Heightmap.Biome.Swamp => 2f,
+        _ => 2f,
+    };
+
+    /// <summary>What starting a staircase at a cell costs: <see cref="StairCostFixed"/>,
+    /// varied by the cell so some sites take stairs and their neighbours do not.</summary>
+    private float StairEntryCost(Vector2i cell)
+    {
+        unchecked
+        {
+            uint h = (uint)cell.x * 2246822519u ^ (uint)cell.y * 3266489917u ^ (uint)m_worldGen.GetSeed() * 668265263u;
+            h = (h ^ (h >> 15)) * 2654435761u;
+            h ^= h >> 13;
+            float u = (h & 0xFFFF) / 65535f;
+            return StairCostFixed * (1f + StairCostWobble * (2f * u - 1f));
+        }
     }
 
     /// <summary>The principal directions (the first eight of <see cref="Directions"/>): a viaduct
@@ -1145,16 +1404,19 @@ public class RoadPathfinder
         return m_fromOnRoad;
     }
 
-    private List<Vector2> ReconstructPath(Dictionary<Vector2i, Vector2i> cameFrom, Vector2i current, Vector2 start, Vector2 end)
+    private List<Vector2> ReconstructPath(Dictionary<Vector2i, Vector2i> cameFrom, Dictionary<Vector2i, int> byStair, HashSet<Vector2i> byViaduct,
+        Vector2i current, Vector2 start, Vector2 end)
     {
         List<Vector2> path = new List<Vector2> { end };
 
         while (cameFrom.ContainsKey(current))
         {
             path.Add(GridToWorld(current));
+            if (byStair.ContainsKey(current)) LastStairSteps.Add((GridToWorld(cameFrom[current]), GridToWorld(current)));
             if (byViaduct.Contains(current)) LastViaductJumps.Add((GridToWorld(cameFrom[current]), GridToWorld(current)));
             current = cameFrom[current];
         }
+        LastStairSteps.Reverse();
         LastViaductJumps.Reverse();
 
         path.Add(start);

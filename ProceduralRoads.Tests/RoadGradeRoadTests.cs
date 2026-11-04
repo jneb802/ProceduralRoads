@@ -22,8 +22,9 @@ public class RoadGradeRoadTests
     private static RoadPathfinder Finder(WorldGenerator world, float cap)
     {
         // The variance term prices a plane slope everywhere alike and would
-        // only slow the search down; these tests are about the grade.
-        return new RoadPathfinder(world) { MaxGrade = cap, TerrainVarianceThreshold = 1000f };
+        // only slow the search down; these tests are about the grade, of road:
+        // no staircases.
+        return new RoadPathfinder(world) { MaxGrade = cap, TerrainVarianceThreshold = 1000f, Stairs = false };
     }
 
     private static float SteepestAlong(List<Vector2> path, WorldGenerator world)

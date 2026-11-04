@@ -61,6 +61,7 @@ namespace ProceduralRoads
         public static ConfigEntry<float> FordSpanWeight = null!;
         public static ConfigEntry<float> BridgeCostFixed = null!;
         public static ConfigEntry<float> BridgeCostPerMeter = null!;
+        public static ConfigEntry<bool> StairsEnabled = null!;
         public static ConfigEntry<float> MaxGrade = null!;
 
         public void Awake()
@@ -117,6 +118,11 @@ namespace ProceduralRoads
                 new ConfigDescription("Pathfinding cost of a bridge per metre of span, on top of CostFixed. " +
                     "Makes long bridges dearer than short ones.",
                     new AcceptableValueRange<float>(0f, 10000f)));
+
+            StairsEnabled = Config.Bind("Stairs", "Enabled", true,
+                "Whether a road may climb ground too steep for it on a staircase of vanilla pieces, " +
+                "built of the biome's material (stone, wood or black marble).");
+
             MaxGrade = Config.Bind("Roads", "MaxGrade", RoadConstants.DefaultMaxRoadGrade,
                 new ConfigDescription("Steepest a road may climb, as rise over run: 0.35 is one metre up " +
                     "for every three along, about 19 degrees. The road you walk never exceeds it: the " +
@@ -227,6 +233,7 @@ namespace ProceduralRoads
             RoadCrossingDetector.SetFordStyleWeights(FordWadeWeight.Value, FordRaiseWeight.Value, FordSpanWeight.Value);
             RoadPathfinder.ConfiguredBridgeCostFixed = BridgeCostFixed.Value;
             RoadPathfinder.ConfiguredBridgeCostPerMeter = BridgeCostPerMeter.Value;
+            RoadPathfinder.ConfiguredStairs = StairsEnabled.Value;
             RoadGrade.Configured = MaxGrade.Value;
             // CustomLocations is parsed at generation time to preserve API registrations
         }

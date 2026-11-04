@@ -233,8 +233,9 @@ public class BridgeTests
         var from = new Vector2(-300f, 0f);
         var to = new Vector2(400f, 0f);
 
-        var uncapped = new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0f }.FindPath(from, to);
-        var capped = new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0.2f }.FindPath(from, to);
+        // Road only: a staircase would climb the bank where the cap refuses road.
+        var uncapped = new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0f, Stairs = false }.FindPath(from, to);
+        var capped = new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0.2f, Stairs = false }.FindPath(from, to);
         Assert.NotNull(uncapped);
         Assert.NotNull(capped);
 

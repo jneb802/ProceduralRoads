@@ -28,21 +28,34 @@ public interface IStructureSource
 }
 
 /// <summary>
-/// A stretch of walking line on a structure that must be clear of rock: cleared
-/// like a road at <see cref="Point"/> (heading from its neighbours on
-/// <see cref="Line"/>), standing on <see cref="Surface"/>, <see cref="Height"/>
-/// tall. <see cref="WholeOnly"/>: a rock here is removed whole, never carved.
+/// Space on a structure that must be clear of rock, in one of two forms. A
+/// walking-line point is cleared like a road at <see cref="Point"/> (heading
+/// from its neighbours on <see cref="Line"/>), standing on <see cref="Surface"/>,
+/// <see cref="Height"/> tall: a bridge deck. A box (<see cref="IsBox"/>) is
+/// given whole, turned by <see cref="YawDegrees"/>: a stretch of a staircase.
+/// <see cref="WholeOnly"/>: a rock here is removed whole, never carved.
 /// </summary>
 public readonly struct StructureClearance
 {
     public readonly RoadSpatialGrid.RoadPoint Point;
-    public readonly List<RoadSpatialGrid.RoadPoint> Line;
+    public readonly List<RoadSpatialGrid.RoadPoint>? Line;
     public readonly float Surface;
     public readonly float Height;
     public readonly bool WholeOnly;
+    public readonly bool IsBox;
+    public readonly Vector3 Centre;
+    public readonly Vector3 Half;
+    public readonly float YawDegrees;
 
     public StructureClearance(RoadSpatialGrid.RoadPoint point, List<RoadSpatialGrid.RoadPoint> line, float surface, float height, bool wholeOnly)
     {
         Point = point; Line = line; Surface = surface; Height = height; WholeOnly = wholeOnly;
+        IsBox = false; Centre = default; Half = default; YawDegrees = 0f;
+    }
+
+    public StructureClearance(Vector3 centre, Vector3 half, float yawDegrees, float surface)
+    {
+        Point = default; Line = null; Surface = surface; Height = half.y * 2f; WholeOnly = false;
+        IsBox = true; Centre = centre; Half = half; YawDegrees = yawDegrees;
     }
 }

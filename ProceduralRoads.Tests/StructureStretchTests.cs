@@ -227,6 +227,93 @@ public sealed class StructureStretchTests : IDisposable
         }
     }
 
+    /// <summary>A road straight across a valley on a viaduct, then a staircase beginning 5 m past the far end's meeting
+    /// point at <paramref name="stairHeight"/>: planned as the generator plans it.</summary>
+    private (RoadCrossing viaduct, List<RoadSpatialGrid.PlannedPath>? plans) ViaductThenStairs(RimValley world, float stairHeight)
+    {
+        _scope.WithWorld(world);
+        float bank = world.Rim + 1f;
+        RoadCrossing c = DvergrViaduct.ValleyCrossing(new Vector2(-bank, 0f), new Vector2(bank, 0f), world, out string why)!;
+        Assert.True(c != null, why);
+        var (_, far) = DvergrViaduct.Ends(c!, world);
+        Vector2 foot = far.Meet - far.Up * 5f, top = foot - far.Up * 10f;
+        var path = new List<Vector2> { new(-100f, 0f), new(-60f, 0f), new(-bank, 0f), new(bank, 0f), foot, top, new(100f, 0f) };
+        c!.FromIndex = 2; c.ToIndex = 3;
+        var stairs = new List<RoadStairSpan> { new() { FromIndex = 4, ToIndex = 5, FromPoint = foot, ToPoint = top, FromHeight = stairHeight, ToHeight = stairHeight } };
+        return (c, RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing> { c }, 4f, null, null, stairs));
+    }
+
+    /// <summary>
+    /// A viaduct's south end on a test world (-3969, 63.0, -5470): the stairs ran up to the bridge with a tiny bit of
+    /// road between them, a road stub, also not level. The viaduct's deck
+    /// ended, then a few metres of tilted paved road, then a 146-piece staircase. A stretch of road shorter than
+    /// StructureEnds.StubLength between a viaduct's end and a staircase is one level landing at the joining height; a
+    /// staircase 2 m under the deck 5 m on is not, and the road is not planned with that viaduct (it is searched again
+    /// without it). Within a step it is planned, the landing level.
+    /// </summary>
+    [Fact]
+    public void NoStubOfRoadBetweenAViaductAndAStaircase()
+    {
+        var world = new RimValley();
+        var (_, stubbed) = ViaductThenStairs(world, world.Top - 2f);
+        Assert.True(stubbed == null, "a tilted stub of road was planned between the viaduct's end and the staircase 2 m under it");
+        Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
+
+        RoadSpatialGrid.LastRefusal = null;
+        var (c, landing) = ViaductThenStairs(world, world.Top - 0.3f);
+        Assert.True(landing != null, RoadSpatialGrid.LastRefusal);
+        var (_, far) = DvergrViaduct.Ends(c, world);
+        foreach (var r in landing!)
+            for (int i = 0; i < r.Points.Count; i++)
+                if (Vector2.Distance(r.Points[i], far.Meet) <= 5f)
+                    Assert.InRange(r.Heights[i], world.Top - 0.31f, world.Top + 0.01f);
+    }
+
+    /// <summary>
+    /// A 52-piece staircase on a test world (-4943.6, -5589.9) -> (-4925.1, -5580.1) whose stairs did not come up to the road
+    /// landing at (-4923.0, 61.2, -5575.8), and a route's staircase ending near another route's: a road that ends on another road (a
+    /// junction) on a staircase whose layout ended 4 m short of it. The road had been dropped from a staircase's end
+    /// to its path's last point; at a junction that left the staircase's top short of the road it joins, nothing between.
+    /// The road is laid from the staircase's end to the junction, at the staircase's height.
+    /// </summary>
+    [Fact]
+    public void AStaircaseEndingShortOfTheRoadItJoinsIsMetByRoad()
+    {
+        var world = new RimValley();
+        _scope.WithWorld(world);
+        LayRoad(new Vector2(-100f, -40f), new Vector2(-100f, 40f), _ => world.Top);
+        Vector2 stairTop = new(-104f, 0f);
+        var path = new List<Vector2> { new(-150f, 0f), new(-120f, 0f), new(-100f, 0f) };
+        var stairs = new List<RoadStairSpan> { new() { FromIndex = 1, ToIndex = 2, FromPoint = path[1], ToPoint = stairTop, FromHeight = world.Top, ToHeight = world.Top } };
+        var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing>(), 4f, null, null, stairs);
+        Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        bool Near(Vector2 at) => plans!.Any(r => r.Points.Select((p, i) => (p, i)).Any(x => Vector2.Distance(x.p, at) <= 0.75f && Mathf.Abs(r.Heights[x.i] - world.Top) <= StructureEnds.StepTolerance));
+        Assert.True(Near(stairTop), $"no road at the staircase's end {stairTop}: its top stops short of the road it joins");
+        Assert.True(Near(path[2]), "no road from the staircase's end to the junction");
+    }
+
+    /// <summary>
+    /// A good case that must not change: the biggest Mistlands staircase on a test world (163 + 130 pieces, (6704,
+    /// 2488) -> (6680, 2440) -> (6648, 2416)), whose stair-to-stair join is StairChain's. Two staircases of
+    /// one road with a short stretch between them at different heights are no stub for the structure-end owner: the road is
+    /// planned between them as before, with no refusal.
+    /// </summary>
+    [Fact]
+    public void TwoStaircasesOfOneRoadKeepTheirOwnJoin()
+    {
+        var world = new RimValley();
+        _scope.WithWorld(world);
+        var path = new List<Vector2> { new(-150f, 0f), new(-140f, 0f), new(-125f, 0f), new(-120f, 0f), new(-105f, 0f), new(-90f, 0f) };
+        var stairs = new List<RoadStairSpan>
+        {
+            new() { FromIndex = 1, ToIndex = 2, FromPoint = path[1], ToPoint = path[2], FromHeight = world.Top, ToHeight = world.Top },
+            new() { FromIndex = 3, ToIndex = 4, FromPoint = path[3], ToPoint = path[4], FromHeight = world.Top + 1f, ToHeight = world.Top },
+        };
+        var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing>(), 4f, null, null, stairs);
+        Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        Assert.Contains(plans!, r => r.Points.Any(p => Vector2.Distance(p, path[2]) <= 0.75f) && r.Points.Any(p => Vector2.Distance(p, path[3]) <= 0.75f));
+    }
+
     /// <summary>
     /// Wooden bridge ends through the same owner (refusing such a bridge lost 11 destinations; the end is adapted instead). A road across a wide river on a slant: each end of its wooden bridge is met by road at its foot, within
     /// a step of its height, and RoadCrossingDetector's banks are no longer where the road stops short of the run.

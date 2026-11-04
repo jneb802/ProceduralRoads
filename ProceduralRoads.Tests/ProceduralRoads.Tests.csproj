@@ -23,7 +23,31 @@
       here; anything touching Harmony patches or engine runtime cannot.
     -->
     <ItemGroup>
+        <None Include="Fixtures/**" CopyToOutputDirectory="PreserveNewest"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.cs" Link="ModSrc/StairLayout.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Switchbacks.cs" Link="ModSrc/StairLayout.Switchbacks.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Cuts.cs" Link="ModSrc/StairLayout.Cuts.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Columns.cs" Link="ModSrc/StairLayout.Columns.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairChain.cs" Link="ModSrc/StairChain.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructureEnds.cs" Link="ModSrc/StructureEnds.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Cantilevers.cs" Link="ModSrc/StairLayout.Cantilevers.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Feet.cs" Link="ModSrc/StairLayout.Feet.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Tops.cs" Link="ModSrc/StairLayout.Tops.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Chains.cs" Link="ModSrc/StairLayout.Chains.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairRoute.cs" Link="ModSrc/StairRoute.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairCover.cs" Link="ModSrc/StairCover.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairFiller.cs" Link="ModSrc/StairFiller.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairKit.cs" Link="ModSrc/StairKit.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.cs" Link="ModSrc/RoadStairRuns.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Feet.cs" Link="ModSrc/RoadStairRuns.Feet.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Tops.cs" Link="ModSrc/RoadStairRuns.Tops.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Chains.cs" Link="ModSrc/RoadStairRuns.Chains.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Approaches.cs" Link="ModSrc/RoadStairRuns.Approaches.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.PlacedSites.cs" Link="ModSrc/RoadStairRuns.PlacedSites.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/PlacedSiteShape.cs" Link="ModSrc/PlacedSiteShape.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadBeside.cs" Link="ModSrc/RoadBeside.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ManualRoadDraft.cs" Link="ModSrc/ManualRoadDraft.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.Appends.cs" Link="ModSrc/RoadSpatialGrid.Appends.cs"/>
@@ -63,6 +87,8 @@
         <Compile Include="../ProceduralRoads/Src/Roads/StructurePiece.cs" Link="ModSrc/StructurePiece.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructureSource.cs" Link="ModSrc/StructureSource.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/BridgeStructures.cs" Link="ModSrc/BridgeStructures.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairStructures.cs" Link="ModSrc/StairStructures.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BuriedPieces.cs" Link="ModSrc/BuriedPieces.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/BridgeSupport.cs" Link="ModSrc/BridgeSupport.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructurePlans.cs" Link="ModSrc/StructurePlans.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructurePlacement.cs" Link="ModSrc/StructurePlacement.cs"/>

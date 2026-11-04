@@ -173,6 +173,33 @@ public sealed class RoadStatisticsTests : IDisposable
         RoadSpatialGrid.Clear();
         Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(2)));
     }
+    /// <summary>
+    /// A generated network with a staircase's cuts and nothing appended: encoding 4 with an empty append block, the
+    /// shape of every network generated with a staircase. The reader demanded at least one append under any encoding
+    /// from 3 up, so this build refused its own saves.
+    /// </summary>
+    [Fact]
+    public void ANetworkWithStaircaseCutsAndNoAppendsRoundTrips()
+    {
+        Commit();
+        RoadSpatialGrid.CommitCuts(new[]{new Vector3(32,39,1)},2f);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        byte[] saved=Bytes(); int version=RoadSpatialGrid.RoadNetworkVersion;
+        Assert.Equal(4,BitConverter.ToInt32(saved,0)); Assert.Equal(4,BitConverter.ToInt32(saved,4));
+        Assert.DoesNotContain(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.addition>0);
+        Assert.Equal(0,BitConverter.ToInt32(saved,saved.Length-9));   // the append block's count, before the length record
+        RoadSpatialGrid.Clear();
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved),RoadSpatialGrid.LastReadRefusal);
+        Assert.Null(RoadSpatialGrid.LastReadRefusal);
+        Assert.Equal(saved,Bytes()); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion);
+        Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.cutOnly);
+        // Cut short, the refusal says where the read stopped.
+        byte[] cut=saved.Take(saved.Length-3).ToArray();
+        Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(cut));
+        Assert.StartsWith("envelope 4, encoding 4: EndOfStreamException at byte ",RoadSpatialGrid.LastReadRefusal);
+        Assert.Contains($" of {cut.Length}:",RoadSpatialGrid.LastReadRefusal);
+        Assert.DoesNotContain("at byte 0 ",RoadSpatialGrid.LastReadRefusal);
+    }
     internal static byte[] Legacy(int version,bool empty=false)
     {
         using var stream=new MemoryStream(); using var writer=new BinaryWriter(stream);

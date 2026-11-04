@@ -23,7 +23,7 @@ public static class StructurePlans
 
     /// <summary>Every kind of structure the network builds. Each plans its own
     /// pieces; everything after that is shared.</summary>
-    public static readonly IReadOnlyList<IStructureSource> Sources = new IStructureSource[] { new BridgeStructures() };
+    public static readonly IReadOnlyList<IStructureSource> Sources = new IStructureSource[] { new BridgeStructures(), new StairStructures() };
 
     private static Dictionary<Vector2s, List<StructurePiece>>? s_plansByZone;
     /// <summary>The same pieces, by source and then zone: clear areas are each source's own business.</summary>

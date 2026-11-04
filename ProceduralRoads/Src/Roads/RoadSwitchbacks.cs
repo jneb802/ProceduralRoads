@@ -59,6 +59,42 @@ public static class RoadSwitchbacks
     /// </summary>
     internal static float BendRadius = 24f;
 
+    /// <summary>
+    /// No ordinary bend is rounded tighter than this. The 45% share of each leg
+    /// leaves a bend between short legs a radius of a metre or two, which reads
+    /// as a corner: the road runs to a point and leaves in another direction.
+    /// At the road's width the paint's inner edge still turns on a 2 m radius
+    /// and the levelled footprint's inner edge (half the road plus the 2 m
+    /// blend margin) just closes at the arc's centre instead of folding into a
+    /// point; on the 1 m dense step no point turns more than a quarter radian.
+    /// A bend tighter than this takes more of a leg from a gentler neighbour,
+    /// or, where short legs leave no room, the bends between the two longer
+    /// legs round it become one arc tangent to both (<see cref="FilletSpan"/>).
+    /// Switchbacks keep their own turns. Applies with bend rounding; 0 is off.
+    /// Settable for tests.
+    /// </summary>
+    internal static float MinBendRadius = 4f;
+
+    /// <summary>The most road (in road widths) whose short legs may become one
+    /// arc: a hook or a kink of a few metres, never a reshaped stretch.</summary>
+    internal const float FilletSpan = 3f;
+
+    /// <summary>How many bends the last Shape on this thread filleted to
+    /// <see cref="MinBendRadius"/>: planning retries without them before it
+    /// gives up the bend rounding.</summary>
+    [ThreadStatic] public static int LastFilleted;
+
+    /// <summary>Set by planning for one retry: shape with the ordinary bend
+    /// arcs only, so a road whose fillet fails a check keeps its rounding.</summary>
+    [ThreadStatic] public static bool SuppressFillets;
+
+    /// <summary>Set by planning for one retry: every ordinary bend rounded on
+    /// <see cref="MinBendRadius"/> and no wider, so a road whose full arcs
+    /// fail a check or its profile (wide arcs cut the corners and shorten it)
+    /// keeps arcs that leave its waypoints by centimetres before it keeps its
+    /// corners.</summary>
+    [ThreadStatic] public static bool LeastBends;
+
     /// <summary>Which points of the last Shape on this thread lie on a turn or
     /// bend arc, for the water and site checks on new geometry.</summary>
     [ThreadStatic] public static List<bool>? LastCurve;
@@ -109,14 +145,20 @@ public static class RoadSwitchbacks
     /// <summary>Why the last Shape on this thread refused, for the refusal
     /// counts in the generation summary.</summary>
     [ThreadStatic] public static string? LastRefusal;
+    /// <summary>Where the last "turns too close to fit their curves" on this
+    /// thread was: the middle of the leg the two turns could not share. The
+    /// generator searches that stretch again with stairs open.</summary>
+    [ThreadStatic] public static Vector2? LastRefusalAt;
 
     public static bool Shape(List<Vector2> input, float width,
-        out List<Vector2>? shaped, out List<bool>? landing, Func<Vector2, float>? heightAt = null, bool? stair = null, float? bend = null, bool? tight = null)
+        out List<Vector2>? shaped, out List<bool>? landing, Func<Vector2, float>? heightAt = null, bool? stair = null, float? bend = null, bool? tight = null,
+        Func<Vector2, bool>? held = null, Func<Vector2, bool>? onRoad = null, float? minRadius = null)
     {
         bool stairs = stair ?? StairTurns;
-        float bendRadius = bend ?? (SuppressBends ? 0f : BendRadius);
+        float bendRadius = bend ?? (SuppressBends ? 0f : LeastBends && BendRadius > 0f ? Mathf.Min(BendRadius, MinBendRadius) : BendRadius);
         bool tightTurns = tight ?? TightSwitchbacks;
-        LastRefusal = null; LastCurve = null; LastWidths = null;
+        float filletRadius = bendRadius > 0f && !SuppressFillets ? Mathf.Min(minRadius ?? MinBendRadius, bendRadius) : 0f;
+        LastRefusal = null; LastRefusalAt = null; LastCurve = null; LastWidths = null; LastFilleted = 0;
         shaped = null; landing = null;
         var p = new List<Vector2>();
         foreach (var v in input)
@@ -239,11 +281,94 @@ public static class RoadSwitchbacks
                         trim[k]=rad[k]*tan;
                     }
                 }
+        // How much of the leg before (useIn) and after (useOut) each vertex its turn takes.
+        var useIn=new float[n]; var useOut=new float[n]; var group=new int[n];
+        for(int k=0;k<n;k++){useIn[k]=useOut[k]=trim[k];group[k]=-1;}
+        var fillets=new Dictionary<int,Fillet>();
+        if (filletRadius > 0f)
+            for(int a=1;a<n-1;a++)
+            {
+                if(!Free(a)) continue;
+                bool sharp = bendAt[a] ? rad[a] < filletRadius-1e-3f : Math.Abs(angle[a])>Math.PI-0.02;
+                if(!sharp) continue;
+                Fillet? best=null;
+                for(int lo=a;lo>=1 && Free(lo) && Inside(lo,a)<=FilletSpan*width;lo--)
+                    for(int hi=a;hi<=n-2 && Free(hi) && Inside(lo,hi)<=FilletSpan*width;hi++)
+                    {
+                        // A waypoint on another road is the junction: it may be rounded, never dropped.
+                        if(lo<hi && onRoad!=null){bool pinned=false;for(int k=lo;k<=hi;k++) pinned|=onRoad(p[k]);if(pinned) break;}
+                        if(Fit(lo,hi) is Fillet f && (best==null || Better(f,best.Value))) best=f;
+                    }
+                float now = bendAt[a] ? rad[a] : 0f;
+                if(best is not Fillet g || g.Radius<=now+0.05f) continue;
+                for(int k=g.From;k<=g.To;k++){group[k]=g.From;bendAt[k]=false;}
+                fillets[g.From]=g;
+                useIn[g.From]=g.Trim-g.Before; useOut[g.To]=g.Trim+g.After;
+                // A gentler neighbour gives up what the fillet took of its leg.
+                Yield(g.From-1,Vector2.Distance(p[g.From-1],p[g.From])-useIn[g.From]-0.25f);
+                Yield(g.To+1,Vector2.Distance(p[g.To],p[g.To+1])-useOut[g.To]-0.25f);
+                LastFilleted++;
+            }
+        // A vertex no fillet or switchback holds, that is not the road's end or a held point.
+        bool Free(int k) => k>0 && k<n-1 && !mark[k] && tightStart[k]<0 && group[k]<0 && !(held?.Invoke(p[k]) ?? false);
+        // Road between two vertices along the waypoints.
+        float Inside(int from,int to){float s=0;for(int k=from;k<to;k++) s+=Vector2.Distance(p[k],p[k+1]);return s;}
+        // What a neighbour must keep of the leg it shares: a turn's own, an ordinary bend's as much as reaches the
+        // minimum radius, the road's end nothing.
+        float Keep(int k,bool after)
+        {
+            if(k<=0 || k>=n-1) return 0f;
+            if(group[k]>=0) return after ? useOut[k] : useIn[k];
+            if(mark[k] || tightStart[k]>=0) return trim[k];
+            if(bendAt[k]) return Mathf.Min(trim[k],filletRadius*(float)Math.Tan(Math.Abs(angle[k])*0.5));
+            return 0f;
+        }
+        void Yield(int k,float room)
+        {
+            if(k<=0 || k>=n-1 || !bendAt[k] || trim[k]<=room) return;
+            trim[k]=useIn[k]=useOut[k]=Mathf.Max(0f,room);
+            rad[k]=trim[k]/(float)Math.Tan(Math.Abs(angle[k])*0.5);
+            if(trim[k]<0.05f) bendAt[k]=false;
+        }
+        // Vertices lo..hi as one arc tangent to the legs either side: its corner where those legs' lines meet, at the
+        // minimum radius where they leave room for it, else as wide as they do.
+        Fillet? Fit(int lo,int hi)
+        {
+            Vector2 dIn=(p[lo]-p[lo-1]).normalized, dOut=(p[hi+1]-p[hi]).normalized;
+            float turn=(float)Math.Atan2(dIn.x*dOut.y-dIn.y*dOut.x,dIn.x*dOut.x+dIn.y*dOut.y), sum=0f;
+            for(int k=lo;k<=hi;k++) sum+=angle[k];
+            if(Math.Abs(sum-turn)>0.01f || Math.Abs(turn)<0.01f || Math.Abs(turn)>Math.PI-0.02) return null;
+            Vector2 corner=p[lo]; float before=0f, after=0f;
+            if(hi>lo)
+            {
+                Vector2 r=p[hi]-p[lo];
+                float cross=dIn.x*dOut.y-dIn.y*dOut.x;
+                before=(r.x*dOut.y-r.y*dOut.x)/cross;
+                corner=p[lo]+dIn*before;
+                after=Vector2.Dot(corner-p[hi],dOut);
+            }
+            float tan=(float)Math.Tan(Math.Abs(turn)*0.5);
+            float room=Mathf.Min(Vector2.Distance(p[lo-1],p[lo])+before-Keep(lo-1,true)-0.25f,
+                                 Vector2.Distance(p[hi],p[hi+1])-after-Keep(hi+1,false)-0.25f);
+            if(room<0.05f) return null;
+            float t=Mathf.Min(room,filletRadius*tan);
+            return new Fillet(lo,hi,corner,dIn,dOut,turn,t,before,after,t/tan);
+        }
+        // Reaching the minimum radius over the fewest vertices, then the widest arc.
+        bool Better(Fillet f,Fillet than)
+        {
+            bool fits=f.Radius>=filletRadius-1e-3f, thanFits=than.Radius>=filletRadius-1e-3f;
+            if(fits!=thanFits) return fits;
+            if(fits && f.To-f.From!=than.To-than.From) return f.To-f.From<than.To-than.From;
+            return f.Radius>than.Radius+1e-3f;
+        }
         // Adjacent turns must not consume the same length of road.
         for(int i=0;i<n-1;i++)
-            if(!(tightStart[i]>=0 && tightStart[i]==tightStart[i+1]) && trim[i]+trim[i+1]>Vector2.Distance(p[i],p[i+1])-0.25f)
+            if(!(tightStart[i]>=0 && tightStart[i]==tightStart[i+1]) && !(group[i]>=0 && group[i]==group[i+1])
+               && useOut[i]+useIn[i+1]>Vector2.Distance(p[i],p[i+1])-0.25f)
             {
-                LastRefusal="switchback: turns too close to fit their curves";
+                LastRefusal=SwitchbackRefusal.TurnsTooClose;
+                LastRefusalAt=(p[i]+p[i+1])*0.5f;
                 return false;
             }
         var output=new List<Vector2>(); var flags=new List<bool>(); var curve=new List<bool>(); var widths=new List<float>();
@@ -255,11 +380,21 @@ public static class RoadSwitchbacks
             output.Add(v);flags.Add(flat);curve.Add(onArc);widths.Add(w);
         }
         float step=Mathf.Max(0.25f,width/4);
-        void Line(Vector2 end)
+        void Line(Vector2 end,bool onArc=false)
         {
-            if(output.Count==0) {Add(end,false);return;}
+            if(output.Count==0) {Add(end,false,onArc);return;}
             var from=output[output.Count-1];int steps=Mathf.Max(1,Mathf.CeilToInt(Vector2.Distance(from,end)/step));
-            for(int k=1;k<=steps;k++) Add(from+(end-from)*(k/(float)steps),false);
+            for(int k=1;k<=steps;k++) Add(from+(end-from)*(k/(float)steps),false,onArc);
+        }
+        // An arc of radius r from begin, heading along incoming, turning through turn.
+        void Arc(Vector2 begin,Vector2 incoming,float turn,float r,bool flat)
+        {
+            float sign=turn<0?-1:1;
+            var centre=begin+new Vector2(-incoming.y,incoming.x)*(sign*r);
+            float start=(float)Math.Atan2(begin.y-centre.y,begin.x-centre.x);
+            int count=Mathf.Max(1,Mathf.CeilToInt(r*Mathf.Abs(turn)/step));
+            for(int k=1;k<count;k++)
+            {float a=start+turn*k/count;Add(centre+new Vector2(Mathf.Cos(a),Mathf.Sin(a))*r,flat,true);}
         }
         void Taper(Vector2 end,float w0,float w1,bool flat)
         {
@@ -283,18 +418,25 @@ public static class RoadSwitchbacks
                 anyTight=true;
                 i=t.end; continue;
             }
+            if(fillets.TryGetValue(i,out var f))
+            {
+                // A leg carried on past its waypoint to the fillet's corner, or the next one met before its own, is
+                // ground the search never judged: checked with the arc.
+                var begin=f.Corner-f.In*f.Trim;
+                if(f.Trim<f.Before) {Line(p[i]);Line(begin,true);} else Line(begin);
+                curve[curve.Count-1]=true;
+                Arc(begin,f.In,f.Turn,f.Radius,false);
+                Add(f.Corner+f.Out*f.Trim,false,true);
+                if(f.Trim+f.After<0f) Line(p[f.To],true);
+                i=f.To; continue;
+            }
             if(!mark[i] && !bendAt[i]) {Line(p[i]);continue;}
-            bool flat=mark[i]; float r=rad[i];
+            bool flat=mark[i];
             var incoming=(p[i]-p[i-1]).normalized;var outgoing=(p[i+1]-p[i]).normalized;
-            var begin=p[i]-incoming*trim[i];var end=p[i]+outgoing*trim[i];
-            float sign=angle[i]<0?-1:1;
-            var centre=begin+new Vector2(-incoming.y,incoming.x)*(sign*r);
-            Line(begin);flags[flags.Count-1]|=flat;curve[curve.Count-1]=true;
-            float start=(float)Math.Atan2(begin.y-centre.y,begin.x-centre.x);
-            int count=Mathf.Max(1,Mathf.CeilToInt(r*Mathf.Abs(angle[i])/step));
-            for(int k=1;k<count;k++)
-            {float a=start+angle[i]*k/count;Add(centre+new Vector2(Mathf.Cos(a),Mathf.Sin(a))*r,flat,true);}
-            Add(end,flat,true);
+            var start=p[i]-incoming*trim[i];
+            Line(start);flags[flags.Count-1]|=flat;curve[curve.Count-1]=true;
+            Arc(start,incoming,angle[i],rad[i],flat);
+            Add(p[i]+outgoing*trim[i],flat,true);
         }
         Line(p[n-1]);
         if (stairs && StairLanding > 0f)
@@ -313,6 +455,12 @@ public static class RoadSwitchbacks
         }
         shaped=output;landing=flags;LastCurve=curve;LastWidths=anyTight?widths:null;return true;
     }
+
+    /// <summary>Waypoints <see cref="From"/>..<see cref="To"/> rounded as one arc: tangent to the leg into the first (<see cref="In"/>)
+    /// and out of the last (<see cref="Out"/>) at <see cref="Trim"/> either side of <see cref="Corner"/>, where those legs' lines
+    /// meet, <see cref="Before"/> along the leg in past the first waypoint and <see cref="After"/> along the leg out past the last.</summary>
+    private readonly record struct Fillet(int From, int To, Vector2 Corner, Vector2 In, Vector2 Out, float Turn, float Trim, float Before,
+        float After, float Radius);
 
     private static bool ClipEnd(List<Vector2> points, float maximumSpur)
     {

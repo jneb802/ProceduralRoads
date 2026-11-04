@@ -45,6 +45,9 @@ public static class RoadEndReport
             Vector2 centre = new Vector2(loc.position.x, loc.position.z);
             RoadSpatialGrid.RoadPoint best = near[0];
             float bestDistance = float.MaxValue;
+            near.RemoveAll(rp => rp.cutOnly);
+            if (near.Count == 0)
+                continue;
             foreach (var rp in near)
             {
                 float d = Vector2.Distance(rp.p, centre);

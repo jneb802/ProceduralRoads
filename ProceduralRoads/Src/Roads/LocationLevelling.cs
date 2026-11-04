@@ -33,9 +33,18 @@ public readonly struct LevelOp
     public readonly float Radius;
     public readonly bool Square;
 
-    public LevelOp(float offsetX, float offsetZ, float height, float radius, bool square)
+    /// <summary>How far round the operation the game blends the ground towards
+    /// its height after levelling it (0: no smoothing), and how sharply: at
+    /// distance d the ground moves by 1 - (d / SmoothRadius)^SmoothPower of the
+    /// way (Heightmap.SmoothTerrain2).</summary>
+    public readonly float SmoothRadius;
+    public readonly float SmoothPower;
+
+    public LevelOp(float offsetX, float offsetZ, float height, float radius, bool square,
+        float smoothRadius = 0f, float smoothPower = 3f)
     {
         OffsetX = offsetX; OffsetZ = offsetZ; Height = height; Radius = radius; Square = square;
+        SmoothRadius = smoothRadius; SmoothPower = smoothPower;
     }
 
     /// <summary>Whether this operation sits on the location's own centre, so
@@ -198,5 +207,41 @@ public static class LocationLevelling
                 height = centreGround + op.Height;
         }
         return height;
+    }
+
+    /// <summary>Where an operation stands from the location's centre once it is turned to <paramref name="yaw"/>.</summary>
+    public static Vector2 OffsetAt(LevelOp op, float yaw)
+    {
+        float r = yaw * Mathf.Deg2Rad, c = Mathf.Cos(r), s = Mathf.Sin(r);
+        return new Vector2(op.OffsetX * c + op.OffsetZ * s, -op.OffsetX * s + op.OffsetZ * c);
+    }
+
+    /// <summary>
+    /// The ground a placed location leaves at <paramref name="point"/>, from the
+    /// <paramref name="natural"/> ground there: each concentric operation in turn
+    /// levels inside its radius and blends towards its height out to its
+    /// smoothing radius, as Heightmap.ApplyModifier does. Offset operations are
+    /// left out (their place depends on the location's rotation), as in
+    /// <see cref="GroundAt"/>. Smoothing is always round: the game ignores
+    /// m_square there.
+    /// </summary>
+    public static float PlacedGroundAt(Vector2 point, Vector2 centre, float centreGround, IReadOnlyList<LevelOp>? ops, float natural)
+    {
+        if (ops == null) return natural;
+        float h = natural;
+        Vector2 offset = point - centre;
+        float d = offset.magnitude;
+        foreach (LevelOp op in ops)
+        {
+            if (!op.Concentric) continue;
+            float level = centreGround + op.Height;
+            if (op.Radius > 0f && (op.Square
+                    ? Mathf.Abs(offset.x) <= op.Radius && Mathf.Abs(offset.y) <= op.Radius
+                    : d <= op.Radius))
+                h = level;
+            if (op.SmoothRadius > 0f && d <= op.SmoothRadius)
+                h = Mathf.Lerp(h, level, 1f - Mathf.Pow(d / op.SmoothRadius, op.SmoothPower));
+        }
+        return h;
     }
 }

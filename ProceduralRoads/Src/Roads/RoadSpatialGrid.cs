@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -6,10 +7,23 @@ using UnityEngine;
 
 namespace ProceduralRoads;
 
+/// <summary>A detached observation of the stored records and successful planned-path length.
+/// Length includes overlapping commits and excludes unplanned levelled bridge supports.</summary>
+public readonly struct RoadStatistics
+{
+    public int StoredPointRecords { get; }
+    public int Cells { get; }
+    public float? CommittedPathLengthMeters { get; }
+    public bool LengthKnown=>CommittedPathLengthMeters.HasValue;
+    internal RoadStatistics(int records,int cells,float? length) { StoredPointRecords=records; Cells=cells; CommittedPathLengthMeters=length; }
+    public string LengthText(string format="F0",float divisor=1f,string unit="m")=>
+        CommittedPathLengthMeters.HasValue ? (CommittedPathLengthMeters.Value/divisor).ToString(format,System.Globalization.CultureInfo.InvariantCulture)+unit : "unknown (legacy save)";
+}
+
 /// <summary>
 /// Spatial data structure for road points. Provides efficient lookup for road influence at any world position.
 /// </summary>
-public static class RoadSpatialGrid
+public static partial class RoadSpatialGrid
 {
     public struct RoadPoint
     {
@@ -17,14 +31,38 @@ public static class RoadSpatialGrid
         public float w;
         public float w2;
         public float h;
+        /// <summary>Paint only: the terrain is not leveled toward this point
+        /// (a waded ford keeps the riverbed as it is).</summary>
+        public bool paintOnly;
+        // 0 is the original network; positive values identify append operations.
+        public int addition;
+        /// <summary>Cut only: not road. A staircase's earthwork: the terrain
+        /// within w/2 is lowered to h where it stands higher, never raised, never
+        /// painted (StairLayout's cuts). Everything that asks where the ROAD is
+        /// skips these points, as it skips paint-only ones.</summary>
+        public bool cutOnly;
+        /// <summary>Into a site: a road's last stretch onto the landing in front of a place
+        /// (RoadSiteEntry). The terrain writer levels and paints toward these points inside
+        /// a place's footprint too, which it leaves alone for every other point, and only
+        /// within <see cref="RoadSiteEntry.InsideReach"/> of them there.</summary>
+        public bool intoSite;
 
-        public RoadPoint(Vector2 position, float width, float height)
+        public RoadPoint(Vector2 position, float width, float height, bool paintOnly = false, int addition = 0, bool cutOnly = false, bool intoSite = false)
         {
             p = position;
             w = width;
             w2 = width * width;
             h = height;
+            this.paintOnly = paintOnly;
+            this.addition = addition;
+            this.cutOnly = cutOnly;
+            this.intoSite = intoSite;
         }
+
+        /// <summary>A point a road runs through: not a ford's paint-only point, not a stair's cut.</summary>
+        public bool IsRoad => !paintOnly && !cutOnly;
+        /// <summary>What the point is, as the network's identity counts it: road 0, paint-only 1, cut-only 2, into a site 3.</summary>
+        public int Kind => paintOnly ? 1 : cutOnly ? 2 : intoSite ? 3 : 0;
     }
 
     public const float GridSize = RoadConstants.SpatialGridSize;
@@ -38,9 +76,29 @@ public static class RoadSpatialGrid
     
     private static Dictionary<Vector2, RoadPointDebugInfo> m_debugInfo = new Dictionary<Vector2, RoadPointDebugInfo>();
     
-    public static int TotalRoadPoints { get; private set; } = 0;
+    private static int m_storedPointRecords;
+    private static float? m_committedPathLength=0f;
+    public static RoadStatistics Statistics
+    {
+        get
+        {
+            m_roadCacheLock.EnterReadLock();
+            try { return new RoadStatistics(m_storedPointRecords,GridCellsWithRoads,m_committedPathLength); }
+            finally { m_roadCacheLock.ExitReadLock(); }
+        }
+    }
+    public static int StoredPointRecords=>Statistics.StoredPointRecords;
+    public static float? CommittedPathLengthMeters=>Statistics.CommittedPathLengthMeters;
+    /// <summary>Compatibility alias: counts stored cell records, including cell copies.</summary>
+    public static int TotalRoadPoints=>StoredPointRecords;
+    /// <summary>How many cells hold road points: counted as cells are added, never asked of the dictionary
+    /// (in the game's Mono its Count takes every one of its locks).</summary>
     public static int GridCellsWithRoads { get; private set; } = 0;
-    public static float TotalRoadLength { get; private set; } = 0f;
+
+
+    /// <summary>Compatibility alias. NaN means legacy committed length is unknown.
+    /// New consumers should use the nullable Statistics projection.</summary>
+    public static float TotalRoadLength=>CommittedPathLengthMeters ?? float.NaN;
     
     /// <summary>
     /// Version hash for the current road network. Changes when roads are regenerated.
@@ -52,18 +110,27 @@ public static class RoadSpatialGrid
 
     public static bool IsInitialized => m_initialized;
 
+    /// <summary>
+    /// Whether the network in memory was read from format 1, the only format a
+    /// released build (1.4.x) can read. Such a network is never written back
+    /// in a newer format (RoadNetworkGenerator.SaveGlobalRoadData), so the
+    /// world still opens in the build that made it.
+    /// </summary>
+    public static bool LoadedFromReleasedFormat { get; private set; }
+
     public static void Clear()
     {
         m_roadCacheLock.EnterWriteLock();
         try
         {
+            LoadedFromReleasedFormat = false;
             m_roadPoints.Clear();
             m_cachedRoadPoints = null;
             m_cachedRoadGrid = new Vector2i(-999999, -999999);
             m_initialized = false;
-            TotalRoadPoints = 0;
+            m_storedPointRecords = 0;
             GridCellsWithRoads = 0;
-            TotalRoadLength = 0f;
+            m_committedPathLength = 0f;
             RoadNetworkVersion = 0;
             m_debugInfo.Clear();
         }
@@ -118,29 +185,104 @@ public static class RoadSpatialGrid
             m_debugInfo[densePoints[i]] = debugInfos[i];
         }
 
-        MergePoints(tempPoints);
-        
-        TotalRoadPoints += densePoints.Count;
-        TotalRoadLength += totalLength;
-        m_initialized = true;
+        MergePoints(tempPoints,totalLength,true);
     }
 
     /// <summary>
-    /// Called after all roads are generated to compute the network version hash.
-    /// This version is stored in TerrainComp ZDOs to detect already-processed zones.
+    /// Called after all roads are generated, and after a network is loaded from
+    /// the save, to compute the network version: a hash of the world seed and
+    /// every stored road point (position, width, height, paint-only flag)
+    /// in canonical order (cells by coordinate, points by position, width,
+    /// height, flag), each record
+    /// mixed into the running value, so it is the same after generation and
+    /// after a save/load round trip (which carries exactly the stored points)
+    /// and changes whenever any road moves or changes height (balanced height
+    /// changes too: records are mixed in order, never summed).
+    /// RoadTerrainModifier stamps it on each zone's terrain compiler to tell
+    /// zones that already carry the current roads from zones that still need
+    /// them.
     /// </summary>
     public static void FinalizeRoadNetwork()
     {
         int worldSeed = WorldGenerator.instance?.GetSeed() ?? 0;
-        int hash = worldSeed;
-        hash = hash * 31 + TotalRoadPoints;
-        hash = hash * 31 + GridCellsWithRoads;
-        hash = hash * 31 + (int)(TotalRoadLength * 10);
-        
-        RoadNetworkVersion = hash;
-        Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, points={TotalRoadPoints}, cells={GridCellsWithRoads}");
+        m_roadCacheLock.EnterWriteLock();
+        try { RoadNetworkVersion=ComputeRoadNetworkVersion(m_roadPoints,worldSeed); }
+        finally { m_roadCacheLock.ExitWriteLock(); }
+        Log.LogDebug($"Road network finalized: version={RoadNetworkVersion}, stored-records={StoredPointRecords}, cells={GridCellsWithRoads}");
     }
-    
+    // Caller owns the grid write lock; no locking getters or callbacks inside the hash publication.
+    private static int ComputeRoadNetworkVersion(IReadOnlyDictionary<Vector2i,RoadPoint[]> geometry,int worldSeed)
+    {
+        uint hash = 2166136261u; // FNV offset basis
+        int storedPoints = 0;
+        int cells = 0;
+
+        var keys = new List<Vector2i>(geometry.Keys);
+        keys.Sort((a, b) => a.x != b.x ? a.x.CompareTo(b.x) : a.y.CompareTo(b.y));
+        var records = new List<RoadPoint>();
+        foreach (var key in keys)
+        {
+            cells++;
+            Mix(ref hash, key.x);
+            Mix(ref hash, key.y);
+            records.Clear();
+            records.AddRange(geometry[key]);
+            records.Sort(CompareRecords);
+            foreach (var rp in records)
+            {
+                storedPoints++;
+                Mix(ref hash, rp.p.x.GetHashCode());
+                Mix(ref hash, rp.p.y.GetHashCode());
+                Mix(ref hash, rp.w.GetHashCode());
+                Mix(ref hash, rp.h.GetHashCode());
+                // A road-only network mixes exactly what it always did.
+                Mix(ref hash, rp.Kind);
+            }
+        }
+
+        Mix(ref hash, worldSeed);
+        Mix(ref hash, storedPoints);
+        Mix(ref hash, cells);
+        int version = unchecked((int)hash);
+        if (version == 0)
+            version = 1; // 0 means "no network"
+
+        return version;
+    }
+
+    private static int CompareRecords(RoadPoint a, RoadPoint b)
+    {
+        int c = a.p.x.CompareTo(b.p.x);
+        if (c != 0) return c;
+        c = a.p.y.CompareTo(b.p.y);
+        if (c != 0) return c;
+        c = a.w.CompareTo(b.w);
+        if (c != 0) return c;
+        c = a.h.CompareTo(b.h);
+        if (c != 0) return c;
+        c = a.paintOnly.CompareTo(b.paintOnly);
+        if (c != 0) return c;
+        c = a.cutOnly.CompareTo(b.cutOnly);
+        return c != 0 ? c : a.intoSite.CompareTo(b.intoSite);
+    }
+
+    /// <summary>FNV-1a step over the four bytes of value, then an avalanche so neighbouring records do not cancel.</summary>
+    private static void Mix(ref uint hash, int value)
+    {
+        unchecked
+        {
+            uint v = (uint)value;
+            for (int i = 0; i < 4; i++)
+            {
+                hash ^= (v >> (8 * i)) & 0xFFu;
+                hash *= 16777619u;
+            }
+            hash ^= hash >> 15;
+            hash *= 0x2C1B3C6Du;
+            hash ^= hash >> 12;
+        }
+    }
+
     private static Vector2 CatmullRom(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
     {
         float t2 = t * t;
@@ -350,18 +492,24 @@ public static class RoadSpatialGrid
         return Mathf.Abs(delta.x) < r + halfGrid && Mathf.Abs(delta.y) < r + halfGrid;
     }
 
-    private static void MergePoints(Dictionary<Vector2i, List<RoadPoint>> tempPoints)
+    private static void MergePoints(Dictionary<Vector2i, List<RoadPoint>> tempPoints,float? committedLength=null,bool initialize=false)
     {
         m_roadCacheLock.EnterWriteLock();
         try
         {
+            int added=0;
+            foreach(var points in tempPoints.Values) added=checked(added+points.Count);
+            int total=checked(m_storedPointRecords+added);
+            float? length=AddCommittedLength(m_committedPathLength,committedLength);
+            int cells=GridCellsWithRoads;
             foreach (var kvp in tempPoints)
             {
                 if (m_roadPoints.TryGetValue(kvp.Key, out var existing))
                 {
-                    var combined = new List<RoadPoint>(existing);
-                    combined.AddRange(kvp.Value);
-                    m_roadPoints[kvp.Key] = combined.ToArray();
+                    var combined = new RoadPoint[existing.Length + kvp.Value.Count];
+                    Array.Copy(existing, combined, existing.Length);
+                    kvp.Value.CopyTo(combined, existing.Length);
+                    m_roadPoints[kvp.Key] = combined;
                 }
                 else
                 {
@@ -369,6 +517,9 @@ public static class RoadSpatialGrid
                 }
             }
             
+            m_storedPointRecords=total;
+            m_committedPathLength=length;
+            if(initialize) m_initialized=true;
             GridCellsWithRoads = m_roadPoints.Count;
             m_cachedRoadGrid = new Vector2i(-999999, -999999);
             m_cachedRoadPoints = null;
@@ -378,6 +529,20 @@ public static class RoadSpatialGrid
             m_roadCacheLock.ExitWriteLock();
         }
     }
+
+    private static float? AddCommittedLength(float? current,float? addition)
+    {
+        if(!addition.HasValue) return current;
+        if(!ManualRoadDraft.IsFinite(addition.Value) || addition.Value<0) throw new ArgumentException("Invalid committed path length.");
+        if(!current.HasValue) return null;
+        float result=current.Value+addition.Value;
+        if(!ManualRoadDraft.IsFinite(result)) throw new OverflowException("Committed path length overflow.");
+        return result;
+    }
+
+    /// <summary>The points stored in one 64 m grid cell (<see cref="GetRoadGrid"/>), or null. Lock-free like every point
+    /// lookup.</summary>
+    internal static RoadPoint[]? CellPoints(Vector2i cell) => m_roadPoints.TryGetValue(cell, out var points) ? points : null;
 
     public static Vector2i GetRoadGrid(float wx, float wy)
     {
@@ -490,6 +655,19 @@ public static class RoadSpatialGrid
         return t * t * (3f - 2f * t);
     }
 
+    /// <summary>
+    /// How far outside a zone a road point can still change the zone's
+    /// terrain: its leveled footprint (half the width plus the blend margin),
+    /// or its full width, whichever is more. A zone's own compiler holds its
+    /// border vertices, and the zone next door holds the same vertices in its
+    /// own; both must see every point that reaches them, or they compute
+    /// different heights for the same place and the road steps at the seam.
+    /// The full width alone, used before, fell short for roads narrower than
+    /// 4 m (a 2 m road reaches 3 m). From 4 m up the two agree and nothing changes.
+    /// </summary>
+    public static float ZoneReach(float width) =>
+        Mathf.Max(width, width * 0.5f + RoadConstants.TerrainBlendMargin);
+
     public static List<RoadPoint> GetRoadPointsInZone(Vector2s zoneID)
     {
         List<RoadPoint> result = new List<RoadPoint>();
@@ -512,10 +690,11 @@ public static class RoadSpatialGrid
                     {
                         foreach (var rp in points)
                         {
-                            if (rp.p.x >= zonePos.x - RoadConstants.HalfZoneSize - rp.w &&
-                                rp.p.x <= zonePos.x + RoadConstants.HalfZoneSize + rp.w &&
-                                rp.p.y >= zonePos.z - RoadConstants.HalfZoneSize - rp.w &&
-                                rp.p.y <= zonePos.z + RoadConstants.HalfZoneSize + rp.w)
+                            float reach = RoadConstants.HalfZoneSize + ZoneReach(rp.w);
+                            if (rp.p.x >= zonePos.x - reach &&
+                                rp.p.x <= zonePos.x + reach &&
+                                rp.p.y >= zonePos.z - reach &&
+                                rp.p.y <= zonePos.z + reach)
                             {
                                 result.Add(rp);
                             }
@@ -530,6 +709,51 @@ public static class RoadSpatialGrid
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Every zone for which GetRoadPointsInZone is not empty: the zones a road
+    /// writes terrain into, found from the points instead of by asking each
+    /// zone in the world. Candidates come from each point's reach (the zone
+    /// square widened by the point's width, GetRoadPointsInZone's own bounds,
+    /// plus a zone of slack either way against rounding at the edges); each
+    /// candidate is then kept only if GetRoadPointsInZone finds points in it,
+    /// so the two agree zone for zone by construction.
+    /// </summary>
+    public static HashSet<Vector2s> GetZonesWithRoadPoints()
+    {
+        var candidates = new HashSet<Vector2s>();
+        if (!m_initialized)
+            return candidates;
+
+        m_roadCacheLock.EnterReadLock();
+        try
+        {
+            foreach (RoadPoint[] cell in m_roadPoints.Values)
+            {
+                foreach (RoadPoint rp in cell)
+                {
+                    float reach = RoadConstants.HalfZoneSize + ZoneReach(rp.w);
+                    int x0 = Mathf.FloorToInt((rp.p.x - reach) / RoadConstants.ZoneSize);
+                    int x1 = Mathf.CeilToInt((rp.p.x + reach) / RoadConstants.ZoneSize);
+                    int y0 = Mathf.FloorToInt((rp.p.y - reach) / RoadConstants.ZoneSize);
+                    int y1 = Mathf.CeilToInt((rp.p.y + reach) / RoadConstants.ZoneSize);
+                    for (int y = y0; y <= y1; y++)
+                        for (int x = x0; x <= x1; x++)
+                            candidates.Add(new Vector2s(x, y));
+                }
+            }
+        }
+        finally
+        {
+            m_roadCacheLock.ExitReadLock();
+        }
+
+        var zones = new HashSet<Vector2s>();
+        foreach (Vector2s zone in candidates)
+            if (GetRoadPointsInZone(zone).Count > 0)
+                zones.Add(zone);
+        return zones;
     }
 
     public static int GetTotalPointCount()
@@ -654,9 +878,10 @@ public static class RoadSpatialGrid
                     list = new List<RoadPoint>();
                     pointsByGrid[grid] = list;
                 }
+                if(!ManualRoadDraft.IsFinite(px) || !ManualRoadDraft.IsFinite(py) || !ManualRoadDraft.IsFinite(w) || w<=0 || !ManualRoadDraft.IsFinite(h)) return;
                 list.Add(point);
             }
-            
+            if(ms.Position!=ms.Length) return;
             AddDeserializedPoints(pointsByGrid);
         }
         catch (System.Exception ex)
@@ -673,6 +898,10 @@ public static class RoadSpatialGrid
         m_roadCacheLock.EnterWriteLock();
         try
         {
+            int added=0;
+            foreach(var cell in pointsByGrid)
+                if(!m_roadPoints.ContainsKey(cell.Key)) added=checked(added+cell.Value.Count);
+            int total=checked(m_storedPointRecords+added);
             foreach (var kvp in pointsByGrid)
             {
                 Vector2i grid = kvp.Key;
@@ -681,10 +910,12 @@ public static class RoadSpatialGrid
                 if (!m_roadPoints.ContainsKey(grid))
                 {
                     m_roadPoints[grid] = newPoints.ToArray();
+                    GridCellsWithRoads++;
                 }
             }
             
-            GridCellsWithRoads = m_roadPoints.Count;
+            m_storedPointRecords=total;
+            if(added>0) m_committedPathLength=null;
             m_initialized = true;
             
             m_cachedRoadGrid = new Vector2i(-999999, -999999);
@@ -698,7 +929,11 @@ public static class RoadSpatialGrid
 
     /// <summary>
     /// Serialize the entire road network to a byte array for global persistence.
-    /// Format: [version:int][cellCount:int][grid.x:int][grid.y:int][pointCount:int][points...]...
+    /// Version 4: [4][geometry encoding 2-5][the old geometry payload after its version]
+    /// [known-length byte 0 or 1][committed planned-path length:float]. Geometry/hash inputs are unchanged.
+    /// Older Roads readers reject v4; this reader also accepts legacy v1-v3 with unknown nonempty length.
+    /// Geometry encodings 4 (the cut-only flag) and 5 (the into-site flag) occur only inside the v4 envelope. Encodings 3
+    /// and up carry the append block ([count][parent ids]); under encodings 4 and 5 it is written even when empty (count 0).
     /// </summary>
     public static byte[]? SerializeAllRoadPoints()
     {
@@ -710,11 +945,30 @@ public static class RoadSpatialGrid
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             
-            writer.Write(1);
+            // Version 2 adds the paint-only flag per point (waded fords), 3 the
+            // append id, 4 the cut-only flag (staircase earthwork), 5 the
+            // into-site flag (a road onto a place's landing). Each is
+            // written only when the network needs it, so a road-only network
+            // saves exactly as before.
+            bool appended = s_appendParents.Count > 0;
+            bool cuts = false, intoSite = false;
+            foreach (var cell in m_roadPoints.Values)
+                foreach (var rp in cell)
+                {
+                    cuts |= rp.cutOnly;
+                    intoSite |= rp.intoSite;
+                }
+            int format = intoSite ? 5 : cuts ? 4 : appended ? 3 : 2;
+            writer.Write(4);
+            writer.Write(format);
             
-            writer.Write(m_roadPoints.Count);
+            // Cells in a fixed order, so the saved bytes depend on the network only:
+            // the grid's own order is its hash table's, and islands fill it in parallel.
+            var ordered = new List<KeyValuePair<Vector2i, RoadPoint[]>>(m_roadPoints);
+            ordered.Sort((a, b) => a.Key.x != b.Key.x ? a.Key.x.CompareTo(b.Key.x) : a.Key.y.CompareTo(b.Key.y));
+            writer.Write(ordered.Count);
             
-            foreach (var kvp in m_roadPoints)
+            foreach (var kvp in ordered)
             {
                 writer.Write(kvp.Key.x);
                 writer.Write(kvp.Key.y);
@@ -726,9 +980,20 @@ public static class RoadSpatialGrid
                     writer.Write(rp.p.y);
                     writer.Write(rp.w);
                     writer.Write(rp.h);
+                    writer.Write(rp.paintOnly);
+                    if (format >= 4) writer.Write(rp.cutOnly);
+                    if (format >= 5) writer.Write(rp.intoSite);
+                    if (format >= 3) writer.Write(rp.addition);
                 }
             }
             
+            if (format >= 3)
+            {
+                writer.Write(s_appendParents.Count);
+                foreach (int parent in s_appendParents) writer.Write(parent);
+            }
+            writer.Write((byte)(m_committedPathLength.HasValue?1:0));
+            writer.Write(m_committedPathLength ?? 0f);
             return ms.ToArray();
         }
         finally
@@ -738,35 +1003,52 @@ public static class RoadSpatialGrid
     }
 
     /// <summary>
+    /// Why the last <see cref="DeserializeAllRoadPoints"/> refused its data: the envelope and
+    /// geometry encoding it read, and the check that failed or the exception that stopped it.
+    /// Null after a successful read. The unreadable-save error and a refused client
+    /// snapshot name it, so a refusal says what this build could not read.
+    /// </summary>
+    public static string? LastReadRefusal { get; private set; }
+
+    /// <summary>
     /// Deserialize the entire road network from a byte array.
     /// Clears existing data and replaces with loaded data.
+    /// False (and <see cref="LastReadRefusal"/> says why) when the data is refused.
     /// </summary>
     public static bool DeserializeAllRoadPoints(byte[] data)
     {
-        if (data == null || data.Length == 0)
+        LastReadRefusal = null;
+        int envelope = 0, version = 0;
+        bool Refuse(string why)
+        {
+            LastReadRefusal = $"envelope {envelope}, encoding {version}: {why}";
             return false;
+        }
+        if (data == null || data.Length == 0)
+            return Refuse("no data");
 
+        // Left open by the reader, so a refusal can say how far the read got.
+        var ms = new MemoryStream(data);
         try
         {
-            using var ms = new MemoryStream(data);
-            using var reader = new BinaryReader(ms);
+            using var reader = new BinaryReader(ms, System.Text.Encoding.UTF8, leaveOpen: true);
             
-            int version = reader.ReadInt32();
-            if (version != 1)
-            {
-                Log.LogWarning($"Unknown road data version: {version}");
-                return false;
-            }
+            envelope=reader.ReadInt32();
+            version=envelope==4 ? reader.ReadInt32() : envelope;
+            if ((envelope==4 && (version < 2 || version > 5)) || (envelope!=4 && (version < 1 || version > 3)))
+                return Refuse("a format this build does not know (it reads envelope 4 with encodings 2-5, and formats 1-3 bare)");
             
             int cellCount = reader.ReadInt32();
             if (cellCount < 0 || cellCount > 1000000)
-            {
-                Log.LogWarning($"Invalid cell count: {cellCount}");
-                return false;
-            }
+                return Refuse($"cell count {cellCount} out of range");
             
             var loadedPoints = new Dictionary<Vector2i, RoadPoint[]>(cellCount);
             int totalPoints = 0;
+            // A released build (1.4.x, format 1) clamped widths and saved
+            // averaged heights, but never checked them. One bad point there
+            // costs that point, not the world its whole network.
+            bool released = envelope == 1;
+            int dropped = 0;
             
             for (int c = 0; c < cellCount; c++)
             {
@@ -775,47 +1057,106 @@ public static class RoadSpatialGrid
                 int pointCount = reader.ReadInt32();
                 
                 if (pointCount < 0 || pointCount > 100000)
-                {
-                    Log.LogWarning($"Invalid point count at cell ({gridX},{gridY}): {pointCount}");
-                    return false;
-                }
+                    return Refuse($"point count {pointCount} at cell ({gridX},{gridY}) out of range");
                 
-                var points = new RoadPoint[pointCount];
+                var points = new List<RoadPoint>(pointCount);
                 for (int i = 0; i < pointCount; i++)
                 {
                     float px = reader.ReadSingle();
                     float py = reader.ReadSingle();
                     float w = reader.ReadSingle();
                     float h = reader.ReadSingle();
-                    points[i] = new RoadPoint(new Vector2(px, py), w, h);
+                    bool paintOnly = version >= 2 && reader.ReadBoolean();
+                    bool cutOnly = version >= 4 && reader.ReadBoolean();
+                    bool intoSite = version >= 5 && reader.ReadBoolean();
+                    int addition = version >= 3 ? reader.ReadInt32() : 0;
+                    if (!ManualRoadDraft.IsFinite(px) || !ManualRoadDraft.IsFinite(py) ||
+                        !ManualRoadDraft.IsFinite(w) || w <= 0 || !ManualRoadDraft.IsFinite(h) || addition < 0)
+                    {
+                        if (!released)
+                            return Refuse($"point {i} of cell ({gridX},{gridY}) has position ({px},{py}), width {w}, height {h}, " +
+                                          $"addition {addition}: a non-finite value, no width or a negative addition");
+                        dropped++;
+                        continue;
+                    }
+                    points.Add(new RoadPoint(new Vector2(px, py), w, h, paintOnly, addition, cutOnly, intoSite));
                 }
                 
-                loadedPoints[new Vector2i(gridX, gridY)] = points;
-                totalPoints += pointCount;
+                var key=new Vector2i(gridX,gridY);
+                if (points.Count == 0 && pointCount > 0) continue;   // every point of the cell was dropped
+                if (loadedPoints.TryGetValue(key, out var earlier))
+                {
+                    // A released build read a cell listed twice as one cell (it filed each point under its grid
+                    // cell), so a released blob keeps both lists; in this build's own formats a repeat is damage.
+                    if (!released) return Refuse($"cell ({gridX},{gridY}) appears twice");
+                    points.InsertRange(0, earlier);
+                }
+                loadedPoints[key]=points.ToArray();
+                totalPoints=checked(totalPoints+points.Count - (earlier?.Length ?? 0));
             }
             
+            var parents = new List<int>();
+            if (version >= 3)
+            {
+                // Encoding 3 is written only for a network with appends, so its block holds at
+                // least one. Encoding 4 is written for any network with a staircase's cuts and
+                // carries the block whether or not anything was appended: empty is valid there.
+                int count = reader.ReadInt32();
+                int least = version >= 4 ? 0 : 1;
+                if (count < least || count > ManualRoadDraft.MaxAppends)
+                    return Refuse($"append block holds {count} parent(s) ({least} to {ManualRoadDraft.MaxAppends} expected)");
+                for (int i = 0; i < count; i++)
+                {
+                    int parent = reader.ReadInt32();
+                    if (parents.Contains(parent)) return Refuse($"append parent {parent} appears twice");
+                    parents.Add(parent);
+                }
+                foreach (var cell in loadedPoints.Values)
+                    foreach (var point in cell)
+                        if (point.addition > count) return Refuse($"a point names append {point.addition} of {count}");
+            }
+            float? length=totalPoints==0 ? 0f : (float?)null;
+            if(envelope==4)
+            {
+                byte known=reader.ReadByte();
+                float metres=reader.ReadSingle();
+                bool canonicalZero=BitConverter.ToInt32(BitConverter.GetBytes(metres),0)==0;
+                if(known>1 || !ManualRoadDraft.IsFinite(metres) || metres<0 || (known==0 && !canonicalZero)
+                    || (totalPoints==0 && (known!=1 || !canonicalZero)))
+                    return Refuse($"planned-path length record (known {known}, {metres} m) does not fit {totalPoints} point(s)");
+                length=known==1 ? metres : (float?)null;
+            }
+            if (ms.Position != ms.Length) return Refuse($"{ms.Length - ms.Position} byte(s) left over after the network");
+            int worldSeed=WorldGenerator.instance?.GetSeed() ?? 0;
             m_roadCacheLock.EnterWriteLock();
             try
             {
+                int networkVersion=ComputeRoadNetworkVersion(loadedPoints,worldSeed);
+                s_appendParents=parents;
                 m_roadPoints = loadedPoints;
                 m_cachedRoadGrid = new Vector2i(-999999, -999999);
                 m_cachedRoadPoints = null;
                 m_initialized = true;
                 GridCellsWithRoads = loadedPoints.Count;
-                TotalRoadPoints = totalPoints;
+                m_storedPointRecords=totalPoints;
+                m_committedPathLength=length;
+                RoadNetworkVersion=networkVersion;
+                LoadedFromReleasedFormat=released;
             }
             finally
             {
                 m_roadCacheLock.ExitWriteLock();
             }
             
-            Log.LogDebug($"Deserialized {cellCount} grid cells, {totalPoints} road points");
+            if (dropped > 0)
+                Log.LogWarning($"The saved road network (format 1, from a released build) held {dropped} point(s) with a " +
+                               "non-finite position or height, or no width; they were left out and the rest of the network loaded.");
+            Log.LogDebug($"Deserialized {cellCount} grid cells, {totalPoints} stored records");
             return true;
         }
         catch (System.Exception ex)
         {
-            Log.LogWarning($"Failed to deserialize global road data: {ex.Message}");
-            return false;
+            return Refuse($"{ex.GetType().Name} at byte {ms.Position} of {data.Length}: {ex.Message}");
         }
     }
 

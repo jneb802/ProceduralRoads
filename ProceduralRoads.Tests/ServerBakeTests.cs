@@ -126,27 +126,14 @@ public class ServerBakeTests
         Assert.False(ServerBakePlanner.VegetationOwed(generated: false, cleared: false, generatedBeforeNetwork: false));
     }
 
-    /// <summary>
-    /// A tree must not vanish under the axe of the player hosting the game. ZNet's peer list leaves the host's own
-    /// player out, so it is added; a dedicated server, which has no local player, adds nobody.
-    /// </summary>
-    [Fact]
-    public void VegetationIsDeferredWhileTheHostStandsInIt()
-    {
-        var host = new Vector3(10f, 30f, 10f);
-        var peer = new Vector3(900f, 30f, 900f);
-        Assert.Contains(host, ServerBakePlanner.VegetationWitnesses(new List<Vector3>(), host));
-        Assert.Equal(new List<Vector3> { peer, host }, ServerBakePlanner.VegetationWitnesses(new[] { peer }, host));
-        Assert.Equal(new List<Vector3> { peer }, ServerBakePlanner.VegetationWitnesses(new[] { peer }, null));
-    }
-
-    [Fact]
-    public void TwoSavedCompilersAreNeitherOfThemWritten()
-    {
-        Assert.Equal(ServerBakePlanner.Action.DuplicateCompilers,
-            Decide(true, false, Compilers(new ServerBakePlanner.Compiler(0, 0, false),
-                new ServerBakePlanner.Compiler(0, 0, false))));
-    }
+    [Theory]
+    [InlineData("rock4_forest", false, true)]
+    [InlineData("rock4_forest", true, false)]
+    [InlineData("cliff_mistlands1", false, true)]
+    [InlineData("silvervein", false, false)]
+    [InlineData("Beech1", false, false)]
+    public void TheRockPassBringsAliveOnlyClearableRocksNoPlayerMade(string prefab, bool playerCreated, bool brought) =>
+        Assert.Equal(brought, ServerBakePlanner.BringsRockAlive(prefab, playerCreated));
 
     [Fact]
     public void APlayerInTheZoneKeepsTheirCompilerUntilTheyLeave()

@@ -24,6 +24,7 @@ public sealed class SeamFadeTests : IDisposable
 
     private readonly ValheimWorldScope _world = new ValheimWorldScope()
         .WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZoneSystem();
+    private readonly StaticOverride _plain = PlainEarthworks.Apply();
 
     public SeamFadeTests()
     {
@@ -35,6 +36,7 @@ public sealed class SeamFadeTests : IDisposable
     {
         NetworkCutoff.Forget();
         RoadSpatialGrid.Clear(); RoadTerrainModifier.ResetForWorld();
+        _plain.Dispose();
         _world.Dispose();
     }
 

@@ -128,6 +128,12 @@ public static class NetworkCutoff
         Log($"new network: {s_excluded.Count} zone(s) generated before it are left as they are");
     }
 
+    /// <summary>
+    /// A network is about to be planned (main thread, before any worker starts): the zones it must leave alone are
+    /// known now, so planning (a staircase's pieces and cuts) avoids them as the writers will.
+    /// <see cref="UseNewNetwork"/> settles the set again when the network is published.
+    /// </summary>
+    public static void BeginNewNetwork() => s_excluded = ExcludedForNewNetwork();
 
     private static HashSet<Vector2s> ExcludedForNewNetwork()
     {

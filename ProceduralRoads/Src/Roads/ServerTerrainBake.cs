@@ -72,7 +72,7 @@ public static class ServerTerrainBake
     private struct Counts
     {
         public int Zones, Created, Rewritten, LiveWritten, Current, Ungenerated, BeforeNetwork, Loaded, Duplicates, Failed;
-        public int NothingToWrite, VegetationZones, VegetationRemoved;
+        public int NothingToWrite, VegetationZones, VegetationRemoved, SavedRocks, GhostRocks, GhostSettled;
         public int GhostCreated, GhostRewritten, GhostFailed;
         public long Bytes;
         public double GhostMs;
@@ -132,7 +132,7 @@ public static class ServerTerrainBake
                 sample = $" (nearest the centre: {rp.p.x:F1} {rp.p.y:F1} at h {rp.h:F2}, {rp.w:F0} m wide{(rp.paintOnly ? ", paint only" : "")})";
             }
         }
-        List<ZDO> saved = RoadTerrainModifier.SavedTerrainCompilers(zone);
+        List<ZDO> saved = FindSavedCompilers(zone);
         List<ServerBakePlanner.Compiler> facts = Describe(saved, zone);
         var described = new List<string>();
         long me = ZDOMan.GetSessionID();
@@ -339,6 +339,11 @@ public static class ServerTerrainBake
                 return;
             if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0)
             {
+                // No road here, but a rock of this zone can reach over the road
+                // next door, and this is the only time the server has it. No
+                // terrain is owed, so a fault here is not a repair.
+                try { s_counts.GhostRocks += ClearGhostRocks(zone, settle: false); }
+                catch (Exception ex) { Log.LogError($"[BAKE] zone {zone} (generated for a peer, no road): rocks: {ex}"); }
                 return;
             }
 
@@ -365,8 +370,10 @@ public static class ServerTerrainBake
             else
                 s_counts.GhostRewritten++;
             s_counts.Bytes += bytes;
+            int rocks = ClearGhostRocks(zone);
+            s_counts.GhostRocks += rocks;
             Log.LogDebug($"[BAKE] zone {zone} (generated for a peer): {result}, " +
-                         $"{bytes} bytes, {clock.Elapsed.TotalMilliseconds:F1} ms");
+                         $"{bytes} bytes, {rocks} rock(s) cleared, {clock.Elapsed.TotalMilliseconds:F1} ms");
         }
         catch (Exception ex)
         {
@@ -375,6 +382,159 @@ public static class ServerTerrainBake
             Log.LogError($"[BAKE] zone {zone} (generated for a peer): {ex}");
         }
     }
+
+    /// <summary>
+    /// Rocks clipping the road in a zone generated for a remote peer, cleared
+    /// as Roads/RockClearing says while the zone's objects still exist: the
+    /// server never loads that zone, so the automatic pass that clears loaded
+    /// zones never sees it, and a player without the mod has no pass at all.
+    /// </summary>
+    private static int ClearGhostRocks(Vector2s zone, bool settle = true)
+    {
+        if (!RoadRockPolicy.Clears(RoadRockClearing.Mode)) return 0;
+        RoadRockCarve.GhostSpawned = ZoneSystem.instance.m_tempSpawnedObjects;
+        try
+        {
+            long sync = RoadRockStats.Now;
+            Physics.SyncTransforms();
+            // What a client would do next: StaticPhysics drops an object onto
+            // the ground, and the road cut has just lowered it (the ghost
+            // heightmap was rebuilt with the road terrain written above), so a
+            // rock beside a cut falls into the road on the client, where
+            // nothing would carve it. Settle it here and save where it lands.
+            // A zone with no road of its own has no cut: nothing is moved there.
+            float drop = 0f;
+            int settled = settle ? SettleGhostObjects(zone, out drop) : 0;
+            if (settled > 0) Physics.SyncTransforms();
+            RoadRockStats.SyncTicks += RoadRockStats.Now - sync;
+            s_counts.GhostSettled += settled;
+            if (settled > 0)
+                Log.LogDebug($"[BAKE] zone {zone} (generated for a peer): {settled} object(s) settled onto the graded ground, the largest move {drop:F2} m");
+            // Its rocks may reach past its corners (a rock1_mountain is ~30 m
+            // across): the road points under any of them are probed, in
+            // whichever zone they lie.
+            Vector3 centre = ZoneSystem.GetZonePos(zone);
+            float radius = GhostRockReach(centre);
+            if (!settle && RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius).Count == 0) return 0;
+            var lines = RoadRockProbe.Run(centre, radius, apply: true, sites: false, mist: true, cliffs: true,
+                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out int cleared);
+            Log.LogDebug($"[BAKE] zone {zone} (generated for a peer): {lines[0]}");
+            return cleared;
+        }
+        finally { RoadRockCarve.GhostSpawned = null; }
+    }
+
+    /// <summary>
+    /// Rocks clipping the road in a generated zone the server does not have
+    /// loaded, cleared once per zone and network with its vegetation. A zone
+    /// generated before its road (a road or staircase appended later, a new
+    /// network) never had the pass a zone generated for a peer gets, and on a
+    /// dedicated server no client clears rocks. The zone's terrain, its saved
+    /// compiler and its clearable rocks are brought alive from their data, as
+    /// generation has them, carved as Roads/RockClearing says, and taken down
+    /// again, leaving their data.
+    /// </summary>
+    private static int ClearSavedRocks(Vector2s zone)
+    {
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        var rocks = new List<(ZDO zdo, GameObject prefab)>();
+        foreach (ZDO zdo in zdos)
+        {
+            GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, IsPlayerCreated(zdo)))
+                rocks.Add((zdo, prefab));
+        }
+        if (rocks.Count == 0) return 0;
+        GameObject? root = null, compiler = null;
+        var alive = new List<GameObject>();
+        try
+        {
+            root = Object.Instantiate(ZoneSystem.instance.m_zonePrefab, ZoneSystem.GetZonePos(zone), Quaternion.identity);
+            Heightmap? hmap = root.GetComponentInChildren<Heightmap>();
+            if (hmap == null || !EnsureGenerated(hmap)) return 0;
+            List<ZDO> saved = RoadTerrainModifier.SavedTerrainCompilers(zone);
+            if (saved.Count == 1)
+            {
+                // The ground as the players have it, road cut included: the carve's support test leans on it.
+                compiler = BringSavedAlive(saved[0], hmap.m_terrainCompilerPrefab);
+                hmap.Regenerate();
+            }
+            foreach (var (zdo, prefab) in rocks)
+                if (BringSavedAlive(zdo, prefab) is GameObject go) alive.Add(go);
+            RoadRockCarve.GhostSpawned = alive;
+            Physics.SyncTransforms();
+            Vector3 centre = ZoneSystem.GetZonePos(zone);
+            var lines = RoadRockProbe.Run(centre, OwnRockReach(centre, alive), apply: true, sites: false, mist: true, cliffs: true,
+                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out int cleared);
+            Log.LogDebug($"[BAKE] zone {zone} (saved rocks): {lines[0]}");
+            return cleared;
+        }
+        finally
+        {
+            RoadRockCarve.GhostSpawned = null;
+            // A rock removed whole has gone with its data; a carved one leaves its copy in the list.
+            foreach (GameObject go in alive)
+                if (go != null) Release(go, bound: true);
+            if (compiler != null) Release(compiler, bound: true);
+            if (root != null) Object.DestroyImmediate(root);
+        }
+    }
+
+    /// <summary>How far round the zone's centre its clearable rocks reach, road width included (never under ZoneCornerReach).</summary>
+    private static float GhostRockReach(Vector3 centre) => OwnRockReach(centre, ZoneSystem.instance.m_tempSpawnedObjects);
+
+    private static float OwnRockReach(Vector3 centre, List<GameObject> objects)
+    {
+        var bounds = new List<(Vector2 min, Vector2 max)>();
+        foreach (var go in objects)
+        {
+            if (go == null || !RoadRockPolicy.IsClearableRock(RoadRockCarve.PrefabName(go, go.GetComponent<ZNetView>()))) continue;
+            foreach (var c in go.GetComponentsInChildren<Collider>())
+                bounds.Add((new Vector2(c.bounds.min.x, c.bounds.min.z), new Vector2(c.bounds.max.x, c.bounds.max.z)));
+        }
+        return RoadRockPolicy.OwnObjectsReach(new Vector2(centre.x, centre.z), bounds, ZoneCornerReach, RoadRockCarve.WidestRoadHalfWidth);
+    }
+
+    /// <summary>
+    /// Move this zone's freshly spawned StaticPhysics objects where the game
+    /// would (RoadRockClearing.FallTarget), transform and saved position both.
+    /// A debug line per zone also says how far the ground under its road
+    /// points is from the road's own height, which is ~0 only if the ghost
+    /// heightmap carries the road terrain: the settling means nothing if not.
+    /// </summary>
+    private static int SettleGhostObjects(Vector2s zone, out float largest)
+    {
+        largest = 0f;
+        int moved = 0;
+        foreach (var go in ZoneSystem.instance.m_tempSpawnedObjects)
+        {
+            if (go == null) continue;
+            var physics = go.GetComponent<StaticPhysics>();
+            if (physics == null || !RoadRockClearing.FallTarget(physics, out float y)) continue;
+            Vector3 p = go.transform.position;
+            largest = Mathf.Max(largest, Mathf.Abs(p.y - y));
+            p.y = y;
+            go.transform.position = p;
+            var view = go.GetComponent<ZNetView>();
+            if (view != null && view.GetZDO() != null) view.GetZDO().SetPosition(p);
+            moved++;
+        }
+        if (Log != null && s_graderChecks < 20)
+        {
+            s_graderChecks++;
+            int n = 0; double sum = 0, worst = 0;
+            foreach (var point in RoadSpatialGrid.GetRoadPointsInZone(zone))
+            {
+                if (point.paintOnly || !ZoneSystem.instance.GetGroundHeight(new Vector3(point.p.x, 0f, point.p.y), out float g)) continue;
+                double d = Mathf.Abs(g - point.h); n++; sum += d; worst = System.Math.Max(worst, d);
+            }
+            if (n > 0) Log.LogDebug($"[BAKE] zone {zone}: ghost ground vs road height over {n} points: mean {sum / n:F2} m, worst {worst:F2} m");
+        }
+        return moved;
+    }
+
+    private static int s_graderChecks;
 
     public static string StatusLine()
     {
@@ -386,10 +546,10 @@ public static class ServerTerrainBake
                $"{c.BeforeNetwork} explored before the network (left as they are), {c.Loaded} loaded here without one, " +
                $"{c.Duplicates} with duplicate compilers, {c.NothingToWrite} with nothing to write, {c.Failed} failed, " +
                $"{s_ghostRepair.Count} deferred, {pending} pending; " +
-               $"vegetation removed from {c.VegetationZones} zones ({c.VegetationRemoved} objects); {c.Bytes / 1024} KiB written; " +
+               $"vegetation removed from {c.VegetationZones} zones ({c.VegetationRemoved} objects), {c.SavedRocks} rock(s) cleared; {c.Bytes / 1024} KiB written; " +
                $"{s_busyMs / 1000.0:F1} s of frame time over {s_wall.Elapsed.TotalSeconds:F1} s. " +
                $"Generated for peers: {c.GhostCreated} compilers created, {c.GhostRewritten} saved ones written, " +
-               $"{c.GhostFailed} failed ({s_ghostRepair.RepairCount} awaiting repair), {c.GhostMs:F0} ms; " +
+               $"{c.GhostFailed} failed ({s_ghostRepair.RepairCount} awaiting repair), {c.GhostRocks} rock(s) cleared, {c.GhostSettled} object(s) settled, {c.GhostMs:F0} ms; " +
                $"{s_faults.Count} zone exception(s); queue " +
                (!Enabled ? "disabled by startup setting" : s_faults.IsPaused
                    ? $"paused ({s_faults.PauseReason}); fix the cause, then road_bake again"
@@ -508,7 +668,12 @@ public static class ServerTerrainBake
         bool generated = zs.IsZoneGenerated(zone);
         bool loadedHere = zs.m_zones.ContainsKey(zone);
         Outcome terrain = ProcessTerrain(zone, generated, loadedHere);
-        return terrain == Outcome.Done ? ProcessVegetation(zone, generated) : terrain;
+        if (terrain == Outcome.NotInPlace)
+        {
+            s_ghostRepair.PendingWorkDone(zone);
+            return Outcome.Done;
+        }
+        return terrain == Outcome.Done ? ProcessVegetation(zone, generated, loadedHere) : terrain;
     }
 
     private static Outcome ProcessTerrain(Vector2s zone, bool generated, bool loadedHere)
@@ -701,9 +866,10 @@ public static class ServerTerrainBake
     /// A zone generated before its road still has everything the game grew
     /// there. Remove, once per zone and network, what generation would have
     /// left out (VegetationClearing). Waits while another player is near the
-    /// zone: a tree vanishing under someone's axe is not worth it.
+    /// zone: a tree vanishing under someone's axe is not worth it. The rocks
+    /// clipping the road go in the same pass (ClearSavedRocks).
     /// </summary>
-    private static Outcome ProcessVegetation(Vector2s zone, bool generated)
+    private static Outcome ProcessVegetation(Vector2s zone, bool generated, bool loadedHere)
     {
         if (!ServerBakePlanner.VegetationOwed(generated, VegetationClearing.IsCleared(zone, s_version), NetworkCutoff.Excludes(zone)))
         {
@@ -714,7 +880,8 @@ public static class ServerTerrainBake
             return Outcome.Done;
         }
         List<VegetationClearing.Area> areas = ClearAreasFor(zone);
-        if (areas.Count > 0)
+        bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere, RoadRockPolicy.Clears(RoadRockClearing.Mode));
+        if (areas.Count > 0 || rocks)
         {
             if (AnyPeerNear(zone))
             {
@@ -722,13 +889,15 @@ public static class ServerTerrainBake
                 s_ghostRepair.Defer(zone, Time.time, RetryDelaySeconds);
                 return Outcome.Waiting;
             }
-            int removed = RemoveVegetation(zone, areas);
+            int removed = areas.Count > 0 ? RemoveVegetation(zone, areas) : 0;
             if (removed > 0)
             {
                 s_counts.VegetationZones++;
                 s_counts.VegetationRemoved += removed;
                 Log.LogDebug($"[BAKE] zone {zone}: removed {removed} trees, rocks and bushes from the road");
             }
+            if (rocks)
+                s_counts.SavedRocks += ClearSavedRocks(zone);
         }
         VegetationClearing.MarkCleared(zone, s_version);
         // Vegetation is finished for this zone and this network. If terrain
@@ -1027,8 +1196,9 @@ public static class ServerTerrainBake
 
     /// <summary>
     /// Whether the compiler came alive against this heightmap and now carries
-    /// the current roads: its Awake postfix (RoadTerrainModifier.
-    /// OnTerrainCompilerReady) wrote them.
+    /// the current roads. Its Awake postfix (RoadTerrainModifier.
+    /// OnTerrainCompilerReady) queued the write; complete the rebuild before
+    /// checking its stamp and releasing the temporary terrain.
     /// </summary>
     private static WriteResult Written(Vector2s zone, GameObject? go, Heightmap hmap, out int bytes)
     {
@@ -1044,6 +1214,7 @@ public static class ServerTerrainBake
             Log.LogWarning($"[BAKE] zone {zone}: the terrain compiler found another heightmap; not written");
             return WriteResult.Failed;
         }
+        RoadTerrainModifier.CompletePendingTerrain(tc, hmap);
         if (!RoadTerrainModifier.CarriesCurrentRoads(tc))
         {
             // Points just outside the zone that reach into it too faintly to
@@ -1082,7 +1253,9 @@ public static class ServerTerrainBake
     /// the game hands it back to the next peer that comes near, as it does
     /// with every object the server generates.
     /// </summary>
-    private static GameObject? BringSavedCompilerAlive(ZDO zdo, Heightmap hmap)
+    private static GameObject? BringSavedCompilerAlive(ZDO zdo, Heightmap hmap) => BringSavedAlive(zdo, hmap.m_terrainCompilerPrefab);
+
+    private static GameObject? BringSavedAlive(ZDO zdo, GameObject prefab)
     {
         if (!zdo.IsOwner())
             zdo.SetOwner(ZDOMan.GetSessionID());
@@ -1090,13 +1263,13 @@ public static class ServerTerrainBake
         ZNetView.m_initZDO = zdo;
         try
         {
-            return Object.Instantiate(hmap.m_terrainCompilerPrefab, zdo.GetPosition(), zdo.GetRotation());
+            return Object.Instantiate(prefab, zdo.GetPosition(), zdo.GetRotation());
         }
         finally
         {
             if (ZNetView.m_initZDO != null)
             {
-                Log.LogWarning($"[BAKE] saved terrain compiler {zdo.m_uid} was not taken up by the object made for it");
+                Log.LogWarning($"[BAKE] saved {prefab.name} {zdo.m_uid} was not taken up by the object made for it");
                 ZNetView.m_initZDO = null;
             }
             ZNetView.m_useInitZDO = false;

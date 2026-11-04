@@ -142,4 +142,61 @@ public class TerrainCompilerLifecycleTests : System.IDisposable
         }
         finally { TearDown(); }
     }
+
+    // A zone's write was queued while its compiler was ours, the game
+    // released the compiler before the heightmap rebuilt (outside the active
+    // area, e.g. at the ring's edge or after a teleport), and the rebuild
+    // dropped the write as "not owner". Nothing asked again, so the road
+    // ended in a cliff at the zone edge.
+    [Fact]
+    public void AWriteSurvivesTheCompilerBeingReleasedBeforeItsRebuild()
+    {
+        var (_, points) = SetUp();
+        try
+        {
+            RoadTerrainModifier.ResetForWorld();
+            Heightmap hm = Heightmap.CreateForZone(Zone, 64, withCompiler: false);
+            hm.AutoRebuild = false;
+            Heightmap.Registered = hm;
+            RoadTerrainModifier.OnZoneSpawned(Zone, points);
+            TerrainComp tc = hm.m_terrainComp!;
+            Assert.Equal(0, tc.SaveCount);
+
+            tc.m_nview.GetZDO().SetOwner(0);   // released by the game
+            hm.RebuildTerrain();
+
+            Assert.Equal(1, tc.SaveCount);
+            Assert.True(tc.m_nview.IsOwner(), "released compiler was not claimed back");
+            Assert.True(RoadTerrainModifier.CarriesCurrentRoads(tc));
+        }
+        finally { RoadTerrainModifier.ResetForWorld(); TearDown(); }
+    }
+
+    [Fact]
+    public void AnotherPeersCompilerIsLeftAloneAndTheSweepWritesItWhenItIsOursAgain()
+    {
+        var (_, points) = SetUp();
+        try
+        {
+            RoadTerrainModifier.ResetForWorld();
+            Heightmap hm = Heightmap.CreateForZone(Zone, 64, withCompiler: false);
+            hm.AutoRebuild = false;
+            Heightmap.Registered = hm;
+            RoadTerrainModifier.OnZoneSpawned(Zone, points);
+            TerrainComp tc = hm.m_terrainComp!;
+
+            tc.m_nview.GetZDO().SetOwner(2);   // another peer's now
+            hm.RebuildTerrain();
+            Assert.Equal(0, tc.SaveCount);
+            Assert.Equal(2, tc.m_nview.GetZDO().GetOwner());
+            Assert.Equal(0, RoadTerrainModifier.PendingWriteCount);
+
+            tc.m_nview.GetZDO().SetOwner(0);   // released again, back in our area
+            hm.AutoRebuild = true;
+            Assert.Equal(1, RoadTerrainModifier.SweepUnstamped());
+            Assert.Equal(1, tc.SaveCount);
+            Assert.True(RoadTerrainModifier.CarriesCurrentRoads(tc));
+        }
+        finally { RoadTerrainModifier.ResetForWorld(); TearDown(); }
+    }
 }

@@ -34,6 +34,7 @@ public sealed class LegacyWorldTests : IDisposable
     internal static readonly Vector2s NewZone = new(-1, 0);
 
     private readonly ValheimWorldScope _world = new ValheimWorldScope().WithWorld(new FlatWorld()).WithZdos().WithZoneSystem().WithScene().AsServer();
+    private readonly StaticOverride _plain = PlainEarthworks.Apply().And(() => RoadTerrainModifier.BatterPerMetre, 0f);
     internal byte[] Blob = Array.Empty<byte>();
 
     public LegacyWorldTests()
@@ -49,7 +50,7 @@ public sealed class LegacyWorldTests : IDisposable
         SetWorldDataLoaded(false);
         NetworkCutoff.Forget();
         RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
-        _world.Dispose();
+        _plain.Dispose(); _world.Dispose();
     }
 
     internal static void SetWorldDataLoaded(bool value) =>

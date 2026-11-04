@@ -15,6 +15,7 @@ public class Island
     public List<Vector2Int> Cells { get; set; } = new();
     public float CellSize { get; set; }
     public float WorldOffset { get; set; }
+    public List<Vector3> CoastalLandings { get; set; } = new();
     
     private HashSet<Vector2Int>? _cellSet;
     

@@ -655,6 +655,19 @@ public static partial class RoadSpatialGrid
         return t * t * (3f - 2f * t);
     }
 
+    /// <summary>
+    /// How far outside a zone a road point can still change the zone's
+    /// terrain: its leveled footprint (half the width plus the blend margin),
+    /// or its full width, whichever is more. A zone's own compiler holds its
+    /// border vertices, and the zone next door holds the same vertices in its
+    /// own; both must see every point that reaches them, or they compute
+    /// different heights for the same place and the road steps at the seam.
+    /// The full width alone, used before, fell short for roads narrower than
+    /// 4 m (a 2 m road reaches 3 m). From 4 m up the two agree and nothing changes.
+    /// </summary>
+    public static float ZoneReach(float width) =>
+        Mathf.Max(width, width * 0.5f + RoadConstants.TerrainBlendMargin);
+
     public static List<RoadPoint> GetRoadPointsInZone(Vector2s zoneID)
     {
         List<RoadPoint> result = new List<RoadPoint>();
@@ -677,10 +690,11 @@ public static partial class RoadSpatialGrid
                     {
                         foreach (var rp in points)
                         {
-                            if (rp.p.x >= zonePos.x - RoadConstants.HalfZoneSize - rp.w &&
-                                rp.p.x <= zonePos.x + RoadConstants.HalfZoneSize + rp.w &&
-                                rp.p.y >= zonePos.z - RoadConstants.HalfZoneSize - rp.w &&
-                                rp.p.y <= zonePos.z + RoadConstants.HalfZoneSize + rp.w)
+                            float reach = RoadConstants.HalfZoneSize + ZoneReach(rp.w);
+                            if (rp.p.x >= zonePos.x - reach &&
+                                rp.p.x <= zonePos.x + reach &&
+                                rp.p.y >= zonePos.z - reach &&
+                                rp.p.y <= zonePos.z + reach)
                             {
                                 result.Add(rp);
                             }
@@ -695,6 +709,51 @@ public static partial class RoadSpatialGrid
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Every zone for which GetRoadPointsInZone is not empty: the zones a road
+    /// writes terrain into, found from the points instead of by asking each
+    /// zone in the world. Candidates come from each point's reach (the zone
+    /// square widened by the point's width, GetRoadPointsInZone's own bounds,
+    /// plus a zone of slack either way against rounding at the edges); each
+    /// candidate is then kept only if GetRoadPointsInZone finds points in it,
+    /// so the two agree zone for zone by construction.
+    /// </summary>
+    public static HashSet<Vector2s> GetZonesWithRoadPoints()
+    {
+        var candidates = new HashSet<Vector2s>();
+        if (!m_initialized)
+            return candidates;
+
+        m_roadCacheLock.EnterReadLock();
+        try
+        {
+            foreach (RoadPoint[] cell in m_roadPoints.Values)
+            {
+                foreach (RoadPoint rp in cell)
+                {
+                    float reach = RoadConstants.HalfZoneSize + ZoneReach(rp.w);
+                    int x0 = Mathf.FloorToInt((rp.p.x - reach) / RoadConstants.ZoneSize);
+                    int x1 = Mathf.CeilToInt((rp.p.x + reach) / RoadConstants.ZoneSize);
+                    int y0 = Mathf.FloorToInt((rp.p.y - reach) / RoadConstants.ZoneSize);
+                    int y1 = Mathf.CeilToInt((rp.p.y + reach) / RoadConstants.ZoneSize);
+                    for (int y = y0; y <= y1; y++)
+                        for (int x = x0; x <= x1; x++)
+                            candidates.Add(new Vector2s(x, y));
+                }
+            }
+        }
+        finally
+        {
+            m_roadCacheLock.ExitReadLock();
+        }
+
+        var zones = new HashSet<Vector2s>();
+        foreach (Vector2s zone in candidates)
+            if (GetRoadPointsInZone(zone).Count > 0)
+                zones.Add(zone);
+        return zones;
     }
 
     public static int GetTotalPointCount()

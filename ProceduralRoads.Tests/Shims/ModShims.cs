@@ -24,13 +24,3 @@ public struct RoadPointDebugInfo
     public float[] WindowHeights;
 }
 
-
-/// <summary>
-/// Shim for RoadClearAreaManager: the real one caches per zone and needs
-/// ZoneSystem.ClearArea, which the lifecycle tests do not exercise.
-/// </summary>
-public static class RoadClearAreaManager
-{
-    public static int CacheClears;
-    public static void ClearCache() => CacheClears++;
-}

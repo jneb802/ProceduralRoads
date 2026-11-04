@@ -21,7 +21,7 @@ public static class RoadClearAreaManager
     /// </summary>
     public static List<ZoneSystem.ClearArea> GetOrCreateClearAreas(Vector2s zoneID)
     {
-        if (!s_roadClearAreasCache.TryGetValue(zoneID, out List<ZoneSystem.ClearArea> roadClearAreas))
+        if (!s_roadClearAreasCache.TryGetValue(zoneID, out List<ZoneSystem.ClearArea>? roadClearAreas))
         {
             roadClearAreas = CreateRoadClearAreas(zoneID);
             s_roadClearAreasCache[zoneID] = roadClearAreas;
@@ -38,25 +38,17 @@ public static class RoadClearAreaManager
         if (roadPoints.Count == 0)
             return clearAreas;
 
-        HashSet<Vector2i> processedCells = new HashSet<Vector2i>();
-
+        // One square per road point, centred on it: 0.6 w reaches past the road's half width at any heading, and the
+        // points are close enough that neighbouring squares overlap across the whole width. Squares snapped to a coarser
+        // grid stood up to half a cell off the road and left its far side outside every clear area. A point gathered
+        // twice gives one square.
+        HashSet<Vector2> seen = new HashSet<Vector2>();
         foreach (RoadSpatialGrid.RoadPoint roadPoint in roadPoints)
         {
-            Vector2i cell = new Vector2i(
-                Mathf.RoundToInt(roadPoint.p.x / RoadConstants.VegetationClearSampleInterval),
-                Mathf.RoundToInt(roadPoint.p.y / RoadConstants.VegetationClearSampleInterval));
-
-            if (processedCells.Contains(cell))
+            if (!seen.Add(roadPoint.p))
                 continue;
-            processedCells.Add(cell);
-
-            Vector3 center = new Vector3(
-                cell.x * RoadConstants.VegetationClearSampleInterval,
-                0f,
-                cell.y * RoadConstants.VegetationClearSampleInterval);
-            
             float radius = roadPoint.w * RoadConstants.VegetationClearMultiplier;
-            clearAreas.Add(new ZoneSystem.ClearArea(center, radius));
+            clearAreas.Add(new ZoneSystem.ClearArea(new Vector3(roadPoint.p.x, 0f, roadPoint.p.y), radius));
         }
 
         return clearAreas;

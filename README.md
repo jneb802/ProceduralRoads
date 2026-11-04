@@ -7,12 +7,15 @@ A Valheim mod that generates procedural roads connecting locations across your w
 - Automatically generates roads from spawn to nearby points of interest
 - Terrain-aware pathfinding that follows natural contours
 - Configurable road width, length, and count
+- Server-side: players without the mod see and walk the same roads
 
 ## Installation
 
 1. Install [BepInEx](https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/)
 2. Install [Jotunn](https://valheim.thunderstore.io/package/ValheimModding/Jotunn/)
 3. Drop `ProceduralRoads.dll` into `BepInEx/plugins/`
+
+On a dedicated server, install it on the server only. Players do not need it, and players who have it are let in whatever version they run. With More World Locations (MWL), MWL must still be installed on the clients too.
 
 Roads are best on a fresh world. On an existing world, zones already explored before the roads were generated are never changed, so roads only appear in new zones; back up the world first.
 

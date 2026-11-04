@@ -64,4 +64,48 @@ public class DebugSwitchTests : IDisposable
         Set("   ");
         Assert.True(DebugSwitches.Flag("A_TEST_SWITCH", true));
     }
+
+    // ---- counting switches ----
+    //
+    // Proving a failure path in a running game needs a way to cause exactly N
+    // failures. The same rules apply: unset is ordinary behaviour, and a value
+    // that is not a count is reported rather than quietly becoming one.
+
+    [Fact]
+    public void AnUnsetCountLeavesTheDefaultAlone()
+    {
+        Set(null);
+        Assert.Equal(0, DebugSwitches.Count("A_TEST_SWITCH", 0));
+        Assert.Equal(7, DebugSwitches.Count("A_TEST_SWITCH", 7));
+    }
+
+    [Theory]
+    [InlineData("3", 3)]
+    [InlineData("  2  ", 2)]
+    [InlineData("10", 10)]
+    public void ACountIsTakenAsWritten(string value, int expected)
+    {
+        Set(value);
+        Assert.Equal(expected, DebugSwitches.Count("A_TEST_SWITCH", 99));
+    }
+
+    [Fact]
+    public void ZeroIsACountAndNotAFallback()
+    {
+        // Explicitly asking for none must not be mistaken for "unset", or a
+        // switch could never be turned off again once the default moved.
+        Set("0");
+        Assert.Equal(0, DebugSwitches.Count("A_TEST_SWITCH", 5));
+    }
+
+    [Theory]
+    [InlineData("lots")]
+    [InlineData("-1")]
+    [InlineData("2.5")]
+    [InlineData("   ")]
+    public void SomethingThatIsNotACountKeepsTheDefault(string value)
+    {
+        Set(value);
+        Assert.Equal(4, DebugSwitches.Count("A_TEST_SWITCH", 4));
+    }
 }

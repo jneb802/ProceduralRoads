@@ -47,4 +47,53 @@ internal static class DebugSwitches
                 return fallback;
         }
     }
+
+    /// <summary>
+    /// A whole-number switch. Out of range or unreadable is reported and
+    /// ignored, for the same reason a mistyped flag is: a validation switch
+    /// must not change behaviour by accident.
+    /// </summary>
+    internal static int Count(string name, int fallback, int least, int most)
+    {
+        string variable = Prefix + name;
+        string? value = Environment.GetEnvironmentVariable(variable);
+        if (string.IsNullOrWhiteSpace(value))
+            return fallback;
+
+        if (!int.TryParse(value.Trim(), out int parsed))
+        {
+            Log.LogWarning($"{variable} is '{value}', which is not a whole number; using {fallback}");
+            return fallback;
+        }
+        if (parsed < least || parsed > most)
+        {
+            Log.LogWarning($"{variable} is {parsed}, outside {least}..{most}; using {fallback}");
+            return fallback;
+        }
+        Log.LogInfo($"{variable}={parsed}");
+        return parsed;
+    }
+    internal static int Count(string name, int fallback) => Count(name, fallback, 0, int.MaxValue);
+
+    /// <summary>A decimal switch, invariant culture; out of range or unreadable is reported and ignored.</summary>
+    internal static float Number(string name, float fallback, float least, float most)
+    {
+        string variable = Prefix + name;
+        string? value = Environment.GetEnvironmentVariable(variable);
+        if (string.IsNullOrWhiteSpace(value))
+            return fallback;
+        if (!float.TryParse(value.Trim(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float parsed)
+            || float.IsNaN(parsed) || float.IsInfinity(parsed))
+        {
+            Log.LogWarning($"{variable} is '{value}', which is not a number; using {fallback}");
+            return fallback;
+        }
+        if (parsed < least || parsed > most)
+        {
+            Log.LogWarning($"{variable} is {parsed}, outside {least}..{most}; using {fallback}");
+            return fallback;
+        }
+        Log.LogInfo($"{variable}={parsed}");
+        return parsed;
+    }
 }

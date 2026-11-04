@@ -35,7 +35,13 @@
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ServerBakePlanner.cs" Link="ModSrc/ServerBakePlanner.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/GhostRepairLedger.cs" Link="ModSrc/GhostRepairLedger.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeFaults.cs" Link="ModSrc/ServerBakeFaults.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/VegetationClearing.cs" Link="ModSrc/VegetationClearing.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadClearAreaManager.cs" Link="ModSrc/RoadClearAreaManager.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/NetworkCutoff.cs" Link="ModSrc/NetworkCutoff.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/TerrainFingerprint.cs" Link="ModSrc/TerrainFingerprint.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRoute.cs" Link="ModSrc/RoadRoute.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/RoadRoute.cs')"/>
     </ItemGroup>

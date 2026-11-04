@@ -44,7 +44,4 @@ public static class RoadConstants
     
     public const float VegetationClearMultiplier = 0.6f;
     public const float VegetationClearSampleInterval = 4f;
-    
-    public const int MaxCoordDebugLogs = 3;
-    public const int MaxVertexModificationLogs = 3;
 }

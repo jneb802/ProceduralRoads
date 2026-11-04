@@ -16,3 +16,6 @@ ProceduralRoads/Thunderstore/*.zip
 ProceduralRoads/Nexus/
 ProceduralRoads/Thunderstore/ProceduralRoads_v*/
 .claude/
+
+# Local system-test runner packages and evidence
+/artifacts/

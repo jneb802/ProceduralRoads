@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Text.RegularExpressions;
 using BepInEx.Logging;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -23,16 +24,17 @@ public class RoadTopologyTests
 
     private sealed class Harness : IDisposable
     {
-        public readonly List<string> Logs = new();
+        private readonly ValheimWorldScope _world = new ValheimWorldScope();
+        public readonly List<string> Logs;
         public readonly RoadPathfinder Pathfinder;
 
         public Harness(SyntheticWorld world)
         {
-            WorldGenerator.instance = world;
+            _world.WithWorld(world);
             RoadSpatialGrid.Clear();
             Pathfinder = new RoadPathfinder(world);
             PathfinderField.SetValue(null, Pathfinder);
-            ManualLogSource.Captured = Logs;
+            Logs = _world.CaptureLog();
         }
 
         private static readonly FieldInfo PathfinderField =
@@ -60,10 +62,9 @@ public class RoadTopologyTests
 
         public void Dispose()
         {
-            ManualLogSource.Captured = null;
             PathfinderField.SetValue(null, null);
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
+            _world.Dispose();
         }
     }
 

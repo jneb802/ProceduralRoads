@@ -155,6 +155,33 @@ public static class RoadNetworkGenerator
     public static bool RoadsAvailable => m_roadsGenerated || m_roadsLoadedFromZDO;
 
     /// <summary>
+    /// Whether a world without persisted roads generates its network when the
+    /// player spawns. Off (PROCEDURALROADS_GENERATE_ROADS_ON_LOAD=0), the world
+    /// stays road-free until road_generate or road_regen_island asks; a
+    /// validation loop on one site then pays seconds, not a whole-world
+    /// generation. There is no config key for this: it is a switch for
+    /// developing the mod, and a config key cannot be taken back once written.
+    /// </summary>
+    public static bool GenerateOnLoad = true;
+
+    /// <summary>Load-time entry: generate unless GenerateOnLoad is off. Returns whether it generated.</summary>
+    public static bool GenerateRoadsOnLoad()
+    {
+        if (!GenerateOnLoad)
+        {
+            Log.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +
+                        "no roads until road_generate or road_regen_island");
+            return false;
+        }
+        GenerateRoads();
+        // Zones generated during the loading screen (around the login position)
+        // exist before the network does; give them their roads now.
+        int zones = RoadTerrainModifier.ApplyToLoadedZones();
+        Log.LogDebug($"Applied road terrain to {zones} zone(s) loaded before generation");
+        return true;
+    }
+
+    /// <summary>
     /// Get the start points of all generated roads for visualization.
     /// </summary>
     public static IReadOnlyList<(Vector2 position, string label)> GetRoadStartPoints() => m_roadStartPoints;
@@ -185,13 +212,23 @@ public static class RoadNetworkGenerator
     /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
     public static void GenerateRoads(bool force = false)
     {
-        if (m_roadsGenerated && !force)
+        if (!RoadLifecycleManager.HoldsTheNetwork)
         {
-            Log.LogDebug("Roads already generated, skipping");
+            Log.LogWarning("Roads are generated only on the server; this peer holds no road network");
             return;
         }
-        
-        if (force && m_roadsGenerated)
+        // A world can already have a network two ways: this session generated
+        // one, or one was loaded from the save. Both count. Asking only whether
+        // this session generated it meant a forced regeneration in a world that
+        // already had roads skipped the reset and laid the new network on top
+        // of the old one - the spatial grid kept both sets of points.
+        if (RoadsAvailable && !force)
+        {
+            Log.LogDebug("Roads already present, skipping");
+            return;
+        }
+
+        if (force && RoadsAvailable)
         {
             Log.LogDebug("Force regenerating roads...");
             Reset();
@@ -211,15 +248,7 @@ public static class RoadNetworkGenerator
 
         Log.LogDebug("Starting road network generation...");
 
-        // Merge config-defined custom locations into registered set
-        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
-        foreach (var locName in configLocations)
-        {
-            if (RegisteredLocationNames.Add(locName))
-            {
-                Log.LogDebug($"Added config location: {locName}");
-            }
-        }
+        RegisterConfiguredLocations();
 
         DateTime startTime = DateTime.Now;
         m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
@@ -267,10 +296,28 @@ public static class RoadNetworkGenerator
 
         RoadSpatialGrid.FinalizeRoadNetwork();
         
+        NetworkCutoff.UseNewNetwork();
         m_roadsGenerated = true;
         m_pathfinder = null;
         
         RoadNetworkPersistence.EnsureMetadataInstance();
+    }
+
+    /// <summary>
+    /// Merge the config-defined custom locations into the registered set.
+    /// Every generation entry point calls this first, so a location named in
+    /// the config counts as road-eligible whichever entry point runs first.
+    /// </summary>
+    private static void RegisterConfiguredLocations()
+    {
+        var configLocations = ProceduralRoadsPlugin.GetConfigLocationNames();
+        foreach (var locName in configLocations)
+        {
+            if (RegisteredLocationNames.Add(locName))
+            {
+                Log.LogDebug($"Added config location: {locName}");
+            }
+        }
     }
 
     #region Core Road Generation Primitive
@@ -374,7 +421,7 @@ public static class RoadNetworkGenerator
 
         foreach (var loc in locationInstances)
         {
-            string prefabName = loc.m_location.m_prefab.Name;
+            string prefabName = loc.m_location.m_prefab.Name!;
             float exteriorRadius = loc.m_location.m_exteriorRadius;
 
             allLocations.Add((prefabName, loc.m_position, exteriorRadius));
@@ -594,6 +641,79 @@ public static class RoadNetworkGenerator
 
     #region Utility Methods
 
+    /// <summary>
+    /// Clear the network and regenerate roads for the single island containing
+    /// worldPos: the same island selection, location selection and pathfinding
+    /// as the global pass, restricted to one island. A validation loop that
+    /// iterates on one site runs in seconds instead of a whole-world generation.
+    /// </summary>
+    public static bool RegenerateIslandAt(Vector3 worldPos, out string summary)
+    {
+        if (!RoadLifecycleManager.HoldsTheNetwork)
+        {
+            summary = "Roads are generated only on the server; this peer holds no road network";
+            return false;
+        }
+        if (WorldGenerator.instance == null || ZoneSystem.instance == null)
+        {
+            summary = "World not ready";
+            return false;
+        }
+
+        RegisterConfiguredLocations();
+
+        var locations = GatherLocationData();
+        if (locations == null)
+        {
+            summary = "No location data available";
+            return false;
+        }
+
+        var islands = IslandDetector.DetectIslands();
+        Island? island = islands.FirstOrDefault(i => i.ContainsPoint(worldPos));
+        if (island == null)
+        {
+            summary = $"No island at ({worldPos.x:F0},{worldPos.z:F0})";
+            return false;
+        }
+
+        var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
+        if (islandLocations.Count == 0)
+        {
+            summary = $"Island {island.Id} has no road-eligible locations";
+            return false;
+        }
+
+        var selected = SelectLocations(islandLocations, GetMaxLocationsForIsland(island));
+
+        DateTime startTime = DateTime.Now;
+        bool locationsWereReady = m_locationsReady;
+        Reset();
+        m_locationsReady = locationsWereReady;
+        m_pathfinder = new RoadPathfinder(WorldGenerator.instance);
+        m_roadsGeneratedCount = 0;
+
+        if (island.ContainsPoint(locations.Value.SpawnPoint))
+            GenerateIslandRoads(island, selected, locations.Value.SpawnPoint, locations.Value.SpawnRadius);
+        else
+            GenerateIslandRoads(island, selected);
+
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        NetworkCutoff.UseNewNetwork();
+        m_roadsGenerated = true;
+        m_pathfinder = null;
+        // Same as after global generation: without the metadata object the
+        // save path has nowhere to put the network and logs an error instead.
+        RoadNetworkPersistence.EnsureMetadataInstance();
+
+        TimeSpan elapsed = DateTime.Now - startTime;
+        summary =
+            $"Island {island.Id} ({island.ApproxArea / 1_000_000f:F1}km²): " +
+            $"{selected.Count} locations, {m_roadsGeneratedCount} roads, " +
+            $"{RoadSpatialGrid.TotalRoadLength:F0}m in {elapsed.TotalSeconds:F1}s";
+        return true;
+    }
+
     public static void Reset()
     {
         m_roadsGenerated = false;
@@ -612,14 +732,14 @@ public static class RoadNetworkGenerator
 
         log.LogDebug("=== Road Generation Summary ===");
         log.LogDebug($"  Roads generated: {roadsGenerated}");
-        log.LogDebug($"  Total road points: {RoadSpatialGrid.TotalRoadPoints}");
-        log.LogDebug($"  Total road length: {RoadSpatialGrid.TotalRoadLength:F0}m");
+        log.LogDebug($"  Stored road-point records: {RoadSpatialGrid.StoredPointRecords}");
+        log.LogDebug($"  Committed planned-path length: {RoadSpatialGrid.Statistics.LengthText()}");
         log.LogDebug($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
 
         if (roadsGenerated > 0)
         {
-            log.LogDebug($"  Avg points/road: {RoadSpatialGrid.TotalRoadPoints / (float)roadsGenerated:F0}");
-            log.LogDebug($"  Avg length/road: {RoadSpatialGrid.TotalRoadLength / roadsGenerated:F0}m");
+            log.LogDebug($"  Avg stored records/road: {RoadSpatialGrid.StoredPointRecords / (float)roadsGenerated:F0}");
+            log.LogDebug($"  Avg committed length/road: {RoadSpatialGrid.Statistics.LengthText(divisor:roadsGenerated)}");
         }
 
         log.LogDebug($"  Generation time: {elapsed.TotalSeconds:F2}s");
@@ -709,7 +829,13 @@ public static class RoadNetworkGenerator
     {
         if (!m_roadsGenerated)
         {
-            Log.LogDebug("[SAVE] No roads generated, skipping global save");
+            Log.LogDebug("[SAVE] No roads generated or appended, skipping global save");
+            return;
+        }
+        // A released build's network stays in the format that build reads.
+        if (RoadSpatialGrid.LoadedFromReleasedFormat)
+        {
+            Log.LogWarning("[SAVE] The road network was saved by a released build (format 1); it is not rewritten");
             return;
         }
 
@@ -723,7 +849,24 @@ public static class RoadNetworkGenerator
     /// <returns>True if road data was found and loaded</returns>
     public static bool TryLoadGlobalRoadData()
     {
-        return RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints);
+        bool loaded = RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints);
+        if (loaded)
+        {
+            // Before anything may write: which zones this network must leave alone.
+            NetworkCutoff.UseLoadedNetwork(RoadSpatialGrid.RoadNetworkVersion, RoadNetworkPersistence.LoadZonesWithNetwork());
+        }
+        return loaded;
+    }
+
+    /// <summary>
+    /// Save which zones were generated with this network in place
+    /// (NetworkCutoff), so the next session knows which zones it may write.
+    /// </summary>
+    public static void SaveNetworkCutoff()
+    {
+        if (!RoadsAvailable || ZoneSystem.instance == null) return;
+        byte[]? record = NetworkCutoff.Record(RoadSpatialGrid.RoadNetworkVersion, ZoneSystem.instance.m_generatedZones);
+        if (record != null) RoadNetworkPersistence.SaveZonesWithNetwork(record);
     }
 
     #endregion

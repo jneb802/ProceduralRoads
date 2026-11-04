@@ -14,6 +14,8 @@ A Valheim mod that generates procedural roads connecting locations across your w
 2. Install [Jotunn](https://valheim.thunderstore.io/package/ValheimModding/Jotunn/)
 3. Drop `ProceduralRoads.dll` into `BepInEx/plugins/`
 
+Roads are best on a fresh world. On an existing world, zones already explored before the roads were generated are never changed, so roads only appear in new zones; back up the world first.
+
 ## Configuration
 
 Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
@@ -31,6 +33,15 @@ Use the `CustomLocations` setting to add locations from other mods (e.g., Expand
 ```
 CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp
 ```
+
+## Console Commands
+
+Host or admin only:
+
+| Command | Description |
+|---------|-------------|
+| `road_generate` | Regenerate the whole network (back up first) |
+| `road_regen_island` | Clear all roads and regenerate only the island you are on (back up first) |
 
 ## API for Mod Authors
 
@@ -82,6 +93,10 @@ private static void RegisterRoadLocation(string locationName)
 - Register locations during mod initialization (Awake/Start)
 - Location names must match the prefab name exactly (e.g., `Runestone_Boars`, not `Runestone Boars`)
 - Both API registrations and config entries are merged at generation time
+
+## Development
+
+Unit tests: `dotnet test ProceduralRoads.Tests`.
 
 ## License
 

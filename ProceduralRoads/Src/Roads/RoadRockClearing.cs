@@ -75,8 +75,7 @@ public static class RoadRockClearing
         long sync = RoadRockStats.Now;
         Physics.SyncTransforms();
         RoadRockStats.SyncTicks += RoadRockStats.Now - sync;
-        // A zone is 64 m across: 46 m from its centre reaches its corners.
-        var lines = RoadRockProbe.Run(map.transform.position, 46f, apply: true, sites: false, mist: true, cliffs: true,
+        var lines = RoadRockProbe.Run(map.transform.position, RoadRockPolicy.ZoneReach, apply: true, sites: false, mist: true, cliffs: true,
             partial: true, carve: RoadRockPolicy.Carves(Mode), out int cleared);
         // Done only when the ground answered at every road point and nothing was
         // left for another peer that owns it.

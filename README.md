@@ -4,10 +4,11 @@ A Valheim mod that generates procedural roads connecting locations across your w
 
 ## Features
 
-- Connects a seeded mix of dungeons, settlements, ruins, bosses and quest sites
-- Spreads destinations over selected islands and joins branches to existing roads
-- Terrain-aware routing, with fords and ruined wooden bridges across rivers
-- Supports destinations from other mods through configuration or the registration API
+- Connects a seeded mix of dungeons, settlements, ruins, bosses and quest sites across selected islands
+- Terrain-aware routing that holds a maximum grade and protects the terrain of locations
+- River fords and ruined wooden bridges; Dvergr viaducts and bridges in the Mistlands
+- Staircases where the ground is too steep for a road
+- Bridges and staircases are built from vanilla pieces, so players can repair them
 - Server-side: players without the mod see and walk the same roads
 
 ## Installation
@@ -18,6 +19,10 @@ A Valheim mod that generates procedural roads connecting locations across your w
 
 On a dedicated server, install it on the server only. Players do not need it, and players who have it are let in whatever version they run. With More World Locations (MWL), MWL must still be installed on the clients too.
 
+## Generation
+
+A world's road network is generated once, the first time the world loads, behind the loading screen. **This takes a while:** about 10 minutes on a Ryzen 7 9800X3D using 15 threads, longer on slower machines. It happens only once per world; road quality was given priority over generation time. Use **Cancel and return to menu** to stop it; the next load starts again. Saved networks load without generating. On a dedicated server, players can join once generation has finished.
+
 Roads are best on a fresh world. On an existing world, zones already explored before the roads were generated are never changed, so roads only appear in new zones; back up the world first.
 
 ## Configuration
@@ -27,63 +32,14 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | RoadWidth | 4 | Road width in meters (2-10) |
-| IslandRoadPercentage | 33 | Percentage of islands selected for roads (0-100); zero disables generation. Boss islands are not automatically included. |
-| SelectIslandsByContent | true | Prefer islands with more eligible destinations; false prefers larger islands. |
-| MaxLocationsPerIsland | 48 | Destination budget per island (2-128). An island earns eight, plus four for every two square kilometres, up to this cap. Boss/quest sites and selected coastal landings consume slots but may exceed it. |
-| TargetSubAreas | 9 | Approximate number of sub-areas used to spread destinations; zero disables spreading. |
-| WeightedDestinations | true | Seeded selection by importance and proximity; false uses priority ranking. |
-| RoutedConnections | true | Price nearby connections and grow branches toward existing roads; false uses the previous chain/MST choice. |
-| PathfindingMaxIterations | 30000 | Build-search budget; pricing probes use half. Higher values may find more connections at greater cost. |
-| WalkableIslands | true | Group walkable land and nearby crossable water; false uses the previous coarse base-height detector. |
-| CoastalLandings | true | Add possible boat approaches on already-selected islands, about one per 5 km² (at least one where suitable), at least 400 m apart on the same island. Uses WalkableIslands samples; inactive with the legacy detector. No dock is spawned and access is not guaranteed. |
-| CustomLocationPriority | 80 | Selection weight for custom locations from config or API. Try 30 for less MWL emphasis. |
-| ExcludedRoadBiomes | AshLands, DeepNorth | Exclude destinations in these biomes from every source, including API registrations. Routes can still pass through an excluded biome. |
+| IslandRoadPercentage | 33 | Percentage of islands selected for roads (0 disables generation) |
+| MaxLocationsPerIsland | 48 | Destinations selected per island (2-128) |
+| PathfindingMaxIterations | 30000 | Search budget per road; higher finds more roads, slower |
+| RockClearing | Carve | Rocks in the road: Off, Remove or Carve |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
+| ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
 
-### Not every destination gets a road
-
-**Expect roughly one destination in five to be left without one.** Measured over
-six frozen terrain dumps with no custom registrations: 1,462 of 1,784 selected destinations ended up next to a road, or
-**82%** — between 78% and 85% depending on the world.
-
-That is normal, and it is the same kind of thing as Valheim failing to place
-every location it tries during world generation. A destination is dropped when
-no route reaches it at all, or when a road to it could not be built inside the
-grade, turn-room and site-protection rules. The generation summary reports unreached destinations separately from failed
-route attempts; a road built to a neighbour may also reach a destination.
-
-Two practical consequences:
-
-- **The count you set is a budget, not a promise.** `MaxLocationsPerIsland` is
-  how many destinations are *selected* per island, not how many get roads.
-- **Oversample if you want more roads.** Raising `MaxLocationsPerIsland` puts
-  more candidates in play, so more of them succeed. There is no fixed success rate: the outcome depends on the island and terrain.
-  More destinations also means a longer generation.
-
-### Road approaches and protected locations
-
-Roads approach the outside of locations while preserving their authored terrain and paint, including locations that are not road destinations. On hillsides, the generator searches for an arrival near the site's elevation and blends the final road profile into the ground. Excavated interiors do not pull an exterior approach down into the excavation.
-
-`Roads / MaxGrade` defaults to `0.35` (35% rise over run). It constrains the planned route and height profile; `0` disables the grade cap. Climbing switchbacks use wider turns and gentler landing profiles. A route that cannot fit the grade, turn or location-clearance constraints can be refused, leaving the location without a road. Actual ground still depends on the game's terrain limits and existing edits.
-
-These routing changes apply when generating a network. They do not remove terrain damage already baked by an older network. Test regeneration on a disposable world or copy first.
-
-Diagnostics: `road_site <x> <z>` describes a nearby location; `road_ends` compares locations with nearby road points. Its height differences are diagnostic measurements, not proof that an entrance or turn is walkable. See [validation and follow-ups](docs/ROAD-FOLLOWUPS.md) and the [offline approach audit](docs/SITE-APPROACH-AUDIT.md).
-
-These defaults apply to a new configuration. Existing config files retain their
-saved values: updating does not silently replace `IslandRoadPercentage = 50`,
-`MaxLocationsPerIsland = 12` or `PathfindingMaxIterations = 10000`. Set them to
-33, 48 and 30000 respectively to try the new defaults.
-
-Existing saved road networks are loaded unchanged. New settings affect fresh
-generation or an explicit regeneration, not a world merely being reloaded.
-Back up before regenerating. `road_regen_island` replaces the whole saved
-network with roads for that island; it does not retain other islands' roads.
-
-Island grouping and route pricing are practical approximations. Selection does
-not guarantee a road: difficult terrain can leave a chosen place unconnected.
-A boss or quest site is retained within a selected island, but its presence
-does not make an otherwise unselected island receive roads.
+Settings apply when a network is generated, not to a saved one. Not every selected destination gets a road: some cannot be reached within the grade and site rules.
 
 ### Custom Locations via Config
 
@@ -99,6 +55,7 @@ Host or admin only:
 
 | Command | Description |
 |---------|-------------|
+| `road_progress` | Generation phase and island count |
 | `road_generate` | Regenerate the whole network (back up first) |
 | `road_regen_island` | Clear all roads and regenerate only the island you are on (back up first) |
 

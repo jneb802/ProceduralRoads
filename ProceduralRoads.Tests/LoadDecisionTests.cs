@@ -79,7 +79,7 @@ public class LoadDecisionTests : System.IDisposable
     /// mod subscribed, nothing decided yet.</summary>
     private ZoneSystem SetUp(bool savedNetworkExists)
     {
-        _world.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZdos().WithZoneSystem().WithNetwork(server: true);
+        _world.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZdos().WithZoneSystem();
         SetWorldDataLoaded(false);
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
@@ -98,7 +98,10 @@ public class LoadDecisionTests : System.IDisposable
             RoadSpatialGrid.AddRoadPath(path, 4f, WorldGenerator.instance);
             RoadSpatialGrid.FinalizeRoadNetwork();
             RoadNetworkPersistence.EnsureMetadataInstance();
-            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>());
+            // No crossings and no bridges on this straight road: the decision
+            // under test is load-or-generate, not what the network contains.
+            RoadNetworkPersistence.SaveGlobalRoadData(
+                new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
 
             // Now start the session over, with that world on "disk" but not
             // yet read: the metadata ZDO is held back until the test says the
@@ -173,7 +176,7 @@ public class LoadDecisionTests : System.IDisposable
         RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
 
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
-        Assert.False(RoadNetworkGenerator.RoadsGenerated);
+        Assert.False(RoadLifecycleManager.IsGenerating);
     }
 
     [Fact]

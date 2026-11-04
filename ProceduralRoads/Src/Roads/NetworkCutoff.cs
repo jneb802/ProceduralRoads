@@ -17,8 +17,8 @@ namespace ProceduralRoads;
 /// with its version. At load, a generated zone outside that record is excluded;
 /// no record, or one for another network, excludes every generated zone.
 ///
-/// An explicit operator command (road_generate, road_regen_island) may write
-/// them; the explored zones it writes become the network's, saved with it (Record).
+/// Explicit operator commands (road_generate, road_regen_island) may still
+/// write the zones they are run in; nothing automatic may.
 /// </summary>
 public static class NetworkCutoff
 {
@@ -141,7 +141,10 @@ public static class NetworkCutoff
         if (Current && s_hadNetwork && ZoneSystem.instance != null)
             excluded.UnionWith(ZoneSystem.instance.m_generatedZones);
         Adopt();
-        return excluded;
+        s_excluded = excluded;
+        s_hadNetwork = true;
+        // Zones an operator wrote stay written (a write still pending for them comes from that command).
+        Log($"new network: {s_excluded.Count} zone(s) generated before it are left as they are");
     }
 
     /// <summary>

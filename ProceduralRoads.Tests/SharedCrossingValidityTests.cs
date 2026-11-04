@@ -53,7 +53,7 @@ public class SharedCrossingValidityTests
                 Assert.False(shared.Shallow);
                 Assert.False(shared.Invalid);
                 Assert.Null(shared.ShallowNote);
-                Assert.Equal(0, RoadNetworkGenerator.InvalidShallows(crossings, null));
+                Assert.Equal(0, RoadNetworkGenerator.InvalidCrossings(crossings, null));
             });
         }
         finally
@@ -74,7 +74,7 @@ public class SharedCrossingValidityTests
         Assert.True(candidate.Shallow);
         Assert.True(candidate.Invalid);
         Assert.Equal(target.ShallowNote, candidate.ShallowNote);
-        Assert.Equal(1, RoadNetworkGenerator.InvalidShallows(new List<RoadCrossing> { candidate }, null));
+        Assert.Equal(1, RoadNetworkGenerator.InvalidCrossings(new List<RoadCrossing> { candidate }, null));
 
         target.Invalid = false;
         candidate.SnapTo(target);

@@ -23,6 +23,7 @@
       here; anything touching Harmony patches or engine runtime cannot.
     -->
     <ItemGroup>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructureEnds.cs" Link="ModSrc/StructureEnds.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadBeside.cs" Link="ModSrc/RoadBeside.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ManualRoadDraft.cs" Link="ModSrc/ManualRoadDraft.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.Appends.cs" Link="ModSrc/RoadSpatialGrid.Appends.cs"/>
@@ -55,7 +56,16 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadTerrainModifier.cs" Link="ModSrc/RoadTerrainModifier.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkPersistence.cs" Link="ModSrc/RoadNetworkPersistence.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
-        <Compile Include="../ProceduralRoads/Src/Roads/BridgePlacement.cs" Link="ModSrc/BridgePlacement.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadCrossing.cs" Link="ModSrc/RoadCrossing.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeLayout.cs" Link="ModSrc/BridgeLayout.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/DvergrViaduct.cs" Link="ModSrc/DvergrViaduct.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/DvergrWoodBridge.cs" Link="ModSrc/DvergrWoodBridge.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructurePiece.cs" Link="ModSrc/StructurePiece.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructureSource.cs" Link="ModSrc/StructureSource.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeStructures.cs" Link="ModSrc/BridgeStructures.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeSupport.cs" Link="ModSrc/BridgeSupport.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructurePlans.cs" Link="ModSrc/StructurePlans.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructurePlacement.cs" Link="ModSrc/StructurePlacement.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakePlanner.cs" Link="ModSrc/ServerBakePlanner.cs"/>

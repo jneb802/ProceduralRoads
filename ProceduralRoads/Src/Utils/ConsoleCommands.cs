@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -37,6 +38,36 @@ public static class ConsoleCommands
             "road_regen_island",
             "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
             (args) => RegenerateIslandHere(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: true,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_crossings",
+            "List the river crossings (fords and bridges) of the road network nearest to you (road_crossings [count=10]).",
+            (args) => CrossingsCommand(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_bridges",
+            "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are.",
+            (args) => BridgesCommand(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_bridge_repairs",
+            "DIAGNOSTIC: the pieces the COMPLETE bridge at the crossing nearest a point has and the shipped one does not -- exactly what a player would replace to close it up: road_bridge_repairs <x> <z>. Nothing is placed; this only says where the missing pieces belong.",
+            (args) => BridgeRepairsCommand(args),
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
@@ -553,6 +584,181 @@ public static class ConsoleCommands
         args.Context.AddString("Queuing terrain for loaded zones...");
         int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true);
         args.Context.AddString($"Queued road terrain for {zonesWithRoads} visible zones.");
+        ReportBridgeRespawn(args, StructurePlacement.RespawnFromPlans());
+    }
+
+    /// <summary>Bridge pieces of the old network sit at the old crossings:
+    /// after a successful rebuild they go, and the new plans go in.</summary>
+    private static void ReportBridgeRespawn(Terminal.ConsoleEventArgs args, (int destroyed, int zones) result)
+    {
+        if (result.destroyed > 0)
+            args.Context.AddString($"Removed {result.destroyed} bridge pieces of the previous network.");
+        if (result.zones > 0)
+            args.Context.AddString($"Spawned bridges into {result.zones} zone(s).");
+    }
+
+    /// <summary>road_crossings [count] lists the river crossings nearest the player.</summary>
+    private static void CrossingsCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+        {
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
+        }
+
+        IReadOnlyList<RoadCrossing> crossings = RoadNetworkGenerator.GetRoadCrossings();
+        args.Context.AddString($"{crossings.Count} river crossing(s) on the roads.");
+        if (crossings.Count == 0)
+            return;
+
+        int count = 10;
+        if (args.Length > 1 && int.TryParse(args[1], out int requested))
+            count = requested;
+        Vector3 here = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+        Vector2 here2 = new Vector2(here.x, here.z);
+        foreach (RoadCrossing site in crossings.OrderBy(c => Vector2.Distance(c.Center, here2)).Take(count))
+        {
+            args.Context.AddString(
+                $"  ({site.Center.x:F0},{site.Center.y:F0}) {Vector2.Distance(site.Center, here2):F0} m away: {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")}, {site.Width:F0} m wide " +
+                $"from ({site.FromBank.x:F1},{site.FromBank.y:F1}) to ({site.ToBank.x:F1},{site.ToBank.y:F1}), " +
+                $"bed {site.WaterLevel - site.RiverbedHeight:F1} m deep, fairway {site.FairwayWidth:F0} m, " +
+                // Pier height, not water depth, is what decides whether vanilla
+                // support can reach the deck. The two differ a lot: a 2.3 m deep
+                // channel between high banks carries a 12 m structure.
+                $"{(site.Kind == CrossingKind.Bridge && WorldGenerator.instance != null ? $"pier {BridgeLayout.PierHeight(site, WorldGenerator.instance):F1} m, " : "")}" +
+                $"{BridgeStructures.PiecesAt(site)} pieces" +
+                $"{(WorldGenerator.instance != null ? ", kit " + BridgeStructures.KitFor(site, WorldGenerator.instance) : "")}");
+        }
+    }
+
+    /// <summary>road_bridges reports the plans; road_bridges respawn destroys every
+    /// spawned bridge piece and spawns the current plans again into the loaded
+    /// zones (fixture iteration).</summary>
+    private static void BridgesCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+        {
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
+        }
+
+        if (args.Length > 1 && args[1] == "respawn")
+        {
+            (int destroyed, int zones) = StructurePlacement.RespawnFromPlans();
+            args.Context.AddString($"Destroyed {destroyed} bridge pieces; spawned the current plans into {zones} zone(s). Zones the world has not generated yet get theirs when it does.");
+            return;
+        }
+
+        List<RoadCrossing> sites = BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings());
+        args.Context.AddString(
+            $"{sites.Count} crossing site(s), " +
+            $"{StructurePlans.TotalPlannedPieces} pieces planned across {StructurePlans.PlannedZoneCount} zone(s), {StructurePlans.SpawnedZones.Count} zone(s) spawned. road_crossings lists them.");
+    }
+
+    /// <summary>
+    /// What is intentionally missing from a bridge, as coordinates.
+    ///
+    /// The bridges ship ruined on purpose -- piers outlive decks, a navigation
+    /// gap stays clear for boats -- and the claim that goes with that is that a
+    /// player can put the missing pieces back with ordinary vanilla ones and
+    /// get a continuous, aligned crossing. This command is how that claim is
+    /// checked in a running game rather than argued about: it prints the
+    /// difference between the completed layout and the shipped one.
+    ///
+    /// Deterministic, and deliberately computed from the PLAN rather than from
+    /// what is standing: two runs on the same world and seed print the same
+    /// list, whether or not anything has since decayed or been built.
+    /// </summary>
+    private static void BridgeRepairsCommand(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadNetworkGenerator.RoadsAvailable)
+        {
+            args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
+            return;
+        }
+        if (WorldGenerator.instance == null)
+        {
+            args.Context.AddString("Error: no world");
+            return;
+        }
+
+        Vector2 at;
+        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+            at = new Vector2(x, z);
+        else if (Player.m_localPlayer != null)
+            at = new Vector2(Player.m_localPlayer.transform.position.x, Player.m_localPlayer.transform.position.z);
+        else
+        {
+            args.Context.AddString("Usage: road_bridge_repairs <x> <z>");
+            return;
+        }
+
+        List<RoadCrossing> sites = BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings());
+        if (sites.Count == 0)
+        {
+            args.Context.AddString("No crossings on this network.");
+            return;
+        }
+
+        RoadCrossing site = sites.OrderBy(c => Vector2.Distance(c.Center, at)).First();
+        int seed = WorldGenerator.instance.GetSeed();
+        if (site.Kind == CrossingKind.Bridge && BridgeStructures.KitFor(site, WorldGenerator.instance) == BridgeStructures.Kit.DvergrViaduct)
+        {
+            // The wooden kit's repair diagnostic does not describe a viaduct.
+            args.Context.AddString("The nearest crossing is a Dvergr viaduct: " + DvergrViaduct.Describe(site, WorldGenerator.instance) +
+                $"; {DvergrViaduct.Solve(site, WorldGenerator.instance, seed).Count} of {DvergrViaduct.SolveComplete(site, WorldGenerator.instance, seed).Count} pieces stand.");
+            return;
+        }
+        if (BridgeStructures.KitFor(site, WorldGenerator.instance) == BridgeStructures.Kit.DvergrWood)
+        {
+            // The wooden kit's repair diagnostic describes its own plates and poles, not the Dvergr pier's planks and piles.
+            args.Context.AddString("The nearest crossing is a Dvergr wood bridge: " + DvergrWoodBridge.Describe(site, WorldGenerator.instance) +
+                $"; {DvergrWoodBridge.Solve(site, WorldGenerator.instance, seed).Count} of {DvergrWoodBridge.SolveComplete(site, WorldGenerator.instance, seed).Count} pieces stand.");
+            return;
+        }
+        List<StructurePiece> complete = BridgeLayout.SolveComplete(site, WorldGenerator.instance, seed);
+        List<StructurePiece> shipped = BridgeLayout.Solve(site, WorldGenerator.instance, seed);
+
+        (float dropFrom, float dropTo) = BridgeLayout.BankDrop(site, WorldGenerator.instance);
+        (bool nearLands, bool farLands) = BridgeLayout.StairRunsLand(site, WorldGenerator.instance);
+        args.Context.AddString(
+            $"Crossing ({site.Center.x:F0},{site.Center.y:F0}) {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")}, " +
+            $"{site.Width:F2} m wide, level deck, bank drop {dropFrom:F2}/{dropTo:F2} m, " +
+            $"built {BridgeLayout.BuiltLength(site.Width):F2} m over {BridgeLayout.Bays(site.Width)} bay(s) " +
+            $"of {BridgeLayout.StationSpacing():F3} m, deck {BridgeLayout.DeckHalfWidth * 2f:F0} m wide, " +
+            $"from ({site.FromBank.x:F2},{site.FromBank.y:F2}) to ({site.ToBank.x:F2},{site.ToBank.y:F2}).");
+        if (!nearLands || !farLands)
+            args.Context.AddString($"STAIRS UNLANDED: near={(nearLands ? "ok" : "above ground")} far={(farLands ? "ok" : "above ground")} " +
+                $"-- the bank falls faster than {BridgeLayout.MaxStairSteps} steps of 1 in 2 can follow.");
+        // A site with no turnable line keeps the bearing the router priced --
+        // better an off-grid bridge than a road over open water -- but then
+        // NONE of its pieces can be replaced by an ordinary hammer, which is
+        // exactly what this command is for. Say so before listing them.
+        float siteHeading = BridgeLayout.YawDegrees(site.Direction);
+        if (!BridgeLayout.HeadingIsPlaceable(siteHeading))
+            args.Context.AddString($"HEADING NOT PLACEABLE: this crossing stands at {siteHeading:F2} deg, and the vanilla hammer " +
+                $"turns only in {BridgeLayout.PlaceableHeadingStep} deg steps. No admissible line reached land on both banks here, " +
+                "so the crossing kept the bearing the router priced. The pieces below are NOT hand-replaceable at this site.");
+        int gap = 0, ruined = 0;
+        List<string> lines = new();
+        foreach (StructurePiece piece in complete)
+        {
+            if (shipped.Any(b => b.Prefab == piece.Prefab && Vector3.Distance(b.Position, piece.Position) < 0.05f))
+                continue;
+            // Two reasons a piece is missing, reported apart: the navigation
+            // gap is left open on purpose for boats, the rest is ruin.
+            bool inGap = BridgeLayout.InNavigationGap(site, site.Along(new Vector2(piece.Position.x, piece.Position.z)));
+            if (inGap) gap++; else ruined++;
+            lines.Add(string.Format(CultureInfo.InvariantCulture,
+                "REPAIR {0} {1} {2:F3} {3:F3} {4:F3} yaw={5:F2} pitch={6:F2} why={7}",
+                lines.Count + 1, piece.Prefab, piece.Position.x, piece.Position.y, piece.Position.z,
+                piece.YawDegrees, piece.PitchDegrees, inGap ? "gap" : "ruin"));
+        }
+        args.Context.AddString($"Completed: {complete.Count} pieces. Shipped: {shipped.Count}. Missing: {lines.Count} ({gap} in the navigation gap, {ruined} ruin).");
+        foreach (string line in lines)
+            args.Context.AddString(line);
+        int n = lines.Count;
+        args.Context.AddString($"OK: BRIDGE_REPAIRS {n} piece(s) to replace");
     }
 
     private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
@@ -582,6 +788,7 @@ public static class ConsoleCommands
         int zones = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true);
         args.Context.AddString(summary);
         args.Context.AddString($"Queued terrain for {zones} loaded zone(s).");
+        ReportBridgeRespawn(args, StructurePlacement.RespawnFromPlans());
     }
 
 

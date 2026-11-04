@@ -18,6 +18,10 @@ public enum RockClearingMode
 /// <summary>Known natural boulders only, never ore, fragments or arbitrary destructibles.</summary>
 public static class RoadRockPolicy
 {
+    /// <summary>Height of the clearance over a walking surface: a player's
+    /// (<see cref="PlayerHeight"/>) with a little room over the head.</summary>
+    public const float ClearanceHeight = 2f;
+
     /// <summary>The player's collision capsule, read from the Player prefab:
     /// 1.85 m tall, 0.49 m radius, standing on its feet.</summary>
     public const float PlayerHeight = 1.85f;
@@ -46,6 +50,19 @@ public static class RoadRockPolicy
     /// (NetworkCutoff), where the rocks are the players' landscape.
     /// </summary>
     public static bool MayTouch(UnityEngine.Vector3 position) => !NetworkCutoff.Excludes(ZoneSystem.GetZone(position));
+
+    /// <summary>A zone is 64 m across: 46 m from its centre reaches its corners.</summary>
+    public const float ZoneReach = 46f;
+
+    /// <summary>
+    /// Whether the pass looks at a zone at all: it has road, or ANY structure (a bridge or viaduct deck, wooden or Dvergr,
+    /// a staircase, a spanned ford) within the reach of its probe -- the same question the probe then asks
+    /// (<see cref="StructurePlans.ClearancesNear"/>), so no structure is left to be "reached from its banks" -- and the
+    /// zone is not one NetworkCutoff leaves as the players found it.
+    /// </summary>
+    public static bool ZoneNeedsLook(Vector2s zone, UnityEngine.Vector3 zoneCentre) =>
+        MayTouch(zoneCentre) &&
+        (RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0 || StructurePlans.AnyStructureNear(zoneCentre, ZoneReach));
 
     /// <summary>Whether this setting carves rocks rather than removing them whole.</summary>
     public static bool Carves(RockClearingMode mode) => mode == RockClearingMode.Carve;
@@ -130,6 +147,49 @@ public static class RoadRockPolicy
         }
     }
 
+    /// <summary>How far apart two fragments of one rock may be and still touch, m.</summary>
+    public const float FragmentTouch = 0.1f;
+    /// <summary>How far over the ground a fragment's lowest point may be and still stand on it, m.</summary>
+    public const float GroundTouch = 0.3f;
+
+    /// <summary>
+    /// The fragments a carve leaves with nothing to hold them: a fragment stays
+    /// while it touches the ground, or touches -- from below, the side or above --
+    /// another remaining fragment of the same rock that stays, so it goes only
+    /// once no chain of touching fragments joins it to one on the ground.
+    /// Removing one can cut off others; all of them are returned at once.
+    /// Neighbouring rocks, trees and pieces hold nothing up: they are not part
+    /// of the rock and may be cleared on their own. A fragment the world placed
+    /// with no such chain (a rock perched on another) was not cut off by the
+    /// carve and stays as it was.
+    /// </summary>
+    /// <param name="standing">the rock's fragments standing before the carve</param>
+    /// <param name="taken">the fragments the carve takes</param>
+    /// <param name="onGround">whether a fragment's lowest point is on the ground (<see cref="GroundTouch"/>)</param>
+    /// <param name="touch">whether two fragments touch (<see cref="FragmentTouch"/>); symmetric</param>
+    public static List<int> CutOff(IReadOnlyCollection<int> standing, ICollection<int> taken,
+        System.Func<int, bool> onGround, System.Func<int, int, bool> touch)
+    {
+        var before = Held(standing, onGround, touch);
+        var left = standing.Where(i => !taken.Contains(i)).ToList();
+        var after = Held(left, onGround, touch);
+        return left.Where(i => before.Contains(i) && !after.Contains(i)).ToList();
+    }
+
+    /// <summary>The fragments joined to the ground, fragment to touching fragment.</summary>
+    private static HashSet<int> Held(IReadOnlyCollection<int> fragments, System.Func<int, bool> onGround, System.Func<int, int, bool> touch)
+    {
+        var held = new HashSet<int>(fragments.Where(onGround));
+        var queue = new Queue<int>(held);
+        while (queue.Count > 0)
+        {
+            int i = queue.Dequeue();
+            foreach (int j in fragments)
+                if (!held.Contains(j) && touch(i, j)) { held.Add(j); queue.Enqueue(j); }
+        }
+        return held;
+    }
+
     /// <summary>The road's direction at a point: toward the nearest other
     /// stored point, ignoring duplicates (a point is stored once per grid cell
     /// it touches) and anything beyond 3 m.</summary>
@@ -186,8 +246,28 @@ public static class RoadRockPolicy
 
     public static bool CanClear(string name, bool registeredVegetation, Heightmap.Biome biome,
         bool protectedSite, bool playerPiece, bool hasNetworkView, bool validView, bool owned) =>
-        IsNaturalBoulder(name) && registeredVegetation && (biome & SupportedBiomes) != 0 &&
+        BoulderInBiome(name, biome) && registeredVegetation &&
         !protectedSite && !playerPiece && (!hasNetworkView || (validView && owned));
+
+    /// <summary>A natural boulder standing in a biome whose boulders are cleared.</summary>
+    private static bool BoulderInBiome(string name, Heightmap.Biome biome) => IsNaturalBoulder(name) && (biome & SupportedBiomes) != 0;
+
+    /// <summary>A Mistlands rock (with <paramref name="rocks"/>) or cliff (with <paramref name="cliffs"/>) standing in the Mistlands.</summary>
+    private static bool MistlandsRockInBiome(string name, bool rocks, bool cliffs, Heightmap.Biome biome) =>
+        IsMistlandsRock(name, rocks, cliffs) && (biome & Heightmap.Biome.Mistlands) != 0;
+
+    /// <summary>The automatic pass (RoadRockClearing) clears Mistlands rocks and cliffs as well as boulders.</summary>
+    public const bool PassClearsMistlandsRocks = true;
+    public const bool PassClearsMistlandsCliffs = true;
+
+    /// <summary>
+    /// Whether the automatic rock clearing, set to <paramref name="mode"/>, takes a rock of the world's own vegetation
+    /// standing on a road in <paramref name="biome"/>: the rule of <see cref="CanClear"/> and
+    /// <see cref="CanClearMistlands"/> for a rock no player or location holds. A rock it would not take is kept off the
+    /// road with the vegetation instead.
+    /// </summary>
+    public static bool ClearingTakes(string name, Heightmap.Biome biome, RockClearingMode mode) =>
+        Clears(mode) && (BoulderInBiome(name, biome) || MistlandsRockInBiome(name, PassClearsMistlandsRocks, PassClearsMistlandsCliffs, biome));
 
     // Mistlands rocks and cliffs are recognised separately: the cliffs are
     // outcrops tens of metres across, not boulders.
@@ -198,6 +278,6 @@ public static class RoadRockPolicy
 
     public static bool CanClearMistlands(string name, bool rocks, bool cliffs, bool registeredVegetation, Heightmap.Biome biome,
         bool protectedSite, bool playerPiece, bool hasNetworkView, bool validView, bool owned) =>
-        IsMistlandsRock(name, rocks, cliffs) && registeredVegetation && (biome & Heightmap.Biome.Mistlands) != 0 &&
+        MistlandsRockInBiome(name, rocks, cliffs, biome) && registeredVegetation &&
         !protectedSite && !playerPiece && (!hasNetworkView || (validView && owned));
 }

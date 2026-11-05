@@ -29,10 +29,13 @@ public static class ServerTerrainBake
 {
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
 
-    /// <summary>Main-thread time the queue may use per frame.</summary>
-    private const double FrameBudgetMs = 8.0;
-    /// <summary>Zones whose terrain the game is still building that one frame may pass over.</summary>
-    private const int NotReadyPerFrame = 8;
+    /// <summary>Main-thread time the queue may use per frame; the in-world rock pass spreads its carves by it too
+    /// (RoadRockClearing).</summary>
+    internal const double FrameBudgetMs = 8.0;
+    /// <summary>Terrain requests the bake may have waiting in the game's heightmap builder at once: half the game's 16
+    /// ready slots (HeightmapBuilder.m_maxReadyQueue; HeightmapBuilder.BuildThread evicts the oldest past them), so
+    /// finished builds are not evicted before the bake takes them and the game's own streaming keeps the other half.</summary>
+    private static readonly int MaxBuilderRequests = ServerBakeBuilderRequests.HalfTheReadyList(HeightmapBuilder.m_maxReadyQueue);
     /// <summary>A zone whose terrain has not been built after this many tries is given up (which also bounds how long
     /// the loading screen holds the first spawn for the bake, ServerBakeLoadScreen).</summary>
     private const int MaxNotReadyTries = 2000;
@@ -59,6 +62,7 @@ public static class ServerTerrainBake
     private static readonly List<Vector2s> s_queue = new();
     private static int s_next;
     private static readonly Dictionary<Vector2s, int> s_notReady = new();
+    private static readonly ServerBakeBuilderRequests s_requests = new(MaxBuilderRequests);
     private static readonly Stopwatch s_wall = new();
     private static double s_busyMs;
     private static float s_nextProgress;
@@ -103,6 +107,7 @@ public static class ServerTerrainBake
         s_queue.Clear();
         s_next = 0;
         s_notReady.Clear();
+        s_requests.Clear();
         s_wall.Reset();
         s_busyMs = 0;
         s_finished = false;
@@ -111,6 +116,7 @@ public static class ServerTerrainBake
         s_ghostRepair.Clear();
         s_faults.Clear();
         s_loadScreen.Clear();
+        DropKeptBuild();
         s_heldMs = 0;
         s_loadScreenTotal = 0;
         s_busyAtSpawn = Player.m_localPlayer != null ? 0 : -1;
@@ -132,21 +138,25 @@ public static class ServerTerrainBake
     {
         if (!Enabled || s_faults.IsPaused || !RoadNetworkGenerator.RoadsAvailable) return false;
         int version = RoadSpatialGrid.RoadNetworkVersion;
-        return version != 0 && (version != s_version || s_next < s_queue.Count);
+        return version != 0 && (version != s_version || s_next < s_queue.Count || s_requests.Count > 0);
     }
 
     /// <summary>
     /// For the loading screen while the bake holds the first spawn: zones written, of those that take writing. Only the
     /// generated zones take time (the rest are left to their generation and pass in a moment), so they alone are counted:
-    /// the bar would otherwise race to the end and wait there. A zone put back to wait on its terrain is counted again.
+    /// the bar would otherwise race to the end and wait there. A zone waiting on its terrain is still to write.
     /// </summary>
     internal static (int written, int total) LoadScreenProgress()
     {
         int left = 0;
         ZoneSystem zones = ZoneSystem.instance;
         if (zones != null)
+        {
             for (int i = s_next; i < s_queue.Count; i++)
                 if (zones.IsZoneGenerated(s_queue[i])) left++;
+            foreach (Vector2s zone in s_requests.Waiting)
+                if (zones.IsZoneGenerated(zone)) left++;
+        }
         if (left > s_loadScreenTotal) s_loadScreenTotal = left;
         return (s_loadScreenTotal - left, s_loadScreenTotal);
     }
@@ -159,7 +169,7 @@ public static class ServerTerrainBake
         s_loadScreen.Release();
         if (s_version == 0) return;
         s_busyAtSpawn = s_busyMs;
-        int pending = Math.Max(0, s_queue.Count - s_next);
+        int pending = Pending();
         // Wall time: game time crawls through a frame the bake holds long (Unity caps each frame's step).
         Log.LogInfo($"[BAKE] first spawn {s_wall.Elapsed.TotalSeconds:F1} s after the bake started: {s_busyMs:F0} ms of bake before it " +
                     $"({s_heldMs:F0} ms of it holding the spawn); {pending} zone(s) pending for the in-world slices" +
@@ -498,27 +508,28 @@ public static class ServerTerrainBake
     /// dedicated server no client clears rocks. The zone's terrain, its saved
     /// compiler and its clearable rocks are brought alive from their data, as
     /// generation has them, carved as Roads/RockClearing says, and taken down
-    /// again, leaving their data.
+    /// again, leaving their data. False, with nothing done, when the zone's
+    /// terrain is not ready (the caller sends the zone round the queue again).
     /// </summary>
-    private static int ClearSavedRocks(Vector2s zone)
+    private static bool ClearSavedRocks(Vector2s zone, List<(ZDO zdo, GameObject prefab)> rocks, out int cleared)
     {
-        var zdos = new List<ZDO>();
-        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
-        var rocks = new List<(ZDO zdo, GameObject prefab)>();
-        foreach (ZDO zdo in zdos)
-        {
-            GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
-            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, IsPlayerCreated(zdo)))
-                rocks.Add((zdo, prefab));
-        }
-        if (rocks.Count == 0) return 0;
+        cleared = 0;
+        var clock = Stopwatch.StartNew();
+        double mark = 0;
+        double Lap() { double now = clock.Elapsed.TotalMilliseconds, d = now - mark; mark = now; return d; }
+        // Asked again right before the terrain is made: Heightmap.Generate would otherwise wait on the main thread
+        // (HeightmapBuilder.RequestTerrainSync) for terrain the builder evicted since the zone was first asked. The
+        // builder's thread can still evict it between this answer and Generate, so a short wait stays possible, if rare.
+        if (AskTerrain(zone) != ServerBakeBuilderRequests.Answer.Ready) return false;
         GameObject? root = null, compiler = null;
         var alive = new List<GameObject>();
         try
         {
             root = Object.Instantiate(ZoneSystem.instance.m_zonePrefab, ZoneSystem.GetZonePos(zone), Quaternion.identity);
             Heightmap? hmap = root.GetComponentInChildren<Heightmap>();
-            if (hmap == null || !EnsureGenerated(hmap)) return 0;
+            if (hmap == null || !EnsureGenerated(hmap)) return true;
+            s_step.Reused = s_handedBack != null && hmap.m_buildData == s_handedBack;
+            s_step.RocksTerrain = Lap();
             List<ZDO> saved = RoadTerrainModifier.SavedTerrainCompilers(zone);
             if (saved.Count == 1)
             {
@@ -526,15 +537,19 @@ public static class ServerTerrainBake
                 compiler = BringSavedAlive(saved[0], hmap.m_terrainCompilerPrefab);
                 hmap.Regenerate();
             }
+            s_step.RocksCompiler = Lap();
             foreach (var (zdo, prefab) in rocks)
                 if (BringSavedAlive(zdo, prefab) is GameObject go) alive.Add(go);
+            s_step.RocksAlive = Lap();
+            s_step.RocksCount = alive.Count;
             RoadRockCarve.GhostSpawned = alive;
             Physics.SyncTransforms();
             Vector3 centre = ZoneSystem.GetZonePos(zone);
             var lines = RoadRockProbe.Run(centre, OwnRockReach(centre, alive), apply: true, sites: false, mist: true, cliffs: true,
-                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out int cleared);
+                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out cleared);
+            s_step.RocksProbe = Lap();
             Log.LogDebug($"[BAKE] zone {zone} (saved rocks): {lines[0]}");
-            return cleared;
+            return true;
         }
         finally
         {
@@ -544,7 +559,112 @@ public static class ServerTerrainBake
                 if (go != null) Release(go, bound: true);
             if (compiler != null) Release(compiler, bound: true);
             if (root != null) Object.DestroyImmediate(root);
+            s_step.RocksRelease = Lap();
         }
+    }
+
+    /// <summary>The zone's saved clearable rocks (ServerBakePlanner.BringsRockAlive), each with its prefab.</summary>
+    private static List<(ZDO zdo, GameObject prefab)> FindSavedRocks(Vector2s zone)
+    {
+        var clock = Stopwatch.StartNew();
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        var rocks = new List<(ZDO zdo, GameObject prefab)>();
+        foreach (ZDO zdo in zdos)
+        {
+            GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, IsPlayerCreated(zdo)))
+                rocks.Add((zdo, prefab));
+        }
+        s_step.RocksFind += clock.Elapsed.TotalMilliseconds;
+        return rocks;
+    }
+
+    /// <summary>
+    /// Whether the saved-rock pass can make the zone's terrain now without waiting on the game's builder: the terrain
+    /// write's build data is handed back first (PROCEDURALROADS_BAKE_KEEP_BUILD), then the game is asked as the terrain
+    /// write asks it (asking starts the build). Not ready: the zone comes back through the queue, as a terrain write does.
+    /// </summary>
+    private static ServerBakeBuilderRequests.Answer RockTerrainReady(Vector2s zone)
+    {
+        s_step.Queue = BuilderQueue();
+        HandBackKeptBuild(zone);
+        return AskTerrain(zone);
+    }
+
+    // ---- one zone's main-thread time per step, and the terrain write's build data kept for the rock pass ----
+
+    /// <summary>One zone's main-thread time per step, for the [BAKE] steps debug line.</summary>
+    private struct StepTimes
+    {
+        public double Terrain, Vegetation, RocksFind, RocksTerrain, RocksCompiler, RocksAlive, RocksProbe, RocksRelease;
+        public int RocksCount, Queue;
+        public bool Reused;
+    }
+
+    private static StepTimes s_step;
+
+    /// <summary>PROCEDURALROADS_BAKE_KEEP_BUILD (default on): the rock pass's temporary terrain reuses the build data
+    /// the zone's terrain write took from the game's builder (ServerBakeKeptBuild), instead of asking for it again.
+    /// Off, the rock pass asks the builder again and the zone waits for it through the queue (on the main thread only
+    /// when the builder evicts the build between the readiness answer and the terrain being made).</summary>
+    private static bool? s_keepBuild;
+    private static bool KeepBuild => s_keepBuild ??= DebugSwitches.Flag("BAKE_KEEP_BUILD", true);
+
+    private static readonly ServerBakeKeptBuild<HeightmapBuilder.HMBuildData> s_keptBuild = new();
+    /// <summary>The kept data while it sits on the builder's ready list, taken back off at the end of the zone if unused.</summary>
+    private static HeightmapBuilder.HMBuildData? s_handedBack;
+
+    /// <summary>The terrain write made the zone's terrain: keep the data it was made from for the zone's rock pass.</summary>
+    private static void KeepBuildData(Vector2s zone, Heightmap hmap)
+    {
+        if (KeepBuild) s_keptBuild.Keep(zone, hmap.m_buildData);
+    }
+
+    /// <summary>Put the kept data back among the builder's ready data, where the next Heightmap.Generate for the zone
+    /// takes it the game's own way (corner biomes included); only data the game itself matches to this zone's terrain
+    /// (HMBuildData.IsEqual, as RequestTerrain matches it), so it can never serve another zone.</summary>
+    private static void HandBackKeptBuild(Vector2s zone)
+    {
+        HeightmapBuilder.HMBuildData? data = s_keptBuild.Take(zone, KeepBuild);
+        Heightmap? template = ZoneTemplate();
+        HeightmapBuilder? builder = HeightmapBuilder.instance;
+        if (data == null || template == null || builder == null || builder.m_lock == null || WorldGenerator.instance == null ||
+            data.m_baseHeights == null || !data.IsEqual(ZoneSystem.GetZonePos(zone), template.m_width, template.m_scale,
+                template.IsDistantLod, WorldGenerator.instance))
+            return;
+        lock (builder.m_lock)
+            ServerBakeKeptBuild<HeightmapBuilder.HMBuildData>.HandBack(builder.m_ready, data);
+        s_handedBack = data;
+    }
+
+    /// <summary>The end of a zone (or of the world): whatever was kept goes, and a hand-back nothing used comes back
+    /// off the builder's ready list.</summary>
+    private static void DropKeptBuild()
+    {
+        s_keptBuild.Drop();
+        HeightmapBuilder.HMBuildData? data = s_handedBack;
+        s_handedBack = null;
+        HeightmapBuilder? builder = data != null ? HeightmapBuilder.instance : null;
+        if (data == null || builder == null || builder.m_lock == null) return;
+        lock (builder.m_lock)
+            ServerBakeKeptBuild<HeightmapBuilder.HMBuildData>.Withdraw(builder.m_ready, data);
+    }
+
+    /// <summary>Zones the game's builder still has to build (each one a sync request waits behind).</summary>
+    private static int BuilderQueue()
+    {
+        HeightmapBuilder builder = HeightmapBuilder.instance;
+        if (builder == null || builder.m_lock == null) return -1;
+        lock (builder.m_lock)
+            return builder.m_toBuild.Count;
+    }
+
+    private static void LogSteps(Vector2s zone, double total)
+    {
+        StepTimes t = s_step;
+        Log.LogDebug(System.FormattableString.Invariant(
+            $"[BAKE] steps {zone}: {total:F1} ms = terrain {t.Terrain:F1}, vegetation {t.Vegetation:F1}, rocks: find {t.RocksFind:F1}, terrain {t.RocksTerrain:F1} ({(t.Reused ? "kept build" : "builder asked")}, builder queue {t.Queue}), compiler {t.RocksCompiler:F1}, {t.RocksCount} alive {t.RocksAlive:F1}, probe {t.RocksProbe:F1}, release {t.RocksRelease:F1}"));
     }
 
     /// <summary>How far round the zone's centre its clearable rocks reach, road width included (never under RoadRockPolicy.ZoneCornerReach).</summary>
@@ -605,13 +725,13 @@ public static class ServerTerrainBake
     public static string StatusLine()
     {
         Counts c = s_counts;
-        int pending = Math.Max(0, s_queue.Count - s_next);
+        int pending = Pending();
         return $"network {s_version}, {c.Zones} zones: {c.Created} compilers created, {c.Rewritten} saved ones written, " +
                $"{c.LiveWritten} written through a live compiler, " +
                $"{c.Current} already current, {c.Ungenerated} left to generation, " +
                $"{c.BeforeNetwork} explored before the network (left as they are), {c.Loaded} loaded here without one, " +
                $"{c.Duplicates} with duplicate compilers, {c.NothingToWrite} with nothing to write, {c.Failed} failed, " +
-               $"{s_ghostRepair.Count} deferred, {pending} pending; bridge pieces into {c.BridgeZones} zones; " +
+               $"{s_ghostRepair.Count} deferred, {pending} pending ({s_requests.Count} of {s_requests.Max} terrain requests waiting in the game's builder); bridge pieces into {c.BridgeZones} zones; " +
                $"vegetation removed from {c.VegetationZones} zones ({c.VegetationRemoved} objects, {c.VegetationTurned} logs turned off the road), {c.SavedRocks} rock(s) cleared; {c.Bytes / 1024} KiB written; " +
                $"{s_busyMs / 1000.0:F1} s of frame time over {s_wall.Elapsed.TotalSeconds:F1} s. " +
                $"Generated for peers: {c.GhostCreated} compilers created, {c.GhostRewritten} saved ones written, " +
@@ -621,6 +741,9 @@ public static class ServerTerrainBake
                    ? $"paused ({s_faults.PauseReason}); fix the cause, then road_bake again"
                    : s_faults.Count > 0 ? "enabled; stopped zones need road_bake again after fixing the cause" : "enabled");
     }
+
+    /// <summary>Zones still to work: the rest of the queue and the zones waiting on their terrain outside it.</summary>
+    private static int Pending() => Math.Max(0, s_queue.Count - s_next) + s_requests.Count;
 
     private static void Enqueue(int version)
     {
@@ -668,31 +791,15 @@ public static class ServerTerrainBake
             }
         }
 
-        if (s_next < s_queue.Count)
+        if (s_next < s_queue.Count || s_requests.Count > 0)
         {
             bool held = HoldsFirstSpawn;
             double budgetMs = ServerBakeLoadScreen.SliceBudgetMs(held, FrameBudgetMs);
             var slice = Stopwatch.StartNew();
-            int notReady = 0;
-            while (s_next < s_queue.Count && slice.Elapsed.TotalMilliseconds < budgetMs)
-            {
-                Vector2s zone = s_queue[s_next++];
-                if (!s_faults.TryProcessZone(zone, () => ProcessZone(zone), s_ghostRepair,
-                        out Outcome outcome, out Exception? error))
-                {
-                    if (error != null)
-                        Log.LogError($"[BAKE] zone {zone}: stopped after an exception; other zones continue. " +
-                                     $"Fix the cause, then road_bake again: {error}");
-                    continue;
-                }
-                if (outcome == Outcome.TerrainNotReady)
-                {
-                    // Asking started the build; come back to it after the rest.
-                    s_queue.Add(zone);
-                    if (++notReady >= NotReadyPerFrame)
-                        break;
-                }
-            }
+            // The zones waiting on their terrain first, then the queue while a request is free (ServerBakeBuilderRequests
+            // owns the order): a zone whose terrain is still building waits outside the queue, and one the cap refuses
+            // stays where it is for the next slice.
+            s_requests.RunSlice(s_queue, ref s_next, TryZone, () => slice.Elapsed.TotalMilliseconds < budgetMs);
             s_busyMs += slice.Elapsed.TotalMilliseconds;
             if (held)
                 s_heldMs += slice.Elapsed.TotalMilliseconds;
@@ -705,7 +812,7 @@ public static class ServerTerrainBake
 
         // Repairs still owed an answer are unfinished work: saying "done" over
         // the top of them is how an unresolved zone went unnoticed.
-        bool idle = s_next >= s_queue.Count;
+        bool idle = s_next >= s_queue.Count && s_requests.Count == 0;
         if (idle && s_ghostRepair.Count == 0)
         {
             if (!s_finished)
@@ -736,18 +843,60 @@ public static class ServerTerrainBake
         }
     }
 
+    /// <summary>One zone through the fault guard; true when it comes back for its terrain (waiting on the build, or
+    /// refused a request by the cap).</summary>
+    private static bool TryZone(Vector2s zone)
+    {
+        if (s_faults.TryProcessZone(zone, () => ProcessZone(zone), s_ghostRepair, out Outcome outcome, out Exception? error))
+            return outcome == Outcome.TerrainNotReady;
+        // Stopped (now or earlier): never back for its terrain, so whatever request it held is free.
+        s_requests.Release(zone);
+        if (error != null)
+            Log.LogError($"[BAKE] zone {zone}: stopped after an exception; other zones continue. " +
+                         $"Fix the cause, then road_bake again: {error}");
+        return false;
+    }
+
     private static Outcome ProcessZone(Vector2s zone)
     {
         ZoneSystem zs = ZoneSystem.instance;
         bool generated = zs.IsZoneGenerated(zone);
         bool loadedHere = zs.m_zones.ContainsKey(zone);
-        Outcome terrain = ProcessTerrain(zone, generated, loadedHere);
-        if (terrain == Outcome.NotInPlace)
+        s_step = default;
+        DropKeptBuild();
+        var clock = Stopwatch.StartNew();
+        Outcome result = Outcome.Done;
+        try
         {
-            s_ghostRepair.PendingWorkDone(zone);
-            return Outcome.Done;
+            Outcome terrain = ProcessTerrain(zone, generated, loadedHere);
+            s_step.Terrain = clock.Elapsed.TotalMilliseconds;
+            if (terrain == Outcome.NotInPlace)
+            {
+                s_ghostRepair.PendingWorkDone(zone);
+                return Outcome.Done;
+            }
+            if (terrain != Outcome.Done) return result = terrain;
+            Outcome vegetation = ProcessVegetation(zone, generated, loadedHere);
+            double total = clock.Elapsed.TotalMilliseconds;
+            if (total >= 5.0) LogSteps(zone, total);
+            return result = vegetation;
         }
-        return terrain == Outcome.Done ? ProcessVegetation(zone, generated, loadedHere) : terrain;
+        finally
+        {
+            // The kept build data is this zone's alone: never carried to the next one, nor left on the builder's list.
+            DropKeptBuild();
+            // Finished with the builder unless it is waiting on its terrain: it took its data, gave up, went elsewhere
+            // (a deferral, a repair, a fault), or never needed terrain. Its request slot is free.
+            if (result != Outcome.TerrainNotReady) s_requests.Release(zone);
+        }
+    }
+
+    /// <summary>One more try at a zone whose terrain the game is still building; false once it is not worth another.</summary>
+    private static bool WaitsForTerrain(Vector2s zone)
+    {
+        int tries = s_notReady.TryGetValue(zone, out int t) ? t + 1 : 1;
+        s_notReady[zone] = tries;
+        return tries < MaxNotReadyTries;
     }
 
     private static Outcome ProcessTerrain(Vector2s zone, bool generated, bool loadedHere)
@@ -857,11 +1006,13 @@ public static class ServerTerrainBake
                 return Outcome.Waiting;
             case ServerBakePlanner.Action.CreateCompiler:
             case ServerBakePlanner.Action.WriteSavedCompiler:
-                if (!TerrainReady(zone))
+                ServerBakeBuilderRequests.Answer asked = AskTerrain(zone);
+                // Capped: not asked at all, so no try is spent.
+                if (asked == ServerBakeBuilderRequests.Answer.Capped)
+                    return Outcome.TerrainNotReady;
+                if (asked == ServerBakeBuilderRequests.Answer.Building)
                 {
-                    int tries = s_notReady.TryGetValue(zone, out int t) ? t + 1 : 1;
-                    s_notReady[zone] = tries;
-                    if (tries < MaxNotReadyTries)
+                    if (WaitsForTerrain(zone))
                         return Outcome.TerrainNotReady;
                     s_counts.Failed++;
                     Log.LogWarning($"[BAKE] zone {zone}: the game never built its terrain; not written");
@@ -971,15 +1122,44 @@ public static class ServerTerrainBake
                 s_ghostRepair.Defer(zone, Time.time, RetryDelaySeconds);
                 return Outcome.Waiting;
             }
+            // The rock pass makes the zone's terrain: asked for before anything is removed, so a zone whose terrain the
+            // game is still building comes back through the queue whole, rather than waiting on the main thread.
+            List<(ZDO zdo, GameObject prefab)> savedRocks = rocks ? FindSavedRocks(zone) : new List<(ZDO, GameObject)>();
+            ServerBakeBuilderRequests.Answer rockTerrain = savedRocks.Count > 0 ? RockTerrainReady(zone) : ServerBakeBuilderRequests.Answer.Ready;
+            // Capped: not asked at all, so no try is spent.
+            if (rockTerrain == ServerBakeBuilderRequests.Answer.Capped)
+                return Outcome.TerrainNotReady;
+            if (rockTerrain == ServerBakeBuilderRequests.Answer.Building)
+            {
+                if (WaitsForTerrain(zone))
+                    return Outcome.TerrainNotReady;
+                Log.LogWarning($"[BAKE] zone {zone}: the game never built its terrain; its saved rocks are not cleared");
+                savedRocks.Clear();
+            }
+            var vegetationClock = Stopwatch.StartNew();
             int removed = areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 ? RemoveVegetation(zone, areas, structureAreas, road) : 0;
+            s_step.Vegetation = vegetationClock.Elapsed.TotalMilliseconds;
             if (removed > 0)
             {
                 s_counts.VegetationZones++;
                 s_counts.VegetationRemoved += removed;
                 Log.LogDebug($"[BAKE] zone {zone}: removed {removed} trees, rocks and bushes from the road");
             }
-            if (rocks)
-                s_counts.SavedRocks += ClearSavedRocks(zone);
+            // The vegetation pass may have taken some of those rocks (their ZDOs gone): found again after it.
+            if (removed > 0 && savedRocks.Count > 0)
+                savedRocks = FindSavedRocks(zone);
+            if (savedRocks.Count > 0)
+            {
+                if (!ClearSavedRocks(zone, savedRocks, out int cleared))
+                {
+                    // Ready a moment ago, evicted from the builder's ready list since: back through the queue (the
+                    // vegetation just removed is not found again).
+                    if (WaitsForTerrain(zone))
+                        return Outcome.TerrainNotReady;
+                    Log.LogWarning($"[BAKE] zone {zone}: the game never built its terrain; its saved rocks are not cleared");
+                }
+                s_counts.SavedRocks += cleared;
+            }
         }
         VegetationClearing.MarkCleared(zone, s_version);
         // Vegetation is finished for this zone and this network. If terrain
@@ -1207,15 +1387,22 @@ public static class ServerTerrainBake
         return facts;
     }
 
+    /// <summary>Ask the game for a zone's terrain within the bake's share of the builder (ServerBakeBuilderRequests):
+    /// the zone holds a request slot from now until ProcessZone is finished with it.</summary>
+    private static ServerBakeBuilderRequests.Answer AskTerrain(Vector2s zone) => s_requests.Ask(zone, () => TerrainReady(zone));
+
     /// <summary>Whether the game has the zone's terrain built (asking starts the build), as SpawnZone checks.</summary>
     private static bool TerrainReady(Vector2s zone)
     {
-        Heightmap? template = ZoneSystem.instance.m_zonePrefab.GetComponentInChildren<Heightmap>();
+        Heightmap? template = ZoneTemplate();
         if (template == null || HeightmapBuilder.instance == null || WorldGenerator.instance == null)
             return false;
         return HeightmapBuilder.instance.IsTerrainReady(ZoneSystem.GetZonePos(zone), template.m_width,
             template.m_scale, template.IsDistantLod, WorldGenerator.instance);
     }
+
+    /// <summary>The zone prefab's heightmap: the width, scale and detail every zone's terrain is built with.</summary>
+    private static Heightmap? ZoneTemplate() => ZoneSystem.instance.m_zonePrefab.GetComponentInChildren<Heightmap>();
 
     /// <summary>
     /// Write a zone the server does not have loaded: make the zone's terrain
@@ -1240,6 +1427,7 @@ public static class ServerTerrainBake
                 Log.LogWarning($"[BAKE] zone {zone}: no terrain to write against; not written");
                 return result;
             }
+            KeepBuildData(zone, hmap);
             RoadTerrainModifier.LastWriteOutcome = RoadTerrainModifier.WriteOutcome.None;
             compiler = saved != null ? BringSavedCompilerAlive(saved, hmap) : CreateCompiler(hmap);
             if (saved == null && compiler != null)

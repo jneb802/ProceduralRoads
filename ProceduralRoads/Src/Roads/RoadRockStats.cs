@@ -13,6 +13,8 @@ namespace ProceduralRoads;
 internal static class RoadRockStats
 {
     internal static long Passes, Skipped, NotReady, Points, Queries, Colliders, Judged, Carved, Removed;
+    /// <summary>Frames that applied carves a pass left for later (RoadRockClearing), and the longest of them.</summary>
+    internal static long CarveFrames, MaxCarveFrameTicks;
     internal static long TotalTicks, MaxPassTicks, LookupTicks, ClearanceTicks, GroundTicks, QueryTicks, JudgeTicks, CarveTicks, SyncTicks;
     private static float s_nextLog = -1f;
     private const float Period = 60f;
@@ -27,7 +29,17 @@ internal static class RoadRockStats
         if (spent > MaxPassTicks) MaxPassTicks = spent;
     }
 
-    private static string Ms(long ticks) => (ticks * 1000.0 / Stopwatch.Frequency).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+    internal static void EndCarveFrame(long started)
+    {
+        long spent = Stopwatch.GetTimestamp() - started;
+        CarveFrames++;
+        if (spent > MaxCarveFrameTicks) MaxCarveFrameTicks = spent;
+    }
+
+    /// <summary>Stopwatch ticks as milliseconds.</summary>
+    internal static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
+
+    private static string MsText(long ticks) => Ms(ticks).ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>Write the minute's line (when the pass ran at all) and start the next minute.</summary>
     internal static void MaybeLog()
@@ -36,13 +48,13 @@ internal static class RoadRockStats
         if (s_nextLog < 0f) { s_nextLog = now + Period; return; }
         if (now < s_nextLog) return;
         s_nextLog = now + Period;
-        if (Passes > 0 || Skipped > 0)
+        if (Passes > 0 || Skipped > 0 || CarveFrames > 0)
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                $"Road rocks timing ({Period:F0} s): {Passes} pass(es) ({Skipped} zone(s) skipped as done, {NotReady} not ready yet), {Ms(TotalTicks)} ms (worst pass {Ms(MaxPassTicks)} ms); " +
-                $"lookup {Ms(LookupTicks)} ms; ground {Ms(GroundTicks)} ms for {Points} road points; clearance boxes {Ms(ClearanceTicks)} ms; overlap {Ms(QueryTicks)} ms for {Queries} queries returning {Colliders} colliders; " +
-                $"judging {Ms(JudgeTicks)} ms for {Judged} objects; carving {Ms(CarveTicks)} ms ({Carved} carved, {Removed} removed whole); " +
-                $"transform sync {Ms(SyncTicks)} ms");
-        Passes = Skipped = NotReady = Points = Queries = Colliders = Judged = Carved = Removed = 0;
+                $"Road rocks timing ({Period:F0} s): {Passes} pass(es) ({Skipped} zone(s) skipped as done, {NotReady} not ready yet), {MsText(TotalTicks)} ms (worst pass {MsText(MaxPassTicks)} ms); " +
+                $"lookup {MsText(LookupTicks)} ms; ground {MsText(GroundTicks)} ms for {Points} road points; clearance boxes {MsText(ClearanceTicks)} ms; overlap {MsText(QueryTicks)} ms for {Queries} queries returning {Colliders} colliders; " +
+                $"judging {MsText(JudgeTicks)} ms for {Judged} objects; carving {MsText(CarveTicks)} ms ({Carved} carved, {Removed} removed whole; {CarveFrames} frame(s) carving after their pass, the longest {MsText(MaxCarveFrameTicks)} ms); " +
+                $"transform sync {MsText(SyncTicks)} ms");
+        Passes = Skipped = NotReady = Points = Queries = Colliders = Judged = Carved = Removed = CarveFrames = MaxCarveFrameTicks = 0;
         TotalTicks = MaxPassTicks = LookupTicks = ClearanceTicks = GroundTicks = QueryTicks = JudgeTicks = CarveTicks = SyncTicks = 0;
     }
 }

@@ -130,7 +130,8 @@ public class ServerBakeTests
     [InlineData("rock4_forest", false, true)]
     [InlineData("rock4_forest", true, false)]
     [InlineData("cliff_mistlands1", false, true)]
-    [InlineData("silvervein", false, false)]
+    [InlineData("silvervein", false, true)]
+    [InlineData("MineRock_Tin", false, false)]
     [InlineData("Beech1", false, false)]
     public void TheRockPassBringsAliveOnlyClearableRocksNoPlayerMade(string prefab, bool playerCreated, bool brought) =>
         Assert.Equal(brought, ServerBakePlanner.BringsRockAlive(prefab, playerCreated));

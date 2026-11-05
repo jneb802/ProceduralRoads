@@ -105,6 +105,8 @@
         <Compile Include="../ProceduralRoads/Src/Roads/GhostRepairLedger.cs" Link="ModSrc/GhostRepairLedger.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeFaults.cs" Link="ModSrc/ServerBakeFaults.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeLoadScreen.cs" Link="ModSrc/ServerBakeLoadScreen.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeKeptBuild.cs" Link="ModSrc/ServerBakeKeptBuild.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeBuilderRequests.cs" Link="ModSrc/ServerBakeBuilderRequests.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/VegetationClearing.cs" Link="ModSrc/VegetationClearing.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadClearAreaManager.cs" Link="ModSrc/RoadClearAreaManager.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/NetworkCutoff.cs" Link="ModSrc/NetworkCutoff.cs"/>

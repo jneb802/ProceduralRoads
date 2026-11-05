@@ -79,7 +79,7 @@ public static class ServerTerrainBake
     private struct Counts
     {
         public int Zones, Created, Rewritten, LiveWritten, Current, Ungenerated, BeforeNetwork, Loaded, Duplicates, Failed, BridgeZones;
-        public int NothingToWrite, VegetationZones, VegetationRemoved, SavedRocks, GhostRocks, GhostSettled;
+        public int NothingToWrite, VegetationZones, VegetationRemoved, VegetationTurned, SavedRocks, GhostRocks, GhostSettled;
         public int GhostCreated, GhostRewritten, GhostFailed;
         public long Bytes;
         public double GhostMs;
@@ -612,7 +612,7 @@ public static class ServerTerrainBake
                $"{c.BeforeNetwork} explored before the network (left as they are), {c.Loaded} loaded here without one, " +
                $"{c.Duplicates} with duplicate compilers, {c.NothingToWrite} with nothing to write, {c.Failed} failed, " +
                $"{s_ghostRepair.Count} deferred, {pending} pending; bridge pieces into {c.BridgeZones} zones; " +
-               $"vegetation removed from {c.VegetationZones} zones ({c.VegetationRemoved} objects), {c.SavedRocks} rock(s) cleared; {c.Bytes / 1024} KiB written; " +
+               $"vegetation removed from {c.VegetationZones} zones ({c.VegetationRemoved} objects, {c.VegetationTurned} logs turned off the road), {c.SavedRocks} rock(s) cleared; {c.Bytes / 1024} KiB written; " +
                $"{s_busyMs / 1000.0:F1} s of frame time over {s_wall.Elapsed.TotalSeconds:F1} s. " +
                $"Generated for peers: {c.GhostCreated} compilers created, {c.GhostRewritten} saved ones written, " +
                $"{c.GhostFailed} failed ({s_ghostRepair.RepairCount} awaiting repair), {c.GhostRocks} rock(s) cleared, {c.GhostSettled} object(s) settled, {c.GhostMs:F0} ms; " +
@@ -1053,7 +1053,7 @@ public static class ServerTerrainBake
             Vector3 position = zdo.GetPosition();
             if (VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
                     IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                    structureAreas, RoadRockClearing.Mode, BiomeAt))
+                    structureAreas, RoadRockClearing.Mode, BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
                 count++;
         }
         return count;
@@ -1117,6 +1117,13 @@ public static class ServerTerrainBake
         return ground;
     }
 
+    /// <summary>A saved object's tilt and the height of its origin, as the game laid it (VegetationClearing.Lean).</summary>
+    private static VegetationClearing.Lean LeanOf(ZDO zdo)
+    {
+        Vector3 euler = zdo.GetRotation().eulerAngles;
+        return new VegetationClearing.Lean(euler.x, euler.z, zdo.GetPosition().y);
+    }
+
     private static int RemoveVegetation(Vector2s zone, List<VegetationClearing.Area> areas, List<VegetationClearing.Area> structureAreas,
         List<VegetationClearing.RoadCentre> road)
     {
@@ -1130,13 +1137,27 @@ public static class ServerTerrainBake
         foreach (ZDO zdo in zdos)
         {
             Vector3 position = zdo.GetPosition();
-            if (!VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                    structureAreas, RoadRockClearing.Mode, BiomeAt))
+            Vector3 euler = zdo.GetRotation().eulerAngles;
+            VegetationClearing.Lying verdict = VegetationClearing.Decide(zdo.GetPrefab(), new Vector2(position.x, position.z),
+                IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                structureAreas, RoadRockClearing.Mode, BiomeAt, euler.y, out float turned, LeanOf(zdo));
+            VegetationClearing.Note(zdo.GetPrefab(), new Vector2(position.x, position.z), verdict, euler.y, turned);
+            ZNetView instance = ZNetScene.instance.FindInstance(zdo);
+            if (verdict == VegetationClearing.Lying.Turned || verdict == VegetationClearing.Lying.Through)
+            {
+                // A log lying across the road, turned beside it, or armour turned so the road runs through it, with its lean
+                // kept (VegetationClearing.Lie).
+                Quaternion rotation = Quaternion.Euler(euler.x, turned, euler.z);
+                if (instance != null) { instance.ClaimOwnership(); instance.transform.rotation = rotation; }
+                else zdo.SetOwner(me);
+                zdo.SetRotation(rotation);
+                s_counts.VegetationTurned++;
+                continue;
+            }
+            if (verdict != VegetationClearing.Lying.Remove)
                 continue;
             // As StructurePlacement.ClearSpawnedPieces: through the scene when the
             // object is alive here, straight from the ZDOs otherwise.
-            ZNetView instance = ZNetScene.instance.FindInstance(zdo);
             if (instance != null)
             {
                 instance.ClaimOwnership();

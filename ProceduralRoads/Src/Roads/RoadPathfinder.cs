@@ -261,19 +261,28 @@ public class RoadPathfinder
 
     /// <summary>Set by FindPathToNetwork when the start was already within
     /// reach of a road, so a null result can be told apart from a failure.</summary>
+    internal RoadIslandActivity.Token? Activity;
     public bool AlreadyOnNetwork { get; private set; }
 
     public List<Vector2>? FindPath(Vector2 start, Vector2 end) => FindPath(start, end, null);
 
     public List<Vector2>? FindPath(Vector2 start, Vector2 end, int? iterationLimit)
     {
+        long began = SearchStats.Enabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        m_lastIterations = 0;
         List<Vector2>? path = FindPathCore(start, end, iterationLimit);
         FoldSqueezes();
+        if (SearchStats.Enabled)
+            SearchStats.Record(iterationLimit.HasValue ? SearchStats.Pricing : SearchStats.Building, path != null,
+                m_lastIterations >= (iterationLimit ?? MaxIterations), m_lastIterations, began);
         return path;
     }
 
+    private int m_lastIterations;
+
     private List<Vector2>? FindPathCore(Vector2 start, Vector2 end, int? iterationLimit)
     {
+        using var activity = new RoadSearchActivity(Activity);
         // The memo is NOT blanked here. It holds world-generator facts, and
         // the generator a pathfinder was built for does not change underneath
         // it: a pathfinder is built at the start of a generation and thrown
@@ -310,7 +319,12 @@ public class RoadPathfinder
 
         while (openSet.TrimClosed(closedSet) && iterations < (iterationLimit ?? MaxIterations))
         {
+            // Every 256 iterations: a cancelled generation drains within milliseconds, without a
+            // static read and token check on each of the millions of nodes a world searches.
+            if ((iterations & 255) == 0) RoadLifecycleManager.ThrowIfCancellationRequested();
             iterations++;
+            activity.Step();
+            m_lastIterations = iterations;
 
             var current = openSet.Pop();
             Vector2i currentPos = current.pos;
@@ -403,13 +417,18 @@ public class RoadPathfinder
     public List<Vector2>? FindPathToNetwork(Vector2 start, float reach, IReadOnlyList<Vector2>? hints = null, System.Func<Vector2, bool>? targetAllowed = null,
         System.Func<bool>? served = null)
     {
+        long began = SearchStats.Enabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        m_lastIterations = 0;
         List<Vector2>? path = FindPathToNetworkCore(start, reach, hints, targetAllowed);
         FoldSqueezes();
+        if (SearchStats.Enabled)
+            SearchStats.Record(SearchStats.Joining, path != null || AlreadyOnNetwork, m_lastIterations >= MaxIterations, m_lastIterations, began);
         return path;
     }
 
     private List<Vector2>? FindPathToNetworkCore(Vector2 start, float reach, IReadOnlyList<Vector2>? hints, System.Func<Vector2, bool>? targetAllowed)
     {
+        using var activity = new RoadSearchActivity(Activity);
         LastPathCost = 0;
         // Kept between searches, for the reason given in FindPath.
         m_searchStart = start;
@@ -534,10 +553,14 @@ public class RoadPathfinder
             bool open = openSet.TrimClosed(closedSet);
             if (haveGoal && (!open || OpenHeap.Compare(goalKey, openSet.Min) <= 0))
                 return TakeGoal();
-            if (openSet.Count == 0) break;
+            if (!open) break;
+            // Every 256 iterations: a cancelled generation drains within milliseconds, without a
+            // static read and token check on each of the millions of nodes a world searches.
+            if ((iterations & 255) == 0) RoadLifecycleManager.ThrowIfCancellationRequested();
             iterations++;
-            var current = openSet.Min;
-            openSet.Remove(current);
+            activity.Step();
+            m_lastIterations = iterations;
+            var current = openSet.Pop();
             Vector2i currentPos = current.pos;
 
             // The start itself at the network (no arrival to judge), or the plain rule without a junction step.
@@ -1016,6 +1039,9 @@ public class RoadPathfinder
         Vector2 toWorld = GridToWorld(to);
         if (RoadSiteProtection.BlocksSegment(fromWorld, toWorld, SiteClearance, m_searchStart, m_searchEnd))
             return Impassable;
+        // Explored land players built in or dug, when the network includes the explored land: round it, not through.
+        if (NetworkCutoff.AvoidsSegment(fromWorld, toWorld, m_searchStart, m_searchEnd))
+            return Impassable;
 
         float dist = DirectionCosts[directionIndex] * CellSize;
         float h1 = m_terrain.Height(from);
@@ -1186,6 +1212,7 @@ public class RoadPathfinder
         // deck or approach. A shared viaduct (both banks the same) is the same structure.
         if (DvergrViaduct.IsTooClose(a, b)) return false;
         if (RoadSiteProtection.BlocksSegment(a, b, SiteClearance, m_searchStart, m_searchEnd)) return false;
+        if (NetworkCutoff.AvoidsSegment(a, b, m_searchStart, m_searchEnd)) return false;
         // Nothing of the network under the deck: another road, a staircase or another viaduct.
         float length = Vector2.Distance(a, b);
         for (float s = CellSize * 0.5f; s <= length - CellSize * 0.5f; s += 2f)
@@ -1422,5 +1449,90 @@ public class RoadPathfinder
         path.Add(start);
         path.Reverse();
         return path;
+    }
+}
+
+/// <summary>
+/// Where generation time goes, by kind of search: how many, how many found
+/// a road, how many spent their whole iteration budget, and the wall time of
+/// each group summed over threads. Added after a full-world generation with
+/// stairs ran 10-100x longer than without. Thread-safe; reset per generation. Off unless
+/// PROCEDURALROADS_TIMINGS is on: off, no search reads the clock or counts.
+/// </summary>
+public static class SearchStats
+{
+    /// <summary>PROCEDURALROADS_TIMINGS: time the searches and print the generation's timing and
+    /// tally lines. Off by default.</summary>
+    internal static readonly bool Enabled = DebugSwitches.Flag("TIMINGS", false);
+
+    public const int Pricing = 0, Building = 1, Joining = 2, StairLayout = 3;
+    private static readonly string[] Names = { "pricing searches", "build searches", "join searches", "stair layouts" };
+    private static readonly long[] s_count = new long[Names.Length], s_found = new long[Names.Length], s_maxed = new long[Names.Length], s_iterations = new long[Names.Length];
+    private static readonly long[] s_ticks = new long[Names.Length], s_maxedTicks = new long[Names.Length];
+
+    public static void Reset()
+    {
+        foreach (long[] a in new[] { s_count, s_found, s_maxed, s_iterations, s_ticks, s_maxedTicks }) System.Array.Clear(a, 0, a.Length);
+    }
+
+    // The same, for the thread's own island: an island is built on one worker, so these say
+    // where ONE island's time went (searches lent to other threads are not in them).
+    [System.ThreadStatic] private static long[]? t_count, t_maxed, t_ticks;
+
+    /// <summary>Start this thread's island tally.</summary>
+    public static void ResetThread()
+    {
+        t_count = new long[Names.Length]; t_maxed = new long[Names.Length]; t_ticks = new long[Names.Length];
+    }
+
+    /// <summary>This thread's island so far: seconds/searches (spent their budget) per kind.</summary>
+    public static string BriefThread()
+    {
+        if (t_count == null) return "nothing timed";
+        var parts = new List<string>();
+        for (int k = 0; k < Names.Length; k++)
+            if (t_count[k] > 0) parts.Add($"{Names[k]} {Seconds(t_ticks![k]):F0}s/{t_count[k]} ({t_maxed![k]} spent the budget)");
+        return parts.Count == 0 ? "nothing timed" : string.Join(", ", parts);
+    }
+
+    public static void Record(int kind, bool found, bool maxed, long iterations, long beganTimestamp)
+    {
+        long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - beganTimestamp;
+        if (t_count != null)
+        {
+            t_count[kind]++; t_ticks![kind] += ticks;
+            if (maxed) t_maxed![kind]++;
+        }
+        System.Threading.Interlocked.Increment(ref s_count[kind]);
+        if (found) System.Threading.Interlocked.Increment(ref s_found[kind]);
+        System.Threading.Interlocked.Add(ref s_iterations[kind], iterations);
+        System.Threading.Interlocked.Add(ref s_ticks[kind], ticks);
+        if (!maxed) return;
+        System.Threading.Interlocked.Increment(ref s_maxed[kind]);
+        System.Threading.Interlocked.Add(ref s_maxedTicks[kind], ticks);
+    }
+
+    private static double Seconds(long ticks) => ticks / (double)System.Diagnostics.Stopwatch.Frequency;
+
+    /// <summary>Thread time so far by kind, on one line: for the per-island
+    /// progress lines, so a run still loading says where its time goes.</summary>
+    public static string Brief()
+    {
+        var parts = new List<string>();
+        for (int k = 0; k < Names.Length; k++)
+            if (s_count[k] > 0) parts.Add($"{Names[k]} {Seconds(System.Threading.Interlocked.Read(ref s_ticks[k])):F0}s/{System.Threading.Interlocked.Read(ref s_count[k])}");
+        return parts.Count == 0 ? "nothing timed" : string.Join(", ", parts);
+    }
+
+    /// <summary>One line per kind that ran.</summary>
+    public static IEnumerable<string> Describe()
+    {
+        for (int k = 0; k < Names.Length; k++)
+        {
+            if (s_count[k] == 0) continue;
+            yield return $"{Names[k]}: {s_count[k]}, {s_found[k]} succeeded, {s_maxed[k]} spent the whole budget " +
+                         $"({Seconds(s_maxedTicks[k]):F0} s of {Seconds(s_ticks[k]):F0} s summed over threads), " +
+                         $"{s_iterations[k] / (double)s_count[k]:F0} iterations each";
+        }
     }
 }

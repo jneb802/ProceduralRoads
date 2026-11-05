@@ -936,13 +936,13 @@ public class BridgeTests
 
             // Only a structure makes this zone worth a look when it carries no road of its own: a zone with the
             // bridge in reach is looked at, a distant one is not.
-            Assert.True(StructurePlans.AnyStructureNear(new Vector3(mid.x, 0f, mid.y), RoadRockPolicy.ZoneReach));
+            Assert.True(StructurePlans.AnyStructureNear(new Vector3(mid.x, 0f, mid.y), RoadRockPolicy.ZoneCornerReach));
             Assert.True(RoadRockPolicy.ZoneNeedsLook(midZone, midCentre));
             var far = new Vector2s(midZone.x + 40, midZone.y + 40);
             Assert.False(RoadRockPolicy.ZoneNeedsLook(far, ZoneSystem.GetZonePos(far)));
 
             // A bridge's deck points are published through the plans for the zone's own reach, with no road point.
-            var deck = StructurePlans.ClearancesNear(midCentre, RoadRockPolicy.ZoneReach);
+            var deck = StructurePlans.ClearancesNear(midCentre, RoadRockPolicy.ZoneCornerReach);
             Assert.NotEmpty(deck);
 
             // The same zone, left as the players found it: its rocks stay.

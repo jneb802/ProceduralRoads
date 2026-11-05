@@ -57,6 +57,9 @@ public static class RoadNetworkPersistence
     /// </summary>
     private static readonly int ZonesWithNetworkHash = "ProceduralRoads_ZonesWithNetwork".GetStableHashCode();
 
+    /// <summary>Hash key for the answer of the world's first load, saved when it skipped the roads (ExistingWorldFirstLoad).</summary>
+    private static readonly int FirstLoadHash = "ProceduralRoads_FirstLoad".GetStableHashCode();
+
     /// <summary>
     /// Whether the last TryLoadGlobalRoadData found a saved network it could
     /// not read: the metadata ZDO holds road data, but its version is unknown,
@@ -379,6 +382,24 @@ public static class RoadNetworkPersistence
         WriteRecord(metadataZdo, ZonesWithNetworkHash, () => record);
     }
 
+    /// <summary>Whether the world's first load skipped the roads (ExistingWorldFirstLoad).</summary>
+    public static bool FirstLoadSkipped() => ExistingWorldFirstLoad.SaysSkipped(GetMetadataZDO()?.GetByteArray(FirstLoadHash, null));
+
+    /// <summary>Remember that the world's first load skipped the roads, so no later load asks again or builds them.</summary>
+    public static void SaveFirstLoadSkipped()
+    {
+        EnsureMetadataInstance();
+        ZDO? metadataZdo = GetMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogWarning("[SAVE] No metadata ZDO: the skipped roads are not remembered, and the next load asks again");
+            return;
+        }
+        if (!metadataZdo.IsOwner())
+            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
+        metadataZdo.Set(FirstLoadHash, ExistingWorldFirstLoad.SkipRecord());
+    }
+
     /// <summary>A saved record of zones generated with the network is one NetworkCutoff can read; none at all is not unread.</summary>
     private static void CheckZonesWithNetwork(byte[]? data)
     {
@@ -457,7 +478,7 @@ public static class RoadNetworkPersistence
     /// Serialize road start points to binary format.
     /// Format: [count][x1][y1][labelLen1][labelBytes1]...
     /// </summary>
-    private static byte[] SerializeRoadStartPoints(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
+    internal static byte[] SerializeRoadStartPoints(IReadOnlyList<(Vector2 position, string label)> roadStartPoints)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
@@ -538,7 +559,7 @@ public static class RoadNetworkPersistence
     /// not a river's bridge. Versions 1 (no flags) and 2 (no kit, decided again from the crossing) are read too. The rest
     /// of a crossing is derived from its banks on load.
     /// </summary>
-    private static byte[] SerializeRoadCrossings(IReadOnlyList<RoadCrossing> roadCrossings)
+    internal static byte[] SerializeRoadCrossings(IReadOnlyList<RoadCrossing> roadCrossings)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);

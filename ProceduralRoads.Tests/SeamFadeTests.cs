@@ -167,11 +167,11 @@ public sealed class SeamFadeTests : IDisposable
     }
 
     /// <summary>
-    /// road_generate and road_regen_island write the excluded zones loaded around the operator in full; the zones
-    /// next to them are then not faded against them.
+    /// road_generate and road_regen_island admit the excluded zones they write (like a manual road): every writer
+    /// writes them from then on, they are not an edge for the seam fade, and the operator is told which they are.
     /// </summary>
     [Fact]
-    public void AnOperatorsWriteIsNotFadedAgainstTheZonesItWrites()
+    public void AnOperatorsWriteAdmitsTheZonesItWritesAndSaysSo()
     {
         var path = new List<Vector2>();
         for (float x = -40f; x <= 100f; x += 4f) path.Add(new Vector2(x, 0f));
@@ -181,15 +181,20 @@ public sealed class SeamFadeTests : IDisposable
         Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);
 
         Heightmap hm = _world.RegisterHeightmap(Explored, Width);
-        RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true);
-        Assert.True(hm.m_terrainComp!.SaveCount > 0, "the operator's write reaches the excluded zone");
-        Assert.True(NetworkCutoff.Excludes(Explored), "automatic writers still leave it alone");
+        var log = new List<string>();
+        BepInEx.Logging.ManualLogSource.Captured = log;
+        try
+        {
+            RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out List<Vector2s> admitted);
+            Assert.Equal(new[] { Explored }, admitted);
+            Assert.Contains(log, line => line.Contains(NetworkCutoff.AdmissionWarning("this command builds roads in", admitted)));
+        }
+        finally { BepInEx.Logging.ManualLogSource.Captured = null; }
+        Assert.True(hm.m_terrainComp!.SaveCount > 0, "the operator's write reaches the explored zone");
+        Assert.False(NetworkCutoff.Excludes(Explored), "it is the network's now, for every writer");
         Assert.Equal(1f, NetworkCutoff.SeamWeight(new Vector2(30f, 0f)));
 
-        // A network that replaces this one in the session keeps it written: its write may still be pending.
-        NetworkCutoff.UseNewNetwork();
-        Assert.Equal(1f, NetworkCutoff.SeamWeight(new Vector2(30f, 0f)));
-        // The next session starts over.
+        // A zone off the loaded ones stays as it is, and the next session starts over from the record.
         NetworkCutoff.Forget();
         ExcludeOnANewNetwork(Explored);
         Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);

@@ -12,6 +12,7 @@ namespace ProceduralRoads;
 public static partial class RoadNetworkGenerator
 {
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
+    public static bool IsGenerating => RoadLifecycleManager.IsGenerating;
     
     private static readonly HashSet<string> BossLocationNames = new HashSet<string>
     {
@@ -494,6 +495,34 @@ public static partial class RoadNetworkGenerator
     /// <summary>River crossings of the generated roads (fords and bridges
     /// prototypes): empty unless the network was generated with either on.</summary>
     public static IReadOnlyList<RoadCrossing> GetRoadCrossings() => m_roadCrossings;
+    /// <summary>The crossings and the road start points in a fixed order, whichever island committed its roads first
+    /// (the same rule as <see cref="StairStructures.SortCanonical"/>): generation lays islands in parallel, and the saved
+    /// bytes must not depend on which finished first. Crossings by their banks, start points by position then label. No
+    /// reader takes a crossing by its index or reads a road's crossings as a run (they are matched by banks, walked as
+    /// sites, or counted), so the order within a road is not kept.</summary>
+    internal static void SortRecordsCanonical()
+    {
+        lock (m_recordGate)
+        {
+            m_roadCrossings.Sort((a, b) =>
+            {
+                int c = a.FromBank.x.CompareTo(b.FromBank.x);
+                if (c == 0) c = a.FromBank.y.CompareTo(b.FromBank.y);
+                if (c == 0) c = a.ToBank.x.CompareTo(b.ToBank.x);
+                if (c == 0) c = a.ToBank.y.CompareTo(b.ToBank.y);
+                if (c == 0) c = a.Kind.CompareTo(b.Kind);
+                if (c == 0) c = a.Style.CompareTo(b.Style);
+                if (c == 0) c = a.ValleyJump.CompareTo(b.ValleyJump);
+                return c != 0 ? c : a.RiverbedHeight.CompareTo(b.RiverbedHeight);
+            });
+            m_roadStartPoints.Sort((a, b) =>
+            {
+                int c = a.position.x.CompareTo(b.position.x);
+                if (c == 0) c = a.position.y.CompareTo(b.position.y);
+                return c != 0 ? c : string.CompareOrdinal(a.label, b.label);
+            });
+        }
+    }
     public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
     /// <summary>Whether the network must be saved in full (<see cref="m_networkDirty"/>).</summary>
     public static bool NetworkDirty => m_networkDirty;
@@ -722,7 +751,11 @@ public static partial class RoadNetworkGenerator
         internal RoadIslandActivity? Activity;
         internal void Compute()
         {
-            System.Threading.Tasks.Parallel.ForEach(Islands,
+            // One island at a time to whichever worker is free, in the islands' chosen order (RoadNetworkSelection.Islands:
+            // most eligible destinations first). The default partitioning hands each worker a run of islands up front, so
+            // a long island could wait behind another on its worker while others stood idle.
+            System.Threading.Tasks.Parallel.ForEach(
+                System.Collections.Concurrent.Partitioner.Create(Islands, System.Collections.Concurrent.EnumerablePartitionerOptions.NoBuffering),
                 new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = Workers, CancellationToken = Cancellation },
                 (island, state, number) =>
                 {
@@ -819,6 +852,7 @@ public static partial class RoadNetworkGenerator
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
 
         StairStructures.SortCanonical();
+        SortRecordsCanonical();
         RoadSpatialGrid.FinalizeRoadNetwork();
         
         NetworkCutoff.UseNewNetwork();

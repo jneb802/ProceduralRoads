@@ -119,10 +119,13 @@ public class RoadEdgesAndVegetationTests
             Assert.Equal(RoadTerrainModifier.WriteOutcome.NothingToWrite, RoadTerrainModifier.LastWriteOutcome);
             Assert.Equal(0, west.SaveCount);
             Assert.False(RoadTerrainModifier.CarriesCurrentRoads(west));
+            Assert.Equal(0, west.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
 
             TerrainComp east = Write(new Vector2s(1, 0));
             Assert.Equal(RoadTerrainModifier.WriteOutcome.Written, RoadTerrainModifier.LastWriteOutcome);
             Assert.Equal(1, east.SaveCount);
+            // Stamped with the writer that wrote it, beside the network.
+            Assert.Equal(RoadTerrainModifier.WriterVersion, east.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
         }
         finally { RoadSpatialGrid.Clear(); }
     }

@@ -19,7 +19,7 @@ public static class LocationPlacementHeights
     /// cannot be read yet.</summary>
     public static Func<IEnumerable<(Vector2 centre, float height)>?>? Source;
 
-    private static readonly Dictionary<Vector2, float> m_heights = new();
+    private static Dictionary<Vector2, float> m_heights = new();
     private static volatile bool m_read;
     private static readonly object m_gate = new object();
 
@@ -34,9 +34,23 @@ public static class LocationPlacementHeights
             if (m_read) return;
             var source = Source?.Invoke();
             if (source == null) return;
-            foreach (var (centre, height) in source) m_heights[centre] = height;
-            m_read = true;
+            using var preparation=new RoadPreparation(p=>SetSteps(source,p));
+            preparation.Drain();
         }
+    }
+
+    internal static IEnumerable<bool> SetSteps(IEnumerable<(Vector2 centre,float height)> source,RoadPreparation preparation)
+    {
+        if(LocationLevelling.RefuseAfterSealing("saved placement heights")) yield break;
+        var built=new Dictionary<Vector2,float>();
+        foreach(var (centre,height) in source)
+        {
+            built[centre]=height;
+            if(preparation.Checkpoint()) yield return true;
+        }
+        preparation.Cancellation.ThrowIfCancellationRequested();
+        m_heights=built;
+        m_read=true;
     }
 
     /// <summary>The one door out. Emptying this while island workers are

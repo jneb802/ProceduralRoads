@@ -23,7 +23,14 @@ On a dedicated server, install it on the server only. Players do not need it, an
 
 A world's road network is generated once, the first time the world loads, behind the loading screen. **This takes a while:** about 10 minutes on a Ryzen 7 9800X3D using 15 threads, longer on slower machines. It happens only once per world; road quality was given priority over generation time. Use **Cancel and return to menu** to stop it; the next load starts again. Saved networks load without generating. On a dedicated server, players can join once generation has finished.
 
-Roads are best on a fresh world. On an existing world, zones already explored before the roads were generated are never changed, so roads only appear in new zones; back up the world first.
+Roads are best on a fresh world. A world explored before it had roads asks once, on its first load with the mod, what to do with the land explored so far:
+
+- **Build roads through explored land too** (recommended): the world is backed up first (`<world>_backup_<date>`, restored from Manage saves). Zones with your buildings or terrain edits are left exactly as they are, and the roads go round them.
+- **Build roads in new land only**: everything explored so far stays as it is.
+- **Skip road building**: no roads, and the world stays as it is. Not asked again; `road_generate` can still build them.
+- **Back to the menu**: nothing is decided; the next load asks again.
+
+A dedicated server, which has no screen, takes the recommended answer. `ExistingWorldFirstLoadRoads` gives the answer instead of asking.
 
 ## Configuration
 
@@ -38,6 +45,7 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | RockClearing | Carve | Rocks in the road: Off, Remove or Carve |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 | ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
+| ExistingWorldFirstLoadRoads | Ask | First load of a world explored before it had roads: Ask, IncludeExplored, NewZonesOnly or Skip |
 
 Settings apply when a network is generated, not to a saved one. Not every selected destination gets a road: some cannot be reached within the grade and site rules.
 

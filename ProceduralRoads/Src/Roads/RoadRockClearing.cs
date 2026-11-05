@@ -76,7 +76,7 @@ public static class RoadRockClearing
         long sync = RoadRockStats.Now;
         Physics.SyncTransforms();
         RoadRockStats.SyncTicks += RoadRockStats.Now - sync;
-        var lines = RoadRockProbe.Run(map.transform.position, RoadRockPolicy.ZoneReach, apply: true, sites: false, mist: RoadRockPolicy.PassClearsMistlandsRocks, cliffs: RoadRockPolicy.PassClearsMistlandsCliffs,
+        var lines = RoadRockProbe.Run(map.transform.position, RoadRockPolicy.ZoneCornerReach, apply: true, sites: false, mist: RoadRockPolicy.PassClearsMistlandsRocks, cliffs: RoadRockPolicy.PassClearsMistlandsCliffs,
             partial: true, carve: RoadRockPolicy.Carves(Mode), out int cleared);
         // Done only when the ground answered at every road point and nothing was
         // left for another peer that owns it.

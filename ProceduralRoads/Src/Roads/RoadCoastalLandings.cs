@@ -20,15 +20,26 @@ public static class RoadCoastalLandings
     public static List<Vector3> Find(Island island, float[] heights, int size,
         Func<float, float, Heightmap.Biome> biomeAt, RoadNetworkOptions options)
     {
+        List<Vector3>? result=null;
+        using var preparation=new RoadPreparation(p=>FindSteps(island,heights,size,biomeAt,options,p,value=>result=value));
+        preparation.Drain(); return result!;
+    }
+
+    internal static IEnumerable<bool> FindSteps(Island island,float[] heights,int size,
+        Func<float,float,Heightmap.Biome> biomeAt,RoadNetworkOptions options,RoadPreparation preparation,Action<List<Vector3>> complete)
+    {
         var candidates = new List<(Vector3 point, float rise)>();
-        if (!options.CoastalLandings) return new List<Vector3>();
         if (heights.Length != size * size) throw new ArgumentException("Height raster dimensions differ");
+        preparation.BeginStage($"Checking island {island.Id+1} coast",island.Cells.Count,"cells visited", "Checking coastal candidates"); yield return true;
         float spacing = island.CellSize;
         float H(int x, int z) => x >= 0 && x < size && z >= 0 && z < size
             ? heights[x * size + z] : float.MinValue;
         bool Known(float h) => h != float.MinValue && !float.IsNaN(h) && !float.IsInfinity(h);
         foreach (var cell in island.Cells)
         {
+            if(preparation.Checkpoint(0)) yield return true;
+            try
+            {
             float h = H(cell.x, cell.y);
             if (!Known(h) || h < RoadPathfinder.LandingFloor || h > Sea + 6) continue;
             // First screen is entirely in memory; query the biome only at a low shore.
@@ -47,6 +58,7 @@ public static class RoadCoastalLandings
                 float step = spacing * (d.x != 0 && d.z != 0 ? 1.41421356f : 1);
                 for (int i = 1; i * step <= 150; i++)
                 {
+                    if(preparation.Checkpoint(0)) yield return true;
                     float water = H(cell.x + d.x*i, cell.y + d.z*i);
                     if (!Known(water)) break;
                     if (water >= Sea)
@@ -69,7 +81,10 @@ public static class RoadCoastalLandings
             int reach = Mathf.CeilToInt(100 / spacing);
             for (int dx = -reach; dx <= reach && rise <= 8; dx++)
                 for (int dz = -reach; dz <= reach; dz++)
+                {
                     rise = Math.Max(rise, H(cell.x+dx, cell.y+dz) - h);
+                    if(preparation.Checkpoint(0)) yield return true;
+                }
             if (rise > 8) continue;
 
             // The biome query is the only thing here that asks the world
@@ -82,9 +97,12 @@ public static class RoadCoastalLandings
                 && biome != Heightmap.Biome.Mistlands)) continue;
 
             candidates.Add((new Vector3(p.x, h, p.y), rise));
+            }
+            finally { preparation.CompleteUnit(); }
         }
 
         // Thin first, using gentleness and coordinates for stable tie breaking.
+        preparation.BeginStage($"Spacing island {island.Id+1} landings",candidates.Count,"candidates visited", "Spacing coastal landings"); yield return true;
         var buckets = new Dictionary<(int,int), List<Vector3>>();
         var thinned = new List<Vector3>();
         foreach (var candidate in candidates.OrderBy(c => c.rise).ThenBy(c => c.point.y)
@@ -97,12 +115,14 @@ public static class RoadCoastalLandings
                 for (int dz = -1; dz <= 1; dz++)
                     if (buckets.TryGetValue((x+dx,z+dz), out var nearby)
                         && nearby.Any(q => DistanceSquared(p,q) < Separation*Separation)) close = true;
-            if (close) continue;
+            if (close) { if(preparation.Checkpoint()) yield return true; continue; }
             if (!buckets.TryGetValue((x,z), out var bucket)) buckets[(x,z)] = bucket = new List<Vector3>();
             bucket.Add(p); thinned.Add(p);
+            if(preparation.Checkpoint()) yield return true;
         }
 
         int target = Math.Max(1, Mathf.CeilToInt(island.ApproxArea / AreaPerLanding));
+        preparation.BeginStage($"Selecting island {island.Id+1} landings",Math.Min(target,thinned.Count),"landings", "Selecting coastal landings"); yield return true;
         var selected = new List<Vector3>();
         while (selected.Count < target && thinned.Count > 0)
         {
@@ -113,12 +133,29 @@ public static class RoadCoastalLandings
             {
                 float nearest = selected.Min(p => DistanceSquared(p, thinned[i]));
                 if (nearest > distance) { distance = nearest; best = i; }
+                if(preparation.Checkpoint(0)) yield return true;
             }
             selected.Add(thinned[best]); thinned.RemoveAt(best);
+            if(preparation.Checkpoint()) yield return true;
         }
-        return selected;
+        complete(selected);
     }
 
     private static float DistanceSquared(Vector3 a, Vector3 b) =>
         (a.x-b.x)*(a.x-b.x) + (a.z-b.z)*(a.z-b.z);
+}
+
+/// <summary>A shore landing the network knew of: where it is, its island, whether the island's destinations took it
+/// (<see cref="Chosen"/>) and whether the finished network reaches it (<see cref="Reached"/>, the one reached test, taken
+/// when the island's roads were done).</summary>
+public sealed class CoastalLandingPlace
+{
+    public Vector3 Position { get; }
+    public int IslandId { get; }
+    public bool Chosen { get; }
+    public bool Reached { get; }
+    public string Name => RoadCoastalLandings.Name;
+
+    public CoastalLandingPlace(Vector3 position, int islandId, bool chosen, bool reached)
+    { Position = position; IslandId = islandId; Chosen = chosen; Reached = reached; }
 }

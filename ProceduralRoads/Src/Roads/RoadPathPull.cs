@@ -107,6 +107,7 @@ public static class RoadPathPull
         Func<Vector2, float> ground, Func<Vector2, bool> wet, float gradeLimit)
     {
         if (RoadSiteProtection.BlocksSegment(path[i], path[j], RoadSiteProtection.Clearance(width), null, null)) return false;
+        if (NetworkCutoff.AvoidsSegment(path[i], path[j], path[0], path[path.Count - 1])) return false;
         if (Tolerance > 0f && !WithinTolerance(path, i, j, Tolerance)) return false;
         var line = Profile(new[] { path[i], path[j] }, ground, wet);
         if (line == null || line.Value.steepest > gradeLimit) return false;

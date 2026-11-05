@@ -20,6 +20,10 @@ namespace ProceduralRoads;
 /// </summary>
 public static class ConsoleCommands
 {
+    /// <summary>PROCEDURALROADS_DEV_COMMANDS: register the developer commands (<see cref="RegisterDevCommands"/>,
+    /// <see cref="StairCommands"/>, <see cref="ViaductCommands"/>). Off by default.</summary>
+    internal static readonly bool DevCommands = DebugSwitches.Flag("DEV_COMMANDS", false);
+
     private static bool s_commandsRegistered = false;
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
     private static List<Minimap.PinData> s_modPins = new();
@@ -28,16 +32,33 @@ public static class ConsoleCommands
     /// <summary>
     /// Register console commands. Called from Terminal.InitTerminal patch.
     /// </summary>
+    private static bool GenerationBusy(Terminal.ConsoleEventArgs args)
+    {
+        if (!RoadLifecycleManager.IsGenerating) return false;
+        args.Context.AddString("Road generation is in progress; use road_progress.");
+        return true;
+    }
+
     public static void RegisterCommands()
     {
         if (s_commandsRegistered)
             return;
 
-        // road_debug - Show detailed road info at player position
+        new Terminal.ConsoleCommand("road_progress", "Read the owned road-generation phase and completed-island count", args =>
+        {
+            var p = RoadLifecycleManager.Progress;
+            args.Context.AddString($"Road progress: run={p.RunId} phase={p.Phase} completed={p.Completed} total={p.Total} elapsed={p.ElapsedSeconds:F1}s frame={Time.frameCount}");
+        });
+        if (DevCommands)
+        {
+            RegisterDevCommands();
+            StairCommands.Register();
+            ViaductCommands.Register();
+        }
         new Terminal.ConsoleCommand(
             "road_regen_island",
             "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
-            (args) => RegenerateIslandHere(args),
+            (args) => { if (!GenerationBusy(args)) RegenerateIslandHere(args); },
             isCheat: true,
             isNetwork: false,
             onlyServer: true,
@@ -45,9 +66,205 @@ public static class ConsoleCommands
             allowInDevBuild: true);
 
         new Terminal.ConsoleCommand(
+            "road_debug",
+            "Show detailed road point info near player position (for debugging terrain issues)",
+            (args) => { if (!GenerationBusy(args)) DebugRoadPoints(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_islands - Detect and visualize islands
+        new Terminal.ConsoleCommand(
+            "road_islands",
+            "Detect the islands road generation uses and place map pins at their centers",
+            (args) => { if (!GenerationBusy(args)) DetectAndShowIslands(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_generate - Generate roads for existing worlds
+        new Terminal.ConsoleCommand(
+            "road_generate",
+            "Generate roads for an existing world. Use after adding mod to existing save.",
+            (args) => { if (!GenerationBusy(args)) GenerateRoadsCommand(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: true,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_pins - Show road start points on map
+        new Terminal.ConsoleCommand(
+            "road_pins",
+            "Place map pins at the start point of each generated road.",
+            (args) => { if (!GenerationBusy(args)) ShowRoadStartPins(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_clearpins - Remove all pins added by this mod
+        new Terminal.ConsoleCommand(
+            "road_clearpins",
+            "Remove all map pins added by ProceduralRoads commands.",
+            (args) => { if (!GenerationBusy(args)) ClearAllModPins(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_debug_markers - Spawn interactable debug markers in current zone
+        new Terminal.ConsoleCommand(
+            "road_debug_markers",
+            "Spawn interactable debug cubes above road points in current zone. Interact to see smoothing details.",
+            (args) => { if (!GenerationBusy(args)) SpawnDebugMarkers(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_debug_markers_clear - Remove all debug markers
+        new Terminal.ConsoleCommand(
+            "road_debug_markers_clear",
+            "Remove all spawned debug markers.",
+            (args) => { if (!GenerationBusy(args)) ClearDebugMarkers(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_debug_log - Log debug info for all road points in radius (for underground/underwater points)
+        new Terminal.ConsoleCommand(
+            "road_debug_log",
+            "Log debug info for all road points within radius. Usage: road_debug_log [radius=15]",
+            (args) => { if (!GenerationBusy(args)) LogRoadPointsInRadius(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_terrain_compare - Compare WorldGenerator vs Heightmap heights
+        new Terminal.ConsoleCommand(
+            "road_terrain_compare",
+            "Compare WorldGenerator height vs actual Heightmap height at road points. Diagnoses height sampling issues.",
+            (args) => { if (!GenerationBusy(args)) CompareTerrainHeights(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        // road_biome_check - Show biome info and blending status at player position
+        new Terminal.ConsoleCommand(
+            "road_biome_check",
+            "Show biome info and compare raw vs blended terrain heights. Verifies biome blending fix.",
+            (args) => { if (!GenerationBusy(args)) CheckBiomeBlending(args); },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        s_commandsRegistered = true;
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road console commands registered");
+    }
+    
+    /// <summary>The developer diagnostics (PROCEDURALROADS_DEV_COMMANDS): the server's terrain bake, a zone's
+    /// saved contents, the river crossings and bridges, and how locations meet their roads.</summary>
+    private static void RegisterDevCommands()
+    {
+        new Terminal.ConsoleCommand(
+            "road_bake",
+            "Road terrain the server writes for players without the mod: what it has written so far; road_bake again to go over every road zone of the current network once more (zones already carrying it are left alone); road_bake zone [x z] for what the server knows and would do about one zone (default: where you stand); road_bake vegetation for the road zones still holding vegetation on the road, most first; road_bake find [x z [radius]] for road zones not generated yet near a point; road_bake server for the server's own zone machinery -- reference position, live zone count, and each peer's zone.",
+            (args) =>
+            {
+                if (GenerationBusy(args)) return;
+                if (args.Length > 1 && args[1] == "zone")
+                {
+                    Vector3 point = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                    if (args.Length > 3 &&
+                        float.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x) &&
+                        float.TryParse(args[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
+                        point = new Vector3(x, 0f, z);
+                    args.Context.AddString(ServerTerrainBake.DescribeZone(point));
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "vegetation")
+                {
+                    int max = 5;
+                    if (args.Length > 2 && int.TryParse(args[2], out int n))
+                        max = n;
+                    foreach (string line in ServerTerrainBake.FindVegetationOnRoads(max))
+                        args.Context.AddString(line);
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "find")
+                {
+                    Vector3 from = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                    float radius = 1000f;
+                    if (args.Length > 3 &&
+                        float.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fx) &&
+                        float.TryParse(args[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fz))
+                        from = new Vector3(fx, 0f, fz);
+                    if (args.Length > 4 &&
+                        float.TryParse(args[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float r))
+                        radius = r;
+                    foreach (string line in ServerTerrainBake.FindUngenerated(from, radius, 5))
+                        args.Context.AddString(line);
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "server")
+                {
+                    foreach (string line in ServerTerrainBake.DescribeServer())
+                        args.Context.AddString(line);
+                    return;
+                }
+                if (args.Length > 1 && args[1] == "again")
+                {
+                    ServerTerrainBake.Requeue();
+                    args.Context.AddString("Road zones queued again for the current network");
+                }
+                args.Context.AddString(ServerTerrainBake.StatusLine());
+            },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
+            "road_zone_report",
+            "What one zone holds because of the roads, read from the saved data: its terrain compiler's fingerprint, its bridge pieces and its vegetation. road_zone_report [x z] (default: where you stand). The same zone written by a modded client and by the server should report the same thing.",
+            (args) =>
+            {
+                if (GenerationBusy(args)) return;
+                Vector3 point = Player.m_localPlayer != null ? Player.m_localPlayer.transform.position : Vector3.zero;
+                if (args.Length > 2 &&
+                    float.TryParse(args[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float x) &&
+                    float.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float z))
+                    point = new Vector3(x, 0f, z);
+                foreach (string line in ZoneReport.Describe(point))
+                    args.Context.AddString(line);
+            },
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+
+        new Terminal.ConsoleCommand(
             "road_crossings",
             "List the river crossings (fords and bridges) of the road network nearest to you (road_crossings [count=10]).",
-            (args) => CrossingsCommand(args),
+            (args) => { if (!GenerationBusy(args)) CrossingsCommand(args); },
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
@@ -57,7 +274,7 @@ public static class ConsoleCommands
         new Terminal.ConsoleCommand(
             "road_bridges",
             "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are.",
-            (args) => BridgesCommand(args),
+            (args) => { if (!GenerationBusy(args)) BridgesCommand(args); },
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
@@ -67,7 +284,7 @@ public static class ConsoleCommands
         new Terminal.ConsoleCommand(
             "road_bridge_repairs",
             "DIAGNOSTIC: the pieces the COMPLETE bridge at the crossing nearest a point has and the shipped one does not -- exactly what a player would replace to close it up: road_bridge_repairs <x> <z>. Nothing is placed; this only says where the missing pieces belong.",
-            (args) => BridgeRepairsCommand(args),
+            (args) => { if (!GenerationBusy(args)) BridgeRepairsCommand(args); },
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
@@ -82,144 +299,19 @@ public static class ConsoleCommands
         new Terminal.ConsoleCommand(
             "road_ends",
             "Compare each location's nearest road point with procedural terrain: road_ends [ring=8] [top=20]. Ring is a radius in metres. CSV also records loaded collision height where available; procedural deltas do not measure the visible rim.",
-            (args) => ReportRoadEnds(args),
+            (args) => { if (!GenerationBusy(args)) ReportRoadEnds(args); },
             isCheat: true,
             isNetwork: false,
             onlyServer: false,
             isSecret: false,
             allowInDevBuild: true);
-
-        new Terminal.ConsoleCommand(
-            "road_debug",
-            "Show detailed road point info near player position (for debugging terrain issues)",
-            (args) => DebugRoadPoints(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_islands - Detect and visualize islands
-        new Terminal.ConsoleCommand(
-            "road_islands",
-            "Detect islands and place map pins at their centers. Args: [cellSize] [minCells]",
-            (args) => DetectAndShowIslands(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_generate - Generate roads for existing worlds
-        new Terminal.ConsoleCommand(
-            "road_generate",
-            "Generate roads for an existing world. Use after adding mod to existing save.",
-            (args) => GenerateRoadsCommand(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: true,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_pins - Show road start points on map
-        new Terminal.ConsoleCommand(
-            "road_pins",
-            "Place map pins at the start point of each generated road.",
-            (args) => ShowRoadStartPins(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_clearpins - Remove all pins added by this mod
-        new Terminal.ConsoleCommand(
-            "road_clearpins",
-            "Remove all map pins added by ProceduralRoads commands.",
-            (args) => ClearAllModPins(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_debug_markers - Spawn interactable debug markers in current zone
-        new Terminal.ConsoleCommand(
-            "road_debug_markers",
-            "Spawn interactable debug cubes above road points in current zone. Interact to see smoothing details.",
-            (args) => SpawnDebugMarkers(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_debug_markers_clear - Remove all debug markers
-        new Terminal.ConsoleCommand(
-            "road_debug_markers_clear",
-            "Remove all spawned debug markers.",
-            (args) => ClearDebugMarkers(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_debug_log - Log debug info for all road points in radius (for underground/underwater points)
-        new Terminal.ConsoleCommand(
-            "road_debug_log",
-            "Log debug info for all road points within radius. Usage: road_debug_log [radius=15]",
-            (args) => LogRoadPointsInRadius(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_terrain_compare - Compare WorldGenerator vs Heightmap heights
-        new Terminal.ConsoleCommand(
-            "road_terrain_compare",
-            "Compare WorldGenerator height vs actual Heightmap height at road points. Diagnoses height sampling issues.",
-            (args) => CompareTerrainHeights(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        // road_biome_check - Show biome info and blending status at player position
-        new Terminal.ConsoleCommand(
-            "road_biome_check",
-            "Show biome info and compare raw vs blended terrain heights. Verifies biome blending fix.",
-            (args) => CheckBiomeBlending(args),
-            isCheat: true,
-            isNetwork: false,
-            onlyServer: false,
-            isSecret: false,
-            allowInDevBuild: true);
-
-        s_commandsRegistered = true;
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road console commands registered");
     }
-    
+
     /// <summary>
     /// Detect islands and place map pins to visualize them.
     /// </summary>
     private static void DetectAndShowIslands(Terminal.ConsoleEventArgs args)
     {
-        // Parse arguments
-        float cellSize = 128f;
-        int minCells = 10;
-        
-        if (args.Length > 1 && float.TryParse(args[1], out float cs))
-        {
-            cellSize = cs;
-        }
-        if (args.Length > 2 && int.TryParse(args[2], out int mc))
-        {
-            minCells = mc;
-        }
-        
         // Check prerequisites
         if (WorldGenerator.instance == null)
         {
@@ -233,10 +325,10 @@ public static class ConsoleCommands
             return;
         }
         
-        args.Context.AddString($"Detecting islands (cellSize={cellSize}m, minCells={minCells})...");
+        args.Context.AddString("Detecting islands as road generation does...");
         
         // Run detection
-        var islands = IslandDetector.DetectIslands(cellSize, minCells);
+        var islands = IslandDetector.DetectRoadIslands();
         
         if (islands.Count == 0)
         {
@@ -436,9 +528,9 @@ public static class ConsoleCommands
         float terrainHeight = 0f;
         if (WorldGenerator.instance != null)
         {
-            terrainHeight = WorldGenerator.instance.GetHeight(playerPos.x, playerPos.z);
-            args.Context.AddString($"WorldGenerator height at position: {terrainHeight:F2}m");
-            Log.LogInfo($"WorldGenerator height at position: {terrainHeight:F2}m");
+            terrainHeight = BiomeBlendedHeight.GetBlendedHeight(playerPos.x, playerPos.z, WorldGenerator.instance);
+            args.Context.AddString($"Natural ground at position: {terrainHeight:F2}m");
+            Log.LogInfo($"Natural ground at position: {terrainHeight:F2}m");
         }
 
         // Get road points near player
@@ -484,7 +576,7 @@ public static class ConsoleCommands
             var rp = nearbyPoints[i];
             float dist = Vector2.Distance(rp.p, playerPos2D);
             float localTerrain = WorldGenerator.instance != null 
-                ? WorldGenerator.instance.GetHeight(rp.p.x, rp.p.y) 
+                ? BiomeBlendedHeight.GetBlendedHeight(rp.p.x, rp.p.y, WorldGenerator.instance)
                 : 0f;
             float delta = rp.h - localTerrain;
             
@@ -566,8 +658,15 @@ public static class ConsoleCommands
 
         Log.LogInfo("Manual road generation triggered via console command");
 
-        // Generate roads (force=true to regenerate if needed)
-        RoadNetworkGenerator.GenerateRoads(force: true);
+        // Generate roads (force=true to regenerate if needed). A failed preparation now throws
+        // out of the synchronous run; say so here rather than in an unhandled console error.
+        try { RoadNetworkGenerator.GenerateRoads(force: true); }
+        catch (System.Exception error)
+        {
+            Log.LogError($"Manual road generation failed: {error}");
+            args.Context.AddString($"Road generation failed: {error.GetBaseException().Message}");
+            return;
+        }
 
         if (!RoadNetworkGenerator.RoadsGenerated)
         {
@@ -582,9 +681,16 @@ public static class ConsoleCommands
 
         // Apply roads to currently loaded zones
         args.Context.AddString("Queuing terrain for loaded zones...");
-        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true);
+        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out var admitted);
+        ReportAdmitted(args, admitted);
         args.Context.AddString($"Queued road terrain for {zonesWithRoads} visible zones.");
         ReportBridgeRespawn(args, StructurePlacement.RespawnFromPlans());
+    }
+
+    private static void ReportAdmitted(Terminal.ConsoleEventArgs args, List<Vector2s> admitted)
+    {
+        if (admitted.Count > 0)
+            args.Context.AddString(NetworkCutoff.AdmissionWarning("this command builds roads in", admitted));
     }
 
     /// <summary>Bridge pieces of the old network sit at the old crossings:
@@ -785,7 +891,8 @@ public static class ConsoleCommands
             return;
         }
 
-        int zones = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true);
+        int zones = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out var admitted);
+        ReportAdmitted(args, admitted);
         args.Context.AddString(summary);
         args.Context.AddString($"Queued terrain for {zones} loaded zone(s).");
         ReportBridgeRespawn(args, StructurePlacement.RespawnFromPlans());
@@ -977,7 +1084,8 @@ public static class ConsoleCommands
         {
             float dist = Vector2.Distance(rp.p, playerPos2D);
             
-            // Get current terrain height for comparison (both raw and blended)
+            // Get current terrain height for comparison (both raw and blended). Raw on purpose: the row shows the
+            // point biome's height beside the rendered one, so a gap between them can be seen.
             float rawTerrain = WorldGenerator.instance?.GetHeight(rp.p.x, rp.p.y) ?? 0f;
             float blendedTerrain = WorldGenerator.instance != null 
                 ? BiomeBlendedHeight.GetBlendedHeight(rp.p.x, rp.p.y, WorldGenerator.instance) 
@@ -1037,7 +1145,8 @@ public static class ConsoleCommands
         sb.AppendLine($"Player Y position: {playerPos.y:F2}m");
         sb.AppendLine();
 
-        // Get WorldGenerator height at player position
+        // Get WorldGenerator height at player position. Raw on purpose, here and in the grids below: this command
+        // compares the generator's point-biome height with the live heightmap.
         float wgHeight = WorldGenerator.instance?.GetHeight(playerPos.x, playerPos.z) ?? 0f;
         sb.AppendLine($"WorldGenerator.GetHeight at player: {wgHeight:F2}m");
 
@@ -1245,6 +1354,7 @@ public static class ConsoleCommands
         sb.AppendLine("Height gradient (10m spacing):");
         float[] offsets = { -20, -10, 0, 10, 20 };
         
+        // Raw on purpose (both directions): road_biome_check shows the point-biome height beside the blended one.
         sb.AppendLine("  X direction:");
         foreach (float offset in offsets)
         {

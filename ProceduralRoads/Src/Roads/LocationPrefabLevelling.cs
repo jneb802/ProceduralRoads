@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using SoftReferenceableAssets;
 
@@ -34,8 +35,68 @@ public static class LocationPrefabLevelling
         // callback free to empty it under the island workers.
         LocationLevelling.ResetPlacements = LocationPlacementHeights.Clear;
         LocationPlacementHeights.Source = SavedPlacements;
-        LocationLevelling.Prime = () => { LocationPlacementHeights.Read(); RoadSiteProtection.Prime(); };
+        LocationLevelling.Prime = PrimeSynchronously;
         RoadSiteProtection.Source = Footprints;
+        LocationLevelling.PrimeIncremental=PrimeSteps;
+        LocationLevelling.CanPrimeIncrementally=()=>LocationLevelling.Prime==PrimeSynchronously && BuiltInSources();
+    }
+
+    private static bool BuiltInSources()=>RoadSiteProtection.Source==Footprints && LocationPlacementHeights.Source==SavedPlacements;
+    private static void PrimeSynchronously()
+    {
+        if(!BuiltInSources())
+        {
+            LocationPlacementHeights.Read(); RoadSiteProtection.Prime();
+            return;
+        }
+        using var preparation=new RoadPreparation(PrimeSteps);
+        preparation.Drain();
+    }
+
+    private static IEnumerable<bool> PrimeSteps(RoadPreparation preparation)
+    {
+        // Copy live collections before retaining an iterator across Unity frames.
+        var locations=RoadSiteProtection.InstalledButUnprepared ? ZoneSystem.instance?.GetLocationList()?.ToArray() : null;
+        if(locations!=null && locations.Length>0)
+        {
+            preparation.BeginStage("Finding location prefabs",locations.Length,"locations"); yield return true;
+            var distinct=new List<ZoneSystem.ZoneLocation>();
+            var names=new HashSet<string>();
+            foreach(var location in locations)
+            {
+                if(names.Add(location.m_location.m_prefab.Name)) distinct.Add(location.m_location);
+                if(preparation.Checkpoint()) yield return true;
+            }
+            preparation.BeginStage("Preparing location prefabs",distinct.Count,"prefabs"); yield return true;
+            foreach(var location in distinct)
+            {
+                // ForPrefab fully releases its temporary asset before control is yielded.
+                ForPrefab(location);
+                preparation.Checkpoint(); yield return true;
+            }
+            preparation.BeginStage("Preparing location footprints",locations.Length,"locations"); yield return true;
+            var footprints=new List<RoadSiteProtection.Footprint>(locations.Length);
+            foreach(var location in locations)
+            {
+                footprints.Add(FootprintAt(location));
+                if(preparation.Checkpoint()) yield return true;
+            }
+            preparation.BeginStage("Indexing location footprints",footprints.Count,"footprints"); yield return true;
+            foreach(var step in RoadSiteProtection.SetSteps(footprints,preparation)) yield return step;
+        }
+        if(!LocationPlacementHeights.HasBeenRead && ZDOMan.instance!=null)
+        {
+            var objects=ZDOMan.instance.m_objectsByID.Values.ToArray();
+            preparation.BeginStage("Reading saved location placements",objects.Length,"saved objects"); yield return true;
+            var placements=new List<(Vector2 centre,float height)>();
+            foreach(var zdo in objects)
+            {
+                if(TryPlacement(zdo,out var placement)) placements.Add(placement);
+                if(preparation.Checkpoint()) yield return true;
+            }
+            preparation.BeginStage("Indexing saved location placements",placements.Count,"placements"); yield return true;
+            foreach(var step in LocationPlacementHeights.SetSteps(placements,preparation)) yield return step;
+        }
     }
 
     private static IEnumerable<RoadSiteProtection.Footprint>? Footprints()
@@ -47,9 +108,7 @@ public static class LocationPrefabLevelling
         foreach (var inst in locations)
         {
             ForPrefab(inst.m_location);
-            m_terrainRadius.TryGetValue(inst.m_location.m_prefab.Name, out float terrainRadius);
-            float radius = Mathf.Max(inst.m_location.m_exteriorRadius, terrainRadius);
-            result.Add(new RoadSiteProtection.Footprint(new Vector2(inst.m_position.x, inst.m_position.z), radius));
+            result.Add(FootprintAt(inst));
         }
         return result;
     }
@@ -74,15 +133,25 @@ public static class LocationPrefabLevelling
     {
         if (ZDOMan.instance == null) return null;
         var found = new List<(Vector2, float)>();
-        int proxyHash = "LocationProxy".GetStableHashCode();
-        foreach (var entry in ZDOMan.instance.m_objectsByID)
-        {
-            ZDO zdo = entry.Value;
-            if (zdo.GetPrefab() != proxyHash) continue;
-            Vector3 position = zdo.GetPosition();
-            found.Add((new Vector2(position.x, position.z), position.y));
-        }
+        foreach(var zdo in ZDOMan.instance.m_objectsByID.Values)
+            if(TryPlacement(zdo,out var placement)) found.Add(placement);
         return found;
+    }
+
+    private static RoadSiteProtection.Footprint FootprintAt(ZoneSystem.LocationInstance location)
+    {
+        m_terrainRadius.TryGetValue(location.m_location.m_prefab.Name,out float terrainRadius);
+        return new RoadSiteProtection.Footprint(new Vector2(location.m_position.x,location.m_position.z),
+            Mathf.Max(location.m_location.m_exteriorRadius,terrainRadius));
+    }
+    private static readonly int LocationProxyHash="LocationProxy".GetStableHashCode();
+    private static bool TryPlacement(ZDO zdo,out (Vector2 centre,float height) placement)
+    {
+        placement=default;
+        if(zdo.GetPrefab()!=LocationProxyHash) return false;
+        Vector3 position=zdo.GetPosition();
+        placement=(new Vector2(position.x,position.z),position.y);
+        return true;
     }
 
     private static float? PlacementHeightAt(Vector2 centre) => LocationPlacementHeights.At(centre);

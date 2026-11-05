@@ -13,7 +13,7 @@ public static partial class RoadNetworkGenerator
         // read straight after the call that sets them.
         var finder = Finder;
         if (finder == null) return;
-        var world = WorldGenerator.instance;
+        var world = GenerationWorld;
         var places = new List<RoadConnectionPlanner.Place> { new("Start",start,radius) };
         foreach (var place in locations) places.Add(new(place.name,place.position,place.radius));
         // Generation-local samples, released after this island. No route-history
@@ -25,18 +25,23 @@ public static partial class RoadNetworkGenerator
         // shared one cannot be priced on several threads. Each worker gets its
         // own, built exactly as the serial one is; the cost of a pair does not
         // depend on which finder asked.
+        var activity=IslandActivity;
         using var pricers = new System.Threading.ThreadLocal<RoadPathfinder>(
-            () => new RoadPathfinder(world) { SiteClearance = RoadWidth * 0.5f + 2f }, trackAllValues: true);
+            () => { var f = NewFinder(world, RoadSiteProtection.Clearance(RoadWidth)); f.Activity = activity; return f; }, trackAllValues: true);
         float? Price(RoadConnectionPlanner.Place a,RoadConnectionPlanner.Place b)
         {
+            RoadLifecycleManager.ThrowIfCancellationRequested();
             Vector2 from=Ground(a),to=Ground(b);
             if (OpenSeaOnLine(world,from,to)) return null;
             var pricer = RoadParallel.PricingWorkers > 1 ? pricers.Value! : finder;
             var path=pricer.FindPath(from,to,System.Math.Max(1000,RoadPathfinder.MaxIterations/2));
             return path != null && path.Count>=2 ? pricer.LastPathCost : null;
         }
-        bool Build(RoadConnectionPlanner.Place a,RoadConnectionPlanner.Place b) =>
-            GenerateRoad(a.Position,a.Radius,b.Position,b.Radius,RoadWidth,$"{a.Name} -> {b.Name}",hints);
+        bool Build(RoadConnectionPlanner.Place a,RoadConnectionPlanner.Place b)
+        {
+            activity?.Connecting(b.Name,Vector3.Distance(a.Position,b.Position));
+            return GenerateRoad(a.Position,a.Radius,b.Position,b.Radius,RoadWidth,$"{a.Name} -> {b.Name}",hints);
+        }
         bool Join(RoadConnectionPlanner.Place place)
         {
             if (hints.Count==0) return false;
@@ -52,11 +57,15 @@ public static partial class RoadNetworkGenerator
             if (finder.AlreadyOnNetwork) return true;
             if (path==null || path.Count<2) return false;
             Vector2 end=path[path.Count-1];
+            activity?.Connecting(place.Name,Vector2.Distance(new Vector2(place.Position.x,place.Position.z),end));
             return GenerateRoad(place.Position,place.Radius,new Vector3(end.x,0,end.y),0,
                 RoadWidth,$"{place.Name} -> road",hints);
         }
         RoadConnectionPlanner.Connect(places,Price,Build,Join,GetLocationPriority,
-            (place,result)=>Log.LogDebug($"Road destination {place.Name} at {place.Position}: {result}"));
+            (place,result)=>Log.LogDebug($"Road destination {place.Name} at {place.Position}: {result}"),
+            index => { SettleDestination(locations,index-1); RefreshDestinationsReached(locations); },
+            total => activity?.Pricing(total), () => activity?.Priced(), () => activity?.Stage("Connecting"),
+            place=>BuildLastResort(place.Position));
         // These are thrown away at the end of this island, so their memo
         // counters have to be collected before they go.
         foreach (var pricer in pricers.Values) pricer.FoldTerrainMemoCounters();

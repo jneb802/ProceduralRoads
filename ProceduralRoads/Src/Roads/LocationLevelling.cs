@@ -92,6 +92,8 @@ public static class LocationLevelling
     /// these caches read Unity assets and the ZDO table, neither of which may
     /// be touched off the main thread or filled by two threads at once.</summary>
     public static System.Action? Prime;
+    internal static System.Func<RoadPreparation,System.Collections.Generic.IEnumerable<bool>>? PrimeIncremental;
+    internal static System.Func<bool>? CanPrimeIncrementally;
 
     /// <summary>Set once Prime has run, on the main thread, before any island
     /// worker starts; cleared when they are all finished.

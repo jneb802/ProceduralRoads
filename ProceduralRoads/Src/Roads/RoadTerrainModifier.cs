@@ -58,7 +58,7 @@ public static class RoadTerrainModifier
     public static WriteOutcome LastWriteOutcome = WriteOutcome.None;
 
     /// <summary>Prefab hash of the game's terrain compiler object (one per zone).</summary>
-    private static readonly int TerrainCompilerPrefabHash = "_TerrainCompiler".GetStableHashCode();
+    internal static readonly int TerrainCompilerPrefabHash = "_TerrainCompiler".GetStableHashCode();
 
     /// <summary>
     /// Zones whose explicit (forced) application was requested while their
@@ -120,6 +120,7 @@ public static class RoadTerrainModifier
 
     public static int SweepUnstamped()
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return 0;
         int version = RoadSpatialGrid.RoadNetworkVersion;
         if (version == 0) return 0;
         var heightmaps = Heightmap.GetAllHeightmaps();
@@ -169,6 +170,7 @@ public static class RoadTerrainModifier
     /// </summary>
     public static void OnZoneSpawned(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return;
         Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
         if (TerrainComp.FindTerrainCompiler(zonePos) == null && HasSavedTerrainCompiler(zoneID))
         {
@@ -232,7 +234,7 @@ public static class RoadTerrainModifier
     {
         // Before the compiler is asked for: a zone explored before this
         // network gets no compiler and no write (NetworkCutoff).
-        if (!force && NetworkCutoff.Excludes(zoneID)) return;
+        if (RoadLifecycleManager.WorkersOwnWorld || NetworkCutoff.Excludes(zoneID)) return;
         TerrainContext? context = GetTerrainContext(zoneID);
         if (context == null)
             return;
@@ -277,23 +279,35 @@ public static class RoadTerrainModifier
     /// height, so writing them again does not accumulate; paint is blended toward the paved colour each time.
     /// </summary>
     /// <param name="operatorRequest">An operator's command (road_generate, road_regen_island): the
-    /// zones loaded around them are written even if they were explored before this network.
+    /// zones loaded around them that hold road are written even if they were explored before this
+    /// network, and become the network's (NetworkCutoff.Admit), like the zones of a manual road.
     /// Otherwise (a network just generated) those zones are left alone (NetworkCutoff).</param>
-    public static int ApplyToLoadedZones(bool operatorRequest = false)
+    public static int ApplyToLoadedZones(bool operatorRequest = false) => ApplyToLoadedZones(operatorRequest, out _);
+
+    /// <param name="admitted">The zones explored before the network that the command now builds in full.</param>
+    public static int ApplyToLoadedZones(bool operatorRequest, out List<Vector2s> admitted)
     {
+        admitted = new List<Vector2s>();
+        if (RoadLifecycleManager.WorkersOwnWorld) return 0;
         var heightmaps = Heightmap.GetAllHeightmaps();
         int zonesWithRoads = 0;
         if (heightmaps == null)
             return 0;
 
-        // The operator's write reaches every loaded road zone: none of them is an edge for the seam fade.
         if (operatorRequest)
+        {
+            var written = new HashSet<Vector2s>();
             foreach (var heightmap in heightmaps)
                 if (heightmap != null)
                 {
                     Vector2s zone = ZoneSystem.GetZone(heightmap.transform.position);
-                    if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0) NetworkCutoff.WrittenByOperator(zone);
+                    if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0) written.Add(zone);
                 }
+            admitted = NetworkCutoff.Admit(written);
+            if (admitted.Count > 0)
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+                    NetworkCutoff.AdmissionWarning("this command builds roads in", admitted));
+        }
 
         foreach (var heightmap in heightmaps)
         {
@@ -302,7 +316,7 @@ public static class RoadTerrainModifier
             Vector2s zoneID = ZoneSystem.GetZone(heightmap.transform.position);
             var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
             if (roadPoints.Count == 0) continue;
-            if (!operatorRequest && NetworkCutoff.Excludes(zoneID)) continue;
+            if (NetworkCutoff.Excludes(zoneID)) continue;
 
             bool existed = TerrainComp.FindTerrainCompiler(heightmap.transform.position) != null;
             if (!existed && HasSavedTerrainCompiler(zoneID))
@@ -340,6 +354,7 @@ public static class RoadTerrainModifier
     public static void ApplyRoadTerrainModsWithContext(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints,
         Heightmap heightmap, TerrainComp terrainComp)
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return;
         QueueWrite(zoneID, roadPoints, heightmap, terrainComp, force: true);
     }
 
@@ -894,6 +909,7 @@ public static class RoadTerrainModifier
         foreach (RoadSpatialGrid.RoadPoint roadPoint in roadPoints)
         {
             if (roadPoint.cutOnly) continue; // stone pieces cover a staircase; its cut is not painted
+            if (roadPoint.unpainted) continue; // the road a structure stands on past its stairs' foot is levelled, not painted
             // Points closer together than PaintDedupeInterval paint the same
             // texels and are skipped, but only while a point's paint reaches
             // the neighbouring texels; a 2 m road paints 0.85 m out on 1 m
@@ -1013,7 +1029,7 @@ public static class RoadTerrainModifier
             // low enough (or the spot is protected): nothing to save but the
             // stamp. Without it the zone was queued again every 2 s, its mesh
             // rebuilt each time, and the rock sweep never finished it.
-            context.TerrainComp.m_nview.GetZDO().Set(AppliedVersionHash, RoadSpatialGrid.RoadNetworkVersion);
+            Stamp(context.TerrainComp);
             LastWriteOutcome = WriteOutcome.NothingToWrite;
         }
         else

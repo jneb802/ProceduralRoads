@@ -79,7 +79,7 @@ public class LoadDecisionTests : System.IDisposable
     /// mod subscribed, nothing decided yet.</summary>
     private ZoneSystem SetUp(bool savedNetworkExists)
     {
-        _world.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZdos().WithZoneSystem();
+        _world.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false }).WithZdos().WithZoneSystem().WithNetwork(server: true);
         SetWorldDataLoaded(false);
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
@@ -218,8 +218,52 @@ public class LoadDecisionTests : System.IDisposable
         zones.LocationsGenerated = true;
         WorldDataArrives();
 
+        Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.True(System.Threading.SpinWait.SpinUntil(() =>
+        { RoadLifecycleManager.Tick(); return !RoadLifecycleManager.IsGenerating; }, 10000));
         Assert.True(RoadNetworkGenerator.RoadsGenerated, "a world with no saved roads did not get any");
         Assert.False(RoadNetworkGenerator.RoadsLoadedFromZDO);
+    }
+
+    [Fact]
+    public void WorldDataArrivingBeforeZoneSystemStartIsNotForgotten()
+    {
+        ZoneSystem zones = SetUp(savedNetworkExists: false);
+        RoadLifecycleManager.OnZoneSystemDestroy(zones);
+        RoadLifecycleManager.OnWorldDataLoaded();
+        RoadLifecycleManager.OnZoneSystemStart(zones);
+        zones.LocationsGenerated = true;
+        Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.False(RoadNetworkGenerator.RoadsAvailable);
+        Assert.True(System.Threading.SpinWait.SpinUntil(() =>
+        { RoadLifecycleManager.Tick(); return !RoadLifecycleManager.IsGenerating; }, 10000));
+        Assert.True(RoadNetworkGenerator.RoadsGenerated);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ReadyLocationsAndWorldDataBeforeZoneStartAreReplayedAfterInitialization(bool saved)
+    {
+        ZoneSystem zones = SetUp(savedNetworkExists: saved);
+        RoadLifecycleManager.OnZoneSystemDestroy(zones);
+        zones.LoadLocationsGeneratedFromSave(true);
+        WorldDataArrives();
+        Assert.False(RoadLifecycleManager.IsGenerating);
+        Assert.False(RoadNetworkGenerator.RoadsAvailable);
+        RoadLifecycleManager.OnZoneSystemStart(zones);
+        if (saved)
+        {
+            Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO);
+            Assert.False(RoadLifecycleManager.IsGenerating);
+        }
+        else
+        {
+            Assert.True(RoadLifecycleManager.InitialGenerationActive);
+            Assert.True(System.Threading.SpinWait.SpinUntil(() =>
+            { RoadLifecycleManager.Tick(); return !RoadLifecycleManager.IsGenerating; }, 10000));
+            Assert.True(RoadNetworkGenerator.RoadsGenerated);
+        }
     }
 
     [Fact]
@@ -364,6 +408,7 @@ public class LoadDecisionTests : System.IDisposable
         byte[] bad = Unreadable(kind);
         metadata.Set(globalData, bad);
         byte[] saved = (byte[])metadata.GetByteArray(globalData)!.Clone();
+        Assert.True(RoadNetworkGenerator.GenerateOnLoad, "with generation at load off this test would prove nothing");
 
         zones.LocationsGenerated = true;
         WorldDataArrives();
@@ -371,6 +416,7 @@ public class LoadDecisionTests : System.IDisposable
 
         Assert.True(RoadNetworkPersistence.LastLoadUnreadable);
         Assert.False(RoadNetworkGenerator.RoadsGenerated, "a network was generated over the saved one");
+        Assert.False(RoadLifecycleManager.IsGenerating, "a network is being generated over the saved one");
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
         Assert.Equal(0, RoadSpatialGrid.StoredPointRecords);
         RoadLifecycleManager.OnPrepareSave();

@@ -20,7 +20,7 @@ public static class RoadSiteProtection
     }
     public static Func<IEnumerable<Footprint>?>? Source;
     private const float Cell = 128f;
-    private static readonly Dictionary<Vector2i, List<Footprint>> cells = new(RoadGridComparer.Instance);
+    private static Dictionary<Vector2i, List<Footprint>> cells = new(RoadGridComparer.Instance);
     private static volatile bool ready;
     // Ensure() builds `cells` on first use. Pricing now runs on several threads
     // and every move cost asks this, so first use can arrive on many threads at
@@ -41,21 +41,38 @@ public static class RoadSiteProtection
     }
     public static void Set(IEnumerable<Footprint> footprints)
     {
-        cells.Clear();
-        foreach (var f in footprints)
+        using var preparation=new RoadPreparation(p=>SetSteps(footprints,p));
+        preparation.Drain();
+    }
+    internal static IEnumerable<bool> SetSteps(IEnumerable<Footprint> footprints,RoadPreparation preparation)
+    {
+        var built=new Dictionary<Vector2i,List<Footprint>>(RoadGridComparer.Instance);
+        foreach(var f in footprints)
         {
-            if (!(f.Radius > 0f) || float.IsInfinity(f.Radius) ||
-                float.IsNaN(f.Centre.x) || float.IsNaN(f.Centre.y) ||
-                float.IsInfinity(f.Centre.x) || float.IsInfinity(f.Centre.y)) continue;
-            for (int z = Bin(f.Centre.y - f.Radius); z <= Bin(f.Centre.y + f.Radius); z++)
-                for (int x = Bin(f.Centre.x - f.Radius); x <= Bin(f.Centre.x + f.Radius); x++)
-                {
-                    var key = new Vector2i(x, z);
-                    if (!cells.TryGetValue(key, out var list)) cells[key] = list = new List<Footprint>();
-                    list.Add(f);
-                }
+            if(f.Radius>0f && !float.IsInfinity(f.Radius) &&
+                !float.IsNaN(f.Centre.x) && !float.IsNaN(f.Centre.y) &&
+                !float.IsInfinity(f.Centre.x) && !float.IsInfinity(f.Centre.y))
+                for(int z=Bin(f.Centre.y-f.Radius);z<=Bin(f.Centre.y+f.Radius);z++)
+                    for(int x=Bin(f.Centre.x-f.Radius);x<=Bin(f.Centre.x+f.Radius);x++)
+                    {
+                        var key=new Vector2i(x,z);
+                        if(!built.TryGetValue(key,out var list)) built[key]=list=new List<Footprint>();
+                        list.Add(f);
+                        if(preparation.Checkpoint(0)) yield return true;
+                    }
+            if(preparation.Checkpoint()) yield return true;
         }
-        ready = true;
+        preparation.Cancellation.ThrowIfCancellationRequested();
+        cells=built;
+        ready=true;
+    }
+    internal static IEnumerable<bool> PrimeSteps(RoadPreparation preparation)
+    {
+        if(ready || Source==null) yield break;
+        if(LocationLevelling.RefuseAfterSealing("the site footprint index")) yield break;
+        var source=Source.Invoke();
+        if(source!=null)
+            foreach(var step in SetSteps(source,preparation)) yield return step;
     }
     private static int Bin(float n) => Mathf.FloorToInt(n / Cell);
     private static void Ensure()

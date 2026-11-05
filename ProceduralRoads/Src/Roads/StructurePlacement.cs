@@ -50,6 +50,7 @@ public static class StructurePlacement
     /// </summary>
     public static int SpawnInLoadedZones(ICollection<ZDOID>? condemned = null)
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return 0;
         var heightmaps = Heightmap.GetAllHeightmaps();
         if (heightmaps == null)
             return 0;
@@ -74,6 +75,7 @@ public static class StructurePlacement
     /// </summary>
     public static (int destroyed, int zones) RespawnFromPlans()
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return (0, 0);
         // The ids come back because destruction is QUEUED: the old pieces are
         // still in ZDOMan's sector lookup while the replacements go in, and
         // without this the replacement pass would mistake them for pieces
@@ -189,6 +191,7 @@ public static class StructurePlacement
     /// </summary>
     public static int ClearSpawnedPieces(ICollection<ZDOID>? condemned = null)
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return 0;
         if (!IsServer || ZDOMan.instance == null || ZNetScene.instance == null)
             return 0;
         StructurePlans.InvalidatePlans();
@@ -232,6 +235,7 @@ public static class StructurePlacement
     /// does not spawn through them (each source decides its own; see StructurePlans).</summary>
     public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2s zoneID)
     {
+        if (RoadLifecycleManager.WorkersOwnWorld) return new List<ZoneSystem.ClearArea>();
         List<ZoneSystem.ClearArea> areas = new();
         foreach (var (centre, radius) in StructurePlans.ClearAreas(zoneID))
             areas.Add(new ZoneSystem.ClearArea(centre, radius));

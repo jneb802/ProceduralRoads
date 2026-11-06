@@ -162,10 +162,60 @@ public sealed class StairStructures : IStructureSource
         return near;
     }
 
+    /// <summary>
+    /// Per whole-metre vertex under a walked piece of the network's staircases (a step, a floor, a filler; not a support), the
+    /// lowest a staircase's cut may take the ground there: the lowest walking surface over it, less
+    /// <see cref="StairLayout.CutBelowSurface"/>, with the island that laid it. A cut lowers the ground only down to just under a
+    /// walk (RoadTerrainModifier.CutAt): a flight's cut and its batter reaching under another flight beside it, or a row's
+    /// reaching under the higher treads of its own, dug a hollow under the walk its supports stood in. Made again as a whole and swapped in (<see cref="RebuildWalkFloor"/>),
+    /// so a reader on another thread never sees it half built.
+    /// </summary>
+    private static volatile System.Collections.Concurrent.ConcurrentDictionary<(int, int), (float floor, byte island)> s_walkFloor = new();
+
+    /// <summary>The lowest a staircase's cut may take the ground at a whole-metre vertex (<see cref="s_walkFloor"/>), negative
+    /// infinity where no walked piece this thread sees stands over it. Any thread.</summary>
+    public static float CutFloor(Vector2 vertex) =>
+        s_walkFloor.TryGetValue((Mathf.RoundToInt(vertex.x), Mathf.RoundToInt(vertex.y)), out var at) && CrossIslandReads.Sees(at.island)
+            ? at.floor : float.NegativeInfinity;
+
+    /// <summary>A run's walked pieces into <see cref="s_walkFloor"/>: every vertex inside a piece's footprint
+    /// (<see cref="StairLayout.Footprint"/>), at its walking height there, a stair's rising along it.</summary>
+    private static void AddWalkFloor(StairRun run, System.Collections.Concurrent.ConcurrentDictionary<(int, int), (float floor, byte island)> into)
+    {
+        foreach (StructurePiece p in run.Pieces)
+        {
+            if (p.Kind is not (StructurePieceKind.StairStep or StructurePieceKind.StairFloor or StructurePieceKind.StairFiller)) continue;
+            var (back, heading, across, depth, height) = StairLayout.Footprint(StairRun.PieceOf(p));
+            bool stair = p.Kind == StructurePieceKind.StairStep;
+            Vector2 dir = StairLayout.Forward(heading), right = StairLayout.Right(heading);
+            float reach = Mathf.Sqrt(across * across / 4f + depth * depth);
+            for (int x = Mathf.FloorToInt(back.x - reach); x <= Mathf.CeilToInt(back.x + reach); x++)
+                for (int z = Mathf.FloorToInt(back.y - reach); z <= Mathf.CeilToInt(back.y + reach); z++)
+                {
+                    Vector2 off = new Vector2(x, z) - back;
+                    float along = Vector2.Dot(off, dir), side = Vector2.Dot(off, right);
+                    if (along < 0f || along > depth || Mathf.Abs(side) > across / 2f) continue;
+                    float floor = height + (stair ? StairLayout.PieceRise * along / StairLayout.PieceRun : 0f) - StairLayout.CutBelowSurface;
+                    into.AddOrUpdate((x, z), (floor, run.Island), (_, was) => floor < was.floor ? (floor, run.Island) : was);
+                }
+        }
+    }
+
+    /// <summary><see cref="s_walkFloor"/> made again from the runs as they now stand (a run swapped or the runs replaced).</summary>
+    private static void RebuildWalkFloor()
+    {
+        lock (s_runs)
+        {
+            var fresh = new System.Collections.Concurrent.ConcurrentDictionary<(int, int), (float floor, byte island)>();
+            foreach (StairRun run in s_runs) AddWalkFloor(run, fresh);
+            s_walkFloor = fresh;
+        }
+    }
+
     /// <summary>No staircases: the network's are gone, and the pieces their first builds saved with them.</summary>
     public static void Reset()
     {
-        lock (s_runs) s_runs.Clear();
+        lock (s_runs) { s_runs.Clear(); s_walkFloor = new(); }
         s_cells.Clear();
         s_standing.Clear();
         BuiltStairs.Reset();
@@ -240,6 +290,7 @@ public sealed class StairStructures : IStructureSource
             if (trimmed.Ground.Count == 0) trimmed.Ground.AddRange(standing.Ground);
             trimmed.Island = standing.Island;
             s_runs[i] = trimmed;
+            RebuildWalkFloor();
             var stillStanding = new HashSet<(int, int)>();
             foreach (StairRun run in s_runs) stillStanding.UnionWith(StandingCells(run));
             foreach (var cell in StandingCells(standing))
@@ -380,7 +431,8 @@ public sealed class StairStructures : IStructureSource
         lock (s_runs)
             foreach (StairRun run in s_runs)
                 dropped += Settle(run, vertex, byPrefab);
-        if (dropped > 0) StructurePlans.InvalidatePlans();
+        // The cut floor from the pieces that stand, as a loaded network makes it (Replace).
+        if (dropped > 0) { RebuildWalkFloor(); StructurePlans.InvalidatePlans(); }
         return dropped;
     }
 
@@ -402,7 +454,7 @@ public sealed class StairStructures : IStructureSource
     public static void Add(StairRun run)
     {
         run.Island = CrossIslandReads.Tag;
-        lock (s_runs) s_runs.Add(run);
+        lock (s_runs) { s_runs.Add(run); AddWalkFloor(run, s_walkFloor); }
         RoadNetworkGenerator.IslandNetworkChanged();
         StructurePlans.InvalidatePlans();
     }
@@ -620,6 +672,7 @@ public sealed class StairStructures : IStructureSource
             s_runs.Clear();
             s_runs.AddRange(runs);
         }
+        RebuildWalkFloor();
         // A saved staircase stands for the roads planned on the loaded network (a manual road's search) as a laid one does.
         s_standing.Clear();
         foreach (StairRun run in runs) MarkStanding(run);

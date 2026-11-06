@@ -8,7 +8,7 @@ namespace ProceduralRoads;
 /// Which objects clip the road surface around a point, and - when asked to -
 /// clear the natural boulders among them. The overlap test is the road's
 /// clearance standing on the loaded road surface (a box of solid-paint width
-/// and player height, <see cref="RoadClearance"/>) against real collider
+/// and player height, <see cref="RockClearances"/>) against real collider
 /// geometry, never a centre radius or a bounding box. Driven by
 /// <see cref="RoadRockClearing"/>.
 /// </summary>
@@ -159,50 +159,21 @@ public static class RoadRockProbe
         var otherZone = new HashSet<GameObject>();
         var touched = new Dictionary<GameObject, List<(RoadSpatialGrid.RoadPoint point, float surface)>>();
         long lookup = RoadRockStats.Now;
-        var points = RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius);
-        // A staircase's cuts are not road: left in the line, one half a metre off a road point turned that point's
-        // heading, and so its clearance box, toward it.
-        points.RemoveAll(p => p.cutOnly);
-        // Structures (bridge decks) are not road points: each source says where
-        // a walker on it needs rock cleared (StructurePlans).
-        var structures = StructurePlans.ClearancesNear(centre, radius);
+        // The boxes a walker needs clear here, roads', decks' and staircases' alike: the one owner, which the carve reads too.
+        var boxes = RockClearances.Near(centre, radius, RoadRockCarve.GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out var points, out LastGroundMisses, out LastRoadHeightPoints);
         RoadRockStats.LookupTicks += RoadRockStats.Now - lookup;
         var onDeck = new HashSet<GameObject>();
-        var all = new List<(RoadSpatialGrid.RoadPoint point, float surface, float height, List<RoadSpatialGrid.RoadPoint> line, bool deck)>();
-        long t = RoadRockStats.Now;
-        foreach (var point in points)
+        RoadRockStats.Points += boxes.Count;
+        int probed = boxes.Count;
+        foreach (var box in boxes)
         {
-            if (!point.IsRoad) continue;
-            bool ground = ZoneSystem.instance.GetGroundHeight(new Vector3(point.p.x, 0f, point.p.y), out float surface);
-            if (!RoadRockPolicy.ClearanceSurface(ground, surface, point.h, RoadRockCarve.GhostSpawned != null, out surface)) { LastGroundMisses++; continue; }
-            if (!ground) LastRoadHeightPoints++;
-            all.Add((point, surface, ClearanceHeight, points, false));
-        }
-        foreach (var s in structures)
-            if (!s.IsBox) all.Add((s.Point, s.Surface, s.Height, s.Line!, s.WholeOnly));
-        RoadRockStats.GroundTicks += RoadRockStats.Now - t;
-        RoadRockStats.Points += all.Count;
-        int probed = all.Count;  // boxes are added as they are judged
-        // Boxes come ready-made (a staircase's stretches): judged as they are, no road point to note.
-        foreach (var s in structures)
-        {
-            if (!s.IsBox) continue;
-            probed++;
-            foreach (var root in Judge(new RockClearance(s.Centre, s.Half, Quaternion.Euler(0f, s.YawDegrees, 0f), s.Surface), sites, mist, cliffs, carve, natural, hits, otherZone, s.KeepsSiteRocks))
-                if (s.WholeOnly) onDeck.Add(root);
-        }
-        foreach (var (point, surface, height, line, deck) in all)
-        {
-            long clearance = RoadRockStats.Now;
-            RoadClearance(point, surface, line, out var boxCentre, out var boxHalf, out var boxTurn, height);
-            RoadRockStats.ClearanceTicks += RoadRockStats.Now - clearance;
-            foreach (var root in Judge(new RockClearance(boxCentre, boxHalf, boxTurn, surface), sites, mist, cliffs, carve, natural, hits, otherZone, point.intoSite))
+            foreach (var root in Judge(box, sites, mist, cliffs, carve, natural, hits, otherZone, box.KeepsSiteRocks))
             {
-                if (deck) onDeck.Add(root);
-                if (partial)
+                if (box.WholeOnly) onDeck.Add(root);
+                if (partial && box.HasPoint)
                 {
                     if (!touched.TryGetValue(root, out var list)) touched[root] = list = new List<(RoadSpatialGrid.RoadPoint, float)>();
-                    list.Add((point, surface));
+                    list.Add((box.Point, box.Surface));
                 }
             }
         }
@@ -484,7 +455,7 @@ public static class RoadRockProbe
         if (r.outcome != RoadRockCarve.Outcome.NotCarvable)
         {
             line += System.FormattableString.Invariant(
-                $"; carve: {r.outcome}, {r.onRoad} of {r.chunks} chunks in the road (mean {r.chunkSize:F1} m) + {r.hanging} hanging + {r.unsupported} cut off{(r.swapped ? ", swapped for the fractured copy" : "")}{(r.note.Length > 0 ? " (" + r.note + ")" : "")}");
+                $"; carve: {r.outcome}, {r.onRoad} of {r.chunks} chunks in the road (mean {r.chunkSize:F1} m) + {r.unsupported} cut off{(r.swapped ? ", swapped for the fractured copy" : "")}{(r.note.Length > 0 ? " (" + r.note + ")" : "")}");
             lines?.Add(line);
             // A rock the pass looked at and left alone is logged once: the
             // automatic pass revisits every loaded zone, and logging it
@@ -527,31 +498,6 @@ public static class RoadRockProbe
     private static void Log(string line) => ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(line);
 
     public const int Slots = RoadRockPolicy.Slots;
-
-    /// <summary>Height of the clearance over the road: a player's. It is the
-    /// painted width (or a little less) wide.</summary>
-    public const float ClearanceHeight = RoadRockPolicy.ClearanceHeight;
-    /// <summary>Half the clearance's length along the road: road points are
-    /// stored about 1 m apart, so neighbouring boxes overlap.</summary>
-    public const float ClearanceHalfLength = 0.6f;
-    /// <summary>The clearance starts this far above the ground, so a chunk whose
-    /// top only reaches the levelled surface stays.</summary>
-    public const float ClearanceLift = 0.1f;
-
-    /// <summary>
-    /// The road's clearance at a point: a box turned to the road's heading, as
-    /// wide as the solid paint and <see cref="ClearanceHeight"/> tall. It was a
-    /// capsule as wide as the road; a capsule is never shorter than its width,
-    /// so on a 4 m road it was a 4 m ball, reaching 4 m up and leaving arches.
-    /// </summary>
-    internal static void RoadClearance(RoadSpatialGrid.RoadPoint point, float surface, List<RoadSpatialGrid.RoadPoint> all,
-        out Vector3 centre, out Vector3 half, out Quaternion turn, float height = ClearanceHeight)
-    {
-        var dir = Heading(point, all);
-        turn = Quaternion.LookRotation(new Vector3(dir.x, 0f, dir.y));
-        half = new Vector3(point.w * 0.5f * RoadConstants.RoadPaintOuterRatio, height * 0.5f, ClearanceHalfLength);
-        centre = new Vector3(point.p.x, surface + ClearanceLift + half.y, point.p.y);
-    }
 
     internal static Vector2 Heading(RoadSpatialGrid.RoadPoint point, List<RoadSpatialGrid.RoadPoint> all) =>
         RoadRockPolicy.Heading(point, all);

@@ -113,6 +113,43 @@ public class StairEndsTests : IDisposable
         return plan;
     }
 
+    /// <summary>A straight flight walking +z from a foot at z = 0 (stairs <paramref name="first"/> rises from -1 m, each a
+    /// run long), as laid: foot first.</summary>
+    private static StairRun Flight(int first, int stairs)
+    {
+        var run = new StairRun { From = new Vector2(0f, first * StairLayout.PieceRun), To = new Vector2(0f, (first + stairs) * StairLayout.PieceRun), Width = 2f };
+        for (int i = first; i < first + stairs; i++)
+            run.Pieces.Add(new StructurePiece
+            {
+                Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", YawDegrees = 180f,
+                Position = new Vector3(0f, i * StairLayout.PieceRise, (i + 0.5f) * StairLayout.PieceRun),
+            });
+        return run;
+    }
+
+    /// <summary>A foot's bottom stair level with the ground in front of it, the ground under the flight cut to just under its
+    /// walk (StairStructures.CutFloor): that stair is walked, not sunk, and the foot steps off it onto the ground (read as
+    /// sunk, the foot was read off the stair above it, a rise over the ground). And a foot over a stair sunk on purpose a
+    /// rise under the ground, the ground falling away past it: the walker steps off at the sunk stair's high edge, onto the
+    /// ground there (read a floor's size out, over the sunk stair's own low end, it was a gap).</summary>
+    [Fact]
+    public void AFootIsReadOffItsLowestWalkedStairAndOverItsSunkOnesAtTheirHighEdge()
+    {
+        float Cut(float z) => z * StairLayout.PieceRise / StairLayout.PieceRun - StairLayout.StepUp / 2f;
+        StairEnds.End foot = StairEnds.Read(Flight(0, 3), (x, z) => z <= 0f ? 0f : Cut(z)).Single(e => !e.Top);
+        Assert.True(foot.Verdict == StairEnds.Verdict.Ok, StairEnds.Line(foot));
+        Assert.Equal(0f, foot.Edge!.Value.y, 2);
+
+        // A sunk stair from z = -2 to 0 (its low edge a rise under the ground at the flight's foot), the ground falling past it
+        // a half rise over its length: more than a step, less than a rise, so the sunk stair's own low edge is in the ground.
+        float fall = StairLayout.PieceRise / 2f;
+        Assert.True(fall > StairLayout.StepUp && fall < StairLayout.PieceRise);
+        float Ground(float x, float z) => z <= 0f ? fall * z / StairLayout.PieceRun : Cut(z);
+        StairEnds.End over = StairEnds.Read(Flight(-1, 4), Ground).Single(e => !e.Top);
+        Assert.True(over.Verdict == StairEnds.Verdict.Ok, StairEnds.Line(over));
+        Assert.Equal(0f, over.Edge!.Value.y, 2);
+    }
+
     [Fact]
     public void TheFourEndsLeftWithNoWayOffAreReadSo()
     {

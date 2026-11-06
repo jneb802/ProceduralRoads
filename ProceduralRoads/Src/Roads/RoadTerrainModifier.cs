@@ -788,7 +788,7 @@ public static class RoadTerrainModifier
         blend = inside
             ? CalculateBlendedHeight(entering, vertex, baseHeight, bounded: true)
             : CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
-        float cut = !inside && cuts.Count > 0 ? LowestCut(cuts, vertex) : float.PositiveInfinity;
+        float cut = !inside && cuts.Count > 0 ? CutAt(cuts, vertex) : float.PositiveInfinity;
         if (blend.InfluencingPoints == 0 && float.IsPositiveInfinity(cut)) return null;
         float finalHeight = blend.InfluencingPoints == 0 ? current : RoadTarget(blend, vertex, baseHeight);
         bool cutHere = cut < finalHeight;
@@ -844,6 +844,16 @@ public static class RoadTerrainModifier
     public const float CutBatterReach = 3f;
     /// <summary>Rise over run of a cut's batter.</summary>
     public const float CutBatterSlope = 1f;
+
+    /// <summary>The height the staircases' cuts take the ground to at this vertex (infinity for none): the lowest any cut within
+    /// reach asks for (<see cref="LowestCut"/>), but never below a walk over it: under a walked piece no lower than just under
+    /// its walking surface (StairStructures.CutFloor). A cut uncovers a walk and the headroom over it; the ground under a
+    /// flight, which its supports stand in, stays.</summary>
+    internal static float CutAt(List<RoadSpatialGrid.RoadPoint> cuts, Vector2 vertex)
+    {
+        float cut = LowestCut(cuts, vertex);
+        return float.IsPositiveInfinity(cut) ? cut : Mathf.Max(cut, StairStructures.CutFloor(vertex));
+    }
 
     /// <summary>The lowest height any cut within reach asks for at this vertex
     /// (infinity for none): its own height within its reach, climbing on the

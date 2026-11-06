@@ -186,15 +186,17 @@ public static class StructurePlans
         return zones;
     }
 
-    /// <summary>Circles to keep vegetation out of round a zone's planned pieces, from every source.</summary>
-    public static List<(Vector3 centre, float radius)> ClearAreas(Vector2s zone)
+    /// <summary>Circles to keep vegetation out of round a zone's planned pieces, from every source; with
+    /// <paramref name="staircases"/>, only the staircases' (true) or only the other sources' (false).</summary>
+    public static List<(Vector3 centre, float radius)> ClearAreas(Vector2s zone, bool? staircases = null)
     {
         var areas = new List<(Vector3 centre, float radius)>();
         EnsurePlans();
         if (s_plansBySource == null)
             return areas;
         foreach (IStructureSource source in Sources)
-            if (s_plansBySource.TryGetValue(source, out var byZone) && byZone.TryGetValue(zone, out List<StructurePiece>? planned)
+            if ((staircases == null || (source is StairStructures) == staircases) &&
+                s_plansBySource.TryGetValue(source, out var byZone) && byZone.TryGetValue(zone, out List<StructurePiece>? planned)
                 && Buildable(planned) is { } pieces)
                 source.AddClearAreas(pieces, areas);
         return areas;

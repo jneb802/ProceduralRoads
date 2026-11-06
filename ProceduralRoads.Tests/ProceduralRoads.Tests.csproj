@@ -78,6 +78,7 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPitches.cs" Link="ModSrc/RoadPitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadEarthworkNoise.cs" Link="ModSrc/RoadEarthworkNoise.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRockPolicy.cs" Link="ModSrc/RoadRockPolicy.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RockClearances.cs" Link="ModSrc/RockClearances.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/LocationPlacementHeights.cs" Link="ModSrc/LocationPlacementHeights.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSiteApproach.cs" Link="ModSrc/RoadSiteApproach.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/TemporaryAssetRead.cs" Link="ModSrc/TemporaryAssetRead.cs"/>

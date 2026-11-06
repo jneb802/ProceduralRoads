@@ -4,22 +4,6 @@ using UnityEngine;
 
 namespace ProceduralRoads;
 
-/// <summary>One box of space a walker needs clear, standing on a walking
-/// surface at <see cref="Surface"/>: a road's clearance at a road point, or a
-/// stretch of a staircase.</summary>
-public readonly struct RockClearance
-{
-    public readonly Vector3 Centre;
-    public readonly Vector3 Half;
-    public readonly Quaternion Turn;
-    public readonly float Surface;
-
-    public RockClearance(Vector3 centre, Vector3 half, Quaternion turn, float surface)
-    {
-        Centre = centre; Half = half; Turn = turn; Surface = surface;
-    }
-}
-
 /// <summary>
 /// Carving: remove only the chunks of a rock that stand in the road, the way a
 /// pickaxe does, instead of the whole rock, and leave no materials behind.
@@ -49,13 +33,6 @@ public static class RoadRockCarve
     /// (<see cref="RoadRockPolicy.WayStrips"/>) is counted in: 0.17 m each on a
     /// 4 m road, whose way is then 10 of them (1.7 m).</summary>
     public const int Strips = 20;
-    /// <summary>Chunks hanging over the road up to this height are taken too:
-    /// the game calls a chunk supported if its bounding box meets a neighbour's,
-    /// so a carve left pieces floating at head height.</summary>
-    public const float Headroom = 4f;
-    /// <summary>A chunk whose lowest point is this far over the road hangs; lower, it stands.</summary>
-    public const float HangsAbove = 1f;
-
 
     public struct Result
     {
@@ -63,7 +40,6 @@ public static class RoadRockCarve
         public int chunks;        // chunks in the rock
         public int onRoad;        // removed because they stand in the road
         public int unsupported;   // removed because the carve cut them off (RoadRockPolicy.CutOff)
-        public int hanging;       // removed because they hung over the road below the headroom
         public bool swapped;      // an intact boulder was swapped for its fractured copy
         public float chunkSize;   // mean bounds diagonal of the removed road chunks, m
         public string note;
@@ -71,11 +47,11 @@ public static class RoadRockCarve
     }
 
     /// <summary>
-    /// Carve the rock at <paramref name="root"/> out of the road's clearance
-    /// (<see cref="RoadRockProbe.RoadClearance"/>) at every road point within
-    /// its reach, whether or not that is in a location's protected area: the
+    /// Carve the rock at <paramref name="root"/> out of every clearance within
+    /// its reach (<see cref="RockClearances"/>: a road's, a staircase's walking box),
+    /// whether or not that is in a location's protected area: the
     /// clearance is only paint-wide and 2 m tall, and a chunk left in it blocks
-    /// a road that already runs there. The caller has already decided
+    /// a way that already runs there. The caller has already decided
     /// the rock may be cleared (policy, ownership; parts of a location never).
     /// </summary>
     /// <summary>Set while carving a zone the server is generating for a remote
@@ -133,24 +109,19 @@ public static class RoadRockCarve
         rock.LoadHealth();
         var areas = rock.m_hitAreas;
         result.chunks = areas.Count;
-        // The road points the FRACTURED rock reaches, not the ones the intact
-        // rock touched: the fractured mesh is not the same shape, and the
-        // automatic pass only looks 46 m round a zone's centre (measured: 4 of
-        // 24 carved rocks still clipped the road at points outside both).
         var near = RoadClearances(rock);
-        var take = ChooseChunks(rock, near, out var hanging);
+        var take = ChooseChunks(rock, near);
         var removed = new List<int>();
         float size = 0f;
         foreach (int i in take)
         {
             var area = areas[i];
             if (area.m_health <= 0f || area.m_collider == null) continue;
-            if (!hanging.Contains(i)) size += area.m_collider.bounds.size.magnitude;
+            size += area.m_collider.bounds.size.magnitude;
             area.m_health = 0f;
             removed.Add(i);
         }
-        result.hanging = hanging.Count;
-        result.onRoad = removed.Count - hanging.Count;
+        result.onRoad = removed.Count;
         result.chunkSize = result.onRoad > 0 ? size / result.onRoad : 0f;
         if (removed.Count == 0 && original != null)
         {
@@ -253,11 +224,12 @@ public static class RoadRockCarve
         }
         var corners = new Dictionary<int, Vector3[]>();
         var ground = new Dictionary<int, bool>();
+        var reader = new GroundReader();
         foreach (int i in standing)
         {
             var shape = Corners(areas[i].m_collider);
             if (shape != null) corners[i] = shape;
-            ground[i] = shape == null || OnGround(areas[i].m_collider);
+            ground[i] = shape == null || OnGround(areas[i].m_collider, reader);
         }
         var touching = RoadRockPolicy.TouchingFragments(corners);
         return RoadRockPolicy.CutOff(standing, taken, i => ground[i], (i, j) => touching.TryGetValue(i, out var t) && t.Contains(j));
@@ -279,11 +251,11 @@ public static class RoadRockCarve
     /// <summary>
     /// Whether a chunk stands on the ground: its underside, found by a ray up through
     /// columns <see cref="GroundStep"/> apart over its footprint, comes within
-    /// <see cref="RoadRockPolicy.GroundTouch"/> of the ground (the finished ground, road
-    /// levelling included) in some column, or reaches under it. A chunk with no ground
-    /// read under it at all is not judged and stays.
+    /// <see cref="RoadRockPolicy.GroundTouch"/> of the ground (<see cref="RoadRockPolicy.StandsOn"/>; the ground as
+    /// <see cref="GroundReader"/> reads it, road levelling included) in some column, or reaches under it. A chunk with no
+    /// ground read under it at all is not judged and stays.
     /// </summary>
-    private static bool OnGround(Collider chunk)
+    private static bool OnGround(Collider chunk, GroundReader ground)
     {
         Bounds b = chunk.bounds;
         int nx = Mathf.Clamp(Mathf.CeilToInt(b.size.x / GroundStep), 2, 8);
@@ -294,12 +266,49 @@ public static class RoadRockCarve
             {
                 float x = Mathf.Lerp(b.min.x, b.max.x, (ix + 0.5f) / nx);
                 float z = Mathf.Lerp(b.min.z, b.max.z, (iz + 0.5f) / nz);
-                if (!ZoneSystem.instance.GetGroundHeight(new Vector3(x, 0f, z), out float g)) continue;
+                if (!ground.At(x, z, out float g)) continue;
                 read = true;
                 if (chunk.Raycast(new Ray(new Vector3(x, b.min.y - 1f, z), Vector3.up), out RaycastHit hit, b.size.y + 2f) &&
-                    hit.point.y <= g + RoadRockPolicy.GroundTouch) return true;
+                    RoadRockPolicy.StandsOn(hit.point.y, g)) return true;
             }
         return !read;
+    }
+
+    /// <summary>
+    /// The ground under a carve's chunks (<see cref="RoadRockPolicy.FragmentGround"/>): the loaded terrain in a zone whose
+    /// terrain is ready, elsewhere the finished ground (<see cref="StructureGround.At"/>), made only when a column needs it.
+    /// One per carve: each zone is asked once.
+    /// </summary>
+    private sealed class GroundReader
+    {
+        private readonly Dictionary<Vector2s, bool> m_ready = new Dictionary<Vector2s, bool>();
+        private System.Func<Vector2, float>? m_finished;
+
+        public bool At(float x, float z, out float ground)
+        {
+            var at = new Vector3(x, 0f, z);
+            Vector2s zone = ZoneSystem.GetZone(at);
+            if (!m_ready.TryGetValue(zone, out bool ready)) m_ready[zone] = ready = TerrainReady(zone);
+            float terrain = 0f;
+            bool read = ready && ZoneSystem.instance.GetGroundHeight(at, out terrain);
+            float finished = float.NaN;
+            if (!read && WorldGenerator.instance != null)
+                finished = (m_finished ??= StructureGround.At(WorldGenerator.instance))(new Vector2(x, z));
+            return RoadRockPolicy.FragmentGround(ready, read, terrain, finished, out ground);
+        }
+
+        /// <summary>Whether a zone's loaded terrain is the ground the players will have: a full heightmap is built there,
+        /// with no rebuild queued, and its road terrain is written (<see cref="RoadTerrainModifier.TerrainSettled"/>), or it
+        /// has no road for the writer to write.</summary>
+        private static bool TerrainReady(Vector2s zone)
+        {
+            Vector3 centre = ZoneSystem.GetZonePos(zone);
+            foreach (var map in Heightmap.GetAllHeightmaps())
+                if (map != null && !map.IsDistantLod && map.IsPointInside(centre))
+                    return !map.HaveQueuedRebuild() &&
+                        (RoadTerrainModifier.TerrainSettled(centre) || RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
+            return false;
+        }
     }
 
     /// <summary>Save the healths and hide the zeroed chunks on every peer
@@ -312,25 +321,15 @@ public static class RoadRockCarve
         rock.UpdateMesh();
     }
 
-    /// <summary>The road's clearance at every road point the rock reaches, and
-    /// every staircase box within its reach (StructurePlans): a boulder in a
-    /// stair's way loses the chunks in the stair, as one in a road does.</summary>
+    /// <summary>Every clearance within the rock's reach (<see cref="RockClearances"/>, the boxes the probe judged it
+    /// by): the rock's horizontal half-diagonal plus the widest road's half-width round its live chunks. The FRACTURED
+    /// rock's reach, not the one the intact rock touched: the fractured mesh is not the same shape, and the automatic pass
+    /// only looks 46 m round a zone's centre (measured: 4 of 24 carved rocks still clipped the road at points outside both).</summary>
     private static List<RockClearance> RoadClearances(MineRock5 rock)
     {
-        var (at, all) = PointsNear(rock);
-        var boxes = new List<RockClearance>(at.Count);
-        foreach (var (point, surface) in at)
-        {
-            RoadRockProbe.RoadClearance(point, surface, all, out var centre, out var half, out var turn);
-            boxes.Add(new RockClearance(centre, half, turn, surface));
-        }
-        if (RockBounds(rock) is Bounds bounds)
-        {
-            float reach = new Vector2(bounds.extents.x, bounds.extents.z).magnitude + WidestRoadHalfWidth;
-            foreach (StructureClearance s in StructurePlans.ClearancesNear(bounds.center, reach))
-                if (s.IsBox) boxes.Add(new RockClearance(s.Centre, s.Half, Quaternion.Euler(0f, s.YawDegrees, 0f), s.Surface));
-        }
-        return boxes;
+        if (RockBounds(rock) is not Bounds bounds) return new List<RockClearance>();
+        float reach = new Vector2(bounds.extents.x, bounds.extents.z).magnitude + WidestRoadHalfWidth;
+        return RockClearances.Near(bounds.center, reach, GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out _, out _, out _);
     }
 
     /// <summary>The bounds of a rock's live chunks, or null when none are left.</summary>
@@ -344,29 +343,6 @@ public static class RoadRockCarve
                 else { var b = bounds.Value; b.Encapsulate(area.m_collider.bounds); bounds = b; }
             }
         return bounds;
-    }
-
-    /// <summary>Every solid road point within the rock's reach, with the ground under it.</summary>
-    private static (List<(RoadSpatialGrid.RoadPoint point, float surface)> at, List<RoadSpatialGrid.RoadPoint> all) PointsNear(MineRock5 rock)
-    {
-        var at = new List<(RoadSpatialGrid.RoadPoint, float)>();
-        var all = new List<RoadSpatialGrid.RoadPoint>();
-        Bounds? bounds = RockBounds(rock);
-        if (bounds == null) return (at, all);
-        var box = bounds.Value;
-        // Reach: the rock's horizontal half-diagonal plus the widest road's half-width.
-        float reach = new Vector2(box.extents.x, box.extents.z).magnitude + WidestRoadHalfWidth;
-        // Headings need the neighbours just outside the reach too.
-        all = RoadSpatialGrid.GetRoadPointsNearPosition(box.center, reach + 3f);
-        all.RemoveAll(p => p.cutOnly); // a staircase's cuts are not road: they would turn the headings
-        foreach (var point in all)
-        {
-            if (!point.IsRoad || (point.p - new Vector2(box.center.x, box.center.z)).sqrMagnitude > reach * reach) continue;
-            // A zone the server generates for a remote peer may have no ground
-            // to read; the road's own stored height is the surface it levels to.
-            at.Add((point, ZoneSystem.instance.GetGroundHeight(new Vector3(point.p.x, 0f, point.p.y), out float surface) ? surface : point.h));
-        }
-        return (at, all);
     }
 
     /// <summary>The prefab an object was made from, read from its ZDO when it
@@ -406,10 +382,11 @@ public static class RoadRockCarve
     /// The chunks to take: at every road point, every chunk in the way
     /// (<see cref="RoadRockPolicy.ChunksInTheWay"/>: strips across the
     /// clearance, player height, <see cref="RoadRockPolicy.MinOpening"/> wide on
-    /// the road's centre line), then those hanging over the way below the
-    /// headroom. <paramref name="hanging"/> is the second kind.
+    /// the road's centre line). Nothing over the box is taken: a road's box, as a staircase's, is a player's height over its
+    /// walk (<see cref="RockClearances"/>), so a rock arching over a road over that stays. It once took what hung over a road
+    /// up to 4 m (RoadRockPolicy.Headroom), the game calling a chunk supported if its bounding box meets a neighbour's.
     /// </summary>
-    private static HashSet<int> ChooseChunks(MineRock5 rock, List<RockClearance> near, out HashSet<int> hanging)
+    private static HashSet<int> ChooseChunks(MineRock5 rock, List<RockClearance> near)
     {
         var index = new Dictionary<Collider, int>();
         for (int i = 0; i < rock.m_hitAreas.Count; i++)
@@ -418,39 +395,32 @@ public static class RoadRockCarve
             if (area.m_health > 0f && area.m_collider != null) index[area.m_collider] = i;
         }
         var removed = new HashSet<int>();
-        hanging = new HashSet<int>();
         foreach (var box in near)
         {
             Vector3 centre = box.Centre, half = box.Half;
             Quaternion turn = box.Turn;
-            float surface = box.Surface, width = 2f * half.x;
+            float width = 2f * half.x;
+            var hits = Physics.OverlapBox(centre, half, turn, ~0, QueryTriggerInteraction.Ignore);
             bool ours = false;
-            foreach (var c in Physics.OverlapBox(centre, half, turn, ~0, QueryTriggerInteraction.Ignore))
+            foreach (var c in hits)
                 if (c != null && index.TryGetValue(c, out int i) && !removed.Contains(i)) { ours = true; break; }
-            if (ours)
-                RoadRockPolicy.ChunksInTheWay(StripBlockers(centre, half, turn, width, index, removed, float.NegativeInfinity), width, removed);
-            // Headroom: what of this rock hangs over the way above the
-            // clearance and below the headroom, in the same strips. Without it
-            // a rock whose top leaned over the road lost its base and kept a
-            // top floating at head height; beside the way its top stays, as
-            // its base does.
-            float from = surface + RoadRockProbe.ClearanceLift + 2f * half.y;
-            if (Headroom > from - surface)
+            if (!ours) continue;
+            // A box no wider than the way (a stair's corridor) is the way in full: its strips together are the box.
+            if (width <= RoadRockPolicy.MinOpening)
             {
-                var roofHalf = (surface + Headroom - from) * 0.5f;
-                var roof = StripBlockers(new Vector3(centre.x, from + roofHalf, centre.z), new Vector3(half.x, roofHalf, half.z), turn, width,
-                    index, removed, surface + HangsAbove);
-                foreach (int i in RoadRockPolicy.ChunksInTheWay(roof, width, removed))
-                    hanging.Add(i);
+                foreach (var c in hits)
+                    if (c != null && index.TryGetValue(c, out int i)) removed.Add(i);
             }
+            else
+                RoadRockPolicy.ChunksInTheWay(StripBlockers(centre, half, turn, width, index, removed), width, removed);
         }
         return removed;
     }
 
-    /// <summary>Per strip across a box, this rock's chunks in it not yet taken whose lowest
-    /// point is over <paramref name="above"/>; only the way's strips are asked, the rest are empty.</summary>
+    /// <summary>Per strip across a box, this rock's chunks in it not yet taken; only the way's strips are asked, the rest
+    /// are empty.</summary>
     private static List<IReadOnlyCollection<int>> StripBlockers(Vector3 centre, Vector3 half, Quaternion turn, float width,
-        Dictionary<Collider, int> index, HashSet<int> removed, float above)
+        Dictionary<Collider, int> index, HashSet<int> removed)
     {
         var blockers = new List<IReadOnlyCollection<int>>(Strips);
         var (first, last) = RoadRockPolicy.WayStrips(Strips, width);
@@ -463,7 +433,7 @@ public static class RoadRockCarve
             {
                 var at = centre + right * (-half.x + (2 * s + 1) * strip.x);
                 foreach (var c in Physics.OverlapBox(at, strip, turn, ~0, QueryTriggerInteraction.Ignore))
-                    if (c != null && index.TryGetValue(c, out int i) && !removed.Contains(i) && c.bounds.min.y > above) mine.Add(i);
+                    if (c != null && index.TryGetValue(c, out int i) && !removed.Contains(i)) mine.Add(i);
             }
             blockers.Add(mine);
         }

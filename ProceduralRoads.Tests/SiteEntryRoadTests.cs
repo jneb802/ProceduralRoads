@@ -238,13 +238,21 @@ public class SiteEntryRoadTests : IDisposable
         var rock = new SiteRock(new Vector2(0f, 0f), 10f, 10f, 0f, 40f, 52f, "rock1_mountain", top, -10, -10, 21);
 
         // Inside its box, but where nothing of it stands: not in the way (its box said it was).
-        Assert.False(rock.InTheWay(new Vector2(-5f, 0f), 2f, 50f, 0.5f, 3f, out _));
-        Assert.True(new SiteRock(new Vector2(0f, 0f), 10f, 10f, 0f, 40f, 52f).InTheWay(new Vector2(-5f, 0f), 2f, 50f, 0.5f, 3f, out _));
+        Assert.False(rock.InTheWay(new Vector2(-5f, 0f), 2f, 50f, out _));
+        Assert.True(new SiteRock(new Vector2(0f, 0f), 10f, 10f, 0f, 40f, 52f).InTheWay(new Vector2(-5f, 0f), 2f, 50f, out _));
         // Beside the part buried under the ground: not in the way either.
-        Assert.False(rock.InTheWay(new Vector2(2f, 0f), 1.5f, 50f, 0.5f, 3f, out _));
+        Assert.False(rock.InTheWay(new Vector2(2f, 0f), 1.5f, 50f, out _));
         // Beside the part standing above the ground: in the way, and how near is said.
-        Assert.True(rock.InTheWay(new Vector2(5.5f, 0f), 1.5f, 50f, 0.5f, 3f, out float d));
+        Assert.True(rock.InTheWay(new Vector2(5.5f, 0f), 1.5f, 50f, out float d));
         Assert.InRange(d, 0f, 1.5f);
+
+        // In the way only where it reaches into a walker's box there (RockClearances.Bottom to Top over the ground): a rock
+        // wholly over the box, or wholly under the walk, is not.
+        float ground = 50f, bottom = RockClearances.Bottom(ground), over = RockClearances.Top(ground);
+        Assert.True(new SiteRock(new Vector2(0f, 0f), 2f, 2f, 0f, over - 0.05f, over + 5f).InTheWay(new Vector2(0f, 0f), 1f, ground, out _));
+        Assert.False(new SiteRock(new Vector2(0f, 0f), 2f, 2f, 0f, over + 0.05f, over + 5f).InTheWay(new Vector2(0f, 0f), 1f, ground, out _));
+        Assert.True(new SiteRock(new Vector2(0f, 0f), 2f, 2f, 0f, ground - 5f, bottom + 0.05f).InTheWay(new Vector2(0f, 0f), 1f, ground, out _));
+        Assert.False(new SiteRock(new Vector2(0f, 0f), 2f, 2f, 0f, ground - 5f, bottom - 0.05f).InTheWay(new Vector2(0f, 0f), 1f, ground, out _));
     }
 
     [Fact]

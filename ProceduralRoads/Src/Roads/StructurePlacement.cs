@@ -295,12 +295,13 @@ public static class StructurePlacement
     }
 
     /// <summary>Clear-areas round a zone's planned structure pieces, so vegetation
-    /// does not spawn through them (each source decides its own; see StructurePlans).</summary>
-    public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2s zoneID)
+    /// does not spawn through them (each source decides its own; see StructurePlans); with <paramref name="staircases"/>,
+    /// only the staircases' (true) or only the other structures' (false).</summary>
+    public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2s zoneID, bool? staircases = null)
     {
         if (RoadLifecycleManager.WorkersOwnWorld) return new List<ZoneSystem.ClearArea>();
         List<ZoneSystem.ClearArea> areas = new();
-        foreach (var (centre, radius) in StructurePlans.ClearAreas(zoneID))
+        foreach (var (centre, radius) in StructurePlans.ClearAreas(zoneID, staircases))
             areas.Add(new ZoneSystem.ClearArea(centre, radius));
         return areas;
     }

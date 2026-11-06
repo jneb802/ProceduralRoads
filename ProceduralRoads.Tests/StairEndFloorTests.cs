@@ -124,8 +124,8 @@ public class StairEndFloorTests : IDisposable
         Assert.Equal(44f, carried.LastRowHeight, 3);
         Assert.Equal(new Vector2(0f, 15.5f), carried.LastRowStart);
         Assert.Equal(carried.Clearances.Count - 1, carried.LastRowClearances);
-        // The pieces that went took their clearances: a floor's one each end and four stairs' eight are left.
-        Assert.Equal(1 + 8 + 1, carried.Clearances.Count);
+        // The pieces that went took their clearances: a floor's one each end and four stairs' stretches are left.
+        Assert.Equal(1 + 4 * StairLayout.ClearanceStretches + 1, carried.Clearances.Count);
         Assert.Equal(2, carried.Landings);
         Assert.Equal(1, StairLayout.EndFloorRows(carried, top: false, RoadStairRuns.Width));
         Assert.Equal(1, StairLayout.EndFloorRows(carried, top: true, RoadStairRuns.Width));

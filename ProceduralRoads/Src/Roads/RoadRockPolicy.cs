@@ -22,6 +22,10 @@ public static class RoadRockPolicy
     /// (<see cref="PlayerHeight"/>) with a little room over the head.</summary>
     public const float ClearanceHeight = 2f;
 
+    /// <summary>A clearance starts this far above the walking surface (a road's ground, a staircase's walk), so a chunk whose
+    /// top only reaches the surface stays.</summary>
+    public const float ClearanceLift = 0.1f;
+
     /// <summary>The player's collision capsule, read from the Player prefab:
     /// 1.85 m tall, 0.49 m radius, standing on its feet.</summary>
     public const float PlayerHeight = 1.85f;
@@ -278,6 +282,27 @@ public static class RoadRockPolicy
     }
     /// <summary>How far over the ground a fragment's lowest point may be and still stand on it, m.</summary>
     public const float GroundTouch = 0.3f;
+
+    /// <summary>Whether a fragment whose underside is at <paramref name="underside"/> stands on ground at
+    /// <paramref name="ground"/>: within <see cref="GroundTouch"/> over it, or reaching under it.</summary>
+    public static bool StandsOn(float underside, float ground) => underside <= ground + GroundTouch;
+
+    /// <summary>
+    /// The ground a column under a fragment is judged on, as the players will have it: the loaded terrain where its zone's
+    /// terrain is ready (<paramref name="zoneReady"/>: its heightmap built and its road terrain written) and answers there;
+    /// anywhere else <paramref name="finished"/>, the finished ground the terrain writer leaves (StructureGround.At). A rock
+    /// is carved once its own zone is ready, and a large one reaches over the zones round it: a zone not loaded yet has no
+    /// ground to read, and one just loaded may not have its road cut yet. Read so, a fragment over such a zone stood on
+    /// nothing anyone had read and held up every fragment touching it, and the carve left them hanging (a mountain boulder
+    /// and a Mistlands cliff, each on a zone corner, their next zone loaded after the carve: "+ 0 cut off").
+    /// False when neither answers (no world generator, or NaN).
+    /// </summary>
+    public static bool FragmentGround(bool zoneReady, bool terrainRead, float terrain, float finished, out float ground)
+    {
+        if (zoneReady && terrainRead) { ground = terrain; return true; }
+        ground = finished;
+        return !float.IsNaN(finished);
+    }
 
     /// <summary>
     /// The fragments a carve leaves with nothing to hold them: a fragment stays

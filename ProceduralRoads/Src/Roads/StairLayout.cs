@@ -35,9 +35,8 @@ public sealed class StairPiece
 }
 
 /// <summary>
-/// Space a walker on the stair needs clear of rock: one stretch of a piece,
-/// from its underside to <see cref="StairLayout.ClearanceHeight"/> above its
-/// walking surface. <see cref="Centre"/> and <see cref="Half"/> are in the
+/// Space a walker on the stair needs clear of rock (its walking box): one stretch of a piece, its walking surface's width,
+/// from just over its walking surface to <see cref="StairLayout.ClearanceHeight"/> above it (StairLayout.AddClearance). <see cref="Centre"/> and <see cref="Half"/> are in the
 /// box's own frame, turned by <see cref="YawDegrees"/> (local +z along the walk).
 /// </summary>
 public readonly struct StairClearance
@@ -320,8 +319,11 @@ public static partial class StairLayout
     /// <summary>Headroom kept clear of rock above every walking surface: player height, as a road's (one owner,
     /// <see cref="RoadRockPolicy.ClearanceHeight"/>).</summary>
     public const float ClearanceHeight = RoadRockPolicy.ClearanceHeight;
-    /// <summary>A stair's clearance is cut into this many stretches along it, so it follows the steps up.</summary>
-    public const int ClearanceStretches = 2;
+    /// <summary>A stair's clearance is cut into this many stretches along it, so it follows the steps up: one a cut point's
+    /// spacing long (<see cref="CutSpacing"/>), 4 to a stair, each rising a quarter of its rise. With 2 a stretch's box reached
+    /// 0.4 m under the walk at its high end, into the stair's body and the rock it lies on, and the carve took every chunk
+    /// there whole.</summary>
+    public const int ClearanceStretches = (int)(PieceRun / CutSpacing);
 
     /// <summary>Cost per metre a piece floats above the ground (mean over it): mostly
     /// hugging the terrain is preferred, some variation is fine.</summary>
@@ -1514,7 +1516,7 @@ public static partial class StairLayout
             underside = baseHeight - kit.FloorThickness;
         }
         plan.Pieces.Add(piece);
-        AddClearance(plan, stair, back, dir, heading, baseHeight, baseHeight - kit.FloorThickness, across, depth);
+        AddClearance(plan, stair, back, dir, heading, baseHeight, across, depth);
         if (cut) AddCuts(plan, stair, back, dir, right, baseHeight, across, depth, ground);
 
         // How far it stands over the ground, held out from a slope aside: what holds it up is the kit's, laid at first build
@@ -1524,18 +1526,26 @@ public static partial class StairLayout
             plan.MaxFloat = Mathf.Max(plan.MaxFloat, underside - ground(centre.x, centre.y));
     }
 
-    /// <summary>The piece's body and the headroom above it, in stretches along
-    /// the walk: a stair rises a step per stretch, a floor or block is level.</summary>
-    private static void AddClearance(StairPlan plan, bool stair, Vector2 laneStart, Vector2 dir, float heading, float baseHeight, float floorUnderside, float across, float depth)
+    /// <summary>The walking box over the piece, in stretches along the walk (the one owner of what a staircase clears of rock): its
+    /// walking surface's width across, from <see cref="RoadRockPolicy.ClearanceLift"/> over the stretch's lowest walk, as a road's
+    /// clearance starts over its surface, up to <see cref="ClearanceHeight"/> over its highest walk, so the whole headroom over
+    /// every tread is in it (over the stretch's middle it fell a quarter of a stretch's rise short at its high end). A stair
+    /// rises <see cref="PieceRise"/> / <see cref="ClearanceStretches"/> per stretch, a floor or block is level. Nothing under the walk: the piece's own body, the supports under it
+    /// and its handrails may stand in rock (they were cleared from the underside up, so a rock a support stood in was fractured
+    /// for it).</summary>
+    private static void AddClearance(StairPlan plan, bool stair, Vector2 laneStart, Vector2 dir, float heading, float baseHeight, float across, float depth)
     {
         int stretches = stair ? ClearanceStretches : 1;
         float length = depth / stretches;
         for (int i = 0; i < stretches; i++)
         {
-            // A stair's walking surface at the middle of this stretch; a floor's or block's is its top.
+            // A stair's walking surface at the middle of this stretch, at its low end and at its high end; a floor's or block's
+            // is its top.
             float surface = stair ? baseHeight + PieceRise * (i + 0.5f) / stretches : baseHeight;
-            float bottom = stair ? baseHeight : floorUnderside;
-            float top = surface + ClearanceHeight;
+            float lowest = stair ? baseHeight + PieceRise * i / stretches : baseHeight;
+            float highest = stair ? baseHeight + PieceRise * (i + 1) / stretches : baseHeight;
+            float bottom = lowest + RoadRockPolicy.ClearanceLift;
+            float top = highest + ClearanceHeight;
             Vector2 mid = laneStart + dir * (length * (i + 0.5f));
             plan.Clearances.Add(new StairClearance(
                 new Vector3(mid.x, (bottom + top) / 2f, mid.y),

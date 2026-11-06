@@ -35,20 +35,22 @@ public readonly struct SiteRock
 
     /// <summary>
     /// Whether the rock is in the way of something at <paramref name="p"/> that keeps
-    /// <paramref name="margin"/> off it, standing on <paramref name="ground"/> (NaN: any height);
-    /// <paramref name="d"/>, how near it comes. By its real top where known: only where the rock
-    /// stands within <paramref name="below"/> under the ground there or higher, and its bottom
-    /// no more than <paramref name="above"/> over it; else by its box.
+    /// <paramref name="margin"/> off it, walked on <paramref name="ground"/> (NaN: any height);
+    /// <paramref name="d"/>, how near it comes. Only where it reaches into a walker's box there
+    /// (<see cref="RockClearances.Bottom"/> to <see cref="RockClearances.Top"/> over the ground, the
+    /// one owner of what a walker needs clear): by its real top where known, else by its box.
     /// </summary>
-    public bool InTheWay(Vector2 p, float margin, float ground, float below, float above, out float d)
+    public bool InTheWay(Vector2 p, float margin, float ground, out float d)
     {
         d = float.PositiveInfinity;
+        float below = float.IsNaN(ground) ? float.NaN : RockClearances.Bottom(ground);
+        float above = float.IsNaN(ground) ? float.NaN : RockClearances.Top(ground);
         if (Top == null)
         {
             d = Distance(p);
-            return d < margin && (float.IsNaN(ground) || Spans(ground - below, ground + above));
+            return d < margin && (float.IsNaN(ground) || Spans(below, above));
         }
-        if (!float.IsNaN(ground) && MinY > ground + above) return false;
+        if (!float.IsNaN(ground) && MinY > above) return false;
         int topH = Top.Length / Math.Max(1, TopW), r = Mathf.CeilToInt(margin) + 1;
         int cx = Mathf.RoundToInt(p.x), cz = Mathf.RoundToInt(p.y);
         for (int z = cz - r; z <= cz + r; z++)
@@ -57,7 +59,7 @@ public readonly struct SiteRock
                 int i = x - TopX0, k = z - TopZ0;
                 if (i < 0 || k < 0 || i >= TopW || k >= topH) continue;
                 float top = Top[k * TopW + i];
-                if (float.IsNaN(top) || (!float.IsNaN(ground) && top < ground - below)) continue;
+                if (float.IsNaN(top) || (!float.IsNaN(ground) && top < below)) continue;
                 float dist = Mathf.Max(0f, Vector2.Distance(p, new Vector2(x, z)) - 0.5f);
                 if (dist < d) d = dist;
             }
@@ -140,10 +142,6 @@ public sealed class PlacedSiteShape
 
     private readonly Func<float, float, float>? _ground;
 
-    /// <summary>How far below the ground a rock's top may be and still be in the way (a rock
-    /// standing on the slope below a ledge is not), and how far above it its bottom.</summary>
-    public const float RockBelow = 0.5f, RockHeadroom = 3f;
-
     /// <summary>The place's own door landing, where its stairs meet the ground (<see cref="DoorLandings"/>), if it has one: the
     /// only landing aimed at.</summary>
     public readonly Vector2? Door;
@@ -197,8 +195,8 @@ public sealed class PlacedSiteShape
     }
 
     /// <summary>The shape of a place turned to <paramref name="yaw"/>, levelled by <paramref name="flat"/>.
-    /// A boulder is in the way only where it stands between <see cref="RockBelow"/> under
-    /// <paramref name="ground"/> and <see cref="RockHeadroom"/> over it (any height without it):
+    /// A boulder is in the way only where it reaches into a walker's box over <paramref name="ground"/>
+    /// (<see cref="SiteRock.InTheWay"/>; any height without it):
     /// seen from above, a rock2_mountain 12 m down the slope below a frost cave's ledge covered
     /// the ledge.</summary>
     /// <paramref name="root"/>: the place's root height (NaN: unknown, no landing is held to the
@@ -353,12 +351,12 @@ public sealed class PlacedSiteShape
         foreach (SiteRock rock in Body)
         {
             float keep = rock.Top != null && !float.IsNaN(bodyMargin) ? bodyMargin : margin;
-            if (rock.InTheWay(p, keep, g, RockBelow, RockHeadroom, out float d))
+            if (rock.InTheWay(p, keep, g, out float d))
                 return FormattableString.Invariant($"at its mouth's {rock.Name} at ({rock.At.x:F1}, {rock.At.y:F1}) ({2f * rock.HalfX:F1} by {2f * rock.HalfZ:F1} m turned {rock.Yaw:F0}; {d:F1} m off it, {keep:F1} kept)");
         }
         foreach (SiteRock rock in Rocks)
         {
-            if (rock.InTheWay(p, rockMargin, g, RockBelow, RockHeadroom, out float d))
+            if (rock.InTheWay(p, rockMargin, g, out float d))
                 return FormattableString.Invariant($"on its {rock.Name} at ({rock.At.x:F1}, {rock.At.y:F1}) ({2f * rock.HalfX:F1} by {2f * rock.HalfZ:F1} m turned {rock.Yaw:F0}; {d:F1} m off it, {rockMargin:F1} kept)");
         }
         return "";

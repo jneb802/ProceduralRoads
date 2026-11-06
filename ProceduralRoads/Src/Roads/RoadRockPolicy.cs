@@ -6,6 +6,13 @@ namespace ProceduralRoads;
 /// <summary>Known natural boulders and copper and silver deposits only, never tin, fragments or arbitrary destructibles.</summary>
 public static class RoadRockPolicy
 {
+    /// <summary>How far past a rock's footprint a road's or a structure's walking box can reach it: the widest of the road (the
+    /// Roads/RoadWidth setting, 4 m at its default, as the carve always reached) and the decks that do not follow the setting, a
+    /// viaduct's (<see cref="DvergrViaduct.HalfWidth"/>) and a Dvergr wood deck's (half its <see cref="DvergrWoodBridge.BeamLength"/>).
+    /// A narrow road setting no longer shrinks the reach under a deck's edge.</summary>
+    public static float CarveReach =>
+        UnityEngine.Mathf.Max(RoadNetworkGenerator.RoadWidth, UnityEngine.Mathf.Max(DvergrViaduct.HalfWidth, DvergrWoodBridge.BeamLength / 2f));
+
     /// <summary>Height of the clearance over a walking surface: a player's
     /// (<see cref="PlayerHeight"/>) with a little room over the head.</summary>
     public const float ClearanceHeight = 2f;

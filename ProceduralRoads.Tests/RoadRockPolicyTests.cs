@@ -3,6 +3,24 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 public class RoadRockPolicyTests
 {
+    /// <summary>The carve reaches as far past a rock as the widest box: the road at its default width (4 m, as always), and a
+    /// deck's half width where the road setting is narrower (a viaduct's and a Dvergr wood deck's, 3 m), or the setting where wider.</summary>
+    [Theory]
+    [InlineData(4f, 4f)]
+    [InlineData(2f, 3f)]
+    [InlineData(3f, 3f)]
+    [InlineData(10f, 10f)]
+    public void TheCarveReachesTheWidestBox(float roadWidth, float reach)
+    {
+        float was = RoadNetworkGenerator.RoadWidth;
+        try
+        {
+            RoadNetworkGenerator.RoadWidth = roadWidth;
+            Assert.Equal(reach, RoadRockPolicy.CarveReach);
+        }
+        finally { RoadNetworkGenerator.RoadWidth = was; }
+    }
+
     [Theory]
     [InlineData("rock1_mountain")]
     [InlineData("rock2_mountain")]

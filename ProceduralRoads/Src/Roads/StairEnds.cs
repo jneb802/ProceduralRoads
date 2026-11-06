@@ -361,8 +361,7 @@ public static class StairEnds
     /// <summary>Whether a road's surface stands at <paramref name="at"/> (within its half width) within a step of
     /// <paramref name="height"/>.</summary>
     private static bool OnRoadLevel(Vector2 at, float height) =>
-        RoadSpatialGrid.TryGetRoadHeightWithin(at, RoadNetworkGenerator.RoadWidth, out float road, out float distance, out float width)
-        && distance <= width / 2f && Mathf.Abs(road - height) <= StairLayout.StepUp;
+        RoadAt(at, out float road) && Mathf.Abs(road - height) <= StairLayout.StepUp;
 
     /// <summary>
     /// The steepest grade a walker stepping onto a road's surface at <paramref name="at"/> climbs or falls at along it over a
@@ -403,8 +402,7 @@ public static class StairEnds
     public static Func<float, float, float> WithRoads(Func<float, float, float> ground) => (x, z) =>
     {
         float g = ground(x, z);
-        return RoadSpatialGrid.TryGetRoadHeightWithin(new Vector2(x, z), RoadNetworkGenerator.RoadWidth, out float road, out float distance, out float width)
-            && distance <= width / 2f && !(road <= g) ? road : g;
+        return RoadAt(new Vector2(x, z), out float road) && !(road <= g) ? road : g;
     };
 
     /// <summary>Every end of every staircase in the network (StairStructures.Runs), each on <paramref name="groundOf"/>'s ground

@@ -445,7 +445,7 @@ public static partial class RoadStairRuns
         if (NetworkCutoff.ExcludedCount == 0) return false;
         foreach (StairPiece piece in plan.Pieces)
             if (NetworkCutoff.Excludes(ZoneSystem.GetZone(piece.Position))) return true;
-        float reach = StairLayout.CutWidth;
+        float reach = RoadTerrainModifier.StairCutReach;
         foreach (Vector3 cut in plan.Cuts)
             foreach (float dx in new[] { -reach, reach })
                 foreach (float dz in new[] { -reach, reach })

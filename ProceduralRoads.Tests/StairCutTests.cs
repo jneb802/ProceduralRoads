@@ -191,4 +191,21 @@ public class StairCutTests : IDisposable
         Assert.Equal(0f, weight);
         Assert.Contains(RoadSpatialGrid.RoadTargets(_ => true), p => p.x > 299f);
     }
+
+    /// <summary>What predicts the writer reads the writer's ground (RoadTerrainModifier.GroundAfterCuts): a cut's height within its
+    /// reach, climbing back on its batter, the natural ground past it: the same as the lowest cut a vertex of the written points
+    /// asks for. Read flat to the cut's reach alone, the batter's 3 m of lowered ground was read as natural.</summary>
+    [Fact]
+    public void TheGroundAfterACutIncludesItsBatter()
+    {
+        var cuts = new List<Vector3> { new(0f, 5f, 0f) };
+        const float natural = 10f, radius = StairLayout.CutRadius;
+        Assert.Equal(5f, RoadTerrainModifier.GroundAfterCuts(natural, cuts, radius, 0f), 3);
+        Assert.Equal(7f, RoadTerrainModifier.GroundAfterCuts(natural, cuts, radius + 2f, 0f), 3);
+        Assert.Equal(natural, RoadTerrainModifier.GroundAfterCuts(natural, cuts, radius + RoadTerrainModifier.CutBatterReach + 0.1f, 0f), 3);
+        // The writer's own: the lowest cut a point asks for.
+        var points = new List<RoadSpatialGrid.RoadPoint> { new(new Vector2(0f, 0f), StairLayout.CutWidth, 5f, cutOnly: true) };
+        foreach (float d in new[] { 0.3f, 1.2f, 2.9f, 3.6f, 4f })
+            Assert.Equal(Mathf.Min(natural, RoadTerrainModifier.LowestCut(points, new Vector2(d, 0f))), RoadTerrainModifier.GroundAfterCuts(natural, cuts, d, 0f), 4);
+    }
 }

@@ -907,13 +907,42 @@ public static class RoadTerrainModifier
         float lowest = float.PositiveInfinity;
         foreach (var c in cuts)
         {
-            float reach = Mathf.Sqrt(c.w2) * 0.5f;
-            float d = (c.p - vertex).magnitude;
-            if (d > reach + CutBatterReach) continue;
-            float h = c.h + Mathf.Max(0f, d - reach) * CutBatterSlope;
+            float h = CutHeightAt(c.p, c.h, Mathf.Sqrt(c.w2) * 0.5f, vertex);
             if (h < lowest) lowest = h;
         }
         return lowest;
+    }
+
+    /// <summary>The height one cut at <paramref name="at"/>, <paramref name="height"/> high within <paramref name="reach"/>, asks of
+    /// <paramref name="vertex"/>: its own height within its reach, climbing on the batter beyond it, infinity past that
+    /// (<see cref="CutBatterReach"/>). The one formula of a cut's ground, for the writer and for what predicts it.</summary>
+    private static float CutHeightAt(Vector2 at, float height, float reach, Vector2 vertex)
+    {
+        float d = (at - vertex).magnitude;
+        if (d > reach + CutBatterReach) return float.PositiveInfinity;
+        return height + Mathf.Max(0f, d - reach) * CutBatterSlope;
+    }
+
+    /// <summary>How far from a staircase's cut its ground is changed: the cut's own reach and its batter (the writer's reach,
+    /// <see cref="LowestCut"/>).</summary>
+    internal const float StairCutReach = StairLayout.CutRadius + CutBatterReach;
+
+    /// <summary>
+    /// The ground <paramref name="ground"/> at (<paramref name="x"/>, <paramref name="z"/>) as the writer leaves it under the
+    /// not yet written staircase cuts <paramref name="cuts"/> (a plan's, each a point and its height, at the staircase cut's
+    /// radius): lowered to the lowest cut within reach, climbing back on the batter, as <see cref="RoadDelta"/> does. Read-only,
+    /// for what predicts the writer (the walking floor a built staircase holds the cut above is not read: nothing stands yet).
+    /// </summary>
+    internal static float GroundAfterCuts(float ground, IReadOnlyList<Vector3> cuts, float x, float z)
+    {
+        var vertex = new Vector2(x, z);
+        float g = ground;
+        foreach (Vector3 c in cuts)
+        {
+            float h = CutHeightAt(new Vector2(c.x, c.z), c.y, StairLayout.CutRadius, vertex);
+            if (h < g) g = h;
+        }
+        return g;
     }
 
     /// <summary>The fill spread per road point (null when it is off): it samples the

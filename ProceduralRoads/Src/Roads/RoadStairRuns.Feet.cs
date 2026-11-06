@@ -662,7 +662,7 @@ public static partial class RoadStairRuns
     /// <summary>Where <paramref name="st"/>'s foot, with no road there, gaps by the end reader (StairEnds.Read: no edge of its
     /// last walked pieces steps off onto <paramref name="ground"/>, the ground a road's staircase is laid out on
     /// (PlanningGround), as its own earthwork leaves it (its cuts, a foot's apron among them: each lowers the ground to its
-    /// height within StairLayout.CutRadius, as the network's cut-only points are written) and with the network's roads on it,
+    /// height within StairLayout.CutRadius and climbs back on its batter, as the writer leaves it, RoadTerrainModifier.GroundAfterCuts) and with the network's roads on it,
     /// nor onto another of <paramref name="all"/>'s staircases): the foot's last stair's exit edge. Null where a walker steps
     /// off it. Read without its cuts, a foot onto the level apron cut for it at the island's start on RoadSeedA was refused.</summary>
     internal static Vector2? FootOffTheGround(RoadStairSpan st, IReadOnlyList<RoadStairSpan> all, Func<float, float, float> ground)
@@ -672,13 +672,7 @@ public static partial class RoadStairRuns
         foreach (RoadStairSpan other in all)
             if (!ReferenceEquals(other, st)) others.AddRange(StairRun.FromPlan(other.FromPoint, other.ToPoint, Width, other.Plan, other.Kit).Pieces);
         List<Vector3> cuts = st.Plan.Cuts;
-        float Cut(float x, float z)
-        {
-            float g = ground(x, z);
-            foreach (Vector3 c in cuts)
-                if (c.y < g && (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z) <= StairLayout.CutRadius * StairLayout.CutRadius) g = c.y;
-            return g;
-        }
+        float Cut(float x, float z) => RoadTerrainModifier.GroundAfterCuts(ground(x, z), cuts, x, z);
         foreach (StairEnds.End end in StairEnds.Read(run, StairEnds.WithRoads(Cut), others))
             if (!end.Top && end.Verdict == StairEnds.Verdict.Gap)
                 return end.Edge is Vector3 e ? new Vector2(e.x, e.z) : st.Plan.Reversed ? st.ToPoint : st.FromPoint;

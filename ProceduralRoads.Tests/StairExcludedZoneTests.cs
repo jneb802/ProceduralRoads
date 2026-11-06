@@ -55,4 +55,19 @@ public class StairExcludedZoneTests : IDisposable
 
         Assert.DoesNotContain(StairStructures.Runs, r => r.Pieces.Any(p => NetworkCutoff.Excludes(ZoneSystem.GetZone(p.Position))));
     }
+
+    /// <summary>A staircase's cut reaches the zone as far as the writer's ground does, its batter too (RoadTerrainModifier.StairCutReach,
+    /// 3.75 m): a cut 2.5 m from an explored zone, outside the 1.5 m a cut's own width spans, still changes ground in it, so the
+    /// staircase is not built. A cut beyond the batter does not.</summary>
+    [Fact]
+    public void ACutWhoseBatterReachesAnExploredZoneExcludesItsStaircase()
+    {
+        _scope.WithWorld(new ScarpWorld());
+        NetworkCutoff.SnapshotWorld(new[] { ZoneSystem.GetZone(new Vector3(40f, 0f, 0f)) });
+        NetworkCutoff.UseNewNetwork();
+        float line = RoadConstants.HalfZoneSize;
+        StairPlan Cutting(float away) => new() { Cuts = { new Vector3(line - away, 30f, 0f) } };
+        Assert.True(RoadStairRuns.InExcludedZone(Cutting(2.5f)));
+        Assert.False(RoadStairRuns.InExcludedZone(Cutting(RoadTerrainModifier.StairCutReach + 0.25f)));
+    }
 }

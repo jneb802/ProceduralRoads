@@ -145,7 +145,7 @@ public class SiteShoreSqueezeTests
         // Nor where the fill would stand past the earthwork cap under the road.
         using var depth = StaticOverride.Keep(() => RoadShoreFill.FillDepth);
         using var cap = StaticOverride.Keep(() => RoadNetworkGenerator.EarthworkCap);
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         With(new Shallows { Depth = 1f, Land = RoadConstants.ShallowWaterHeight + 9f }, place, () =>
             Assert.True(new RoadPathfinder(WorldGenerator.instance).SiteShoreSqueeze(new Vector2(15f, 0f))));
         // Off, every water is water.

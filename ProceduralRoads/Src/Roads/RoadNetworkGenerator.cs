@@ -186,7 +186,7 @@ public static partial class RoadNetworkGenerator
 
     #endregion
 
-    public static float RoadWidth = 4f;
+    public static float RoadWidth = RoadConstants.DefaultRoadWidth;
     public static int IslandRoadPercentage = 33;
 
     private static bool m_roadsGenerated = false;
@@ -3393,7 +3393,10 @@ public static partial class RoadNetworkGenerator
     /// fill (vanilla TerrainComp clamps level deltas to +/-8 m). A road still
     /// past it after the re-route retries is refused. Settable for tests; 0 is
     /// off.</summary>
-    internal static float EarthworkCap = 8f;
+    internal static float EarthworkCap = DefaultEarthworkCap;
+
+    /// <summary>The cap a game runs with: the level-delta clamp the game itself applies (<see cref="RoadConstants.TerrainDeltaMax"/>).</summary>
+    internal const float DefaultEarthworkCap = RoadConstants.TerrainDeltaMax;
 
     // ---- The earthwork cap as each kind of rule reads it: the one place its unset case (EarthworkCap 0) is decided ----
     // Three readings, each meant, none a copy of another:
@@ -3900,7 +3903,7 @@ public static partial class RoadNetworkGenerator
     private static void JoinNetwork(Vector2 from, Vector2 to, StairPlan plan, StairKit kit, bool atPlace, Vector2? fromMeet = null, Vector2? toMeet = null,
         (Vector2 Centre, float Ground)? expectedPlace = null)
     {
-        RoadSpatialGrid.CommitCuts(CutsOf(plan, atPlace), StairLayout.CutRadius * 2f);
+        RoadSpatialGrid.CommitCuts(CutsOf(plan, atPlace), StairLayout.CutWidth);
         AddToNetwork(RunOf(from, to, plan, kit, atPlace, fromMeet, toMeet, expectedPlace), plan, kit);
     }
 

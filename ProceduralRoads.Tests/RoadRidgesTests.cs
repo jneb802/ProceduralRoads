@@ -96,7 +96,7 @@ public sealed class RoadRidgesTests : IDisposable
         RoadNetworkGenerator.Reset();
         _scope.WithWorld(world);
         SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f, Fords = false, Bridges = false, Stairs = stairs });
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         RoadNetworkGenerator.RidgeRetries = retries;
         var pieces = new List<RoadSpatialGrid.PlannedPath>();
         var hook = RoadNetworkGenerator.PieceCommitted;

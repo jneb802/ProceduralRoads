@@ -742,7 +742,7 @@ public sealed class DvergrWoodBridgeCutoffTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
         for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
         ManualRoads.Commit(ManualRoads.Prepare(new[] { new Vector2(-160, 0), new Vector2(160, 0) }, false, new[] { island }));

@@ -226,7 +226,7 @@ public static class ManualRoads
         foreach (RoadSpatialGrid.PlannedPath path in append.WithFills.Concat(append.IntoSite))
             for (int i = 0; i < path.Points.Count; i++)
                 Reach(path.Points[i], path.Widths != null && i < path.Widths.Count ? path.Widths[i] : path.Width);
-        foreach (Vector3 cut in append.StairCuts) Reach(new Vector2(cut.x, cut.z), RoadNetworkGenerator.ManualAppend.StairCutWidth);
+        foreach (Vector3 cut in append.StairCuts) Reach(new Vector2(cut.x, cut.z), StairLayout.CutWidth);
         foreach (Vector3 cut in append.Ground.Cuts) Reach(new Vector2(cut.x, cut.z), RoadNetworkGenerator.CrossingGround.CutWidth);
         foreach (var (at, _) in append.Ground.Raised) Reach(at.p, at.w);
         var world = WorldGenerator.instance;
@@ -452,7 +452,6 @@ public static partial class RoadNetworkGenerator
     /// read off it (ManualRoads.ZonesReached): one list of both.</summary>
     internal sealed class ManualAppend
     {
-        public static float StairCutWidth => StairLayout.CutRadius * 2f;
         /// <summary>Its roads with the junctions' fill where its ends meet the network (RoadJunctionFillet), its staircases'
         /// start pads and the ground under its decks' ends.</summary>
         public readonly List<RoadSpatialGrid.PlannedPath> WithFills = new();
@@ -545,7 +544,7 @@ public static partial class RoadNetworkGenerator
             RoadNetworkPersistence.EnsureMetadataInstance();
             // All or none: the road, its fills and pads, its cuts and the other roads it raises.
             RoadSpatialGrid.CommitAppend(append.WithFills, expectedVersion, intoSitePlans: append.IntoSite,
-                cuts: new (IReadOnlyList<Vector3>, float)[] { (append.StairCuts, ManualAppend.StairCutWidth), (append.Ground.Cuts, CrossingGround.CutWidth) },
+                cuts: new (IReadOnlyList<Vector3>, float)[] { (append.StairCuts, StairLayout.CutWidth), (append.Ground.Cuts, CrossingGround.CutWidth) },
                 raised: append.Ground.Raised);
             // In the network from here on: saved with the world even if a step below throws.
             m_networkDirty = true;

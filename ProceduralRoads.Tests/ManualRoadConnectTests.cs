@@ -34,7 +34,7 @@ public sealed class ManualRoadConnectTests : IDisposable
     public ManualRoadConnectTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); PlacedSites.Reset();
-        RoadNetworkGenerator.MarkLocationsReady(); RoadNetworkGenerator.RoadWidth = 4;
+        RoadNetworkGenerator.MarkLocationsReady(); RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
         RoadPathfinder.JunctionStep = RoadPathfinder.DefaultJunctionStep;
         RoadNetworkGenerator.ConfigureFinders(f => { f.TerrainVarianceThreshold = 1000f; f.Meander = 0f; });

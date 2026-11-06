@@ -48,7 +48,7 @@ public class StairEndFloorTests : IDisposable
     private static void WithTheCap(Action body)
     {
         float cap = RoadNetworkGenerator.EarthworkCap;
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         try { body(); }
         finally { RoadNetworkGenerator.EarthworkCap = cap; }
     }

@@ -62,7 +62,7 @@ namespace ProceduralRoads
             Config.SaveOnConfigSet = false;
 
             // Initialize configuration
-            RoadWidth = Config.Bind("Roads", "RoadWidth", 4f,
+            RoadWidth = Config.Bind("Roads", "RoadWidth", RoadConstants.DefaultRoadWidth,
                 new ConfigDescription("Width of generated roads in meters",
                     new AcceptableValueRange<float>(2f, 10f)));
 

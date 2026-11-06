@@ -28,6 +28,8 @@ public static partial class StairLayout
     /// stand 0.5 m apart and terrain vertices 1 m apart, so this reaches every
     /// vertex under the cut stretch (half the 1 m diagonal is 0.71 m).</summary>
     public const float CutRadius = 0.75f;
+    /// <summary>The width a staircase's cut is committed at: twice its radius.</summary>
+    public const float CutWidth = CutRadius * 2f;
 
     internal const float SurfaceSpacing = CutSpacing / 2f;
 

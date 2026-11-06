@@ -27,7 +27,7 @@ public sealed class ForeignOwnerAppendTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
     }
     public void Dispose() { RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); _plain.Dispose(); _world.Dispose(); }
 

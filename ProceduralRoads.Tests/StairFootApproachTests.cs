@@ -63,7 +63,7 @@ public sealed class StairFootApproachTests : IDisposable
         RoadNetworkGenerator.Reset();
         _scope.WithWorld(world);
         // The mod's earthwork cap (the suite runs with it off, PlainRoads).
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         var finder = new RoadPathfinder(world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
         SetPathfinder(finder);
         var path = new List<Vector2>();

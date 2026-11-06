@@ -116,3 +116,15 @@ public class PastTerrainLimitTests
         Assert.Equal(Mathf.Abs(height - ground) > cap, RoadNetworkGenerator.PastTerrainLimit(height, ground, cap));
     }
 }
+
+public class NamedDefaultsTests
+{
+    /// <summary>Recorded before the defaults were named: a game runs with a 4 m road, an 8 m earthwork cap and 1.5 m stair cuts.</summary>
+    [Fact]
+    public void DefaultsAreAsRecorded()
+    {
+        Assert.Equal(4f, RoadConstants.DefaultRoadWidth);
+        Assert.Equal(8f, RoadNetworkGenerator.DefaultEarthworkCap);
+        Assert.Equal(1.5f, StairLayout.CutWidth);
+    }
+}

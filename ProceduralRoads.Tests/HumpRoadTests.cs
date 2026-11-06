@@ -62,7 +62,7 @@ public sealed class HumpRoadTests : IDisposable
     {
         _scope.WithWorld(world);
         // The mod's earthwork cap (the suite runs with it off, PlainRoads).
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         var finder = new RoadPathfinder(world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
         SetPathfinder(finder);
         var path = new List<Vector2>();
@@ -122,7 +122,7 @@ public sealed class HumpRoadTests : IDisposable
         _scope.WithWorld(world);
         var road = RoadSpatialGrid.PlanRoadPath(straight, 4f, world);
         Assert.NotNull(road);
-        Assert.Equal(0, RoadNetworkGenerator.PastTerrainLimit(new List<RoadSpatialGrid.PlannedPath> { road! }, 8f, new List<Vector2>()));
+        Assert.Equal(0, RoadNetworkGenerator.PastTerrainLimit(new List<RoadSpatialGrid.PlannedPath> { road! }, RoadNetworkGenerator.DefaultEarthworkCap, new List<Vector2>()));
         var trench = Assert.Single(RoadRidges.Find(road!.Points, road.Heights, q => BiomeBlendedHeight.GetBlendedHeight(q.x, q.y, world)));
         Assert.Equal(RoadRidges.Kind.Trench, trench.Kind);
 

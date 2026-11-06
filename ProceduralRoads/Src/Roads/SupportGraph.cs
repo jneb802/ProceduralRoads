@@ -36,6 +36,8 @@ public static class SupportGraph
         }
     }
 
+    /// <summary>MaterialType.Wood: the railed bridge kits' posts and decks.</summary>
+    public static readonly Material Wood = new(100f, 10f, 0.2f, 0.125f);
     /// <summary>MaterialType.Marble: the black marble pieces.</summary>
     public static readonly Material Marble = new(1500f, 100f, 0.5f, 0.125f);
     /// <summary>MaterialType.Stone: a staircase's stone pieces (stone_stair, stone_floor_2x2, stone_wall_2x1, stone_arch).</summary>

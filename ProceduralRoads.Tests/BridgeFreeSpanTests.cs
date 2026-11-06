@@ -26,9 +26,9 @@ public class BridgeFreeSpanTests
     [Fact]
     public void SixteenMetresIsWhatTheSupportRuleActuallyReaches()
     {
-        Assert.True(WeakestPieceOfAFreeSpan(16f) >= BridgeSupport.MinSupport,
+        Assert.True(WeakestPieceOfAFreeSpan(16f) >= SupportGraph.Wood.Min,
             $"a 16 m span should hold; weakest piece {WeakestPieceOfAFreeSpan(16f):F2}");
-        Assert.True(WeakestPieceOfAFreeSpan(20f) < BridgeSupport.MinSupport,
+        Assert.True(WeakestPieceOfAFreeSpan(20f) < SupportGraph.Wood.Min,
             $"a 20 m span should fall; weakest piece {WeakestPieceOfAFreeSpan(20f):F2}");
     }
 
@@ -38,8 +38,8 @@ public class BridgeFreeSpanTests
     /// opposed ones.</summary>
     private static float WeakestPieceOfAFreeSpan(float spanMetres)
     {
-        float step = 1f - BridgeSupport.HorizontalLoss
-                        * (BridgeLayout.DeckSpan + BridgeSupport.ComDistanceMargin);
+        float step = 1f - SupportGraph.Wood.HorizontalLoss
+                        * (BridgeLayout.DeckSpan + SupportGraph.DistanceMargin);
         int n = Mathf.RoundToInt(spanMetres / BridgeLayout.DeckSpan);
         float[] v = new float[n];
         for (int pass = 0; pass < 400; pass++)
@@ -47,11 +47,11 @@ public class BridgeFreeSpanTests
             float[] next = new float[n];
             for (int i = 0; i < n; i++)
             {
-                float left = i == 0 ? BridgeSupport.MaxSupport : v[i - 1];
-                float right = i == n - 1 ? BridgeSupport.MaxSupport : v[i + 1];
+                float left = i == 0 ? SupportGraph.Wood.Max : v[i - 1];
+                float right = i == n - 1 ? SupportGraph.Wood.Max : v[i + 1];
                 float one = Mathf.Max(left * step, right * step);
                 float both = (left * step + right * step) * 0.5f;
-                next[i] = Mathf.Min(BridgeSupport.MaxSupport, Mathf.Max(one, both));
+                next[i] = Mathf.Min(SupportGraph.Wood.Max, Mathf.Max(one, both));
             }
             v = next;
         }

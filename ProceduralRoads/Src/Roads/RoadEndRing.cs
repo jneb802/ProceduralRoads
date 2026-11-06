@@ -33,7 +33,7 @@ public readonly struct RoadEndRing
 
     /// <summary>At a top, a floor this near the road's height is where the road comes onto it, level (a top landing the road
     /// meets from any side): not a crossing. Only its flight counts there.</summary>
-    public const float LevelWithRoad = 0.5f;
+    public const float LevelWithRoad = StairLayout.StepUp;
 
     /// <summary>A walked piece's sample this far over the lane's or the inner circle's edge is on it (a piece placed on the
     /// line, not over it).</summary>

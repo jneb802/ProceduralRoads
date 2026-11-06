@@ -44,9 +44,9 @@ public static class StructureEnds
     /// </summary>
     public const float JoinOverlap = 2f;
 
-    /// <summary>How far the road where it meets an end may stand off the end's height for a player to walk on: about a
-    /// step a player takes without a jump.</summary>
-    public const float StepTolerance = 0.5f;
+    /// <summary>How far the road where it meets an end may stand off the end's height for a player to walk on: one step, the
+    /// staircase step (<see cref="StairLayout.StepUp"/>), the one height a step is read at everywhere.</summary>
+    public const float StepTolerance = StairLayout.StepUp;
 
     /// <summary>The middle of the end's step <paramref name="k"/> (0 at the edge): its origin, a half run out from the joint above it.</summary>
     public static Vector2 StepCentre(Vector2 edge, Vector2 up, int k) => edge - up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun);

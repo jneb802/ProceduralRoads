@@ -20,6 +20,18 @@ public sealed class StructureEndTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
+    /// <summary>A step is one height everywhere: a road meeting an end stands within a staircase step of it (StairLayout.StepUp,
+    /// 0.2 m), not the 0.5 m a second constant used to allow, and a floor reads as level with the road within the same step.</summary>
+    [Fact]
+    public void AStepIsTheStaircaseStepWhereTheRoadMeetsAnEnd()
+    {
+        var end = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 10f, 0);
+        Assert.True(StructureEnds.Reachable(10f - StairLayout.StepUp * 0.9f, end));
+        Assert.False(StructureEnds.Reachable(10f - 0.3f, end));
+        Assert.Equal(StairLayout.StepUp, StructureEnds.StepTolerance);
+        Assert.Equal(StairLayout.StepUp, RoadEndRing.LevelWithRoad);
+    }
+
     /// <summary>A Mistlands valley along z: the near (west) flat at <see cref="Top"/>, a floor <see cref="Depth"/> under
     /// it, faces of 1.2; past the far (east) rim the ground is <see cref="Far"/> of the metres beyond the rim. Sea past
     /// |x|, |z| = 200.</summary>

@@ -45,9 +45,8 @@ public static class RoadWiggle
     /// <summary>Times a refused or earth-moving swayed plan is planned again with more of its sway held.</summary>
     public const int HoldRounds = 3;
     /// <summary>Ground grade along the road up to which the sway is at full strength; above it
-    /// the sway eases down to <see cref="SlopeFloor"/> at the grade cap. Validation switch
-    /// WIGGLE_FLAT.</summary>
-    public static readonly float Flat = DebugSwitches.Number("WIGGLE_FLAT", 0.12f, 0.02f, 1f);
+    /// the sway eases down to <see cref="SlopeFloor"/> at the grade cap.</summary>
+    public const float Flat = 0.12f;
 
     /// <summary>The share of the sway kept at the road's grade cap, and beyond it: a reduced
     /// sway on slopes instead of switching it off.

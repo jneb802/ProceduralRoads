@@ -223,6 +223,20 @@ public sealed class BridgeLifecycleTests : IDisposable
         Assert.Same(second, Assert.Single(again));
     }
 
+    /// <summary>A join aims at the network as generation's hints do: never at a point on a crossing, its banks included (a join aimed at a bridge's
+    /// waypoint in mid-river built a second bridge out to it).</summary>
+    [Fact] public void AJoinNeverAimsAtAPointOnACrossing()
+    {
+        RoadCrossing bridge = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), c => c.Kind == CrossingKind.Bridge);
+        Vector2 bank = bridge.ToBank;
+        float reach = RoadNetworkGenerator.RoadWidth * 0.5f;
+        Assert.Contains(RoadSpatialGrid.RoadTargets(_ => true), p => Vector2.Distance(p, bank) <= reach);
+        List<Vector2> targets = RoadNetworkGenerator.JoinTargets(_ => true);
+        Assert.NotEmpty(targets);
+        Assert.DoesNotContain(targets, p => Vector2.Distance(p, bank) <= reach);
+        Assert.Contains(targets, p => p.x < bridge.FromBank.x - 8f || p.x > bridge.ToBank.x + 8f || p.y < Mathf.Min(bridge.FromBank.y, bridge.ToBank.y) - 8f);
+    }
+
     /// <summary>A site with pieces standing in a zone whose record was lost is started: reaching another of its zones lays it
     /// zone by zone as before, saving no fresh solve that could disagree with what stands.</summary>
     [Fact] public void ASiteWithPiecesStandingAndNoRecordIsNotSavedAfresh()

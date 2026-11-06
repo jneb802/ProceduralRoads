@@ -275,6 +275,29 @@ public static partial class RoadNetworkGenerator
     private static int s_networkVersions;
     internal static int IslandNetworkVersion =>
         t_networkVersion != 0 ? t_networkVersion : t_networkVersion = System.Threading.Interlocked.Increment(ref s_networkVersions);
+    /// <summary>The points of the stored network a join may aim at, by the rule generation's hints follow (GenerateRoadCore):
+    /// none on a crossing and none on a staircase, since a join aimed at one built a second bridge out to a waypoint in
+    /// mid-river, and there is no road on a staircase to join. Generation adds its hints as it builds, from the road's own
+    /// path; a stored network has no paths, so these are its points within half a road width of a crossing's banks or a
+    /// staircase's ends, bank to bank and end to end, dropped.</summary>
+    internal static List<Vector2> JoinTargets(Func<Vector2, bool> allowed)
+    {
+        var spans = new List<(Vector2 a, Vector2 b)>();
+        foreach (RoadCrossing crossing in m_roadCrossings) spans.Add((crossing.FromBank, crossing.ToBank));
+        foreach (StairRun run in StairStructures.Runs) spans.Add((run.From, run.To));
+        bool OnSpan(Vector2 p)
+        {
+            foreach (var (a, b) in spans)
+            {
+                Vector2 ab = b - a;
+                float t = ab.sqrMagnitude < 1e-6f ? 0f : Mathf.Clamp01(Vector2.Dot(p - a, ab) / ab.sqrMagnitude);
+                if (Vector2.Distance(p, a + ab * t) <= RoadWidth * 0.5f) return true;
+            }
+            return false;
+        }
+        return RoadSpatialGrid.RoadTargets(p => allowed(p) && !OnSpan(p));
+    }
+
     internal static void IslandNetworkChanged() => t_networkVersion = System.Threading.Interlocked.Increment(ref s_networkVersions);
     [System.ThreadStatic] internal static RoadIslandActivity.Token? IslandActivity;
     /// <summary>How many of an island's destinations the finished network

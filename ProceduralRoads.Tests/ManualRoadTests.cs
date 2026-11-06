@@ -51,6 +51,17 @@ public class ManualRoadTests : IDisposable
     }
     private void Add(float z) => RoadSpatialGrid.CommitAppend(new[] { Line(z) }, RoadSpatialGrid.RoadNetworkVersion);
 
+    /// <summary>A join aims at no point on a staircase: there is no road on it to join.</summary>
+    [Fact] public void AJoinNeverAimsAtAPointOnAStaircase()
+    {
+        BaseRoad();
+        StairStructures.Replace(new List<StairRun> { new StairRun { From = new Vector2(-8f, -16f), To = new Vector2(8f, -16f), Width = 4f } });
+        Assert.Contains(RoadSpatialGrid.RoadTargets(_ => true), p => Math.Abs(p.x) < 4f);
+        var targets = RoadNetworkGenerator.JoinTargets(_ => true);
+        Assert.DoesNotContain(targets, p => Math.Abs(p.x) < 8f);
+        Assert.Contains(targets, p => Math.Abs(p.x) > 12f);
+    }
+
     [Fact] public void CoordinatesUseInvariantXZAndCanBeCopiedBack()
     {
         using var overrides = StaticOverride.Keep(() => CultureInfo.CurrentCulture);

@@ -334,7 +334,7 @@ public static class ManualRoads
         RoadNetworkGenerator.PlaceEnds? ends = null;
         if (connect)
         {
-            var targets = RoadSpatialGrid.RoadTargets(OnIsland);
+            var targets = RoadNetworkGenerator.JoinTargets(OnIsland);
             if (targets.Count == 0) throw new InvalidOperationException("No road network exists on this island.");
             if (fromPlace == null && RoadSpatialGrid.TryGetRoadWithin(points[0], width * 0.5f, out _, OnIsland))
             { plan.AlreadyConnected = true; return plan; }

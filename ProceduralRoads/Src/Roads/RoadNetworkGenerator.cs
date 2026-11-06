@@ -891,9 +891,7 @@ public static partial class RoadNetworkGenerator
         if (PlacedSites.TryGetReady(centre, out PlacedSite placed)) to = placed.Shape.Landing;
         else
         {
-            Vector2 out1 = at - centre;
-            out1 = out1.sqrMagnitude < 1e-4f ? new Vector2(0f, 1f) : out1.normalized;
-            to = centre + out1 * RoadSiteProtection.ArrivalRadiusAt(centre, radius);
+            to = EdgeToward(centre, radius, at);
         }
         return RidgeOver(at, height, to, level, q => PlacedSites.GroundAt(q.x, q.y, world)) > RidgeRise;
     }
@@ -1006,6 +1004,15 @@ public static partial class RoadNetworkGenerator
     internal static bool LandingReached(PlacedSite site) =>
         PlacedSites.Landed(site.Centre) || NetworkNear(site.Shape.Landing, LandingReach, site.LandingHeight);
 
+    /// <summary>The edge of the ground a place shapes (<see cref="RoadSiteProtection.ArrivalRadiusAt"/>) on the side of
+    /// <paramref name="q"/> (due +z where <paramref name="q"/> is within 1 cm of the centre).</summary>
+    private static Vector2 EdgeToward(Vector2 centre, float radius, Vector2 q)
+    {
+        Vector2 out1 = q - centre;
+        out1 = out1.sqrMagnitude < 1e-4f ? new Vector2(0f, 1f) : out1.normalized;
+        return centre + out1 * RoadSiteProtection.ArrivalRadiusAt(centre, radius);
+    }
+
     /// <summary>
     /// The height the network arriving at the place at <paramref name="centre"/> (exterior <paramref name="radius"/>, as asked)
     /// from <paramref name="from"/> must end level with to reach it (<see cref="ReachRise"/>): the one owner of a place's arrival
@@ -1027,9 +1034,7 @@ public static partial class RoadNetworkGenerator
         float root = LocationLevelling.CentreHeight(centre, world);
         IReadOnlyList<LevelOp>? ops = LocationLevelling.OpsAt(centre);
         if (LocationLevelling.ApproachHeight(root, ops) is float platform) return platform;
-        Vector2 out1 = from - centre;
-        out1 = out1.sqrMagnitude < 1e-4f ? new Vector2(0f, 1f) : out1.normalized;
-        Vector2 edge = centre + out1 * RoadSiteProtection.ArrivalRadiusAt(centre, radius);
+        Vector2 edge = EdgeToward(centre, radius, from);
         return LocationLevelling.PlacedGroundAt(edge, centre, root, ops, BiomeBlendedHeight.GetBlendedHeight(edge.x, edge.y, world));
     }
 

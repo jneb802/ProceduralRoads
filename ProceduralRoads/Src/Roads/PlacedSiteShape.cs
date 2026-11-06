@@ -195,7 +195,7 @@ public sealed class PlacedSiteShape
         // landing in front of the mouth is clear, and its box overstates it there. With its real top known it
         // stays: where it stands is then known.
         KeepOut = rockRadius + RoadStairRuns.RockMargin;
-        Landing = door ?? found ?? (pit > 0f ? flatCentre + front * (pit + RoadStairRuns.LandingOut) : flatCentre + front * edge);
+        Landing = LandingFor(0f);
         var kept = new List<SiteRock>();
         var body = new List<SiteRock>();
         foreach (SiteRock rock in rocks)

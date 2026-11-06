@@ -189,7 +189,7 @@ public static class PlacedSiteReader
             SiteRock box = Box(p, zdo.GetRotation(), scale, LocalBox(prefab), prefab.name);
             // Its real top where it counts: a rock an approach keeps clear of (large, round the
             // mouth, or at a place keeping every rock); a small one elsewhere is cleared anyway.
-            bool kept = ownRock || box.Large || keepSmall || (rockRadius > 0f && Vector2.Distance(box.At, centre) <= rockRadius);
+            bool kept = ownRock || SiteRock.Kept(box.Large, keepSmall, box.RoundItsMouth(centre, rockRadius));
             rocks.Add(kept ? WithTop(box, prefab, p, zdo.GetRotation(), setScale) : box);
         }
         return rocks;

@@ -104,6 +104,24 @@ public readonly struct SiteRock
         return new Vector2(local.x * c + local.y * s, local.y * c - local.x * s);
     }
 
+    /// <summary>Whether it stands round the mouth of a place at <paramref name="centre"/> whose exterior radius is
+    /// <paramref name="rockRadius"/> (none without one): its box's middle inside that radius.</summary>
+    public bool RoundItsMouth(Vector2 centre, float rockRadius) => rockRadius > 0f && Vector2.Distance(At, centre) <= rockRadius;
+
+    /// <summary>Whether a place's rock is kept on an approach to the place (the one owner of the rule; each caller measures
+    /// the rock its own way): a <paramref name="large"/> one (<see cref="LargeRock"/> or more across), any at a place that
+    /// keeps every rock (<paramref name="keepsEveryRock"/>, <see cref="KeepsEveryRock"/>), or any
+    /// <paramref name="roundItsMouth"/> (inside its exterior radius). <paramref name="why"/>: the first of these that holds,
+    /// in that order ("" when none does).</summary>
+    public static bool Kept(bool large, bool keepsEveryRock, bool roundItsMouth, out string why)
+    {
+        why = large ? "large" : keepsEveryRock ? "a place keeping every rock" : roundItsMouth ? "round its mouth" : "";
+        return large || keepsEveryRock || roundItsMouth;
+    }
+
+    /// <summary><see cref="Kept(bool, bool, bool, out string)"/>, without the reason.</summary>
+    public static bool Kept(bool large, bool keepsEveryRock, bool roundItsMouth) => Kept(large, keepsEveryRock, roundItsMouth, out _);
+
     /// <summary>A place none of whose rocks an approach may clear, small ones included: Hildir's
     /// cave, whose boulder blocking the entrance is not disturbed (the landing near by is still
     /// reached).</summary>
@@ -182,12 +200,13 @@ public sealed class PlacedSiteShape
         var body = new List<SiteRock>();
         foreach (SiteRock rock in rocks)
         {
-            if (rockRadius > 0f && Vector2.Distance(rock.At, centre) <= rockRadius)
+            if (rock.RoundItsMouth(centre, rockRadius))
             {
                 // Come to from every side, every piece of its body stands: the landing is found clear of them.
                 if (rock.Top != null || allRound || rock.Distance(Landing) > 0f) body.Add(rock);
             }
-            else if (rock.Large || keepSmallRocks) kept.Add(rock);
+            // The rest of its kept rocks (those round its mouth are its body, above).
+            else if (SiteRock.Kept(rock.Large, keepSmallRocks, roundItsMouth: false)) kept.Add(rock);
         }
         Rocks = kept;
         Body = body;

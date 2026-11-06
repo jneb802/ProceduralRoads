@@ -236,11 +236,11 @@ public static class RoadRockProbe
         bool? part = LocationPrefabLevelling.IsPart(Utils.GetPrefabName(place.gameObject), place.transform.position, place.transform.rotation, at);
         if (part == false) return false;
         string kind = part == true ? "one of its parts" : "its parts not known";
-        if (size >= SiteRock.LargeRock) { why = kind + ", large"; return true; }
         Vector3 d = at - place.transform.position;
-        if (SiteRock.KeepsEveryRock(place.name)) { why = kind + ", a place keeping every rock"; return true; }
-        if (new Vector2(d.x, d.z).magnitude <= place.m_exteriorRadius) { why = kind + ", round its mouth"; return true; }
-        return false;
+        if (!SiteRock.Kept(size >= SiteRock.LargeRock, SiteRock.KeepsEveryRock(place.name),
+                new Vector2(d.x, d.z).magnitude <= place.m_exteriorRadius, out string reason)) return false;
+        why = kind + ", " + reason;
+        return true;
     }
 
     /// <summary>What a judged object is to the road: cleared (and whether it stands in a site area), or kept, and kept

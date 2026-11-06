@@ -710,25 +710,25 @@ public static partial class RoadStairRuns
                     kit = kits.TryGetValue(k, out StairKit? mergedKit) ? mergedKit : StairKit.ForLine(line, Biome);
                     if (crestOf != null)
                     {
-                        StairPlan first = crestOf.Plan;
-                        bool floored = first.CrestFloored || first.LastRowKind == StairPieceKind.Landing;
-                        var crestRow = new StairContinuation(new Vector2(first.End.x, first.End.z), first.EndHeading, first.End.y,
-                            floored ? StairPieceKind.Landing : StairPieceKind.Stair);
-                        StairPlan down = StairLayout.BuildDown(crestRow, b, Ground, Width, kit, GenerationExpansions, GenerationTotalExpansions, GenerationStall, corridor: line);
-                        if (down.Reached && Usable(down, path, start, to, world, spans, crestRow.Edge))
+                        if (DownFromCrest(crestOf, kit, Ground, out bool floored) is StairContinuation crestRow)
                         {
-                            plan = down;
-                            crestOf.ToPoint = a = crestRow.Edge;
-                            meet = a;
-                            System.Threading.Interlocked.Increment(ref RidgesSnapped);
-                            return true;
-                        }
-                        if (floored && SnapOffCrest(crestOf, crestRow, b, kit, Ground, line, path, start, to, world, spans, ref a, ref meet) is StairPlan off)
-                        {
-                            plan = off;
-                            System.Threading.Interlocked.Increment(ref RidgesSnapped);
-                            System.Threading.Interlocked.Increment(ref RidgesSnappedOffCrest);
-                            return true;
+                            if (floored) { a = crestRow.Edge; meet = a; }
+                            StairPlan down = StairLayout.BuildDown(crestRow, b, Ground, Width, kit, GenerationExpansions, GenerationTotalExpansions, GenerationStall, corridor: line);
+                            if (down.Reached && Usable(down, path, start, to, world, spans, crestRow.Edge))
+                            {
+                                plan = down;
+                                crestOf.ToPoint = a = crestRow.Edge;
+                                meet = a;
+                                System.Threading.Interlocked.Increment(ref RidgesSnapped);
+                                return true;
+                            }
+                            if (floored && SnapOffCrest(crestOf, crestRow, b, kit, Ground, line, path, start, to, world, spans, ref a, ref meet) is StairPlan off)
+                            {
+                                plan = off;
+                                System.Threading.Interlocked.Increment(ref RidgesSnapped);
+                                System.Threading.Interlocked.Increment(ref RidgesSnappedOffCrest);
+                                return true;
+                            }
                         }
                     }
                     float mergedArriving = StairLayout.Bearing(start > 0 ? path[start - 1] : a, start > 0 ? a : path[start + 1]);
@@ -827,24 +827,10 @@ public static partial class RoadStairRuns
                 // Whether the first's top is a floor on the crest. A staircase an earlier road built (Existing) is met as it is,
                 // never edited: no floor is carried onto it nor flag set on its plan, which is the network's.
                 bool crestFloored = false;
-                if (meet != null && spans[spans.Count - 1].Plan is StairPlan first && !first.Reversed
-                    && (first.LastRowKind == StairPieceKind.Stair || first.CrestFloored
-                        || first.LastRowKind == StairPieceKind.Landing && first.Reached))
+                if (meet != null && DownFromCrest(spans[spans.Count - 1], kit, Ground, out crestFloored) is StairContinuation crestOn)
                 {
-                    RoadStairSpan up = spans[spans.Count - 1];
-                    // Its top a floor already (a top landing, or the far floor of a flight up out of a valley): that floor is the
-                    // crest's 2x2, the second searched down off it as off one laid on (laid from its own foot, the second's top stood a rise
-                    // under the first's).
-                    crestFloored = first.CrestFloored || first.LastRowKind == StairPieceKind.Landing;
-                    if (crestFloored && !up.Existing) first.CrestFloored = true;
-                    // A 2x2 at the crest between the two top stairs (a ridge always has at least one 2x2 between the up and down
-                    // stairs): a floor on from the first's top stair, the second from its far edge.
-                    // Only on this road's own first staircase: an earlier road's is met at its top stair, back to back.
-                    if (!crestFloored && !up.Existing
-                        && StairLayout.CarryTopTo(first, up.ToPoint + StairLayout.Forward(first.EndHeading) * StairLayout.PieceRun, up.ToHeight, Ground, Width, kit))
-                        crestFloored = first.CrestFloored = true;
-                    if (crestFloored) { up.ToPoint = new Vector2(first.End.x, first.End.z); up.ToHeight = first.End.y; a = up.ToPoint; meet = a; }
-                    crestRow = new StairContinuation(up.ToPoint, first.EndHeading, up.ToHeight, crestFloored ? StairPieceKind.Landing : StairPieceKind.Stair);
+                    crestRow = crestOn;
+                    if (crestFloored) { a = crestOn.Edge; meet = a; }
                 }
                 // Up out of a valley the staircase before came down into: from a floor shared at the bottom, carried on from it
                 // as from a laid row, no road between their feet.

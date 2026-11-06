@@ -123,4 +123,44 @@ public class StairJoinTests : IDisposable
         Assert.Equal(StairStructures.Runs.Count(), owner.Snapshot()[0].Staircases);
         Assert.True(owner.Snapshot()[0].Staircases > 0);
     }
+
+    /// <summary>One crest owner (RoadStairRuns.DownFromCrest), for the merged ridge staircase as for the unmerged: a first
+    /// staircase whose top is a stair gets the crest's 2x2 carried on from it and its span ends on that floor, so the second is
+    /// searched down from the floor's edge (the merge laid it from the top stair's edge, with no floor between the two). A top
+    /// that is a floor already is used as it is, and an earlier road's staircase is never edited.</summary>
+    [Fact]
+    public void TheCrestFloorIsCarriedOntoAFirstStaircaseWhateverTheCase()
+    {
+        float Ground(float x, float z) => z < 0f ? 0f : z < 8f ? z : 8f;
+        StairPlan Climb() => StairLayout.Build(new Vector2(0f, -4f), new Vector2(0f, 12f), Ground, sunkFoot: true);
+        RoadStairSpan Span(StairPlan plan) => new() { Plan = plan, Kit = StairKit.Stone, ToPoint = new Vector2(plan.End.x, plan.End.z), ToHeight = plan.End.y };
+
+        StairPlan laid = Climb();
+        Assert.True(laid.Reached, laid.Reason);
+        Assert.Equal(StairPieceKind.Stair, laid.LastRowKind);
+        RoadStairSpan up = Span(laid);
+        Vector2 topEdge = up.ToPoint;
+        StairContinuation row = RoadStairRuns.DownFromCrest(up, StairKit.Stone, Ground, out bool floored)!.Value;
+        Assert.True(floored);
+        Assert.True(laid.CrestFloored);
+        Assert.Equal(StairPieceKind.Landing, row.Kind);
+        Assert.Equal(StairLayout.PieceRun, Vector2.Distance(topEdge, row.Edge), 2);
+        Assert.Equal(new Vector2(laid.End.x, laid.End.z), up.ToPoint);
+
+        // A floor already: used as it is.
+        RoadStairSpan again = Span(laid);
+        Assert.Equal(again.ToPoint, RoadStairRuns.DownFromCrest(again, StairKit.Stone, Ground, out bool kept)!.Value.Edge);
+        Assert.True(kept);
+
+        // An earlier road's: met at its top stair, no floor carried.
+        StairPlan theirs = Climb();
+        RoadStairSpan existing = Span(theirs);
+        existing.Existing = true;
+        Vector2 theirTop = existing.ToPoint;
+        StairContinuation back = RoadStairRuns.DownFromCrest(existing, StairKit.Stone, Ground, out bool carried)!.Value;
+        Assert.False(carried);
+        Assert.False(theirs.CrestFloored);
+        Assert.Equal(theirTop, back.Edge);
+        Assert.Equal(StairPieceKind.Stair, back.Kind);
+    }
 }

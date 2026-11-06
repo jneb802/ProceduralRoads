@@ -148,6 +148,33 @@ public static partial class RoadStairRuns
 
 
 
+    /// <summary>
+    /// The one crest owner: the row a staircase laid down over a ridge is searched down from, off the top of <paramref name="up"/>,
+    /// the staircase before it (the merged and the unmerged cases both read it here). Null where that top is not one to meet: a
+    /// staircase laid down, or a top that is neither a stair, a floor already, nor a reached floor. A top that is a floor already
+    /// (a top landing, or the far floor of a flight up out of a valley) is the crest's 2x2; a top stair gets a 2x2 carried on from it
+    /// (<see cref="StairLayout.CarryTopTo"/>) to a stair on, only on this road's own staircase: an earlier road's is met at its top
+    /// stair, back to back, never edited. Where there is a floor, <paramref name="up"/> ends on it (its point and height move to the
+    /// floor's far edge), and <paramref name="floored"/> says so; else the row is its top stair's edge.
+    /// </summary>
+    internal static StairContinuation? DownFromCrest(RoadStairSpan up, StairKit kit, Func<float, float, float> ground, out bool floored)
+    {
+        floored = false;
+        StairPlan first = up.Plan;
+        if (first.Reversed
+            || !(first.LastRowKind == StairPieceKind.Stair || first.CrestFloored
+                || first.LastRowKind == StairPieceKind.Landing && first.Reached)) return null;
+        floored = first.CrestFloored || first.LastRowKind == StairPieceKind.Landing;
+        if (floored && !up.Existing) first.CrestFloored = true;
+        // A 2x2 at the crest between the two top stairs (a ridge always has at least one 2x2 between the up and down stairs): a floor
+        // on from the first's top stair, the second from its far edge.
+        if (!floored && !up.Existing
+            && StairLayout.CarryTopTo(first, up.ToPoint + StairLayout.Forward(first.EndHeading) * StairLayout.PieceRun, up.ToHeight, ground, Width, kit))
+            floored = first.CrestFloored = true;
+        if (floored) { up.ToPoint = new Vector2(first.End.x, first.End.z); up.ToHeight = first.End.y; }
+        return new StairContinuation(up.ToPoint, first.EndHeading, up.ToHeight, floored ? StairPieceKind.Landing : StairPieceKind.Stair);
+    }
+
     /// <summary>Ridge meets snapped off the crest's floor's side or a second floor on (<see cref="SnapOffCrest"/>).</summary>
     public static int RidgesSnappedOffCrest;
 

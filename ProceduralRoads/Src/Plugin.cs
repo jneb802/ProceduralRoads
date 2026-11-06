@@ -112,7 +112,7 @@ namespace ProceduralRoads
                 else RoadNetworkGenerator.NetworkOptions.HildirQuestSites = AttemptRoadsToHildirQuestSites.Value;
                 ProceduralRoadsLogger.LogInfo($"Locations.AttemptRoadsToHildirQuestSites = {AttemptRoadsToHildirQuestSites.Value}");
             };
-            RockClearing = Config.Bind("Roads", "RockClearing", RockClearingMode.Carve,
+            RockClearing = Config.Bind("Roads", "RockClearing", RoadRockClearing.DefaultMode,
                 "Natural rocks that clip a road's surface. Off leaves them; Remove takes away a rock that blocks " +
                 "at least half the road's width; Carve takes only the pieces of a rock that stand in the road, as a " +
                 "pickaxe would, and drops no stone. Helps mountain and Mistlands roads most, where boulders otherwise " +

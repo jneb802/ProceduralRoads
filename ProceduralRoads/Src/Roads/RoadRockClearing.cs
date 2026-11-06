@@ -15,8 +15,10 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadRockClearing
 {
+    /// <summary>The "Roads/RockClearing" setting's default.</summary>
+    public const RockClearingMode DefaultMode = RockClearingMode.Carve;
     /// <summary>Set from the "Roads/RockClearing" setting.</summary>
-    internal static RockClearingMode Mode = RockClearingMode.Carve;
+    internal static RockClearingMode Mode = DefaultMode;
     private static float s_next;
     private static int s_cursor;
     /// <summary>

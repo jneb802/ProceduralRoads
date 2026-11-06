@@ -24,7 +24,6 @@ public static class StructurePlacement
     private static readonly HashSet<string> s_warnedPrefabs = new();
 
     /// <summary>Whether this peer may create or destroy world objects.</summary>
-    private static bool IsServer => ZNet.instance != null && ZNet.instance.IsServer();
 
     /// <summary>
     /// Called from the SpawnZone postfix in every mode. On the server, a zone
@@ -103,7 +102,7 @@ public static class StructurePlacement
     /// </summary>
     private static int SpawnGhostsIntoGeneratedZones(ICollection<ZDOID>? condemned)
     {
-        if (!IsServer || ZoneSystem.instance == null)
+        if (!RoadLifecycleManager.HoldsTheNetwork || ZoneSystem.instance == null)
             return 0;
 
         int zones = 0;
@@ -117,7 +116,7 @@ public static class StructurePlacement
 
     private static int SpawnInZone(Vector2s zoneID, bool ghost, ICollection<ZDOID>? condemned = null)
     {
-        if (!IsServer || ZNetScene.instance == null || ZDOMan.instance == null)
+        if (!RoadLifecycleManager.HoldsTheNetwork || ZNetScene.instance == null || ZDOMan.instance == null)
             return 0;
         // A zone explored before this network gets no pieces (NetworkCutoff).
         if (NetworkCutoff.Excludes(zoneID))
@@ -192,7 +191,7 @@ public static class StructurePlacement
     public static void ApplyPendingAppends()
     {
         if (RoadLifecycleManager.WorkersOwnWorld) return;
-        if (!IsServer || ZNetScene.instance == null || ZDOMan.instance == null) return;
+        if (!RoadLifecycleManager.HoldsTheNetwork || ZNetScene.instance == null || ZDOMan.instance == null) return;
         var zones = new List<Vector2s>(StructureAppendQueue.Zones);
         if (zones.Count == 0) return;
         // One zone / at most 64 new objects per retry. A missing prefab in one
@@ -316,7 +315,7 @@ public static class StructurePlacement
     public static int ClearSpawnedPieces(ICollection<ZDOID>? condemned = null, List<BuiltBridge>? sites = null)
     {
         if (RoadLifecycleManager.WorkersOwnWorld) return 0;
-        if (!IsServer || ZDOMan.instance == null || ZNetScene.instance == null)
+        if (!RoadLifecycleManager.HoldsTheNetwork || ZDOMan.instance == null || ZNetScene.instance == null)
             return 0;
         StructurePlans.InvalidatePlans();
         HashSet<Vector2s>? zones = null;

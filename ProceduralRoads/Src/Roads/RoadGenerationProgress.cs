@@ -126,7 +126,7 @@ public static partial class RoadLifecycleManager
     /// a host whose load went past it, when its player spawns.</summary>
     private static void BeginInitialGeneration()
     {
-        if (IsGenerating || m_initialAttempted || ZNet.instance == null || !ZNet.instance.IsServer()) return;
+        if (IsGenerating || m_initialAttempted || !RoadLifecycleManager.HoldsTheNetwork) return;
         if (!RoadNetworkGenerator.GenerateOnLoad)
         {
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +

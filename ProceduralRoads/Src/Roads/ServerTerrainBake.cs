@@ -98,7 +98,6 @@ public static class ServerTerrainBake
     /// <summary>Prefab hashes of the game's own vegetation (ZoneSystem.m_vegetation), per world.</summary>
     private static HashSet<int>? s_vegetationPrefabs;
 
-    private static bool IsServer => ZNet.instance != null && ZNet.instance.IsServer();
 
     /// <summary>Forget the queue: the world is going away.</summary>
     public static void Reset()
@@ -130,7 +129,7 @@ public static class ServerTerrainBake
     internal static bool HoldsFirstSpawn => s_loadScreen.Holds(BeforeFirstSpawn(), WorkOwed());
 
     private static bool BeforeFirstSpawn() =>
-        HoldSpawnEnabled && IsServer && !ZNet.instance.IsDedicated() && Game.instance != null &&
+        HoldSpawnEnabled && RoadLifecycleManager.HoldsTheNetwork && !ZNet.instance.IsDedicated() && Game.instance != null &&
         Player.m_localPlayer == null && Game.instance.m_firstSpawn && Game.instance.WaitingForRespawn();
 
     // A network whose queue is not built yet (its first Tick is still to come) is owed work too.
@@ -165,7 +164,7 @@ public static class ServerTerrainBake
     /// spawn, what the loading screen took and what the in-world slices have left.</summary>
     public static void OnSpawn(Game game)
     {
-        if (!IsServer || !game.m_firstSpawn) return;
+        if (!RoadLifecycleManager.HoldsTheNetwork || !game.m_firstSpawn) return;
         s_loadScreen.Release();
         if (s_version == 0) return;
         s_busyAtSpawn = s_busyMs;
@@ -376,7 +375,7 @@ public static class ServerTerrainBake
     {
         try
         {
-            if (!IsServer || ZoneSystem.instance == null || ZDOMan.instance == null || ZNetScene.instance == null)
+            if (!RoadLifecycleManager.HoldsTheNetwork || ZoneSystem.instance == null || ZDOMan.instance == null || ZNetScene.instance == null)
                 return;
             if (s_faults.IsPaused)
                 return;
@@ -414,7 +413,7 @@ public static class ServerTerrainBake
     {
         try
         {
-            if (!Enabled || !IsServer || hmap == null || ZDOMan.instance == null ||
+            if (!Enabled || !RoadLifecycleManager.HoldsTheNetwork || hmap == null || ZDOMan.instance == null ||
                 !RoadNetworkGenerator.RoadsAvailable || RoadSpatialGrid.RoadNetworkVersion == 0)
                 return;
             if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0)

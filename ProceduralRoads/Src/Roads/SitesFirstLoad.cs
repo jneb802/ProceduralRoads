@@ -49,7 +49,7 @@ public static class SitesFirstLoad
     internal static IEnumerable<bool> Steps(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
     {
         Reset();
-        if (ZNet.instance == null || !ZNet.instance.IsServer() || ZoneSystem.instance == null || WorldGenerator.instance == null) yield break;
+        if (!RoadLifecycleManager.HoldsTheNetwork || ZoneSystem.instance == null || WorldGenerator.instance == null) yield break;
         var selected = work.AllSelected.ToList();
         preparation.BeginStage(ListingStage, selected.Count, "destinations"); yield return true;
         int already = 0;

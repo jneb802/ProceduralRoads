@@ -206,7 +206,7 @@ public static class ZoneSystem_Patch
         /// game's own zone creation for each player and the server's own position.</summary>
         private static void RevealSiteIcons(ZoneSystem zones)
         {
-            if (HiddenSiteIcons.Count == 0 || ZNet.instance == null || !ZNet.instance.IsServer() || Time.time < s_nextReveal) return;
+            if (HiddenSiteIcons.Count == 0 || !RoadLifecycleManager.HoldsTheNetwork || Time.time < s_nextReveal) return;
             s_nextReveal = Time.time + 0.5f;
             var references = new List<Vector3> { ZNet.instance.GetReferencePosition() };
             foreach (ZNetPeer peer in ZNet.instance.GetPeers()) references.Add(peer.GetRefPos());
@@ -227,7 +227,7 @@ public static class ZoneSystem_Patch
         [HarmonyPostfix]
         public static void Postfix(Dictionary<Vector3, string> icons)
         {
-            if (ZNet.instance != null && ZNet.instance.IsServer()) HiddenSiteIcons.Filter(icons);
+            if (RoadLifecycleManager.HoldsTheNetwork) HiddenSiteIcons.Filter(icons);
         }
     }
 

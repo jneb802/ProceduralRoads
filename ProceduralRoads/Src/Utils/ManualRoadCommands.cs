@@ -66,7 +66,7 @@ public static class ManualRoadCommands
         int versionBefore = RoadSpatialGrid.RoadNetworkVersion;
         try
         {
-            if (ZNet.instance == null || !ZNet.instance.IsServer()) throw new InvalidOperationException("Run this command on the host or dedicated-server console.");
+            if (!RoadLifecycleManager.HoldsTheNetwork) throw new InvalidOperationException("Run this command on the host or dedicated-server console.");
             if (ZDOMan.instance == null || ZNetScene.instance == null) throw new InvalidOperationException("The world is not ready.");
             string actor = Player.m_localPlayer == null ? "console" : "host";
             var draft = ManualRoads.Draft(actor);

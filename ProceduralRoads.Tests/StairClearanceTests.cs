@@ -153,7 +153,7 @@ public class StairClearanceTests : IDisposable
                 RockClearance box = Assert.Single(mine);
                 Assert.Equal(stored.Half, box.Half);
                 Assert.Equal(RoadStairRuns.Width, 2f * box.Half.x, 3);
-                Assert.Equal(RoadRockPolicy.ClearanceHeight, box.Top - box.Surface, 3);
+                Assert.Equal(RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, box.Top - box.Surface, 3);
                 continue;
             }
             // A stair's: its corridor, the box's full height, and its tread layer, the walk's width to StepUp over its
@@ -174,21 +174,22 @@ public class StairClearanceTests : IDisposable
         Assert.Equal(Flat + RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, road.Top, 3);
     }
 
-    /// <summary>A stair's walking box starts where a road's does (RockClearances.Bottom), and its top and highest walk are
-    /// StairLayout.BoxTop and HighestWalk, the same floats as the sums the two callers wrote before they read the owners:
-    /// pinned over walks at zero, under and over the sea, large and NaN.</summary>
+    /// <summary>A stair's walking box is a road's (RockClearances.Bottom to Top, a lift over the walk and a player's headroom
+    /// over that: 2.1 m over it, not 2.0), and its stored top reads back to the highest walk: pinned over walks at zero, under
+    /// and over the sea, large and NaN.</summary>
     [Theory]
-    [InlineData(0f, 0.1f, 2f, -2f)]
-    [InlineData(1.9f, 2f, 3.9f, -0.100000024f)]
-    [InlineData(30f, 30.1f, 32f, 28f)]
-    [InlineData(-30.5f, -30.4f, -28.5f, -32.5f)]
-    [InlineData(1234.567f, 1234.667f, 1236.567f, 1232.567f)]
-    [InlineData(float.NaN, float.NaN, float.NaN, float.NaN)]
-    public void AStairBoxStartsWhereARoadBoxStarts(float walk, float bottom, float boxTop, float highest)
+    [InlineData(0f, 0.1f, 2.1f)]
+    [InlineData(1.9f, 2f, 4f)]
+    [InlineData(30f, 30.1f, 32.1f)]
+    [InlineData(-30.5f, -30.4f, -28.4f)]
+    [InlineData(1234.567f, 1234.667f, 1236.667f)]
+    [InlineData(float.NaN, float.NaN, float.NaN)]
+    public void AStairBoxIsARoadBox(float walk, float bottom, float boxTop)
     {
-        Assert.Equal(bottom, RockClearances.Bottom(walk));
-        Assert.Equal(boxTop, StairLayout.BoxTop(walk));
-        Assert.Equal(highest, StairLayout.HighestWalk(walk));
+        Assert.Equal(bottom, RockClearances.Bottom(walk), 3);
+        Assert.Equal(boxTop, StairLayout.BoxTop(walk), 3);
+        Assert.Equal(RockClearances.Top(walk), StairLayout.BoxTop(walk));
+        Assert.Equal(walk, StairLayout.HighestWalk(StairLayout.BoxTop(walk)), 3);
     }
 
     /// <summary>Whether a stored walking box is a stair's stretch: its top stands a player's headroom over a walk higher than
@@ -272,7 +273,7 @@ public class StairClearanceTests : IDisposable
                             $"stair at {walked.Position}: its edge {side:F2} m aside, {over:F2} m over its walk, in a box");
                 // Hugging the treads: nothing more than a stretch's rise under the walk, nor over its headroom.
                 Assert.False(own.Any(b => Inside(b, walk - up * (rise + 0.01f))), $"stair at {walked.Position}: under its walk {along:F2} m along");
-                Assert.False(own.Any(b => Inside(b, walk + up * (RoadRockPolicy.ClearanceHeight + rise + 0.01f))),
+                Assert.False(own.Any(b => Inside(b, walk + up * (RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight + rise + 0.01f))),
                     $"stair at {walked.Position}: over its headroom {along:F2} m along");
             }
         }

@@ -1762,8 +1762,8 @@ public static class DvergrViaduct
     /// <summary>
     /// Whether <paramref name="p"/> (its box on the bridge's axes, <see cref="Extents"/>) stands on a road built there
     /// (the network as it now stands, as <see cref="StructureEnds.BuiltRoadNear"/> reads it) more than it is let: at any
-    /// road point, in the road's walking box (over its surface by more than <see cref="BridgeLayout.StairFootTolerance"/>,
-    /// what a foot stands on as landed, and under the player's height, <see cref="RoadRockPolicy.PlayerHeight"/>), it blocks
+    /// road point, in the road's headroom box (over its surface by more than the lift, <see cref="RockClearances.Bottom"/>, and under
+    /// its top, <see cref="RockClearances.Top"/>: the box the rock clearing keeps clear, a stair's too), it blocks
     /// more of the road's width than <see cref="ParapetRoadOverlap"/>, counted as the rock clearing counts a rock
     /// (<see cref="RoadRockPolicy.Slots"/> narrow capsules across the road, <see cref="RoadRockPolicy.Slot"/>, the road's
     /// heading there <see cref="RoadRockPolicy.Heading"/>). A piece clipping the road's edge less than that stands; a piece
@@ -1782,7 +1782,7 @@ public static class DvergrViaduct
         foreach (RoadSpatialGrid.RoadPoint q in near)
         {
             if ((q.p - c).sqrMagnitude > reach * reach) continue;
-            if (top <= q.h + BridgeLayout.StairFootTolerance || bottom >= q.h + RoadRockPolicy.PlayerHeight) continue;
+            if (top <= RockClearances.Bottom(q.h) || bottom >= RockClearances.Top(q.h)) continue;
             Vector2 heading = RoadRockPolicy.Heading(q, near), across = new(-heading.y, heading.x);
             int blocked = 0;
             for (int k = 0; k < RoadRockPolicy.Slots; k++)

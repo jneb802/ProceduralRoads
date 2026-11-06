@@ -381,6 +381,24 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
                 && Mathf.Abs(r.Position.x - c.Position.x) < DvergrViaduct.Extents(r.Prefab).u + DvergrViaduct.Extents(c.Prefab).u - 1e-3f);
     }
 
+    /// <summary>A bank parapet's piece is on the road over the road's headroom box (RockClearances.Bottom to Top: a lift over
+    /// the surface to a player's headroom over that, 2.1 m), the box the rock clearing and a stair keep clear: a piece 1.95 m
+    /// over the road is on it (it stood clear from 1.85), one wholly over 2.1 m is not.</summary>
+    [Theory]
+    [InlineData(1.95f, true)]
+    [InlineData(1.0f, true)]
+    [InlineData(2.2f, false)]
+    [InlineData(-1.5f, false)]
+    public void ABankParapetsRoadBandIsTheRoadsHeadroomBox(float above, bool onTheRoad)
+    {
+        var road = new List<Vector2>();
+        for (float x = -10f; x <= 10f; x += 1f) road.Add(new Vector2(x, 0f));
+        RoadSpatialGrid.CommitLevelled(road, road.Select(_ => 30f).ToList(), RoadConstants.DefaultRoadWidth);
+        // An unknown prefab is a unit box (half 0.5): its underside is `above` over the surface.
+        var piece = new StructurePiece { Prefab = "unit", Position = new Vector3(0f, 30f + above + 0.5f, 0f) };
+        Assert.Equal(onTheRoad, DvergrViaduct.OnTheRoad(piece, new Vector2(1f, 0f), new Vector2(0f, 1f)));
+    }
+
     // ------------------------------------------------------------ helpers
 
     /// <summary>Every hand-built piece laid, and any other piece laid a course of black marble under one of them (their boxes

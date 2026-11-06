@@ -1551,12 +1551,13 @@ public static partial class StairLayout
         }
     }
 
-    /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a player's headroom
-    /// (<see cref="RoadRockPolicy.ClearanceHeight"/>) over it. <see cref="HighestWalk"/> reads a stored box back.</summary>
-    internal static float BoxTop(float highest) => highest + RoadRockPolicy.ClearanceHeight;
+    /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a road's
+    /// (<see cref="RockClearances.Top"/>), a player's headroom (<see cref="RoadRockPolicy.ClearanceHeight"/>) over the lift
+    /// (<see cref="RoadRockPolicy.ClearanceLift"/>) over the walk. <see cref="HighestWalk"/> reads a stored box back.</summary>
+    internal static float BoxTop(float highest) => RockClearances.Top(highest);
 
     /// <summary>A stored walking box's highest walk, from its top <paramref name="top"/> (the inverse of <see cref="BoxTop"/>).</summary>
-    internal static float HighestWalk(float top) => top - RoadRockPolicy.ClearanceHeight;
+    internal static float HighestWalk(float top) => top - RoadRockPolicy.ClearanceHeight - RoadRockPolicy.ClearanceLift;
 
     /// <summary>Unity's yaw: 0 faces +z, 90 faces +x.</summary>
     public static Vector2 Forward(float headingDegrees)

@@ -33,13 +33,20 @@ public static class BiomeBlendedHeight
     private const float HeightmapHalfSize = HeightmapSize / 2f;           // 32m from center
     
     // Zone size for calculating heightmap centers
-    private const float ZoneSize = 64f;
+    private const float ZoneSize = RoadConstants.ZoneSize;
     
     /// <summary>
     /// Get terrain height with biome blending that matches rendered terrain.
     /// This replicates HeightmapBuilder.Build()'s biome blending logic exactly.
     /// </summary>
-    public static float GetBlendedHeight(float wx, float wy, WorldGenerator worldGen)
+    public static float GetBlendedHeight(float wx, float wy, WorldGenerator worldGen) => GetBlendedHeight(wx, wy, worldGen, null);
+
+    /// <summary>
+    /// <see cref="GetBlendedHeight(float, float, WorldGenerator)"/>, the heightmap corners' biomes read through the
+    /// caller's <paramref name="corners"/> (null: read from the world each time). The same heights to the bit: a corner's
+    /// biome is a fact of the world alone, and the corners are the same floats either way.
+    /// </summary>
+    public static float GetBlendedHeight(float wx, float wy, WorldGenerator worldGen, Corners? corners)
     {
         if (worldGen == null)
             return 0f;
@@ -68,16 +75,39 @@ public static class BiomeBlendedHeight
         float z1 = cornerZ + HeightmapSize;
         
         // Get biomes at the four corners
-        Heightmap.Biome biome00 = worldGen.GetBiome(x0, z0);  // bottom-left
-        Heightmap.Biome biome10 = worldGen.GetBiome(x1, z0);  // bottom-right  
-        Heightmap.Biome biome01 = worldGen.GetBiome(x0, z1);  // top-left
-        Heightmap.Biome biome11 = worldGen.GetBiome(x1, z1);  // top-right
+        Heightmap.Biome biome00, biome10, biome01, biome11;
+        if (corners != null)
+        {
+            int ix = (int)Mathf.Floor((wx + HeightmapHalfSize) / ZoneSize);
+            int iz = (int)Mathf.Floor((wy + HeightmapHalfSize) / ZoneSize);
+            biome00 = corners.Get(worldGen, ix, iz, x0, z0);
+            biome10 = corners.Get(worldGen, ix + 1, iz, x1, z0);
+            biome01 = corners.Get(worldGen, ix, iz + 1, x0, z1);
+            biome11 = corners.Get(worldGen, ix + 1, iz + 1, x1, z1);
+        }
+        else
+        {
+            biome00 = worldGen.GetBiome(x0, z0);  // bottom-left
+            biome10 = worldGen.GetBiome(x1, z0);  // bottom-right
+            biome01 = worldGen.GetBiome(x0, z1);  // top-left
+            biome11 = worldGen.GetBiome(x1, z1);  // top-right
+        }
         
         // If all corners have the same biome, no blending needed
         // (This is the fast path that HeightmapBuilder uses)
+        //
+        // The game builds the WHOLE heightmap from the corners' biome here,
+        // not from the biome at the point: HeightmapBuilder.Build calls
+        // GetBiomeHeight(cornerBiome, wx, wy). WorldGenerator.GetHeight asks
+        // GetBiome(wx, wy) instead, and the two differ wherever a biome
+        // narrower than a zone lies between four corners of another - the
+        // tip of a Black Forest tongue inside a Meadows zone, a knoll that
+        // reads Mountain, an inlet that reads Ocean. A road across such a
+        // patch was levelled to the patch's formula - a Black Forest height
+        // metres above the Meadows ground the game actually rendered there.
         if (biome00 == biome10 && biome00 == biome01 && biome00 == biome11)
         {
-            return worldGen.GetHeight(wx, wy);
+            return worldGen.GetBiomeHeight(biome00, wx, wy, out _);
         }
         
         // Different biomes at corners - need to blend
@@ -109,6 +139,69 @@ public static class BiomeBlendedHeight
         return height;
     }
     
+    /// <summary>
+    /// A caller-owned memo of heightmap corner biomes for <see cref="GetBlendedHeight(float, float, WorldGenerator, Corners)"/>:
+    /// every sample reads four corner biomes, and the samples of one heightmap (and its neighbours, which share corners)
+    /// read the same ones. Direct-mapped on the corner lattice: <c>columns</c> by <c>rows</c> slots, a corner at
+    /// (ix mod columns, iz mod rows), replaced by the next corner landing there. Two by two holds every corner of the last
+    /// heightmap; a scan down columns of the world wants two columns and as many rows as a column has corners. Not
+    /// thread-safe: one owner, one thread. It forgets everything when asked about another world generator.
+    /// </summary>
+    public sealed class Corners
+    {
+        private readonly int m_columns, m_rows;
+        private readonly int[] m_x, m_z;
+        private readonly Heightmap.Biome[] m_biome;
+        private readonly bool[] m_has;
+        private WorldGenerator? m_world;
+
+        public Corners(int columns = 2, int rows = 2)
+        {
+            if (columns < 1 || rows < 1) throw new System.ArgumentOutOfRangeException(columns < 1 ? nameof(columns) : nameof(rows));
+            m_columns = columns;
+            m_rows = rows;
+            int n = columns * rows;
+            m_x = new int[n];
+            m_z = new int[n];
+            m_biome = new Heightmap.Biome[n];
+            m_has = new bool[n];
+        }
+
+        /// <summary>A memo for a scan down whole columns of a square of <paramref name="radius"/> round the world centre:
+        /// two columns of corners, and every corner of one column.</summary>
+        public static Corners ForColumnScan(float radius) => new(2, Mathf.CeilToInt(radius * 2f / ZoneSize) + 2);
+
+        /// <summary>Corner biomes read from the world generator, and corner biomes the memo answered (for measuring it).</summary>
+        public long Reads, Hits;
+
+        /// <summary>The biome of the corner at lattice (<paramref name="ix"/>, <paramref name="iz"/>), which stands at
+        /// (<paramref name="x"/>, <paramref name="z"/>): from the memo, else read from the world and kept.</summary>
+        internal Heightmap.Biome Get(WorldGenerator world, int ix, int iz, float x, float z)
+        {
+            if (!ReferenceEquals(world, m_world))
+            {
+                System.Array.Clear(m_has, 0, m_has.Length);
+                m_world = world;
+            }
+            int cx = ix % m_columns, cz = iz % m_rows;
+            if (cx < 0) cx += m_columns;
+            if (cz < 0) cz += m_rows;
+            int slot = cz * m_columns + cx;
+            if (m_has[slot] && m_x[slot] == ix && m_z[slot] == iz)
+            {
+                Hits++;
+                return m_biome[slot];
+            }
+            Reads++;
+            Heightmap.Biome biome = world.GetBiome(x, z);
+            m_x[slot] = ix;
+            m_z[slot] = iz;
+            m_biome[slot] = biome;
+            m_has[slot] = true;
+            return biome;
+        }
+    }
+
     /// <summary>
     /// Smooth step function matching Valheim's DUtils.SmoothStep(0, 1, t)
     /// Standard smoothstep: 3t² - 2t³
@@ -163,6 +256,7 @@ public static class BiomeBlendedHeight
         info.Height01 = worldGen.GetBiomeHeight(info.Biome01, wx, wy, out mask);
         info.Height11 = worldGen.GetBiomeHeight(info.Biome11, wx, wy, out mask);
         
+        info.PointBiome = worldGen.GetBiome(wx, wy);
         info.RawHeight = worldGen.GetHeight(wx, wy);
         info.BlendedHeight = GetBlendedHeight(wx, wy, worldGen);
         info.HeightDifference = info.BlendedHeight - info.RawHeight;
@@ -178,6 +272,10 @@ public static class BiomeBlendedHeight
         public float Tx, Tz;
         
         public Heightmap.Biome Biome00, Biome10, Biome01, Biome11;
+        /// <summary>The biome WorldGenerator.GetHeight uses at the point. When
+        /// it is not the corners' shared biome, the raw height is a formula
+        /// the rendered terrain does not use here.</summary>
+        public Heightmap.Biome PointBiome;
         public bool IsBiomeBoundary;
         
         public float Height00, Height10, Height01, Height11;

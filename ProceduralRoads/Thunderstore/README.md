@@ -14,33 +14,32 @@ Version 1.4.4 supports Valheim 1.0. Install Jotunn 2.30.2 or newer on each clien
 - API for mod developers to register their locations for road network connection.
 - Support for custom locations from Expand World Data or other mods.
 - Anonymous analytics to help improve the mod (opt-out available in config).
-- Required on both client and server.
+- On a dedicated server, install it on the server only; players do not need it.
 - Checkout my youtube video showcasing the mod. Click the banner image above.
 
 ## Road generation process
 - Road generation starts after all locations have been placed.
 - First we detect all the islands in the world.
-- Get the users island percentage config, i.e if 50% islands then we select 50% of total islands to give roads.
+- Get the users island percentage config, i.e if 33% islands then we select 33% of total islands to give roads.
 - For each selected island, we select generate a road network within the island locations.
-- Within the island, we find locations and build a network of roads between them. Some locations are prioritized over others, such as bosses and dungeons. Some locations are excluded entirely.
+- Within the island, we find locations and build a network of roads between them. Some locations are excluded entirely.
 - Once we have locations, pathfind between the locations using A* pathfinding, avoiding rivers, steep slopes, and water.
 - Once a road is defined, paint it as a stone path and smooth its height to fit the surrounding terrain.
 
 ## Instructions
-- Roads will automatically generate for new worlds.
-- Please make a backup before adding roads to an existing world!
-- To add roads to an existing world, use the road_generate command shown below. You can validate using the road_pins command to see where roads were placed. Then you can use road_clearpins to remove the road_pins on your map.
-- Please note, I have not done extensive testing on how roads impact terrain within or around player builds. Roads could potentially generate directly through an existing build.
+- Roads will automatically generate for new worlds, once, the first time the world loads.
+- A world explored before it had roads asks on its first load what to do with the land explored so far: build roads through it too (the world is backed up first), build them in new land only, or skip them. Zones with your buildings or terrain edits are left as they are, and the roads go round them.
+- `road_generate` replaces the whole network; please make a backup first. You can validate using the road_pins command to see where roads were placed. Then you can use road_clearpins to remove the road_pins on your map.
 
 ## Configuration
 
 | Setting | Default | Range | Description |
 |---------|---------|-------|-------------|
 | `RoadWidth` | 4 | 2-10 | Width of generated roads in meters. |
-| `IslandRoadPercentage` | 50 | 0-100 | Percentage of islands the mod will attempt to generate roads on (largest islands first). Setting this to 100 does not guarantee every island will have roads — see "Why some islands have no roads" below. |
-| `PathfindingMaxIterations` | 10000 | 1000-100000 | Maximum number of iterations for each road segment's pathfinding algorithm. Higher values will generate more roads but increase generation time. Lower values will speed up generation time but cause less roads to generate. |
-| `MaxLocationsPerIsland` | 12 | 2-30 | Maximum number of locations selected for road connections on each island. |
-| `CustomLocations` | *(empty)* | | Comma-separated list of location names to include in road generation. Use this for locations added by Expand World Data or other mods. Custom locations are prioritized at the same level as dungeons. |
+| `IslandRoadPercentage` | 33 | 0-100 | Percentage of islands the mod will attempt to generate roads on (largest islands first). Setting this to 100 does not guarantee every island will have roads — see "Why some islands have no roads" below. |
+| `PathfindingMaxIterations` | 30000 | 1000-100000 | Maximum number of iterations for each road segment's pathfinding algorithm. Higher values will generate more roads but increase generation time. Lower values will speed up generation time but cause less roads to generate. |
+| `MaxLocationsPerIsland` | 48 | 2-128 | Maximum number of locations selected for road connections on each island. |
+| `CustomLocations` | *(empty)* | | Comma-separated list of location names to include in road generation. Use this for locations added by Expand World Data or other mods. |
 
 ## Why some islands have no roads
 Even with IslandRoadPercentage set to 100, some islands may not receive roads. This setting controls which islands the mod *attempts* to place roads on, but road generation can still fail for several reasons:
@@ -58,9 +57,11 @@ All commands require cheats enabled (`devcommands`).
 
 | Command | Description |
 |---------|-------------|
-| `road_generate` | Generate roads for an existing world. Use after adding mod to an existing save. |
+| `road_generate` | Regenerate the whole network (back up first). |
+| `road_regen_island` | Clear all roads and regenerate only the island you are on (back up first). |
+| `road_progress` | Generation phase and island count. |
 | `road_pins` | Place map pins at road start points for visualization. |
-| `road_islands` | Detect islands and place pins at their centers. Optional args: `[cellSize] [minCells]` |
+| `road_islands` | Detect islands and place pins at their centers. |
 | `road_clearpins` | Remove all map pins added by ProceduralRoads. |
 | `road_debug` | Show road point info near player position (for troubleshooting terrain issues). |
 

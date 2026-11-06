@@ -43,7 +43,6 @@ namespace ProceduralRoads
 
         // Configuration entries
         public static ConfigEntry<float> RoadWidth = null!;
-        public static ConfigEntry<RockClearingMode> RockClearing = null!;
         public static ConfigEntry<string> CustomLocations = null!;
         public static ConfigEntry<Heightmap.Biome> ExcludedRoadBiomes = null!;
         public static ConfigEntry<bool> AttemptRoadsToHildirQuestSites = null!;
@@ -112,13 +111,6 @@ namespace ProceduralRoads
                 else RoadNetworkGenerator.NetworkOptions.HildirQuestSites = AttemptRoadsToHildirQuestSites.Value;
                 ProceduralRoadsLogger.LogInfo($"Locations.AttemptRoadsToHildirQuestSites = {AttemptRoadsToHildirQuestSites.Value}");
             };
-            RockClearing = Config.Bind("Roads", "RockClearing", RoadRockClearing.DefaultMode,
-                "Natural rocks that clip a road's surface. Off leaves them; Remove takes away a rock that blocks " +
-                "at least half the road's width; Carve takes only the pieces of a rock that stand in the road, as a " +
-                "pickaxe would, and drops no stone. Helps mountain and Mistlands roads most, where boulders otherwise " +
-                "make them hard to use. Location parts and player pieces are never touched.");
-            RoadRockClearing.Mode = RockClearing.Value;
-            RockClearing.SettingChanged += (_, _) => RoadRockClearing.Mode = RockClearing.Value;
 
             WeatheredStructures = Config.Bind("Structures", "Weathered", StructureWear.DefaultWeathered,
                 "Structures laid weathered, as an old ruin a player can repair: Bridges (bridges and viaducts: some deck, " +

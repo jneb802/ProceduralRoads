@@ -159,7 +159,7 @@ public static class ZoneSystem_Patch
         public static bool InsideClearArea(ZoneSystem zones, List<ZoneSystem.ClearArea> areas, Vector3 point, ZoneSystem.ZoneVegetation veg, float scale,
             ref float yaw, float tiltX, float tiltZ) =>
             RoadClearAreaManager.OnRoad(areas, s_firstRoadArea, s_firstStructureArea, s_road, point, veg.m_prefab.name, scale,
-                RoadRockClearing.Mode, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset), turns: s_yawFound,
+                BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset), turns: s_yawFound,
                 firstRockKeepingArea: s_firstRockKeepingArea);
 
         private static Heightmap.Biome BiomeAt(Vector3 point) => WorldGenerator.instance.GetBiome(point);

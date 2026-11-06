@@ -168,8 +168,7 @@ public class RoadEdgesAndVegetationTests
         var server = new List<VegetationClearing.Area> { new(new Vector2(cx, cz), r) };
         var generation = new List<ZoneSystem.ClearArea> { new(new Vector3(cx, 0f, cz), r) };
         Assert.Equal(inside, VegetationClearing.InsideClearArea(server, new Vector2(px, pz)));
-        Assert.Equal(inside, RoadClearAreaManager.InsideClearArea(generation, 1, 1, new Vector3(px, 0f, pz), "Beech1",
-            RockClearingMode.Carve, _ => Heightmap.Biome.Meadows));
+        Assert.Equal(inside, RoadClearAreaManager.InsideClearArea(generation, 1, 1, new Vector3(px, 0f, pz), "Beech1", _ => Heightmap.Biome.Meadows));
     }
 
     [Fact]
@@ -379,7 +378,7 @@ public class RoadEdgesAndVegetationTests
     {
         float yaw = 0f;
         return !RoadClearAreaManager.OnRoad(RoadClearAreaManager.GetOrCreateClearAreas(zone), 0, int.MaxValue, RoadCentres(zone),
-            new Vector3(at.x, 40f, at.y), prefab, scale, RockClearingMode.Carve, _ => Heightmap.Biome.Meadows, ref yaw);
+            new Vector3(at.x, 40f, at.y), prefab, scale, _ => Heightmap.Biome.Meadows, ref yaw);
     }
 
     /// <summary>The server's test of one saved object.</summary>
@@ -486,7 +485,7 @@ public class RoadEdgesAndVegetationTests
     /// <summary>
     /// The game's vegetation list holds stones and boulders alike. A small stone in the middle of the road goes with the
     /// vegetation; a boulder there that the rock clearing takes is the rock clearing's alone (Carve carves it), so the
-    /// vegetation pass never takes it. A boulder the rock clearing would leave -- clearing Off, a biome it does not clear --
+    /// vegetation pass never takes it. A boulder the rock clearing would leave -- a biome it does not clear --
     /// goes with the vegetation, as generation keeps it off the road.
     /// </summary>
     [Fact]
@@ -496,21 +495,18 @@ public class RoadEdgesAndVegetationTests
         var centre = new Vector2(10f, 10f);
         System.Func<Vector2, Heightmap.Biome> In(Heightmap.Biome b) => _ => b;
         Assert.True(VegetationClearing.ShouldRemove(Stone, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
-            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.Mountain)));
+            biomeAt: In(Heightmap.Biome.Mountain)));
         Assert.False(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
-            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.Mountain)));
+            biomeAt: In(Heightmap.Biome.Mountain)));
         Assert.False(VegetationClearing.ShouldRemove(MistlandsCliff, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
-            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.Mistlands)));
+            biomeAt: In(Heightmap.Biome.Mistlands)));
         Assert.True(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
-            rockClearing: RockClearingMode.Off, biomeAt: In(Heightmap.Biome.Mountain)));
+            biomeAt: In(Heightmap.Biome.AshLands)));
         Assert.True(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
-            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.AshLands)));
-        Assert.True(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
-            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.DeepNorth)));
+            biomeAt: In(Heightmap.Biome.DeepNorth)));
         foreach (string rock in RoadRockPolicy.KnownRocks)
         {
             Assert.True(VegetationClearing.IsRock(rock.GetStableHashCode()), rock);
-            Assert.False(VegetationClearing.LeftToRockClearing(rock.GetStableHashCode(), Heightmap.Biome.Mountain, RockClearingMode.Off), rock);
         }
         Assert.False(VegetationClearing.IsRock(Stone));
         Assert.False(VegetationClearing.IsRock(Tree));
@@ -524,15 +520,12 @@ public class RoadEdgesAndVegetationTests
         var vegetation = new HashSet<int> { Boulder, MistlandsCliff };
         var onStair = new Vector2(40f, 0f);
         var stair = new List<VegetationClearing.Area> { new VegetationClearing.Area(onStair, 3f) };
-        foreach (var mode in new[] { RockClearingMode.Carve, RockClearingMode.Remove, RockClearingMode.Off })
-        {
-            Assert.True(VegetationClearing.ShouldRemove(Boulder, onStair, false, vegetation, Areas, NoLocations, NoPlayerGround,
-                structureAreas: stair, rockClearing: mode, biomeAt: _ => Heightmap.Biome.Mountain));
-            Assert.True(VegetationClearing.ShouldRemove(MistlandsCliff, onStair, false, vegetation, Areas, NoLocations, NoPlayerGround,
-                structureAreas: stair, rockClearing: mode, biomeAt: _ => Heightmap.Biome.Mistlands));
-        }
+        Assert.True(VegetationClearing.ShouldRemove(Boulder, onStair, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            structureAreas: stair, biomeAt: _ => Heightmap.Biome.Mountain));
+        Assert.True(VegetationClearing.ShouldRemove(MistlandsCliff, onStair, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            structureAreas: stair, biomeAt: _ => Heightmap.Biome.Mistlands));
         Assert.False(VegetationClearing.ShouldRemove(Boulder, onStair, true, vegetation, Areas, NoLocations, NoPlayerGround,
-            structureAreas: stair, rockClearing: RockClearingMode.Carve, biomeAt: _ => Heightmap.Biome.Mountain));
+            structureAreas: stair, biomeAt: _ => Heightmap.Biome.Mountain));
     }
 
     /// <summary>

@@ -15,10 +15,6 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadRockClearing
 {
-    /// <summary>The "Roads/RockClearing" setting's default.</summary>
-    public const RockClearingMode DefaultMode = RockClearingMode.Carve;
-    /// <summary>Set from the "Roads/RockClearing" setting.</summary>
-    internal static RockClearingMode Mode = DefaultMode;
     private static float s_next;
     private static int s_cursor;
     /// <summary>
@@ -67,7 +63,7 @@ public static class RoadRockClearing
     public static void Tick()
     {
         RoadRockStats.MaybeLog();
-        if (!RoadRockPolicy.Clears(Mode) || !RoadNetworkGenerator.RoadsAvailable || ZoneSystem.instance == null || ZNetScene.instance == null) return;
+        if (!RoadNetworkGenerator.RoadsAvailable || ZoneSystem.instance == null || ZNetScene.instance == null) return;
         if (s_pass != null) { CarveSome(s_pass); return; }
         if (Time.unscaledTime < s_next) return;
         s_next = Time.unscaledTime + 0.5f;
@@ -311,7 +307,7 @@ public static class RoadRockClearing
         var zone = ZoneSystem.GetZone(point);
         var map = Heightmap.FindHeightmap(point);
         int version = RoadSpatialGrid.RoadNetworkVersion;
-        lines.Add($"zone {zone}: mode {Mode}, roads available {RoadNetworkGenerator.RoadsAvailable}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
+        lines.Add($"zone {zone}: roads available {RoadNetworkGenerator.RoadsAvailable}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
         if (map == null) { lines.Add("no heightmap here"); return lines; }
         bool listed = Heightmap.GetAllHeightmaps().Contains(map);
         bool done = s_done.TryGetValue(map.GetInstanceID(), out int doneFor);

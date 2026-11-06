@@ -3,18 +3,6 @@ using System.Linq;
 
 namespace ProceduralRoads;
 
-/// <summary>What happens to natural rocks that clip a road's surface.</summary>
-public enum RockClearingMode
-{
-    /// <summary>Rocks are left where the world put them.</summary>
-    Off,
-    /// <summary>A rock that blocks at least half the road's width is removed whole (an ore deposit is kept).</summary>
-    Remove,
-    /// <summary>Only the pieces of a rock that stand in the road are taken, as a
-    /// pickaxe would; a rock with no pieces is removed whole, an ore deposit with none kept.</summary>
-    Carve,
-}
-
 /// <summary>Known natural boulders and copper and silver deposits only, never tin, fragments or arbitrary destructibles.</summary>
 public static class RoadRockPolicy
 {
@@ -58,9 +46,6 @@ public static class RoadRockPolicy
     public const Heightmap.Biome SupportedBiomes = Heightmap.Biome.Mountain |
         Heightmap.Biome.Plains | Heightmap.Biome.BlackForest | Heightmap.Biome.Meadows | Heightmap.Biome.Swamp;
 
-    /// <summary>Whether this setting clears rocks at all.</summary>
-    public static bool Clears(RockClearingMode mode) => mode != RockClearingMode.Off;
-
     /// <summary>
     /// Whether a rock standing here may be carved or removed at all: never in
     /// a zone explored before the road network reached the world
@@ -81,18 +66,11 @@ public static class RoadRockPolicy
         MayTouch(zoneCentre) &&
         (RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0 || StructurePlans.AnyStructureNear(zoneCentre, ZoneCornerReach));
 
-    /// <summary>Whether this setting carves rocks rather than removing them whole.</summary>
-    public static bool Carves(RockClearingMode mode) => mode == RockClearingMode.Carve;
-
-    /// <summary>Keep a rock that blocks under half the road's width at its
-    /// worst point, when rocks are removed whole.</summary>
-    public static bool KeepPartial(int blockedSlots, int slots) => blockedSlots * 2 < slots;
-
-    /// <summary>How many narrow capsules across the road the partial-rock rule counts what blocks (<see cref="KeepPartial"/>).</summary>
+    /// <summary>How many narrow capsules across the road a count of what blocks it uses (the viaduct parapet's overlap rule).</summary>
     public const int Slots = 5;
 
     /// <summary>Slot <paramref name="k"/> of <paramref name="slots"/> narrow capsules across a road <paramref name="width"/>
-    /// wide, which <see cref="KeepPartial"/> counts what blocks: its centre's offset across the road from the centre line,
+    /// wide, which a count of what blocks uses: its centre's offset across the road from the centre line,
     /// and its radius (the road's width shared out between them).</summary>
     public static (float offset, float radius) Slot(int k, int slots, float width)
     {
@@ -172,8 +150,8 @@ public static class RoadRockPolicy
     public static bool ReleasesWaiting(Vector2s waitedFrom, int waitedVersion, Vector2s playerZoneNow, int versionNow) =>
         waitedFrom.x != playerZoneNow.x || waitedFrom.y != playerZoneNow.y || waitedVersion != versionNow;
 
-    /// <summary>Whether a rock may be removed whole at all (the Remove setting, a rock the carve cannot cut, a rock
-    /// under a deck): a deposit may not, so its ore is never lost with it; it is carved or kept.</summary>
+    /// <summary>Whether a rock may be removed whole at all (a rock the carve cannot cut, a rock under a deck): a deposit
+    /// may not, so its ore is never lost with it; it is carved or kept.</summary>
     public static bool MayRemoveWhole(string name) => !IsResourceDeposit(name);
 
     /// <summary>Every rock prefab clearing may touch, for road_rock_kinds: the lists above, written once.</summary>
@@ -413,13 +391,13 @@ public static class RoadRockPolicy
     public const bool PassClearsMistlandsCliffs = true;
 
     /// <summary>
-    /// Whether the automatic rock clearing, set to <paramref name="mode"/>, takes a rock of the world's own vegetation
+    /// Whether the automatic rock clearing takes a rock of the world's own vegetation
     /// standing on a road in <paramref name="biome"/>: the rule of <see cref="CanClear"/> and
     /// <see cref="CanClearMistlands"/> for a rock no player or location holds. A rock it would not take is kept off the
     /// road with the vegetation instead.
     /// </summary>
-    public static bool ClearingTakes(string name, Heightmap.Biome biome, RockClearingMode mode) =>
-        Clears(mode) && (BoulderInBiome(name, biome) || MistlandsRockInBiome(name, PassClearsMistlandsRocks, PassClearsMistlandsCliffs, biome));
+    public static bool ClearingTakes(string name, Heightmap.Biome biome) =>
+        BoulderInBiome(name, biome) || MistlandsRockInBiome(name, PassClearsMistlandsRocks, PassClearsMistlandsCliffs, biome);
 
     // Mistlands rocks and cliffs are recognised separately: the cliffs are
     // outcrops tens of metres across, not boulders.

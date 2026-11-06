@@ -1755,8 +1755,8 @@ public static class DvergrViaduct
 
     /// <summary>The most of a road's width a bank parapet's piece may block at any point and stand (<see cref="OnTheRoad"/>),
     /// counted in the rock clearing's slots across the road (<see cref="RoadRockPolicy.Slots"/>): a fifth, one slot of five.
-    /// The owner's, 5 Nov 2026 ("40% seems like a lot, lets start with 20% and see"): a rock left in place may block under
-    /// half (<see cref="RoadRockPolicy.KeepPartial"/>), a railing laid on the road's edge less.</summary>
+    /// The owner's, 5 Nov 2026 ("40% seems like a lot, lets start with 20% and see"): a railing laid on the road's edge blocks
+    /// less than the half a rock could.</summary>
     public const float ParapetRoadOverlap = 0.2f;
 
     /// <summary>

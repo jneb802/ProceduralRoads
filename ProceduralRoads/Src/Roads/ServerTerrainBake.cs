@@ -460,13 +460,12 @@ public static class ServerTerrainBake
 
     /// <summary>
     /// Rocks clipping the road in a zone generated for a remote peer, cleared
-    /// as Roads/RockClearing says while the zone's objects still exist: the
+    /// carved while the zone's objects still exist: the
     /// server never loads that zone, so the automatic pass that clears loaded
     /// zones never sees it, and a player without the mod has no pass at all.
     /// </summary>
     private static int ClearGhostRocks(Vector2s zone, bool settle = true)
     {
-        if (!RoadRockPolicy.Clears(RoadRockClearing.Mode)) return 0;
         RoadRockCarve.GhostSpawned = ZoneSystem.instance.m_tempSpawnedObjects;
         try
         {
@@ -505,7 +504,7 @@ public static class ServerTerrainBake
     /// network) never had the pass a zone generated for a peer gets, and on a
     /// dedicated server no client clears rocks. The zone's terrain, its saved
     /// compiler and its clearable rocks are brought alive from their data, as
-    /// generation has them, carved as Roads/RockClearing says, and taken down
+    /// generation has them, carved, and taken down
     /// again, leaving their data. False, with nothing done, when the zone's
     /// terrain is not ready (the caller sends the zone round the queue again).
     /// </summary>
@@ -1121,7 +1120,7 @@ public static class ServerTerrainBake
         List<VegetationClearing.Area> areas = ClearAreasFor(zone, since);
         List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
         List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone, since);
-        bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere, RoadRockPolicy.Clears(RoadRockClearing.Mode));
+        bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere);
         if (areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 || rocks)
         {
             if (AnyPeerNear(zone))
@@ -1249,7 +1248,7 @@ public static class ServerTerrainBake
             Vector3 position = zdo.GetPosition();
             if (VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
                     PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                    structureAreas, RoadRockClearing.Mode, BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
+                    structureAreas, BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
                 count++;
         }
         return count;
@@ -1333,7 +1332,7 @@ public static class ServerTerrainBake
             Vector3 euler = zdo.GetRotation().eulerAngles;
             VegetationClearing.Lying verdict = VegetationClearing.Decide(zdo.GetPrefab(), new Vector2(position.x, position.z),
                 PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                structureAreas, RoadRockClearing.Mode, BiomeAt, euler.y, out float turned, LeanOf(zdo));
+                structureAreas, BiomeAt, euler.y, out float turned, LeanOf(zdo));
             VegetationClearing.Note(zdo.GetPrefab(), new Vector2(position.x, position.z), verdict, euler.y, turned);
             ZNetView instance = ZNetScene.instance.FindInstance(zdo);
             if (verdict == VegetationClearing.Lying.Turned || verdict == VegetationClearing.Lying.Through)

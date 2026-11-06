@@ -127,11 +127,10 @@ public static class ServerBakePlanner
 
     /// <summary>
     /// Whether a zone owed its vegetation pass also has its saved rocks
-    /// cleared: only when rocks are cleared at all, and only where the server
-    /// does not have the zone loaded (a loaded zone's rocks are live objects,
+    /// cleared: only where the server does not have the zone loaded (a loaded zone's rocks are live objects,
     /// which the half-second pass of RoadRockClearing clears).
     /// </summary>
-    public static bool SavedRocksOwed(bool loadedHere, bool clearsRocks) => clearsRocks && !loadedHere;
+    public static bool SavedRocksOwed(bool loadedHere) => !loadedHere;
 
     /// <summary>Which saved objects the rock pass brings alive: the clearable rocks, never a player's.</summary>
     public static bool BringsRockAlive(string prefab, bool playerCreated) =>

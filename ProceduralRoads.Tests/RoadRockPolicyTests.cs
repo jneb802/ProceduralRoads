@@ -34,22 +34,18 @@ public class RoadRockPolicyTests
             Assert.False(RoadRockPolicy.CanClear(name,true,biome,false,false,true,true,true));
     }
 
-    /// <summary>A large rock on the road is the rock clearing's alone: Off keeps it, Carve carves it (whole when small),
-    /// Remove removes it whole.</summary>
+    /// <summary>A large rock on the road is the rock clearing's alone: it carves it (whole when small).</summary>
     [Fact]
-    public void TheRockClearingSettingDecidesALargeRockOnTheRoad()
+    public void ALargeRockOnTheRoadIsTheRockClearingsAlone()
     {
         Assert.True(RoadRockPolicy.IsClearableRock("rock1_mountain"));
         Assert.False(RoadRockPolicy.IsClearableRock("Pickable_Stone"));
-        Assert.False(RoadRockPolicy.Clears(RockClearingMode.Off));
-        Assert.True(RoadRockPolicy.Clears(RockClearingMode.Carve) && RoadRockPolicy.Carves(RockClearingMode.Carve));
-        Assert.True(RoadRockPolicy.Clears(RockClearingMode.Remove) && !RoadRockPolicy.Carves(RockClearingMode.Remove));
     }
 
     /// <summary>
     /// A zone generated with the road: PlaceVegetation asks the clear areas per vegetation entry. The road's keep trees
     /// and small stones off it, but a large rock the rock clearing takes there is placed as in a world without roads (the
-    /// setting then carves or removes it). A location's own clear area, which comes first, still keeps it out.
+    /// rock clearing then carves it). A location's own clear area, which comes first, still keeps it out.
     /// </summary>
     [Fact]
     public void AZoneGeneratedWithTheRoadKeepsItsLargeRocksForTheRockClearing()
@@ -61,17 +57,16 @@ public class RoadRockPolicyTests
         var inLocation = new UnityEngine.Vector3(1f, 0f, 1f);
         System.Func<UnityEngine.Vector3, Heightmap.Biome> mountain = _ => Heightmap.Biome.Mountain;
         System.Func<UnityEngine.Vector3, Heightmap.Biome> mistlands = _ => Heightmap.Biome.Mistlands;
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, "Beech1", RockClearingMode.Carve, mountain));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, "Pickable_Stone", RockClearingMode.Carve, mountain));
+        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, "Beech1", mountain));
+        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, "Pickable_Stone", mountain));
         foreach (string rock in RoadRockPolicy.KnownRocks)
         {
             var biome = RoadRockPolicy.IsNaturalBoulder(rock) ? mountain : mistlands;
-            Assert.False(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, rock, RockClearingMode.Carve, biome), rock);
-            Assert.False(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, rock, RockClearingMode.Remove, biome), rock);
-            Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, inLocation, rock, RockClearingMode.Carve, biome), rock);
+            Assert.False(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, rock, biome), rock);
+            Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, inLocation, rock, biome), rock);
         }
         // Before the roads add theirs, every area is the game's.
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, int.MaxValue, int.MaxValue, onRoad, "rock1_mountain", RockClearingMode.Carve, mountain));
+        Assert.True(RoadClearAreaManager.InsideClearArea(areas, int.MaxValue, int.MaxValue, onRoad, "rock1_mountain", mountain));
     }
 
     /// <summary>
@@ -86,13 +81,12 @@ public class RoadRockPolicyTests
         var areas = new System.Collections.Generic.List<ZoneSystem.ClearArea> { road };
         var onRoad = new UnityEngine.Vector3(20f, 0f, 0.5f);
         System.Func<UnityEngine.Vector3, Heightmap.Biome> In(Heightmap.Biome b) => _ => b;
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock1_mountain", RockClearingMode.Off, In(Heightmap.Biome.Mountain)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", RockClearingMode.Carve, In(Heightmap.Biome.AshLands)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", RockClearingMode.Carve, In(Heightmap.Biome.DeepNorth)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock_mistlands1", RockClearingMode.Carve, In(Heightmap.Biome.Plains)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "cliff_mistlands1", RockClearingMode.Off, In(Heightmap.Biome.Mistlands)));
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", RockClearingMode.Carve, In(Heightmap.Biome.Meadows)));
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "cliff_mistlands1", RockClearingMode.Carve, In(Heightmap.Biome.Mistlands)));
+        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock1_mountain", In(Heightmap.Biome.Mountain)));
+        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", In(Heightmap.Biome.AshLands)));
+        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", In(Heightmap.Biome.DeepNorth)));
+        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock_mistlands1", In(Heightmap.Biome.Plains)));
+        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", In(Heightmap.Biome.Meadows)));
+        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "cliff_mistlands1", In(Heightmap.Biome.Mistlands)));
     }
 
     /// <summary>
@@ -107,9 +101,8 @@ public class RoadRockPolicyTests
         var areas = new System.Collections.Generic.List<ZoneSystem.ClearArea> { road, stair };
         var onStair = new UnityEngine.Vector3(40f, 0f, 1f);
         foreach (string rock in RoadRockPolicy.KnownRocks)
-            foreach (var mode in new[] { RockClearingMode.Carve, RockClearingMode.Remove, RockClearingMode.Off })
-                Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onStair, rock, mode,
-                    _ => RoadRockPolicy.IsNaturalBoulder(rock) ? Heightmap.Biome.Mountain : Heightmap.Biome.Mistlands), rock);
+            Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onStair, rock,
+                _ => RoadRockPolicy.IsNaturalBoulder(rock) ? Heightmap.Biome.Mountain : Heightmap.Biome.Mistlands), rock);
     }
 
     /// <summary>The rule the generation and server clearings ask is the automatic pass's own: CanClear and
@@ -125,9 +118,7 @@ public class RoadRockPolicyTests
                 bool pass = RoadRockPolicy.CanClear(rock, true, biome, false, false, true, true, true) ||
                     RoadRockPolicy.CanClearMistlands(rock, RoadRockPolicy.PassClearsMistlandsRocks, RoadRockPolicy.PassClearsMistlandsCliffs,
                         true, biome, false, false, true, true, true);
-                Assert.Equal(pass, RoadRockPolicy.ClearingTakes(rock, biome, RockClearingMode.Carve));
-                Assert.Equal(pass, RoadRockPolicy.ClearingTakes(rock, biome, RockClearingMode.Remove));
-                Assert.False(RoadRockPolicy.ClearingTakes(rock, biome, RockClearingMode.Off));
+                Assert.Equal(pass, RoadRockPolicy.ClearingTakes(rock, biome));
             }
     }
 
@@ -148,11 +139,10 @@ public class RoadRockPolicyTests
         Assert.False(RoadRockPolicy.CanClear(name, false, home, false, false, true, true, true));
         Assert.False(RoadRockPolicy.CanClear(name, true, home, true, false, true, true, true));
         Assert.False(RoadRockPolicy.CanClear(name, true, home, false, true, true, true, true));
-        Assert.True(RoadRockPolicy.ClearingTakes(name, home, RockClearingMode.Carve));
-        Assert.False(RoadRockPolicy.ClearingTakes(name, home, RockClearingMode.Off));
-        Assert.False(RoadRockPolicy.ClearingTakes(name, Heightmap.Biome.Ocean, RockClearingMode.Carve));
+        Assert.True(RoadRockPolicy.ClearingTakes(name, home));
+        Assert.False(RoadRockPolicy.ClearingTakes(name, Heightmap.Biome.Ocean));
         // Placed with the zone, left to the rock clearing rather than kept off the road with the vegetation.
-        Assert.True(VegetationClearing.LeftToRockClearing(name.GetStableHashCode(), home, RockClearingMode.Carve));
+        Assert.True(VegetationClearing.LeftToRockClearing(name.GetStableHashCode(), home));
         Assert.True(ServerBakePlanner.BringsRockAlive(name, playerCreated: false));
         // A fractured deposit (carved or mined) is judged as the deposit that fractures into it.
         var map = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>
@@ -162,7 +152,7 @@ public class RoadRockPolicyTests
 
     /// <summary>
     /// Only a deposit's chunks in the road are taken: carving cuts a deposit whatever its size (a small boulder goes
-    /// whole), and a deposit is never removed whole, under the Remove setting or where the carve cannot cut it.
+    /// whole), and a deposit is never removed whole, where the carve cannot cut it.
     /// </summary>
     [Theory]
     [InlineData("rock4_copper")]
@@ -193,7 +183,7 @@ public class RoadRockPolicyTests
         Assert.False(RoadRockPolicy.IsClearableRock("MineRock_Tin"));
         Assert.DoesNotContain("MineRock_Tin", RoadRockPolicy.KnownRocks);
         foreach (var biome in new[] { Heightmap.Biome.BlackForest, Heightmap.Biome.Swamp, Heightmap.Biome.Mountain })
-            Assert.False(RoadRockPolicy.ClearingTakes("MineRock_Tin", biome, RockClearingMode.Carve));
+            Assert.False(RoadRockPolicy.ClearingTakes("MineRock_Tin", biome));
     }
 
     [Theory]
@@ -253,12 +243,6 @@ public class RoadRockPolicyTests
     [InlineData("cliff_mistlands1_creep")]
     public void TheMistlandsPathTakesNothingElse(string name) =>
         Assert.False(RoadRockPolicy.CanClearMistlands(name,true,true,true,Heightmap.Biome.Mistlands,false,false,true,true,true));
-
-    [Theory]
-    [InlineData(0, true)] [InlineData(1, true)] [InlineData(2, true)]
-    [InlineData(3, false)] [InlineData(4, false)] [InlineData(5, false)]
-    public void ARockBlockingUnderHalfTheRoadIsKept(int blocked, bool keep) =>
-        Assert.Equal(keep, RoadRockPolicy.KeepPartial(blocked, 5));
 
     [Theory]
     [InlineData("rock4_forest")] [InlineData("Rock_3")] [InlineData("rock2_heath")]

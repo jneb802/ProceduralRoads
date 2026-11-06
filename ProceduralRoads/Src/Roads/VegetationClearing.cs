@@ -22,7 +22,7 @@ namespace ProceduralRoads;
 /// location's exterior radius are left to the location. The game's vegetation
 /// list also holds the large rocks; on a road those the rock clearing takes
 /// there belong to it (<see cref="LeftToRockClearing"/>), so the
-/// Roads/RockClearing setting decides what happens to them, and a structure's
+/// rock clearing carves them, and a structure's
 /// clear areas keep every rock out. Small stones (the pickable ones) are
 /// vegetation and go with the trees.
 ///
@@ -533,12 +533,12 @@ public static class VegetationClearing
     public static bool IsRock(int prefab) => s_rockClearingRocks.ContainsKey(prefab);
 
     /// <summary>
-    /// A large rock the rock clearing, set to <paramref name="mode"/>, takes off a road in <paramref name="biome"/>
+    /// A large rock the rock clearing takes off a road in <paramref name="biome"/>
     /// (<see cref="RoadRockPolicy.ClearingTakes"/>): never removed with the vegetation from a road's clear areas. A rock
     /// it would leave goes with the vegetation, as generation keeps it off the road.
     /// </summary>
-    public static bool LeftToRockClearing(int prefab, Heightmap.Biome biome, RockClearingMode mode) =>
-        s_rockClearingRocks.TryGetValue(prefab, out string? name) && RoadRockPolicy.ClearingTakes(name, biome, mode);
+    public static bool LeftToRockClearing(int prefab, Heightmap.Biome biome) =>
+        s_rockClearingRocks.TryGetValue(prefab, out string? name) && RoadRockPolicy.ClearingTakes(name, biome);
 
     /// <summary>ZoneSystem.InsideClearArea, the test PlaceVegetation uses: strict, and square.</summary>
     public static bool InsideClearArea(IReadOnlyList<Area> areas, Vector2 point, bool leftToRockClearing = false)
@@ -578,16 +578,15 @@ public static class VegetationClearing
     /// <param name="scale">the object's scale</param>
     /// <param name="structureAreas">the structures' clear areas (bridges, staircases): a bridge's keeps every rock out as well, a
     /// staircase's (<see cref="Area.LeavesRocks"/>) leaves a rock the rock clearing takes to it</param>
-    /// <param name="rockClearing">the Roads/RockClearing setting; Off leaves no rock to the rock clearing</param>
     /// <param name="biomeAt">the biome at a position, asked for a large rock only (<see cref="LeftToRockClearing"/>)</param>
     public static bool ShouldRemove(int prefab, Vector2 position, bool playerCreated,
         ICollection<int> vegetationPrefabs, IReadOnlyList<Area> clearAreas,
         IReadOnlyList<Footprint> locations, IReadOnlyList<Footprint> playerGround,
         IReadOnlyList<RoadCentre>? road = null, float scale = 1f, IReadOnlyList<Area>? structureAreas = null,
-        RockClearingMode rockClearing = RockClearingMode.Off, Func<Vector2, Heightmap.Biome>? biomeAt = null, float yaw = 0f,
+        Func<Vector2, Heightmap.Biome>? biomeAt = null, float yaw = 0f,
         Lean? lean = null) =>
         Decide(prefab, position, playerCreated, vegetationPrefabs, clearAreas, locations, playerGround, road, scale, structureAreas,
-            rockClearing, biomeAt, yaw, out _, lean) == Lying.Remove;
+            biomeAt, yaw, out _, lean) == Lying.Remove;
 
     /// <summary>
     /// <see cref="ShouldRemove"/>, and for one lying along the ground at <paramref name="yaw"/> and <paramref name="lean"/>
@@ -598,13 +597,13 @@ public static class VegetationClearing
         ICollection<int> vegetationPrefabs, IReadOnlyList<Area> clearAreas,
         IReadOnlyList<Footprint> locations, IReadOnlyList<Footprint> playerGround,
         IReadOnlyList<RoadCentre>? road, float scale, IReadOnlyList<Area>? structureAreas,
-        RockClearingMode rockClearing, Func<Vector2, Heightmap.Biome>? biomeAt, float yaw, out float turned, Lean? lean = null)
+        Func<Vector2, Heightmap.Biome>? biomeAt, float yaw, out float turned, Lean? lean = null)
     {
         turned = yaw;
         // Somebody's own object, whatever it is: never ours to take.
         if (playerCreated || !vegetationPrefabs.Contains(prefab))
             return Lying.Clear;
-        bool leftToRocks = IsRock(prefab) && LeftToRockClearing(prefab, biomeAt?.Invoke(position) ?? Heightmap.Biome.None, rockClearing);
+        bool leftToRocks = IsRock(prefab) && LeftToRockClearing(prefab, biomeAt?.Invoke(position) ?? Heightmap.Biome.None);
         // A staircase's area (Area.LeavesRocks) leaves such a rock to the rock clearing, as a road's does.
         bool inside = structureAreas != null && InsideClearArea(structureAreas, position, leftToRocks) ||
             InsideClearArea(clearAreas, position) && !leftToRocks;

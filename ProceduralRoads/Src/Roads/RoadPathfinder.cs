@@ -1003,7 +1003,7 @@ public class RoadPathfinder
         float cos = Mathf.Clamp((incoming.x * outgoing.x + incoming.y * outgoing.y) /
                                 (Mathf.Sqrt(incoming.sqrMagnitude) * Mathf.Sqrt(outgoing.sqrMagnitude)), -1f, 1f);
         float angle = (float)System.Math.Acos(cos);
-        if (TurnLimitDegrees > 0f && angle * 57.29578f > TurnLimitDegrees + 0.01f) return Impassable;
+        if (TurnLimitDegrees > 0f && angle * Mathf.Rad2Deg > TurnLimitDegrees + 0.01f) return Impassable;
         return TurnWeight * angle;
     }
 

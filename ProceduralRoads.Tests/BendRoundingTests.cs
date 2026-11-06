@@ -17,7 +17,7 @@ public class BendRoundingTests
         {
             if (Vector2.Distance(p[i - 1], p[i]) < 1e-3f || Vector2.Distance(p[i], p[i + 1]) < 1e-3f) continue;
             Vector2 a = (p[i] - p[i - 1]).normalized, b = (p[i + 1] - p[i]).normalized;
-            worst = Mathf.Max(worst, (float)System.Math.Acos(Mathf.Clamp(a.x * b.x + a.y * b.y, -1f, 1f)) * 57.29578f);
+            worst = Mathf.Max(worst, (float)System.Math.Acos(Mathf.Clamp(a.x * b.x + a.y * b.y, -1f, 1f)) * Mathf.Rad2Deg);
         }
         return worst;
     }

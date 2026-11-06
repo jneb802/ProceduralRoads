@@ -49,11 +49,16 @@ public static partial class RoadNetworkGenerator
     /// landing, as aimed at its centre it did).</summary>
     internal static readonly int DoorWeight = 3;
 
+    /// <summary>The ring a place's doors stand on: where the road's trim leaves it (<see cref="KeepOutEdge(Vector2, float, float, bool)"/>),
+    /// out by <see cref="PlacedSites.AimOut"/>. The record of a place placed first covers it (SitesFirstLoad.Read).</summary>
+    internal static float DoorRing(Vector2 centre, float radius, float width, bool placed) =>
+        KeepOutEdge(centre, radius, width, placed) + PlacedSites.AimOut;
+
     private static RoadDoor[] BuildDoors(Vector2 centre, float radius, float width)
     {
         var world = GenerationWorld!;
         bool placed = PlacedSites.TryGetReady(centre, out PlacedSite site);
-        float ring = KeepOutEdge(centre, radius, width, placed) + PlacedSites.AimOut;
+        float ring = DoorRing(centre, radius, width, placed);
         float bearing = 0f, level;
         if (placed)
         {

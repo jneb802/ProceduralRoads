@@ -157,7 +157,7 @@ public static class SitesFirstLoad
         float rock = PlacedSiteReader.RockRadius(centre);
         // The ground the road onto its landing may be laid over: out to the road's trim ring and round
         // its rock (a staircase from behind is led round it), and a margin beyond.
-        float ring = RoadNetworkGenerator.KeepOutEdge(centre, rock, RoadNetworkGenerator.RoadWidth, placed: true) + PlacedSites.AimOut;
+        float ring = RoadNetworkGenerator.DoorRing(centre, rock, RoadNetworkGenerator.RoadWidth, placed: true);
         float half = Mathf.Max(ring, rock + RoadStairRuns.RockMargin + RoadStairRuns.RockClearance) + PlacedSiteReader.Margin;
         int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
         string prefab = ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";

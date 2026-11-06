@@ -250,7 +250,7 @@ public class RoadPathfinder
     private WorldGenerator m_worldGen;
     private readonly RoadTerrainSamples m_terrain;
     private Vector2? m_searchStart, m_searchEnd;
-    public float SiteClearance = 4f;
+    public float SiteClearance = RoadSiteProtection.Clearance(RoadConstants.DefaultRoadWidth);
 
     /// <summary>Roughness about a quadratic surface; see RoadTerrainSamples.QuadVariance.</summary>
     internal bool QuadVariance { get => m_terrain.QuadVariance; set => m_terrain.QuadVariance = value; }

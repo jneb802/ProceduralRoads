@@ -478,6 +478,47 @@ public class FordTests
         Assert.Null(Pathfinder(world, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
     }
 
+    /// <summary>
+    /// A swamp channel 1 m deep (bed 29 m: deeper than a ford's wading depth elsewhere, over the deep line, nothing
+    /// sailable) is a ford where the crossing is built, so the search judges the jump the same way: a road that may only
+    /// ford crosses it, and the crossing it gets is that ford. The search judged it a bridge and, with bridges off, found
+    /// no way across.
+    /// </summary>
+    [Fact]
+    public void ASwampChannelTheBuilderFordsIsFordedBySearch()
+    {
+        var swamp = new GullyWorld { Land = Heightmap.Biome.Swamp, Bed = 29f };
+        var path = Pathfinder(swamp, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f));
+        Assert.NotNull(path);
+        var crossing = Assert.Single(RoadCrossingDetector.Detect(path!, swamp, bridges: false, fords: true));
+        Assert.Equal(CrossingKind.Ford, crossing.Kind);
+
+        // A swamp channel sailable for more than a boat's length is a bridge in both: no ford-only road across it.
+        Assert.Null(Pathfinder(new GullyWorld { Land = Heightmap.Biome.Swamp, Bed = 28.5f }, true)
+            .FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
+    }
+
+    /// <summary>
+    /// Ford or bridge is one rule (RoadCrossingDetector.IsFordJump): the class the search gives a jump is the class the
+    /// detector builds on it, in and out of a swamp, either side of each depth line, and for a jump past the ford cap.
+    /// </summary>
+    [Theory]
+    [InlineData(Heightmap.Biome.Meadows, 29.5f, 12f)]
+    [InlineData(Heightmap.Biome.Meadows, 29f, 12f)]
+    [InlineData(Heightmap.Biome.Swamp, 29f, 12f)]
+    [InlineData(Heightmap.Biome.Swamp, 28.5f, 12f)]
+    [InlineData(Heightmap.Biome.Swamp, 28.5f, 2f)]
+    [InlineData(Heightmap.Biome.Swamp, 27.5f, 2f)]
+    [InlineData(Heightmap.Biome.Swamp, 29.5f, 26f)]
+    public void TheSearchClassesAJumpAsTheDetectorBuildsIt(Heightmap.Biome land, float bed, float halfWidth)
+    {
+        var world = new GullyWorld { Land = land, Bed = bed, HalfWidth = halfWidth };
+        float reach = halfWidth + 4f;
+        Vector2 a = new(-reach, 0f), b = new(reach, 0f);
+        var crossing = Assert.Single(RoadCrossingDetector.Detect(new List<Vector2> { a, b }, world, bridges: true, fords: true));
+        Assert.Equal(crossing.Kind == CrossingKind.Ford, RoadCrossingDetector.IsFordJump(a, b, world));
+    }
+
     // ---- persistence ----
 
     [Fact]

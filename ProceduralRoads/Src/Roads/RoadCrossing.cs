@@ -712,12 +712,10 @@ public static class RoadCrossingDetector
         // is a ford in the same style mix, unless a stretch of it is sailable
         // for at least a boat's length, which keeps it a bridge. Without
         // bridges every crossing is a ford.
-        // The class the pathfinder accepted is kept: a jump beyond the ford
-        // cap was a bridge whatever its depth, and a feature that is off
-        // never produces its kind.
-        bool ford = jumpLength <= RoadConstants.MaxFordSpan + 0.5f && (swamp
-            ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
-            : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
+        // The class the pathfinder accepted is kept: the search classes the
+        // jump by the same rule (IsFord), and a feature that is off never
+        // produces its kind.
+        bool ford = IsFord(jumpLength, swamp, riverbed, fairwayWidth);
         if (!fords) ford = false;
         // Without bridges, water a ford may not cross is not a crossing: a
         // segment dipping into a deeper channel is left as it is today.
@@ -905,6 +903,38 @@ public static class RoadCrossingDetector
         }
         return crossing;
     }
+
+    /// <summary>
+    /// Ford or bridge: the one rule, for the search pricing a jump (<see cref="IsFordJump"/>) and the detector building it.
+    /// A FORD is a jump within the ford cap (half a metre over it for the snapped path) over water a ford may cross: in a
+    /// swamp, a bed down to the deep line with no sailable stretch a boat's length long; elsewhere, a bed at wading depth
+    /// with nothing sailable. Anything else is a bridge. <paramref name="riverbed"/> and <paramref name="fairwayWidth"/>
+    /// are the <see cref="Profile"/> of the bank-to-bank line, <paramref name="swamp"/> the biome at its middle.
+    /// </summary>
+    internal static bool IsFord(float jumpLength, bool swamp, float riverbed, float fairwayWidth) =>
+        WithinFordCap(jumpLength) && (swamp
+            ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
+            : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
+
+    /// <summary>
+    /// <see cref="IsFord"/> for the jump between <paramref name="a"/> and <paramref name="b"/>, measured as
+    /// <see cref="Build"/> measures a path segment: the water's edge on each side (<see cref="Shore"/>), the river along
+    /// the line between them at 1 m (<see cref="Profile"/>), the biome at its middle. A jump past the ford cap is a bridge
+    /// without reading the water.
+    /// </summary>
+    internal static bool IsFordJump(Vector2 a, Vector2 b, WorldGenerator world)
+    {
+        float jumpLength = Vector2.Distance(a, b);
+        if (!WithinFordCap(jumpLength))
+            return false;
+        Vector2 from = Shore(a, b, world);
+        Vector2 to = Shore(b, a, world);
+        (float riverbed, _, float fairwayWidth) = Profile(from, to, world);
+        Vector2 center = (from + to) * 0.5f;
+        return IsFord(jumpLength, world.GetBiome(center.x, center.y) == Heightmap.Biome.Swamp, riverbed, fairwayWidth);
+    }
+
+    private static bool WithinFordCap(float jumpLength) => jumpLength <= RoadConstants.MaxFordSpan + 0.5f;
 
     /// <summary>The river along the bank-to-bank line at about 1 m spacing:
     /// the lowest bed, and the longest sailable stretch.</summary>

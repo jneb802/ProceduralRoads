@@ -1370,10 +1370,10 @@ public class RoadPathfinder
     /// <summary>
     /// Scans cell by cell from a dry cell across river water in one of the
     /// eight principal directions and lands on the first dry ground outside
-    /// the river band. A jump within the ford cap over water no deeper than
-    /// wading is a FORD at a small cost (with fords on); anything longer or
-    /// deeper is a BRIDGE at the bridge cost (with bridges on), held to
-    /// near-level banks. Water without a
+    /// the river band. A jump the crossing builder fords
+    /// (RoadCrossingDetector.IsFordJump, the one rule) is a FORD at a small
+    /// cost (with fords on); anything else is a BRIDGE at the bridge cost
+    /// (with bridges on), held to near-level banks. Water without a
     /// river core under it (a lake, the sea) is not crossed; neither is a dry
     /// river valley.
     /// </summary>
@@ -1395,7 +1395,6 @@ public class RoadPathfinder
         // cache, whose every miss takes a write lock all workers share.
         float fromHeight = m_terrain.Height(from);
         bool sawRiverWater = false;
-        float deepest = float.MaxValue;
         int maxCells = Bridges ? RoadConstants.MaxBridgeCrossingCells : RoadConstants.MaxRiverCrossingCells;
 
         for (int step = 1; step <= maxCells; step++)
@@ -1412,7 +1411,6 @@ public class RoadPathfinder
             if (water || riverCore)
             {
                 sawRiverWater |= water && riverCore;
-                deepest = Mathf.Min(deepest, height);
                 continue;
             }
 
@@ -1420,27 +1418,25 @@ public class RoadPathfinder
             if (!sawRiverWater)
                 return false;
 
-            bool bridgesAllowed = Bridges;
+            // Ford or bridge as the crossing builder judges this jump (its water's
+            // edges, the river between them at 1 m, the swamp rule): the class
+            // priced here is the class built.
+            bool bridge = !RoadCrossingDetector.IsFordJump(fromWorld, world, m_worldGen);
+            if (bridge ? !Bridges : !Fords)
+                return false;
             Vector2 fromBank = fromWorld;
             Vector2 toBank = world;
-            // In a swamp the detector walks a wet bank out over the wade shelf
-            // until it finds dry ground, which can add a great deal of deck.
-            // Do it HERE, before the span is measured against the cap and
-            // before the crossing is priced, so the search judges the bridge it
-            // will actually get. Deciding afterwards would leave a route
-            // accepted at one length and built at another.
-            if (bridgesAllowed && m_worldGen.GetBiome(
+            // In a swamp the detector walks a bridge's wet bank out over the
+            // wade shelf until it finds dry ground, which can add a great deal
+            // of deck. Do it HERE, before the span is measured against the cap
+            // and before the crossing is priced, so the search judges the
+            // bridge it will actually get. Deciding afterwards would leave a
+            // route accepted at one length and built at another.
+            if (bridge && m_worldGen.GetBiome(
                     (fromWorld.x + world.x) * 0.5f, (fromWorld.y + world.y) * 0.5f) == Heightmap.Biome.Swamp)
                 (fromBank, toBank) = RoadCrossingDetector.ExtendOverSwampShelf(fromWorld, world, m_worldGen);
 
             float distance = Vector2.Distance(fromBank, toBank);
-            // The cells are 8 m apart and a channel can hide between them:
-            // the whole jump is sampled every 2 m before its depth is trusted.
-            deepest = Mathf.Min(deepest, DeepestAlong(fromWorld, world));
-            bool bridge = distance > RoadConstants.MaxFordSpan
-                || deepest < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth;
-            if (bridge ? !Bridges : !Fords)
-                return false;
             if (distance > maxCells * CellSize)
                 return false;
 
@@ -1484,23 +1480,6 @@ public class RoadPathfinder
         }
 
         return false;
-    }
-
-    /// <summary>The lowest ground on the line between two points, sampled
-    /// every 2 m at the biome-blended height the game renders (a biome edge
-    /// can move the ground metres from the raw generator height), so the
-    /// pathfinder and the crossing detector judge the same water.</summary>
-    private float DeepestAlong(Vector2 a, Vector2 b)
-    {
-        float length = Vector2.Distance(a, b);
-        int samples = Mathf.Max(1, Mathf.CeilToInt(length / 2f));
-        float deepest = float.MaxValue;
-        for (int i = 0; i <= samples; i++)
-        {
-            float t = (float)i / samples;
-            deepest = Mathf.Min(deepest, BiomeBlendedHeight.GetBlendedHeight(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, m_worldGen));
-        }
-        return deepest;
     }
 
     /// <summary>Whether a finished road already runs through this point.</summary>

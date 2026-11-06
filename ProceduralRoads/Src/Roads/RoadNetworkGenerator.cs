@@ -4959,7 +4959,7 @@ public static partial class RoadNetworkGenerator
     /// <summary>The one rule for Hildir's quest sites: roads go to them only with their setting on (config
     /// Locations.AttemptRoadsToHildirQuestSites). Then they are required destinations, placed before their roads; off, they
     /// are left for a player, as the game leaves them.</summary>
-    internal static bool HildirRoads(string name) => IsHildirQuestSite(name) && NetworkOptions.HildirQuestSites;
+    internal static bool HildirRoads(string name) => IsHildirQuestSite(name) && GenerationOptions.HildirQuestSites;
 
     private static bool IsRoadLocation(string locationName)
     {

@@ -51,3 +51,23 @@ public class ZoneMathTests
     [Fact]
     public void TheRoadGridIsZoneAligned() => Assert.Equal(RoadConstants.ZoneSize, RoadConstants.SpatialGridSize);
 }
+
+/// <summary>Grid index math shared by the search and its caches.</summary>
+public class GridMathTests
+{
+    [Theory]
+    [InlineData(32)]
+    [InlineData(64)]
+    public void FloorDivRoundsDown(int size)
+    {
+        for (int i = -300; i <= 300; i++)
+            Assert.Equal((int)System.Math.Floor(i / (double)size), SharedTerrain.FloorDiv(i, size));
+    }
+
+    [Fact]
+    public void CellCentreScalesByTheCellSize()
+    {
+        foreach (var c in new[] { new Vector2i(0, 0), new Vector2i(-3, 7), new Vector2i(125, -126) })
+            Assert.Equal(new Vector2(c.x * RoadPathfinder.CellSize, c.y * RoadPathfinder.CellSize), RoadPathfinder.CellCentre(c));
+    }
+}

@@ -201,7 +201,7 @@ public static partial class RoadStairRuns
     }
 
     /// <summary>The tile a lattice index falls in (rounded down).</summary>
-    private static int TileOf(int i) => i >= 0 ? i / TileSize : (i + 1) / TileSize - 1;
+    private static int TileOf(int i) => SharedTerrain.FloorDiv(i, TileSize);
 
     private static float Lattice(int i, int k, WorldGenerator world)
     {

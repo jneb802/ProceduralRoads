@@ -59,6 +59,9 @@ public static class RoadSwitchbacks
     /// </summary>
     internal static float BendRadius = 24f;
 
+    /// <summary>The least radius of a bend, as <see cref="MinBendRadius"/> starts; a junction fill's radius starts as tight.</summary>
+    internal const float DefaultMinBendRadius = 4f;
+
     /// <summary>
     /// No ordinary bend is rounded tighter than this. The 45% share of each leg
     /// leaves a bend between short legs a radius of a metre or two, which reads
@@ -73,7 +76,7 @@ public static class RoadSwitchbacks
     /// Switchbacks keep their own turns. Applies with bend rounding; 0 is off.
     /// Settable for tests.
     /// </summary>
-    internal static float MinBendRadius = 4f;
+    internal static float MinBendRadius = DefaultMinBendRadius;
 
     /// <summary>The most road (in road widths) whose short legs may become one
     /// arc: a hook or a kink of a few metres, never a reshaped stretch.</summary>

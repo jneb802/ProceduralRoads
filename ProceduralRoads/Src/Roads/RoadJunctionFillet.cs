@@ -20,7 +20,7 @@ public static class RoadJunctionFillet
     /// The inside corner's radius at the paint's inner edge: the road's width, as an ordinary bend's least radius
     /// (RoadSwitchbacks.MinBendRadius), so a junction turns as tight as a road may. Settable for tests; 0 is off.
     /// </summary>
-    internal static float Radius = 4f;
+    internal static float Radius = RoadSwitchbacks.DefaultMinBendRadius;
 
     /// <summary>How far along each road (in road widths) a corner's fill may run from the junction: an acute Y's fill is
     /// held to this, with a smaller radius, rather than paving a long wedge between the two roads.</summary>

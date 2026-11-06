@@ -486,7 +486,7 @@ public static class RoadCrossingDetector
     public const float ShallowMinLength = 6f;
     /// <summary>One rule for every style (a wade, a raised ford and a deck take the same water;
     /// water no style may take is no crossing at all): a road may cross
-    /// shallow water as far as a river ford reaches and no deeper than a ford is waded. A run past
+    /// shallow water as far as a river ford reaches and no deeper than <see cref="ShallowMaxDepth"/>. A run past
     /// either is an INVALID crossing; the caller re-routes round it or refuses the road.</summary>
     public const float ShallowMaxLength = RoadConstants.MaxFordSpan;
     /// <summary>Deeper than this no style is built. A wade is a ford BUILT up to

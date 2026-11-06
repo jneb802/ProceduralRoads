@@ -100,7 +100,7 @@ public static partial class RoadNetworkGenerator
     };
     
     private const int DefaultPriority = 20;
-    /// <summary>Selection weight of a custom location (named by prefix, config or API).</summary>
+    /// <summary>Selection weight of a custom location (named by config or API).</summary>
     private const int CustomLocationPriority = 80;
     public static RoadNetworkOptions NetworkOptions { get; set; } = new();
 

@@ -144,11 +144,7 @@ public static class RoadTerrainModifier
                 if (terrainComp == null) continue;
             }
             if (terrainComp.m_nview == null || !terrainComp.m_nview.IsValid()) continue;
-            if (!terrainComp.m_nview.IsOwner())
-            {
-                if (terrainComp.m_nview.HasOwner()) continue;   // another peer's; look again next sweep
-                terrainComp.m_nview.ClaimOwnership();           // released by the game: ours to write
-            }
+            if (!TakeIfReleased(terrainComp.m_nview)) continue;   // another peer's; look again next sweep
             if (CarriesCurrentRoads(terrainComp)) { s_swept.Add((zoneID, version)); continue; }
             if (s_pendingWrites.ContainsKey(terrainComp)) continue;
             int writes = s_sweepWrites.TryGetValue((zoneID, version), out int w) ? w + 1 : 1;
@@ -203,12 +199,8 @@ public static class RoadTerrainModifier
         if (roadPoints.Count == 0 || (!forced && (NetworkCutoff.Excludes(zoneID) || CarriesCurrentRoads(terrainComp))))
             return;
 
-        if (!terrainComp.m_nview.IsOwner())
-        {
-            if (terrainComp.m_nview.HasOwner())
-                return;
-            terrainComp.m_nview.ClaimOwnership();
-        }
+        if (!TakeIfReleased(terrainComp.m_nview))
+            return;
 
         QueueWrite(zoneID, roadPoints, terrainComp.m_hmap, terrainComp, forced);
     }
@@ -264,6 +256,16 @@ public static class RoadTerrainModifier
         if (zdo == null) return false;
         return CarriesCurrentRoads(ZoneSystem.GetZone(terrainComp.m_hmap.transform.position),
             zdo.GetInt(AppliedVersionHash, 0));
+    }
+
+    /// <summary>Whether the compiler is ours to write: already ours, or released by the game and now claimed. Another
+    /// peer's is left alone (false): it writes its own zones.</summary>
+    internal static bool TakeIfReleased(ZNetView nview)
+    {
+        if (nview.IsOwner()) return true;
+        if (nview.HasOwner()) return false;
+        nview.ClaimOwnership();
+        return true;
     }
 
     // Saved compilers and live ones must agree: an append elsewhere does not
@@ -424,9 +426,8 @@ public static class RoadTerrainModifier
         // left alone and the request dropped: that peer writes its own zones,
         // and if the compiler comes back to us unwritten the sweep queues it.
         if (request.Version == RoadSpatialGrid.RoadNetworkVersion && terrainComp.m_hmap == heightmap &&
-            terrainComp.m_nview != null && terrainComp.m_nview.IsValid() &&
-            !terrainComp.m_nview.IsOwner() && !terrainComp.m_nview.HasOwner())
-            terrainComp.m_nview.ClaimOwnership();
+            terrainComp.m_nview != null && terrainComp.m_nview.IsValid())
+            TakeIfReleased(terrainComp.m_nview);
         // The network can change between requesting and rebuilding.
         if (request.Version != RoadSpatialGrid.RoadNetworkVersion ||
             terrainComp.m_hmap != heightmap || terrainComp.m_nview == null ||

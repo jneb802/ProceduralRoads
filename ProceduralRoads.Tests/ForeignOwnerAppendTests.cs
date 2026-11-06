@@ -77,4 +77,18 @@ public sealed class ForeignOwnerAppendTests : IDisposable
         float reach = RoadTerrainModifier.MaxInfluenceRadius(4f) + hm.m_scale;
         TerrainAssert.OnlyChangedWithin(before, compiler, (x, z) => Mathf.Abs(z) <= reach, "the released zone");
     }
+
+    [Fact]
+    public void ACompilerIsOursWhenWeOwnItOrTheGameReleasedItAndNotWhenAnotherPeerHasIt()
+    {
+        var nview = _world.RegisterHeightmap(new Vector2s(1, 0)).m_terrainComp!.m_nview;
+        var zdo = nview.GetZDO();
+        zdo.SetOwner(OtherPeer);
+        Assert.False(RoadTerrainModifier.TakeIfReleased(nview));
+        Assert.Equal(OtherPeer, zdo.GetOwner());
+        zdo.SetOwner(0);
+        Assert.True(RoadTerrainModifier.TakeIfReleased(nview));
+        Assert.True(nview.IsOwner());
+        Assert.True(RoadTerrainModifier.TakeIfReleased(nview));
+    }
 }

@@ -979,12 +979,8 @@ public static class ServerTerrainBake
                 if (!live.m_nview.IsOwner())
                 {
                     // Somebody else's to write; ours only once they let go.
-                    if (live.m_nview.HasOwner())
-                    {
-                        Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);
-                        return Outcome.Waiting;
-                    }
-                    live.m_nview.ClaimOwnership();
+                    Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);
+                    return Outcome.Waiting;
                 }
                 RoadTerrainModifier.LastWriteOutcome = RoadTerrainModifier.WriteOutcome.None;
                 RoadTerrainModifier.BakeRoadTerrain(zone, live.m_hmap, live);

@@ -209,6 +209,20 @@ public sealed class BridgeLifecycleTests : IDisposable
         Assert.NotNull(BuiltBridges.Of(site));
     }
 
+    /// <summary>A second addition to a zone still owed pieces by the first brings no old plan again: the first queued it, and a
+    /// piece a player destroyed since must not come back.</summary>
+    [Fact] public void ASecondAppendToAZoneStillOwedDoesNotAddItsOldPlanAgain()
+    {
+        List<Vector2s> zones = GeneratedPlanZones();
+        Vector3 at = StructurePlans.PlanFor(zones[0])![0].Position;
+        var first = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = at };
+        var second = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = new Vector3(at.x, at.y + 1f, at.z) };
+        StructureAppendQueue.Enqueue(StructureAppendQueue.Prepare(new[] { first }));
+        Assert.NotNull(StructureAppendQueue.ForZone(zones[0]));
+        List<StructurePiece> again = StructureAppendQueue.Prepare(new[] { second })[ZoneSystem.GetZone(at)];
+        Assert.Same(second, Assert.Single(again));
+    }
+
     /// <summary>A site with pieces standing in a zone whose record was lost is started: reaching another of its zones lays it
     /// zone by zone as before, saving no fresh solve that could disagree with what stands.</summary>
     [Fact] public void ASiteWithPiecesStandingAndNoRecordIsNotSavedAfresh()

@@ -47,8 +47,9 @@ public static class StructureAppendQueue
             {
                 pieces = new List<StructurePiece>(); result.Add(zone, pieces);
                 // An unspawned zone must receive its old plans too, since we
-                // will mark the zone spawned when this operation completes.
-                if (!StructurePlans.IsSpawned(zone) && !StructurePlans.ZoneHasLivePieces(zone))
+                // will mark the zone spawned when this operation completes. One owed pieces by an earlier append
+                // has them queued already, and a piece a player destroyed since must not come back.
+                if (!StructurePlans.Started(zone))
                 {
                     // Not the pieces of a generated bridge withheld for reaching an explored zone.
                     var old = StructurePlans.BuildablePlanFor(zone);

@@ -274,8 +274,7 @@ public static class StructureSites
     private static bool Started(HashSet<Vector2s> zones, ICollection<ZDOID>? condemned)
     {
         foreach (Vector2s zone in zones)
-            if (StructurePlans.IsSpawned(zone) || StructureAppendQueue.ForZone(zone) != null || StructurePlans.ZoneHasLivePieces(zone, condemned))
-                return true;
+            if (StructurePlans.Started(zone, condemned)) return true;
         return false;
     }
 }

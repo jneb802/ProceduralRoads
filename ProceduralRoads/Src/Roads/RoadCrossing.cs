@@ -488,7 +488,7 @@ public static class RoadCrossingDetector
     /// water no style may take is no crossing at all): a road may cross
     /// shallow water as far as a river ford reaches and no deeper than a ford is waded. A run past
     /// either is an INVALID crossing; the caller re-routes round it or refuses the road.</summary>
-    public const float ShallowMaxLength = RoadConstants.MaxRiverCrossingCells * 8f;
+    public const float ShallowMaxLength = RoadConstants.MaxFordSpan;
     /// <summary>Deeper than this no style is built. A wade is a ford BUILT up to
     /// <see cref="ShallowWadeCover"/> under the water line (a submerged causeway), so every style
     /// takes the same water; 3 m of fill is well inside the 8 m earthwork cap. Measured on a
@@ -676,7 +676,7 @@ public static class RoadCrossingDetector
             float toH = BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world);
             (Vector2 topFrom, int topFromIndex, float topFromH) = BankTop(path, from, fromIndex, -1, world);
             (Vector2 topTo, int topToIndex, float topToH) = BankTop(path, to, toIndex, +1, world);
-            float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+            float cap = RoadConstants.MaxBridgeSpan;
             bool bothRise = topFromH >= fromH + RoadConstants.HighBankRise
                          && topToH >= toH + RoadConstants.HighBankRise;
             if (bothRise
@@ -715,7 +715,7 @@ public static class RoadCrossingDetector
         // The class the pathfinder accepted is kept: a jump beyond the ford
         // cap was a bridge whatever its depth, and a feature that is off
         // never produces its kind.
-        bool ford = jumpLength <= RoadConstants.MaxRiverCrossingCells * RoadPathfinder.CellSize + 0.5f && (swamp
+        bool ford = jumpLength <= RoadConstants.MaxFordSpan + 0.5f && (swamp
             ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
             : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
         if (!fords) ford = false;
@@ -1061,7 +1061,7 @@ public static class RoadCrossingDetector
     /// </summary>
     private static bool SnapToPlaceableHeading(ref Vector2 from, ref Vector2 to, WorldGenerator world)
     {
-        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        float cap = RoadConstants.MaxBridgeSpan;
         Vector2 centre = (from + to) * 0.5f;
         float bearing = BridgeLayout.YawDegrees((to - from).normalized);
 
@@ -1115,7 +1115,7 @@ public static class RoadCrossingDetector
             return false;
         // Still inside the limits the router applies to a bridge.
         float span = Vector2.Distance(turnedFrom, turnedTo);
-        if (span < 1f || span > RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize)
+        if (span < 1f || span > RoadConstants.MaxBridgeSpan)
             return false;
         float bankDelta = Mathf.Abs(
             BiomeBlendedHeight.GetBlendedHeight(turnedTo.x, turnedTo.y, world)
@@ -1139,7 +1139,7 @@ public static class RoadCrossingDetector
         float toH = BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world);
         (Vector2 topFrom, float topFromH) = HighestAlong(from, -d, world);
         (Vector2 topTo, float topToH) = HighestAlong(to, d, world);
-        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        float cap = RoadConstants.MaxBridgeSpan;
         if (topFromH >= fromH + RoadConstants.HighBankRise && topToH >= toH + RoadConstants.HighBankRise
             && Mathf.Abs(topFromH - topToH) <= RoadConstants.MaxBridgeBankDelta
             && Vector2.Distance(topFrom, topTo) <= cap)
@@ -1254,7 +1254,7 @@ public static class RoadCrossingDetector
         Vector2 edgeFrom, Vector2 edgeTo, int edgeFromIndex, int edgeToIndex)
     {
         float ceiling = RoadConstants.MaxBridgePierHeight;
-        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        float cap = RoadConstants.MaxBridgeSpan;
 
         // Deck, bed and profile for a candidate pair of banks, or null if it is
         // not a crossing this mod would build. A piece-carrying crossing on an

@@ -56,6 +56,8 @@ public static class RoadConstants
     // detours to share it when the detour costs less than the saving and
     // makes its own crossing beyond that.
     public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
+    /// <summary>The longest ford jump, in metres.</summary>
+    public const float MaxFordSpan = MaxRiverCrossingCells * PathfindingCellSize;
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;
     public const float FordWadeMaxDepth = 0.5f;
@@ -80,6 +82,8 @@ public static class RoadConstants
     // defaults make a 100 m bridge worth roughly 1 km of rough detour; a
     // bridge appears where the way around is long or there is none.
     public const int MaxBridgeCrossingCells = 16; // 16 * 8 m = 128 m, dry cell to dry cell
+    /// <summary>The longest bridge jump, in metres.</summary>
+    public const float MaxBridgeSpan = MaxBridgeCrossingCells * PathfindingCellSize;
     public const float MaxBridgeBankDelta = 2.5f;
     public const float DefaultBridgeCostFixed = 60000f;
     public const float DefaultBridgeCostPerMeter = 600f;

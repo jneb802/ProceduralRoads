@@ -197,7 +197,7 @@ public static partial class RoadNetworkGenerator
         float span=Vector2.Distance(from,to);
         int samples=Mathf.Max(1,Mathf.CeilToInt(span/RoadPathfinder.CellSize));
         float run=0; bool river=false;
-        float reach=RoadConstants.MaxBridgeCrossingCells*RoadPathfinder.CellSize;
+        float reach=RoadConstants.MaxBridgeSpan;
         bool Blocked() => run>reach && !river;
         for (int i=0;i<=samples;i++)
         {

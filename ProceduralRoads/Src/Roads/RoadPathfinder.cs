@@ -1431,7 +1431,7 @@ public class RoadPathfinder
             // The cells are 8 m apart and a channel can hide between them:
             // the whole jump is sampled every 2 m before its depth is trusted.
             deepest = Mathf.Min(deepest, DeepestAlong(fromWorld, world));
-            bool bridge = distance > RoadConstants.MaxRiverCrossingCells * CellSize
+            bool bridge = distance > RoadConstants.MaxFordSpan
                 || deepest < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth;
             if (bridge ? !Bridges : !Fords)
                 return false;

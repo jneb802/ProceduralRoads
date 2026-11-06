@@ -800,7 +800,7 @@ public static class RoadNetworkPersistence
 
     /// <summary>The longest crossing a network holds, bank to bank: a bridge's jump (MaxBridgeCrossingCells) with a
     /// swamp bridge's banks walked out over the shelf at both ends (SwampBridgeDryReach).</summary>
-    internal const float MaxCrossingSpan = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize + 2f * RoadConstants.SwampBridgeDryReach;
+    internal const float MaxCrossingSpan = RoadConstants.MaxBridgeSpan + 2f * RoadConstants.SwampBridgeDryReach;
 
     /// <summary>
     /// Why a saved crossing is not one this build ever makes, or null when it is: every number finite, its points in

@@ -71,3 +71,15 @@ public class GridMathTests
             Assert.Equal(new Vector2(c.x * RoadPathfinder.CellSize, c.y * RoadPathfinder.CellSize), RoadPathfinder.CellCentre(c));
     }
 }
+
+public class CrossingSpanTests
+{
+    /// <summary>Recorded before the spans were named: a ford jump is 48 m and a bridge jump 128 m.</summary>
+    [Fact]
+    public void SpansAreAsRecorded()
+    {
+        Assert.Equal(48f, RoadConstants.MaxFordSpan);
+        Assert.Equal(128f, RoadConstants.MaxBridgeSpan);
+        Assert.Equal(128f + 2f * RoadConstants.SwampBridgeDryReach, RoadNetworkPersistence.MaxCrossingSpan);
+    }
+}

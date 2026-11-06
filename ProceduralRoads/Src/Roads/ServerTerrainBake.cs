@@ -22,7 +22,7 @@ namespace ProceduralRoads;
 ///
 /// A zone whose compiler carries the current network version is left alone, so
 /// a restart writes nothing twice and later player edits survive.
-/// Switches: PROCEDURALROADS_SERVER_BAKE (default on), PROCEDURALROADS_PEER_PROBE
+/// Switch: PROCEDURALROADS_PEER_PROBE
 /// (default off; logs where each connected player stands against the road).
 /// </summary>
 public static class ServerTerrainBake
@@ -45,9 +45,7 @@ public static class ServerTerrainBake
     private const float ProbeEverySeconds = 5f;
     private const float GhostLogEverySeconds = 30f;
 
-    private static bool? s_enabled;
     private static bool? s_probe;
-    private static bool Enabled => s_enabled ??= DebugSwitches.Flag("SERVER_BAKE", true);
     private static bool Probe => s_probe ??= DebugSwitches.Flag("PEER_PROBE", false);
     private static readonly ServerBakeLoadScreen s_loadScreen = new();
     /// <summary>Frame time the bake used behind the loading screen; at the host's first spawn, frame time used so far (-1 before).</summary>
@@ -132,7 +130,7 @@ public static class ServerTerrainBake
     // A network whose queue is not built yet (its first Tick is still to come) is owed work too.
     private static bool WorkOwed()
     {
-        if (!Enabled || s_faults.IsPaused || !RoadNetworkGenerator.RoadsAvailable) return false;
+        if (s_faults.IsPaused || !RoadNetworkGenerator.RoadsAvailable) return false;
         int version = RoadSpatialGrid.RoadNetworkVersion;
         return version != 0 && (version != s_version || s_next < s_queue.Count || s_requests.Count > 0);
     }
@@ -362,7 +360,6 @@ public static class ServerTerrainBake
     {
         s_faults.Clear();
         s_version = 0;
-        // Do not change s_enabled: an operator's startup opt-out still holds.
     }
 
     /// <summary>Every frame (ZoneSystem.Update postfix): work the queue for a slice of the frame (a larger one while the
@@ -377,7 +374,7 @@ public static class ServerTerrainBake
                 return;
             if (Probe)
                 ProbePeers();
-            if (!Enabled || !RoadNetworkGenerator.RoadsAvailable)
+            if (!RoadNetworkGenerator.RoadsAvailable)
                 return;
             int version = RoadSpatialGrid.RoadNetworkVersion;
             if (version == 0)
@@ -409,7 +406,7 @@ public static class ServerTerrainBake
     {
         try
         {
-            if (!Enabled || !RoadLifecycleManager.HoldsTheNetwork || hmap == null || ZDOMan.instance == null ||
+            if (!RoadLifecycleManager.HoldsTheNetwork || hmap == null || ZDOMan.instance == null ||
                 !RoadNetworkGenerator.RoadsAvailable || RoadSpatialGrid.RoadNetworkVersion == 0)
                 return;
             if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0)
@@ -728,7 +725,7 @@ public static class ServerTerrainBake
                $"Generated for peers: {c.GhostCreated} compilers created, {c.GhostRewritten} saved ones written, " +
                $"{c.GhostFailed} failed ({s_ghostRepair.RepairCount} awaiting repair), {c.GhostRocks} rock(s) cleared, {c.GhostSettled} object(s) settled, {c.GhostMs:F0} ms; " +
                $"{s_faults.Count} zone exception(s); queue " +
-               (!Enabled ? "disabled by startup setting" : s_faults.IsPaused
+               (s_faults.IsPaused
                    ? $"paused ({s_faults.PauseReason}); fix the cause, then road_bake again"
                    : s_faults.Count > 0 ? "enabled; stopped zones need road_bake again after fixing the cause" : "enabled");
     }

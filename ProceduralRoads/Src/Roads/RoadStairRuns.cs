@@ -311,7 +311,7 @@ public static partial class RoadStairRuns
         RoadFeetAcross = MergedFeetAcross = RoadTopsAcross = ApproachStartsAcross = ApproachLayoutsAcross = SiteChecksAcross = 0;
         Array.Clear(RingEnds, 0, RingEnds.Length);
         PadsAtFeet = PadsAtTops = PadsPartial = 0;
-        FeetCarriedOnto = TopsCarriedOnto = EndsCarried = EndsSkippedByRows = EndsTried = RoadOntoCalls = RoadOntoUnplanned = CarriesReused = 0;
+        FeetCarriedOnto = TopsCarriedOnto = EndsCarried = EndsTried = RoadOntoCalls = RoadOntoUnplanned = CarriesReused = 0;
         Array.Clear(EndsByFloorRows, 0, EndsByFloorRows.Length);
         EndFloorsKept.Clear();
         PadsRefused.Clear();

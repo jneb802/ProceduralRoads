@@ -162,7 +162,7 @@ public class StairClearanceTests : IDisposable
             RockClearance inner = Assert.Single(mine, b => Mathf.Abs(2f * b.Half.x - corridor) < 1e-3f);
             RockClearance tread = Assert.Single(mine, b => Mathf.Abs(2f * b.Half.x - RoadStairRuns.Width) < 1e-3f);
             Assert.Equal(storedTop, inner.Top, 3);
-            Assert.Equal(StairLayout.HighestWalk(storedTop) + StairLayout.StepUp, tread.Top, 3);
+            Assert.Equal(StairLayout.HighestWalk(stored.Centre, stored.Half, stored.Surface) + StairLayout.StepUp, tread.Top, 3);
         }
 
         // A road's clearance is a player's height over the road, its own roof too.
@@ -175,7 +175,7 @@ public class StairClearanceTests : IDisposable
     }
 
     /// <summary>A stair's walking box is a road's (RockClearances.Bottom to Top, a lift over the walk and a player's headroom
-    /// over that: 2.1 m over it, not 2.0), and its stored top reads back to the highest walk: pinned over walks at zero, under
+    /// over that: 2.1 m over it, not 2.0), pinned over walks at zero, under
     /// and over the sea, large and NaN.</summary>
     [Theory]
     [InlineData(0f, 0.1f, 2.1f)]
@@ -189,12 +189,26 @@ public class StairClearanceTests : IDisposable
         Assert.Equal(bottom, RockClearances.Bottom(walk), 3);
         Assert.Equal(boxTop, StairLayout.BoxTop(walk), 3);
         Assert.Equal(RockClearances.Top(walk), StairLayout.BoxTop(walk));
-        Assert.Equal(walk, StairLayout.HighestWalk(StairLayout.BoxTop(walk)), 3);
+    }
+
+    /// <summary>A stair stretch's walking box saved by a build before the headroom became the road's (its top 2.0 m over the
+    /// highest walk, not 2.1) reads back the same highest walk as one laid now: read from the bottom and surface, which every
+    /// build stored the same way, never from the top.</summary>
+    [Fact]
+    public void AStairBoxSavedBeforeTheRoadsHeadroomReadsAsLaid()
+    {
+        float lowest = 10f, highest = 10.25f, surface = 10.125f;
+        float bottom = lowest + RoadRockPolicy.ClearanceLift;
+        foreach (float top in new[] { highest + 2.0f, StairLayout.BoxTop(highest) })
+        {
+            var box = new StairClearance(new Vector3(0f, (bottom + top) / 2f, 0f), new Vector3(1f, (top - bottom) / 2f, 0.25f), 0f, surface);
+            Assert.Equal(highest, StairLayout.HighestWalk(box.Centre, box.Half, box.Surface), 3);
+        }
     }
 
     /// <summary>Whether a stored walking box is a stair's stretch: its top stands a player's headroom over a walk higher than
     /// its middle one.</summary>
-    private static bool Rises(StairClearance box) => StairLayout.HighestWalk(box.Centre.y + box.Half.y) > box.Surface + 0.01f;
+    private static bool Rises(StairClearance box) => StairLayout.HighestWalk(box.Centre, box.Half, box.Surface) > box.Surface + 0.01f;
 
     /// <summary>Whether a box centred at <paramref name="centre"/>, turned to <paramref name="yaw"/>, is one of a walked piece's
     /// own: standing over its footprint, turned to its heading.</summary>

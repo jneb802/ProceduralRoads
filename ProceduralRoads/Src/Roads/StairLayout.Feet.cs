@@ -65,9 +65,10 @@ public static partial class StairLayout
     /// <summary>Most stairs <see cref="LowerFoot"/> adds down from a foot.</summary>
     public const int MostLowered = 2;
 
-    /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise the
-    /// foot stays (the road's landing is filled up to it); from half a rise up, a stair drops (<see cref="LowerFoot"/>, <see cref="LowerFootTo"/>).</summary>
-    private static int WholeStairsOver(float over) => Mathf.RoundToInt(over / PieceRise);
+    /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise
+    /// (<see cref="HalfRise"/>) the foot stays (the road's landing is filled up to it); from half a rise up, a stair drops
+    /// (<see cref="LowerFoot"/>, <see cref="LowerFootTo"/>). Half rounds up, not to even.</summary>
+    private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + 0.5f);
 
     /// <summary>
     /// A staircase whose foot (the first step's low edge, at the ground's height there) stands over its road's ground

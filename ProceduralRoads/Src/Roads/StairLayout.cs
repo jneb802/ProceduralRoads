@@ -267,6 +267,11 @@ public static partial class StairLayout
 
     public const float PieceRun = 2f;
     public const float PieceRise = 1f;
+
+    /// <summary>Half a rise. Staircases and structure ends stand in whole rises, so two of them meet within half a rise: the
+    /// rounding of a foot to its road (<see cref="WholeStairsOver"/>) and two structures sharing a landing
+    /// (StructureEnds.Share). A walker's step is <see cref="StepUp"/>.</summary>
+    public const float HalfRise = PieceRise * 0.5f;
     public const float HeadingStep = 22.5f;
     /// <summary>
     /// A generated staircase keeps this close to the stretch of road it
@@ -1553,11 +1558,15 @@ public static partial class StairLayout
 
     /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a road's
     /// (<see cref="RockClearances.Top"/>), a player's headroom (<see cref="RoadRockPolicy.ClearanceHeight"/>) over the lift
-    /// (<see cref="RoadRockPolicy.ClearanceLift"/>) over the walk. <see cref="HighestWalk"/> reads a stored box back.</summary>
+    /// (<see cref="RoadRockPolicy.ClearanceLift"/>) over the walk.</summary>
     internal static float BoxTop(float highest) => RockClearances.Top(highest);
 
-    /// <summary>A stored walking box's highest walk, from its top <paramref name="top"/> (the inverse of <see cref="BoxTop"/>).</summary>
-    internal static float HighestWalk(float top) => top - RoadRockPolicy.ClearanceHeight - RoadRockPolicy.ClearanceLift;
+    /// <summary>A stored walking box's highest walk (centre <paramref name="centre"/>, half extents <paramref name="half"/>, middle
+    /// walk <paramref name="surface"/>): its middle walk stands under its highest as far as its lowest (the box's bottom less
+    /// the lift) stands under it. Read from the bottom and surface, stored the same way by every build, so a box saved before
+    /// the headroom became the road's is read as it was laid.</summary>
+    internal static float HighestWalk(Vector3 centre, Vector3 half, float surface) =>
+        2f * surface - (centre.y - half.y - RoadRockPolicy.ClearanceLift);
 
     /// <summary>Unity's yaw: 0 faces +z, 90 faces +x.</summary>
     public static Vector2 Forward(float headingDegrees)

@@ -119,9 +119,9 @@ public static class RockClearances
     internal static void AddBox(StructureClearance s, List<RockClearance> boxes)
     {
         var turn = Quaternion.Euler(0f, s.YawDegrees, 0f);
-        float bottom = s.Centre.y - s.Half.y, top = s.Centre.y + s.Half.y;
+        float bottom = s.Centre.y - s.Half.y;
         // A stair's stretch rises: its middle walk stands under its highest.
-        float highest = StairLayout.HighestWalk(top);
+        float highest = StairLayout.HighestWalk(s.Centre, s.Half, s.Surface);
         if (highest <= s.Surface + RisesOver || Corridor(s.Half.x) >= s.Half.x)
         {
             boxes.Add(Of(s, turn, s.Centre, s.Half));

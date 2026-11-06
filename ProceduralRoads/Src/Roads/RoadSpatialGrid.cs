@@ -547,7 +547,7 @@ public static partial class RoadSpatialGrid
 
     /// <summary>The ends of a piece of <paramref name="points"/> (<paramref name="total"/> long) that are levelled
     /// (<see cref="LevelledEnds"/>), each whether at its start and its height. A piece levelled at both ends whose levelled
-    /// stretches overlap, the two within a step of each other (a landing two structures' ends share), is levelled at their
+    /// stretches overlap, the two close enough to share it (StructureEnds.SharesLanding: a landing two structures' ends share), is levelled at their
     /// common height all along, as the landing was laid (StructureEnds.Share), not at the one levelled last.</summary>
     private static List<(bool atStart, float height)> LevelledOn(List<(Vector2 at, float height)> ends, List<Vector2> points, float total)
     {
@@ -559,7 +559,7 @@ public static partial class RoadSpatialGrid
         }
         int s = on.FindIndex(e => e.atStart), e = on.FindIndex(x => !x.atStart);
         if (s >= 0 && e >= 0 && total <= 2f * (StructureEnds.ApronLength + StructureEnds.JoinOverlap) + 1e-3f
-            && Mathf.Abs(on[s].height - on[e].height) <= StructureEnds.StepTolerance + 1e-3f)
+            && StructureEnds.SharesLanding(on[s].height, on[e].height))
         {
             float common = 0.5f * (on[s].height + on[e].height);
             on[s] = (true, common);
@@ -812,10 +812,11 @@ public static partial class RoadSpatialGrid
             foreach (var (atStart, height) in LevelledOn(levelledEnds, densePoints, pathTotal))
             {
                 // The levelled stretch never takes the piece's other end where that end is held at another height (a
-                // staircase's foot, another structure's end): the two cannot both be met, and the piece is refused.
+                // staircase's foot, another structure's end) further than two structures may share a landing across
+                // (StructureEnds.SharesLanding): the two cannot both be met, and the piece is refused.
                 float? other = atStart ? endGround : startGround;
                 if (pathTotal <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f && other is float otherHeight
-                    && Mathf.Abs(otherHeight - Mathf.Max(height, minHeight)) > StructureEnds.StepTolerance)
+                    && !StructureEnds.SharesLanding(otherHeight, Mathf.Max(height, minHeight)))
                 {
                     LastRefusal = LevelledOverHeldEnd;
                     Log.LogDebug("Road refused: a structure's levelled end reaches a held end at another height");

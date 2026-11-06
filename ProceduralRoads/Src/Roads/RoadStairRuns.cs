@@ -1081,7 +1081,10 @@ public static partial class RoadStairRuns
                 if (StairLayout.LowerFootTo(toEnd, Ground, Width, under.MeetHeight) is Vector3 lowest
                     && Vector2.Dot(new Vector2(lowest.x, lowest.z) - under.Meet, outward) is float nowOut && nowOut >= 0f && nowOut < wasOut
                     && Mathf.Abs(Vector2.Dot(new Vector2(lowest.x, lowest.z) - under.Meet, across)) <= RoadNetworkGenerator.RoadWidth / 2f
-                    && !InExcludedZone(toEnd) && KeepsItsRingLowered(toEnd, lowest))
+                    && !InExcludedZone(toEnd) && KeepsItsRingLowered(toEnd, lowest)
+                    // Close enough to share the landing to the end (two structures, StructureEnds.SharesLanding); else the foot is
+                    // laid from the end's height instead (FromTheEndsHeight, below).
+                    && StructureEnds.SharesLanding(lowest.y, under.MeetHeight))
                 {
                     plan = toEnd;
                     (footAt, footHeight) = (new Vector2(lowest.x, lowest.z), lowest.y);

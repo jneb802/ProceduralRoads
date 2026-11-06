@@ -532,7 +532,7 @@ public static class StructureEnds
     /// or pad (their edges nearer than both ends' <see cref="OwnGround"/>): <paramref name="far"/>, the end of the crossing
     /// the road leaves at <paramref name="path"/>'s point <paramref name="from"/>, and <paramref name="near"/>, the end of the
     /// next it comes to at <paramref name="to"/>, each as the bank takes it. Every pair of rows up their flights whose
-    /// feet stand within a step of each other in height (<see cref="StepTolerance"/>), at least
+    /// feet stand close enough in height to share it (<see cref="SharesLanding"/>), at least
     /// <see cref="SharedLandingLength"/> apart, each foot opening onto the other along its line (within a turn of 60
     /// degrees), is a candidate: the road between the two feet levelled at their common height, within the earthwork cap,
     /// dry or else as earthwork over water, every other road on it raised to it (RoadStairRuns.Land). The cheapest
@@ -559,7 +559,7 @@ public static class StructureEnds
                 var f = new End(far.Edge, far.Up, far.Height, rf);
                 var m = new End(near.Edge, near.Up, near.Height, rn);
                 float step = Mathf.Abs(f.MeetHeight - m.MeetHeight), height = 0.5f * (f.MeetHeight + m.MeetHeight);
-                if (step > StepTolerance + 1e-3f || height < RoadConstants.DryRoadFloor - StepTolerance) continue;
+                if (!SharesLanding(f.MeetHeight, m.MeetHeight) || height < RoadConstants.DryRoadFloor - StepTolerance) continue;
                 Vector2 across = m.Meet - f.Meet;
                 float length = across.magnitude;
                 if (length < SharedLandingLength) continue;
@@ -789,7 +789,8 @@ public static class StructureEnds
     /// <summary>
     /// Why the road <paramref name="points"/> between two structures, held at <paramref name="from"/> and
     /// <paramref name="to"/> at its ends, is a stub: shorter than <see cref="StubLength"/> (the stretch under a viaduct's
-    /// joining piece apart) and its ends further apart in height than a step (<see cref="StepTolerance"/>), so it is not one
+    /// joining piece apart) and its ends further apart in height than two structures may share a landing across
+    /// (<see cref="SharesLanding"/>), so it is not one
     /// level landing. Null where it is a landing, or long enough to be road.
     /// </summary>
     public static string? IsStub(IReadOnlyList<Vector2> points, float from, float to)
@@ -797,9 +798,14 @@ public static class StructureEnds
         float length = 0f;
         for (int i = 1; i < points.Count; i++) length += Vector2.Distance(points[i - 1], points[i]);
         if (length >= StubLength + JoinOverlap - 1e-3f) return null;
-        if (Mathf.Abs(from - to) <= StepTolerance + 1e-3f) return null;
+        if (SharesLanding(from, to)) return null;
         return FormattableString.Invariant($"a stub of road {length:F1} m long between two structures {Mathf.Abs(from - to):F1} m apart in height");
     }
+
+    /// <summary>Whether two structure ends at <paramref name="a"/> and <paramref name="b"/> may share one level landing: structures
+    /// stand in whole rises, so within half a rise (<see cref="StairLayout.HalfRise"/>), not a walker's step. The one rule for
+    /// <see cref="Share"/> and for levelling that landing (RoadSpatialGrid.LevelledOn).</summary>
+    public static bool SharesLanding(float a, float b) => Mathf.Abs(a - b) <= StairLayout.HalfRise + 1e-3f;
 
     /// <summary>Whether a player walks from road at <paramref name="roadHeight"/> where the road meets
     /// <paramref name="end"/> onto it.</summary>

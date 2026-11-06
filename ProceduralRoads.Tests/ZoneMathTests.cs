@@ -38,7 +38,7 @@ public class ZoneMathTests
         uint hash = 2166136261u;
         foreach (float x in Coordinates())
             foreach (float z in Coordinates())
-                hash = (hash ^ (uint)System.BitConverter.SingleToInt32Bits(BiomeBlendedHeight.GetBlendedHeight(x, z, world))) * 16777619u;
+                hash = (hash ^ (uint)System.BitConverter.ToInt32(System.BitConverter.GetBytes(BiomeBlendedHeight.GetBlendedHeight(x, z, world)), 0)) * 16777619u;
         Assert.Equal(2273996284u, hash);
     }
 
@@ -153,7 +153,7 @@ public class ModelledHeightRecordedTests
             {
                 var vertex = points[random.Next(points.Count)].p + new Vector2(Next(-14f, 14f), Next(-14f, 14f));
                 float ground = Next(0f, 80f);
-                hash = (hash ^ (uint)System.BitConverter.SingleToInt32Bits(RoadTerrainModifier.ModelledHeight(points, vertex, ground, fill))) * 16777619u;
+                hash = (hash ^ (uint)System.BitConverter.ToInt32(System.BitConverter.GetBytes(RoadTerrainModifier.ModelledHeight(points, vertex, ground, fill)), 0)) * 16777619u;
             }
         }
         Assert.Equal(4142811402u, hash);

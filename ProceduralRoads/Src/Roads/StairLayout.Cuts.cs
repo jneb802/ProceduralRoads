@@ -7,7 +7,8 @@ namespace ProceduralRoads;
 /// <summary>
 /// Small cuts where the ground covers a walk (one owner): a row of a piece is cut out where the ground covers more than half of
 /// it or any of it deeper than StairCover.TreadEdge, to CutBelowSurface under the walk; the treads near either end are kept clear of
-/// other earthwork; a turn's wedge is read for burial where a staircase is kept off earthwork.
+/// other earthwork; where a staircase is kept off earthwork (an approach) a piece's and a turn's wedge's burial is read over its
+/// whole walking surface (Cover, the one reading the search, the approach's refusal and the tests share).
 /// </summary>
 public static partial class StairLayout
 {
@@ -28,18 +29,97 @@ public static partial class StairLayout
     /// vertex under the cut stretch (half the 1 m diagonal is 0.71 m).</summary>
     public const float CutRadius = 0.75f;
 
-    /// <summary>How deep the ground stands over the filler of the wedge a turn at <paramref name="pivot"/>
-    /// opens off a piece whose far edge is centred on <paramref name="edge"/>, level with its top
-    /// <paramref name="height"/>; the turned piece's back edge is centred on <paramref name="start"/>.
-    /// Read at the wedge's middle and at the middle of its open side (between the two outer corners),
-    /// a little inside it.</summary>
-    internal static float WedgeBuried(Vector2 edge, float height, Vector2 pivot, Vector2 start, Func<float, float, float> ground)
+    internal const float SurfaceSpacing = CutSpacing / 2f;
+
+    private static Vector3 WalkPoint(bool stair, Vector2 back, Vector2 dir, Vector2 right, float height, float along, float side)
     {
-        Vector2 a = edge + (edge - pivot);                        // the piece before's outer corner
-        Vector2 b = start + (start - pivot);                      // the new piece's outer back corner
-        Vector2 open = (a + b) * 0.5f, middle = (pivot + a + b) * (1f / 3f);
-        Vector2 inside = open + (pivot - open).normalized * 0.1f;
-        return Mathf.Max(ground(middle.x, middle.y), ground(inside.x, inside.y)) - height;
+        Vector2 p = back + dir * along + right * side;
+        return new Vector3(p.x, height + (stair ? PieceRise * along / PieceRun : 0f), p.y);
+    }
+
+    /// <summary>The complete walked surface, its boundary included, whether or not cuts were emitted.
+    /// Uses the same surface transform as AddCuts and the kit's actual filler dimensions.</summary>
+    internal static IEnumerable<Vector3> WalkingSurface(StairPiece piece)
+    {
+        if (piece.Kind == StairPieceKind.Support) yield break;
+        var (back, heading, across, depth, height) = Footprint(piece);
+        foreach (Vector3 sample in WalkingSurface(piece.Kind == StairPieceKind.Stair, back, heading, height, across, depth)) yield return sample;
+    }
+
+    /// <summary>A walked piece's footprint as its walking surface is read (<see cref="WalkingSurface(StairPiece)"/>): its back
+    /// edge's centre, the heading it is walked on, its size across and along that heading (a filler's its kit's), and its
+    /// walking height at its back edge (a stair's low edge, a floor's top).</summary>
+    internal static (Vector2 back, float heading, float across, float depth, float height) Footprint(StairPiece piece)
+    {
+        StairKit kit = StairKit.Named(piece.Prefab.Split('_')[0]) ?? StairKit.Stone;
+        bool stair = piece.Kind == StairPieceKind.Stair;
+        float across = PieceRun, depth = PieceRun;
+        if (piece.Kind == StairPieceKind.Filler)
+            foreach (FillerKind filler in kit.Fillers)
+                if (filler.Prefab == piece.Prefab) { across = filler.Across; depth = filler.Depth; break; }
+        float heading = stair ? Wrap(piece.YawDegrees + 180f) : piece.YawDegrees;
+        Vector2 back = new Vector2(piece.Position.x, piece.Position.z) - Forward(heading) * (depth / 2f);
+        return (back, heading, across, depth, piece.Position.y + (stair ? 0f : kit.FloorTop));
+    }
+
+    private static IEnumerable<Vector3> WalkingSurface(bool stair, Vector2 back, float heading, float height, float across, float depth)
+    {
+        Vector2 dir = Forward(heading), right = Right(heading);
+        for (float along = 0f; along <= depth + 0.001f; along += SurfaceSpacing)
+            for (float side = -across / 2f; side <= across / 2f + 0.001f; side += SurfaceSpacing)
+                yield return WalkPoint(stair, back, dir, right, height, along, side);
+    }
+
+    /// <summary>
+    /// How deep the ground stands over a walked piece, point by point (one owner of "a walked piece is buried in the ground"
+    /// where no earthwork uncovers it: an approach's search, its refusal and the tests' oracle all read this): the ground
+    /// less the walking height at every point of <see cref="WalkingSurface(StairPiece)"/>, its edges included. Read at the
+    /// piece's inside only (the search read 0.5–1.5 m along, 0.9 m across; the refusal its cut rows), a stair just past a
+    /// switchback pad at the Mountain tower had its side edge 0.53 m under the tower's raised corner while every inside
+    /// point stood clear. The edges are read where they are, with no inset: the edge is where a player sees the slope come
+    /// through the piece. Positive where the ground covers the surface.
+    /// </summary>
+    internal static IEnumerable<(Vector3 at, float depth)> Cover(IEnumerable<Vector3> surface, Func<float, float, float> ground)
+    {
+        foreach (Vector3 s in surface) yield return (s, ground(s.x, s.z) - s.y);
+    }
+
+    /// <summary>The deepest the ground stands over the walking surface <see cref="WalkingSurface(bool, Vector2, float, float, float, float)"/>
+    /// lays out (<see cref="Cover"/>), 0 where it stands clear everywhere, read no further once deeper than
+    /// <paramref name="enough"/> (the search's refusal: the rest cannot change it); the same lattice point for point, read with plain loops: the search reads every candidate piece and wedge so,
+    /// and an iterator per reading was garbage on the worker threads.</summary>
+    internal static float DeepestOver(bool stair, Vector2 back, float heading, float height, float across, float depth,
+        Func<float, float, float> ground, float enough = float.PositiveInfinity)
+    {
+        Vector2 dir = Forward(heading), right = Right(heading);
+        float deepest = 0f;
+        for (float along = 0f; along <= depth + 0.001f; along += SurfaceSpacing)
+            for (float side = -across / 2f; side <= across / 2f + 0.001f; side += SurfaceSpacing)
+            {
+                Vector3 s = WalkPoint(stair, back, dir, right, height, along, side);
+                deepest = Mathf.Max(deepest, ground(s.x, s.z) - s.y);
+                if (deepest > enough) return deepest;
+            }
+        return deepest;
+    }
+
+    /// <summary>How deep the ground stands over the fillers of the wedge a turn of <paramref name="turn"/> heading steps off a
+    /// piece walking <paramref name="from"/> opens, pivoting on <paramref name="pivot"/> (StairFiller.Choose's fillers, as the
+    /// kit lays them, read round the origin and moved to the pivot, allocating nothing: StairFiller.Around and At, as
+    /// Route.WedgeHeld reads them; level with the piece before, its top <paramref name="height"/>): each over its whole walking
+    /// surface, its edges included (<see cref="DeepestOver"/>). Read before at the wedge's middle and its open side only, a
+    /// filler at the Mountain tower stood 0.72 m into the slope at its edge.</summary>
+    internal static float WedgeBuried(Vector2 pivot, float from, float height, int turn, float width, bool offFloor, FillerKind[]? fillers,
+        Func<float, float, float> ground, float enough = float.PositiveInfinity)
+    {
+        float deepest = 0f;
+        foreach (FillerPiece around in StairFiller.Around(from, turn, width, offFloor, fillers))
+        {
+            FillerPiece filler = StairFiller.At(around, pivot);
+            deepest = Mathf.Max(deepest, DeepestOver(false, filler.Back, filler.Heading, height, filler.Across, filler.Depth, ground, enough));
+            if (deepest > enough) break;
+        }
+        return deepest;
     }
 
     /// <summary>How far from either end a staircase's treads are kept clear of earthwork
@@ -88,13 +168,14 @@ public static partial class StairLayout
         var row = new List<(Vector2 p, float g)>();
         for (float along = CutSpacing / 2f; along < depth; along += CutSpacing)
         {
-            float surface = stair ? baseHeight + PieceRise * along / PieceRun : baseHeight;
+            float surface = WalkPoint(stair, laneStart, dir, right, baseHeight, along, 0f).y;
             row.Clear();
             int covered = 0;
             float deepest = float.NegativeInfinity;
             for (float side = -across / 2f + CutSpacing / 2f; side < across / 2f; side += CutSpacing)
             {
-                Vector2 p = laneStart + dir * along + right * side;
+                Vector3 walk = WalkPoint(stair, laneStart, dir, right, baseHeight, along, side);
+                Vector2 p = new Vector2(walk.x, walk.z);
                 float g = ground(p.x, p.y);
                 row.Add((p, g));
                 if (g > surface + CoverTolerance) covered++;

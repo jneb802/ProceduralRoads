@@ -15,8 +15,18 @@ public static class RoadSiteProtection
     public readonly struct Footprint
     {
         public readonly Vector2 Centre;
+        /// <summary>Everything the place's terrain modifiers touch, its paint included: other roads keep out of it.</summary>
         public readonly float Radius;
-        public Footprint(Vector2 centre, float radius) { Centre = centre; Radius = radius; }
+        /// <summary>Where the place's own road stops (<see cref="ArrivalRadiusAt"/>): the ground the place shapes
+        /// (<see cref="LocationLevelling.ArrivalReach"/>), at most <see cref="Radius"/>; past it out to Radius the
+        /// place only paints, and its own road is carried on over that.</summary>
+        public readonly float Arrival;
+        public Footprint(Vector2 centre, float radius) : this(centre, radius, radius) { }
+        public Footprint(Vector2 centre, float radius, float arrival)
+        {
+            Centre = centre; Radius = radius;
+            Arrival = float.IsNaN(arrival) ? radius : Mathf.Clamp(arrival, 0f, radius);
+        }
     }
     public static Func<IEnumerable<Footprint>?>? Source;
     private const float Cell = 128f;
@@ -110,7 +120,38 @@ public static class RoadSiteProtection
     // search. Those sections are clipped away before storing the road.
     public static bool BlocksSegment(Vector2 a, Vector2 b, float clearance,
         Vector2? start, Vector2? end) =>
-        BlocksSegment(a, b, clearance, start, end, false, out _);
+        BlocksSegment(a, b, clearance, start, end, Mode.Exempt, out _);
+
+    /// <summary>The site clearance of a road's searched line, a step <paramref name="a"/> to <paramref name="b"/> on its
+    /// way from <paramref name="start"/> to <paramref name="end"/> (place centres): as <see cref="BlocksSegment(Vector2, Vector2, float, Vector2?, Vector2?)"/>,
+    /// but an endpoint's own footprint is crossed only as the road's departure or arrival: once the line is inside the
+    /// end's footprint and clearance it stays there, and once out of the start's it never comes back. The road is trimmed
+    /// where it last leaves the end's ring (TrimPathToRadii), so a searched line that came into a place's clearance and left
+    /// it again kept that stretch, and the final road (<see cref="BlocksRoad"/>) was refused for it.</summary>
+    internal static bool BlocksRoute(Vector2 a, Vector2 b, float clearance, Vector2? start, Vector2? end) =>
+        BlocksSegment(a, b, clearance, start, end, Mode.Route, out _);
+
+    /// <summary>The site clearance of a road's line once trimmed: the final check (RoadSpatialGrid.PlanRoadPath) and every
+    /// step that shapes the line before it (the pull, the sway, the network snap, the bends' fillets and the spline) ask
+    /// this, with the road's width and the ends it was planned between, so a shaped line the final check would refuse is
+    /// never made. <see cref="Clearance"/> of <paramref name="width"/>; a trimmed arrival may graze its own place's
+    /// clearance (<see cref="BlocksFinalSegment"/>).</summary>
+    internal static bool BlocksRoad(Vector2 a, Vector2 b, float width, Vector2 start, Vector2 end) =>
+        BlocksSegment(a, b, Clearance(width), start, end, Mode.Final, out _);
+
+    /// <summary><see cref="BlocksRoad"/> over every leg of <paramref name="line"/>, each leg at the wider of its two
+    /// points' <paramref name="widths"/> where given; the first leg that crosses, or -1.</summary>
+    internal static int FirstBlockedLeg(IReadOnlyList<Vector2> line, float width, IReadOnlyList<float>? widths, Vector2 start, Vector2 end)
+    {
+        for (int i = 1; i < line.Count; i++)
+        {
+            float w = widths != null && widths.Count == line.Count ? Mathf.Max(widths[i - 1], widths[i]) : width;
+            if (BlocksRoad(line[i - 1], line[i], w, start, end)) return i;
+        }
+        return -1;
+    }
+
+    private enum Mode { Exempt, Route, Final }
 
     // A trimmed arrival is outside the site, at the edge of its extra road
     // clearance. It may graze that margin while turning towards the site.
@@ -118,21 +159,27 @@ public static class RoadSiteProtection
     // the authored footprint itself. Use the input ends, before reshaping.
     internal static bool BlocksFinalSegment(Vector2 a, Vector2 b, float clearance,
         Vector2 start, Vector2 end, out Footprint? hit) =>
-        BlocksSegment(a, b, clearance, start, end, true, out hit);
+        BlocksSegment(a, b, clearance, start, end, Mode.Final, out hit);
 
-    private static bool IsArrival(Vector2? endpoint, Footprint site, float clearance)
+    /// <summary>How far in a trimmed arrival at <paramref name="site"/> keeps its road (its segments may
+    /// not come nearer the centre), or NaN where <paramref name="endpoint"/> is not one: an end between
+    /// the place's arrival edge (<see cref="Footprint.Arrival"/>) and its whole footprint's clearance edge.
+    /// An end on the clearance edge keeps the whole footprint, as before; an end carried in over the ground
+    /// the place only paints keeps only the ground it shapes.</summary>
+    private static float ArrivalKeep(Vector2? endpoint, Footprint site, float clearance)
     {
-        if (!endpoint.HasValue) return false;
-        float distance = (endpoint.Value - site.Centre).sqrMagnitude;
+        if (!endpoint.HasValue) return float.NaN;
+        float distance = (endpoint.Value - site.Centre).magnitude;
         // Five centimetres accommodates float rounding of the radial trim
         // at world coordinates; it does not enlarge the allowed footprint.
-        float outer = site.Radius + clearance + 0.05f;
-        return distance >= site.Radius * site.Radius && distance <= outer * outer;
+        if (distance < site.Arrival || distance > site.Radius + clearance + 0.05f) return float.NaN;
+        return Mathf.Clamp(distance - clearance - 0.05f, site.Arrival, site.Radius);
     }
 
     private static bool BlocksSegment(Vector2 a, Vector2 b, float clearance,
-        Vector2? start, Vector2? end, bool final, out Footprint? hit)
+        Vector2? start, Vector2? end, Mode mode, out Footprint? hit)
     {
+        bool final = mode == Mode.Final;
         hit = null;
         Ensure();
         // Footprints exist and cannot be consulted. Answering "nothing is in
@@ -147,12 +194,28 @@ public static class RoadSiteProtection
                 if (!cells.TryGetValue(new Vector2i(x, z), out var list)) continue;
                 foreach (var f in list)
                 {
-                    if (!final && ((start.HasValue && (start.Value - f.Centre).sqrMagnitude < f.Radius * f.Radius) ||
-                        (end.HasValue && (end.Value - f.Centre).sqrMagnitude < f.Radius * f.Radius))) continue;
+                    float r = f.Radius + clearance;
+                    if (!final)
+                    {
+                        bool departs = start.HasValue && (start.Value - f.Centre).sqrMagnitude < f.Radius * f.Radius;
+                        bool arrives = end.HasValue && (end.Value - f.Centre).sqrMagnitude < f.Radius * f.Radius;
+                        if (departs || arrives)
+                        {
+                            if (mode == Mode.Exempt || (departs && arrives)) continue;
+                            // A step that ends inside the end's ring (or starts inside the start's) is the arrival (the
+                            // departure); one that ends outside it is held to the whole clearance as any other.
+                            Vector2 inside = arrives ? b : a;
+                            if ((inside - f.Centre).sqrMagnitude < r * r) continue;
+                        }
+                    }
                     Vector2 d = b - a, to = f.Centre - a;
                     float t = d.sqrMagnitude < 0.0001f ? 0f : Mathf.Clamp01((to.x * d.x + to.y * d.y) / d.sqrMagnitude);
-                    float r = f.Radius + clearance;
-                    if (final && (IsArrival(start, f, clearance) || IsArrival(end, f, clearance))) r = f.Radius;
+                    if (final)
+                    {
+                        float keep = ArrivalKeep(start, f, clearance);
+                        if (float.IsNaN(keep)) keep = ArrivalKeep(end, f, clearance);
+                        if (!float.IsNaN(keep)) r = keep;
+                    }
                     if ((a + d * t - f.Centre).sqrMagnitude < r * r)
                     { hit = f; return true; }
                 }
@@ -187,6 +250,21 @@ public static class RoadSiteProtection
         return best <= reach;
     }
 
+    /// <summary>Where a road to the place at <paramref name="centre"/> stops: the ground the place shapes
+    /// (<see cref="Footprint.Arrival"/>), or <paramref name="fallback"/> (its exterior radius) where larger.
+    /// <see cref="RadiusAt"/> is the whole footprint, paint included.</summary>
+    public static float ArrivalRadiusAt(Vector2 centre, float fallback)
+    {
+        Ensure();
+        if (InstalledButUnprepared) return fallback;
+        if (cells.TryGetValue(new Vector2i(Bin(centre.x), Bin(centre.y)), out var list))
+            foreach (var f in list)
+                if ((f.Centre - centre).sqrMagnitude < 0.25f) fallback = Mathf.Max(fallback, f.Arrival);
+        return fallback;
+    }
+
+    /// <summary>The whole footprint's radius of the place at <paramref name="centre"/>, paint included, or
+    /// <paramref name="fallback"/> where larger.</summary>
     public static float RadiusAt(Vector2 centre, float fallback)
     {
         Ensure();

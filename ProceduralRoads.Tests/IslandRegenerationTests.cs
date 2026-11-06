@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using System.Collections.Generic;
 using UnityEngine;
 using Valheim.Testing;
@@ -12,13 +14,15 @@ namespace ProceduralRoads.Tests;
 public class IslandRegenerationTests : System.IDisposable
 {
     private readonly ValheimWorldScope _world = new ValheimWorldScope();
+    /// <summary>SitesFirstLoad.PlacingStage (the mod's loading-panel label; SitesFirstLoad itself is not compiled here).</summary>
+    private const string PlacingStage = "Placing places before their roads";
 
     private static readonly (string name, float x, float z, float radius)[] StandardLocations =
     {
         ("StartTemple", 0f, 0f, 25f),
         ("Eikthyrnir", 260f, 40f, 10f),
-        ("Crypt4", -220f, 150f, 18f),
-        ("Crypt4", 120f, -260f, 18f),
+        ("WoodVillage1", -220f, 150f, 18f),
+        ("WoodVillage1", 120f, -260f, 18f),
     };
 
     private SyntheticWorld SetUp() => SetUp(StandardLocations);
@@ -44,8 +48,38 @@ public class IslandRegenerationTests : System.IDisposable
         return world;
     }
 
+    /// <summary>A generation run to its end as the game's frames run it (<see cref="RoadLifecycleManager.Tick"/>),
+    /// each frame timed: the frames it took, and the longest. One already ended takes none.</summary>
+    private static (int frames, double longestMs) FinishLoad()
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        int frames = 0;
+        double longest = 0;
+        while (RoadLifecycleManager.IsGenerating && clock.Elapsed.TotalSeconds < 120)
+        {
+            var frame = System.Diagnostics.Stopwatch.StartNew();
+            RoadLifecycleManager.Tick();
+            longest = Math.Max(longest, frame.Elapsed.TotalMilliseconds);
+            frames++;
+            System.Threading.Thread.Sleep(1);
+        }
+        Assert.False(RoadLifecycleManager.IsGenerating, "the load-time generation did not finish in 120 s");
+        return (frames, longest);
+    }
+
+    /// <summary>The world loads as the game loads it, a host's: the load-time generation starts
+    /// (<see cref="RoadLifecycleManager"/>, under the loading screen) and the frames run it.</summary>
+    private void StartLoad()
+    {
+        _world.WithNetwork(server: true);
+        RoadLifecycleManager.OnZoneSystemStart(ZoneSystem.instance!);
+        ZoneSystem.instance!.LocationsGenerated = true;
+        RoadLifecycleManager.OnWorldDataLoaded();
+    }
+
     private static void TearDown()
     {
+        if (ZoneSystem.instance != null) RoadLifecycleManager.OnZoneSystemDestroy(ZoneSystem.instance);
         RoadNetworkGenerator.Reset();
         RoadNetworkGenerator.GenerateOnLoad = true;
         ProceduralRoadsPlugin.ConfigLocationNames = new();
@@ -79,7 +113,8 @@ public class IslandRegenerationTests : System.IDisposable
         try
         {
             RoadNetworkGenerator.GenerateOnLoad = false;
-            Assert.False(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            StartLoad();
+            Assert.False(RoadLifecycleManager.IsGenerating);
             Assert.False(RoadNetworkGenerator.RoadsAvailable);
             Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
 
@@ -88,10 +123,95 @@ public class IslandRegenerationTests : System.IDisposable
 
             RoadNetworkGenerator.GenerateOnLoad = true;
             RoadNetworkGenerator.Reset();
-            Assert.True(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            StartLoad();
+            Assert.True(RoadLifecycleManager.IsGenerating);
+            FinishLoad();
             Assert.True(RoadNetworkGenerator.RoadsAvailable);
         }
         finally { TearDown(); }
+    }
+
+    /// <summary>At world load the main thread is never held for the choosing or the building: the call that
+    /// starts it returns before any road is built, and the frames go on, each short, while workers build the
+    /// network (the choosing once held the loading screen's main thread, so the harness's CLI answered nothing
+    /// for 30 s). With the load-time lifecycle the choosing is sliced on the main thread and the
+    /// building runs on workers; the places are placed (SitesFirst) from a frame, on the main thread.</summary>
+    [Fact]
+    public void LoadTimeGenerationKeepsTheFramesGoingWhileWorkersBuildTheRoads()
+    {
+        SetUp();
+        try
+        {
+            int main = Environment.CurrentManagedThreadId;
+            var chosenOn = new List<int>();
+            IEnumerable<bool> Record() { chosenOn.Add(Environment.CurrentManagedThreadId); yield break; }
+            RoadNetworkGenerator.SitesFirst = (_, _) => Record();
+            var started = System.Diagnostics.Stopwatch.StartNew();
+
+            StartLoad();
+
+            double startMs = started.Elapsed.TotalMilliseconds;
+            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.False(RoadNetworkGenerator.RoadsAvailable);
+            var (frames, longest) = FinishLoad();
+            double total = started.Elapsed.TotalMilliseconds;
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+            Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+            // Places are placed (SitesFirst) on the main thread, from a frame.
+            Assert.Equal(new[] { main }, chosenOn);
+            Assert.True(frames > 2, $"{frames} frame(s) over {total:F0} ms");
+            Assert.True(startMs < total / 2 && longest < total / 2,
+                $"the start held the main thread {startMs:F0} ms and the longest frame {longest:F0} ms of {total:F0} ms");
+        }
+        finally { RoadNetworkGenerator.SitesFirst = null; TearDown(); }
+    }
+
+    /// <summary>At world load the roads wait for the places that are placed first ("sites first"):
+    /// the destinations are chosen, the placing runs, and only then are the roads built. Built at once
+    /// when nothing waits. The placing is a preparation stage of its own on the loading panel.</summary>
+    [Fact]
+    public void LoadTimeGenerationWaitsForItsPlacesToBePlacedBeforeBuildingRoads()
+    {
+        SetUp();
+        try
+        {
+            bool release = false;
+            List<string>? chosen = null;
+            IEnumerable<bool> Hold(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
+            {
+                chosen = work.AllSelected.Select(d => d.name).ToList();
+                preparation.BeginStage(PlacingStage, 1, "places"); yield return true;
+                while (!release) { preparation.EndSlice(); yield return true; }
+                preparation.CompleteUnit();
+            }
+            RoadNetworkGenerator.SitesFirst = Hold;
+
+            StartLoad();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            while (RoadLifecycleManager.Progress.PreparationStage != PlacingStage && RoadLifecycleManager.IsGenerating && clock.Elapsed.TotalSeconds < 30)
+                RoadLifecycleManager.Tick();
+            for (int frame = 0; frame < 10; frame++) RoadLifecycleManager.Tick();
+
+            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.Equal("Preparing", RoadLifecycleManager.Progress.Phase);
+            Assert.Equal(PlacingStage, RoadLifecycleManager.Progress.PreparationStage);
+            Assert.False(RoadNetworkGenerator.RoadsAvailable);
+            Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
+            Assert.Contains("Eikthyrnir", chosen!);
+            release = true;
+            FinishLoad();
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+            Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+
+            // Nothing to place: built at once.
+            RoadNetworkGenerator.Reset();
+            RoadNetworkGenerator.SitesFirst = (_, _) => Enumerable.Empty<bool>();
+            RoadLifecycleManager.OnWorldDataLoaded();
+            Assert.True(RoadLifecycleManager.GenerationRunning);
+            FinishLoad();
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+        }
+        finally { RoadNetworkGenerator.SitesFirst = null; TearDown(); }
     }
 
     [Fact]
@@ -100,18 +220,18 @@ public class IslandRegenerationTests : System.IDisposable
         SetUp();
         try
         {
-            // A zone that exists before generation, on the road from the start
-            // temple towards Eikthyrnir: its heightmap must carry road deltas and
-            // paint right after the load-time generation, without any zone spawn.
-            var zone = new Vector2s(2, 0);
-            Heightmap hm = _world.RegisterHeightmap(zone, 64);
-            TerrainComp tc = hm.m_terrainComp!;
+            // Zones that exist before generation, a column across the road from the
+            // start temple towards Eikthyrnir (which door it arrives at decides which
+            // of them it crosses): the one it crosses must carry road deltas and paint
+            // right after the load-time generation, without any zone spawn, and none
+            // is written twice.
+            var zones = new[] { new Vector2s(2, -1), new Vector2s(2, 0), new Vector2s(2, 1) };
+            var compilers = zones.Select(z => _world.RegisterHeightmap(z, 64).m_terrainComp!).ToList();
 
-            Assert.True(RoadNetworkGenerator.GenerateRoadsOnLoad());
-            Assert.True(RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0, "test zone has no road points; move it onto the road");
-            Assert.Equal(1, tc.SaveCount);
-            Assert.Contains(tc.m_modifiedHeight, m => m);
-            Assert.Contains(tc.m_modifiedPaint, m => m);
+            StartLoad();
+            FinishLoad();
+            Assert.Contains(compilers, tc => tc.SaveCount == 1 && tc.m_modifiedHeight.Any(m => m) && tc.m_modifiedPaint.Any(m => m));
+            Assert.All(compilers, tc => Assert.True(tc.SaveCount <= 1));
         }
         finally
         {
@@ -130,7 +250,8 @@ public class IslandRegenerationTests : System.IDisposable
         try
         {
             RoadNetworkGenerator.GenerateOnLoad = false;
-            Assert.False(RoadNetworkGenerator.GenerateRoadsOnLoad());
+            StartLoad();
+            Assert.False(RoadLifecycleManager.IsGenerating);
             Assert.True(RoadNetworkGenerator.RegenerateIslandAt(Vector3.zero, out string summary), summary);
             Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
             byte[] network = RoadSpatialGrid.SerializeAllRoadPoints()!;

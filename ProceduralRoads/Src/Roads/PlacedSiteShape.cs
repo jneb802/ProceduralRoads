@@ -4,7 +4,8 @@ using UnityEngine;
 
 namespace ProceduralRoads;
 
-/// <summary>A rock standing in a place's footprint: the place's own. Its colliders' box seen from above, turned with the rock
+/// <summary>A rock standing in a place's footprint: the place's own, read off its saved
+/// objects (PlacedSiteReader). Its colliders' box seen from above, turned with the rock
 /// about the vertical (<see cref="Yaw"/>, degrees, as Unity turns): a circle out to the box's
 /// corner made a long rock half as wide again as it is (rock1_mountain 17.5 m).</summary>
 public readonly struct SiteRock
@@ -100,11 +101,17 @@ public readonly struct SiteRock
         float r = yaw * Mathf.Deg2Rad, c = Mathf.Cos(r), s = Mathf.Sin(r);
         return new Vector2(local.x * c + local.y * s, local.y * c - local.x * s);
     }
+
+    /// <summary>A place none of whose rocks an approach may clear, small ones included: Hildir's
+    /// cave, whose boulder blocking the entrance is not disturbed (the landing near by is still
+    /// reached).</summary>
+    public static bool KeepsEveryRock(string placeName) => placeName.StartsWith("Hildir", StringComparison.Ordinal);
 }
 
 /// <summary>
-/// Where an approach to a placed place may go, for a staircase to it
-/// (<see cref="RoadStairRuns.PlanPlacedSiteApproach"/>): the landing in front of
+/// Where an approach to a placed place may go, for a road onto its landing
+/// (<see cref="RoadSiteEntry"/>) and a staircase to it
+/// (<see cref="RoadStairRuns.PlanPlacedSiteApproach"/>) alike: the landing in front of
 /// its floor, the entrance pit (the floor and its smoothing), the rock round it (its
 /// exterior radius, but for a cone in front of its floor) and its own boulders. Pure.
 /// </summary>
@@ -112,8 +119,8 @@ public sealed class PlacedSiteShape
 {
     public readonly Vector2 Centre, FlatCentre, Front, Landing;
     public readonly float Pit, KeepOut, RockRadius;
-    /// <summary>The height of the entrance's own level, which a landing must be near (NaN: unknown):
-    /// the place's root, or for a flat raised or sunk less than <see cref="SunkDepth"/>, the flat.</summary>
+    /// <summary>The height of the entrance's own level (NaN: unknown, and no landing is held to the place's level,
+    /// <see cref="Landings"/>): the place's root, or for a flat raised or sunk less than <see cref="SunkDepth"/>, the flat.</summary>
     public readonly float Entrance;
     /// <summary>How far out from the flat's middle its outer edge is: the pit's edge for a sunk
     /// floor, the flat's own edge for one level with the place. Landings nearest it come first.</summary>
@@ -123,7 +130,8 @@ public sealed class PlacedSiteShape
     /// BearCave's): the landing itself (a road that wraps around low ends way below
     /// the cave entrance).</summary>
     public const float SunkDepth = 1.5f;
-    /// <summary>How far above or below the entrance's level a landing may be.</summary>
+    /// <summary>How far the ground a step outside a landing's edge may rise over it before the edge meets a wall, not a slope
+    /// (<see cref="Aims"/>). A landing itself is held to the place's arrival height (<see cref="Landings"/>).</summary>
     public const float LandingRise = 2f;
     public readonly IReadOnlyList<SiteRock> Rocks;
     /// <summary>The boulders standing inside its exterior radius: its body, round its mouth.</summary>
@@ -140,10 +148,26 @@ public sealed class PlacedSiteShape
     /// only landing aimed at.</summary>
     public readonly Vector2? Door;
 
+    /// <summary>Whether the place is entered only from its front, its back blocked (<see cref="FrontOnly"/>): network at its
+    /// ring reaches it only on its entrance side (<see cref="OnEntranceSide"/>).</summary>
+    public readonly bool EnteredFromFront;
+
+    /// <summary>Whether the place is come to from every side (<see cref="OnLevelGround"/>: a place that levels nothing and is
+    /// landed on the level ground its smoothing leaves beside it): no front cone, no keep-out round its exterior radius, and
+    /// no way led round behind it; its own pieces and boulders (<see cref="Body"/>) are still kept clear of.</summary>
+    public readonly bool AllRound;
+
+    /// <summary>The landing found on the place's level ground (<see cref="OnLevelGround"/>), if it was: its landing.</summary>
+    private readonly Vector2? _found;
+
     private PlacedSiteShape(Vector2 centre, Vector2 flatCentre, Vector2 front, float pit, float edge, float entrance, float rockRadius,
-        IReadOnlyList<SiteRock> rocks, Func<float, float, float>? ground, bool keepSmallRocks, Vector2? door = null)
+        IReadOnlyList<SiteRock> rocks, Func<float, float, float>? ground, bool keepSmallRocks, Vector2? door = null, bool enteredFromFront = false,
+        bool allRound = false, Vector2? found = null)
     {
         Door = door;
+        EnteredFromFront = enteredFromFront;
+        AllRound = allRound;
+        _found = found;
         Centre = centre; FlatCentre = flatCentre; Front = front; Pit = pit; Edge = edge; Entrance = entrance; RockRadius = rockRadius; _ground = ground;
         // A boulder standing inside the place's exterior radius is its body, round its mouth:
         // never touched, earthwork included, where it stands at the walking level (seen
@@ -155,14 +179,15 @@ public sealed class PlacedSiteShape
         // landing in front of the mouth is clear, and its box overstates it there. With its real top known it
         // stays: where it stands is then known.
         KeepOut = rockRadius + RoadStairRuns.RockMargin;
-        Landing = door ?? (pit > 0f ? flatCentre + front * (pit + RoadStairRuns.LandingOut) : flatCentre + front * edge);
+        Landing = door ?? found ?? (pit > 0f ? flatCentre + front * (pit + RoadStairRuns.LandingOut) : flatCentre + front * edge);
         var kept = new List<SiteRock>();
         var body = new List<SiteRock>();
         foreach (SiteRock rock in rocks)
         {
             if (rockRadius > 0f && Vector2.Distance(rock.At, centre) <= rockRadius)
             {
-                if (rock.Top != null || rock.Distance(Landing) > 0f) body.Add(rock);
+                // Come to from every side, every piece of its body stands: the landing is found clear of them.
+                if (rock.Top != null || allRound || rock.Distance(Landing) > 0f) body.Add(rock);
             }
             else if (rock.Large || keepSmallRocks) kept.Add(rock);
         }
@@ -184,22 +209,107 @@ public sealed class PlacedSiteShape
         bool sunk = flat.Height <= -SunkDepth;
         float pit = sunk ? Mathf.Max(flat.Radius, flat.SmoothRadius) : 0f;
         float entrance = float.IsNaN(root) ? float.NaN : sunk ? root : root + flat.Height;
-        return new(centre, centre + LocationLevelling.OffsetAt(flat, yaw), StairLayout.Forward(yaw), pit,
+        // A place with a door faces out of it (a crypt's may face its prefab's back), else its prefab's front.
+        Vector2 front = prefab != null && DoorLandings.TryGetValue(prefab, out Vector2 door) && door.y < 0f
+            ? -StairLayout.Forward(yaw) : StairLayout.Forward(yaw);
+        return new(centre, centre + LocationLevelling.OffsetAt(flat, yaw), front, pit,
             sunk ? pit : flat.Radius, entrance, rockRadius, rocks ?? Array.Empty<SiteRock>(), ground, keepSmallRocks,
-            DoorLanding(prefab, centre, yaw));
+            DoorLanding(prefab, centre, yaw), FrontOnly(prefab));
+    }
+
+    /// <summary>The flat a place with no levelled flat of its own is shaped round, its centre at its root: one with a door
+    /// (a Crypt2 only smooths), whose landing is its door landing (<see cref="DoorLandings"/>), and one landed on the level
+    /// ground its smoothing leaves (<see cref="OnLevelGround"/>).</summary>
+    public static readonly LevelOp DoorFlat = new(0f, 0f, 0f, 0f, false);
+
+    /// <summary>How far off the place's body (its pieces and boulders, <see cref="Body"/>) the landing on its level ground is
+    /// found (<see cref="OnLevelGround"/>): the clearance a staircase onto a landing keeps
+    /// (<see cref="RoadStairRuns.PlanPlacedSiteApproach"/>), a road's its own half width and <see cref="BodyGap"/> more.</summary>
+    public const float LevelGroundClearance = 1f;
+
+    /// <summary>
+    /// The shape of a place that levels no flat but smooths the ground round it (a Mountain tower ruin's five smoothings, a
+    /// cabin's one), landed on the level ground that leaves beside it: the one owner of "smoothing level enough to stand on
+    /// is a flat". The landing finder's own test (<see cref="Landings"/>: <see cref="LevelTolerance"/> over
+    /// <see cref="LevelRadius"/>, out to <see cref="LandingSearch"/>) on the place's finished ground
+    /// (<paramref name="ground"/>, <see cref="PlacedSiteGround"/>), all round it (<see cref="AllRound"/>: a ruin has no
+    /// mouth and no rock base; its exterior radius is no keep-out), <see cref="LevelGroundClearance"/> off its own pieces and
+    /// boulders (<paramref name="rocks"/>, its <see cref="Body"/>), nearest its centre first; the landing is that point, held
+    /// to its own ground. Null where none is level (a cabin's one smoothing on a steep slope): the place is then reached at
+    /// its ring (<see cref="PlacedSites.FlatlessPlaced"/>). A StoneTowerRuins04 on a Mountain slope rising 1.4 in 1 left a
+    /// pad at 192.7 m 4 to 7 m south-east of its centre, raised 1.6 m over its root by its fourth smoothing, where a player
+    /// stood beside the tower; its road had ended at its ring, 33 m off.
+    /// </summary>
+    public static PlacedSiteShape? OnLevelGround(Vector2 centre, float yaw, float rockRadius, IReadOnlyList<SiteRock>? rocks,
+        Func<float, float, float> ground, bool keepSmallRocks, float root, string? prefab)
+    {
+        // A place entered only from its front keeps its front (it levels its flat in any case).
+        if (FrontOnly(prefab)) return null;
+        IReadOnlyList<SiteRock> all = rocks ?? Array.Empty<SiteRock>();
+        Vector2 front = StairLayout.Forward(yaw);
+        // Searched at any height (no entrance level yet), then held to the landing's own.
+        var search = new PlacedSiteShape(centre, centre, front, 0f, 0f, float.NaN, rockRadius, all, ground, keepSmallRocks, allRound: true);
+        var found = search.Landings(ground, LevelGroundClearance, 1);
+        if (found.Count == 0) return null;
+        return new PlacedSiteShape(centre, centre, front, 0f, 0f, root, rockRadius, all, ground, keepSmallRocks,
+            allRound: true, found: found[0].at);
     }
 
     /// <summary>
-    /// Where a place's own stairs meet the ground in front of its door, in the prefab's frame (x across, z out of its front),
-    /// for the places whose landing is not their levelled flat's edge: a Dvergr boss entrance's door is up its own stairs,
-    /// and its flat's edge lay against the entrance building (at the Queen's entrance 7552,3392, yaw 315,
+    /// Where a place's road ends in front of its door, in the prefab's frame (x across, z out of its front; a door on the
+    /// prefab's back has z under 0): the one owner of "where a road ends at a place" for a place with a door. Such a place is
+    /// placed first wherever it is (its door turns with it, <see cref="PlacedSites.NeedsPlacing(string, bool, bool, Heightmap.Biome, IReadOnlyList{LevelOp}?)"/>)
+    /// and reached only on this landing (<see cref="RoadNetworkGenerator.Reached"/>). A Dvergr boss entrance's door is up its
+    /// own stairs, and its flat's edge lay against the entrance building (at the Queen's entrance 7552,3392, yaw 315,
     /// the road ended at its west wall, 6 m from the stairs' foot at about 7538,3409, going under the
-    /// structure). The location prefab names no entrance or door child the offline model reads, so it is measured.
+    /// structure). The crypts': their roads stopped at the edge of everything they paint or level, 16 m (Crypt2) to
+    /// 38 m (Crypt4) from the door (49 of 49 reached crypts on one test world). Measured from the game's prefabs (their Gateway, the
+    /// door's face and the crypt's own stairs, by level rays through their colliders), each landing on the ground the crypt
+    /// levels to its root in front of its door, clear of its rubble: Crypt4 and Hildir's crypt face +z, door face at z 7.5,
+    /// rubble to z 10.6 at x 2.5 to 3, the door's sinks level the ground to z 15; Crypt3 is entered down its own stairs
+    /// from -z, their top at z -8 on ground its sinks level out to z -12.4; Crypt2's door faces -z, its face at z -4.9,
+    /// a passage to its Gateway at the centre. Not the swamp's SunkenCrypt4 (entered from -z over its porch, front at z -6,
+    /// landing about (0, -9.5)): its road onto that landing failed at 17 of 19 on one test world offline, mostly in water, so it keeps
+    /// its ring end. The location prefab names no entrance or door child the offline model reads,
+    /// so it is measured.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, Vector2> DoorLandings = new Dictionary<string, Vector2>
     {
         ["Mistlands_DvergrBossEntrance1"] = new Vector2(2.1f, 21.9f),
+        ["Crypt2"] = new Vector2(0.5f, -8.5f),
+        ["Crypt3"] = new Vector2(0f, -10.5f),
+        ["Crypt4"] = new Vector2(0f, 11.5f),
+        ["Hildir_crypt"] = new Vector2(0f, 11.5f),
     };
+
+    /// <summary>Whether <paramref name="prefab"/> has a door its road ends in front of (<see cref="DoorLandings"/>).</summary>
+    public static bool HasDoor(string? prefab) => prefab != null && DoorLandings.ContainsKey(prefab);
+
+    /// <summary>
+    /// The places entered only from their front, their back the blocked rock or wall of the building: the Dvergr town
+    /// entrances, a mine shaft (Mistlands_DvergrTownEntrance1, its gate on the prefab's +z) and the same building as the
+    /// Queen's entrance (Mistlands_DvergrTownEntrance2, its stairs up to the door on +z, their foot at z 22.25 on the flat it
+    /// levels there), as their prefabs have them. Their landing is already in front (<see cref="Landing"/>, the flat's edge
+    /// along <see cref="Front"/>, the placed turn), but a road that got no further than the ring reached them anywhere round
+    /// it: at (1344, 7168) and (5760, 3264) the road ended 55 to 60 m from the stairs on the blocked back, in the rock, and
+    /// counted the place reached (off level). Such a place is reached on its landing, or at its ring on its entrance side
+    /// (<see cref="OnEntranceSide"/>) only, level or, on the fallback, off level; a road is not kept at its ring behind it.
+    /// Not a door (<see cref="DoorLandings"/>): the road need not come onto one point in front of the door, nor level.
+    /// </summary>
+    public static IReadOnlyCollection<string> FrontOnlyPlaces => s_frontOnly;
+    private static readonly HashSet<string> s_frontOnly = new()
+    {
+        "Mistlands_DvergrTownEntrance1",
+        "Mistlands_DvergrTownEntrance2",
+    };
+
+    /// <summary>Whether <paramref name="prefab"/> is entered only from its front (<see cref="FrontOnlyPlaces"/>).</summary>
+    public static bool FrontOnly(string? prefab) => prefab != null && s_frontOnly.Contains(prefab);
+
+    /// <summary>Whether network at <paramref name="p"/> is on the side the place is entered from: anywhere for most places;
+    /// for one entered only from its front (<see cref="EnteredFromFront"/>), in front of its floor (<see cref="InFront"/>:
+    /// the whole front side of the line through its floor across its facing).</summary>
+    public bool OnEntranceSide(Vector2 p) => !EnteredFromFront || InFront(p);
 
     /// <summary>The world position of <paramref name="prefab"/>'s door landing (<see cref="DoorLandings"/>) for a place at
     /// <paramref name="centre"/> turned to <paramref name="yaw"/>; null for any other place.</summary>
@@ -213,7 +323,7 @@ public sealed class PlacedSiteShape
     public bool InFront(Vector2 p)
     {
         Vector2 d = p - FlatCentre;
-        return d.sqrMagnitude > 1e-6f && Vector2.Dot(d.normalized, Front) >= _cosCone;
+        return d.sqrMagnitude > 1e-6f && (AllRound || Vector2.Dot(d.normalized, Front) >= _cosCone);
     }
 
     /// <summary>Whether something centred at <paramref name="p"/> keeps out of the place: out of
@@ -233,7 +343,8 @@ public sealed class PlacedSiteShape
     public string Refusal(Vector2 p, float margin, float rockMargin, float bodyMargin = float.NaN)
     {
         float floor = Vector2.Distance(p, FlatCentre);
-        if (floor < Pit + margin) return FormattableString.Invariant($"in the entrance ({floor:F1} m from the floor, {Pit + margin:F1} kept)");
+        // Come to from every side, it has no entrance: its body is what is kept off.
+        if (!AllRound && floor < Pit + margin) return FormattableString.Invariant($"in the entrance ({floor:F1} m from the floor, {Pit + margin:F1} kept)");
         float centre = Vector2.Distance(p, Centre);
         if (RockRadius > 0f && centre < KeepOut + margin && !InFront(p))
             return FormattableString.Invariant($"in the place's rock ({centre:F1} m from its centre, {KeepOut + margin:F1} kept outside the front)");
@@ -256,7 +367,7 @@ public sealed class PlacedSiteShape
     /// <summary>The landing's aim for an approach that keeps <paramref name="clearance"/> off the pit:
     /// <see cref="Landing"/>, or further out in front where that is not enough.</summary>
     public Vector2 LandingFor(float clearance) =>
-        Door is Vector2 door ? door : Pit > 0f ? FlatCentre + Front * (Pit + Mathf.Max(RoadStairRuns.LandingOut, clearance)) : FlatCentre + Front * Edge;
+        Door is Vector2 door ? door : _found is Vector2 found ? found : Pit > 0f ? FlatCentre + Front * (Pit + Mathf.Max(RoadStairRuns.LandingOut, clearance)) : FlatCentre + Front * Edge;
 
     /// <summary>How far past its pit a landing is looked for, how level it must be (highest less
     /// lowest ground within <see cref="LevelRadius"/>), how far apart the ones tried stand, and how many.</summary>
@@ -268,8 +379,14 @@ public sealed class PlacedSiteShape
 
     /// <summary>
     /// The level ground beside the place's mouth, nearest the flat's outer edge on its front
-    /// axis first, within <see cref="LandingRise"/> of the entrance's level: every metre within
-    /// <see cref="LandingCone"/> of its front axis, seen from its floor, <paramref name="clearance"/> clear of its pit, rock and boulders, out to
+    /// axis first, level with the place: within <see cref="RoadNetworkGenerator.ReachRise"/> of the ground at its
+    /// <see cref="Landing"/>, the height a road reaches the place at (<see cref="RoadNetworkGenerator.ArrivalHeight"/>), since
+    /// a road or staircase carried onto a landing reaches the place (<see cref="PlacedSites.MarkLanded"/>). Held to 2 m of the
+    /// place's root before, a road was carried onto a shelf 1.8 m under a Mountain tower's flat and counted it reached; a
+    /// cave's root is not the level of the ground in front of its mouth (a frost cave's 2 m above it), its landing point's
+    /// ground is. Only where the place's root is known (<see cref="Entrance"/>): every metre within
+    /// <see cref="LandingCone"/> of its front axis, seen from its floor, <paramref name="clearance"/> clear of its pit, rock and boulders,
+    /// no nearer its middle than its <see cref="Edge"/> less <see cref="LevelRadius"/>, out to
     /// <see cref="LandingSearch"/> past the pit, whose ground within <see cref="LevelRadius"/>
     /// varies by <see cref="LevelTolerance"/> or less; at most <see cref="LandingTries"/>,
     /// <see cref="LandingApart"/> apart, each with its ground height, which an approach arrives at. The landing of a
@@ -284,15 +401,23 @@ public sealed class PlacedSiteShape
         float outer = Edge + LandingSearch;
         Vector2 edge = FlatCentre + Front * Edge;
         float cosCone = Mathf.Cos(LandingCone * Mathf.Deg2Rad);
+        // No nearer the middle than the flat's edge less a landing's own level ground: a flat level with its place is the place
+        // itself. Looked for from just past the clearance, a Dvergr camp's (Mistlands_Excavation3, its flat 17 m, its wall about
+        // 14.7 m round it) landings stood 10 to 14 m from its centre, and its road ran on inside the wall line. A sunk floor's
+        // edge is its pit's, so its landings stay where they were; so do a road's onto a flat 6.5 m round or less (its
+        // clearance is further out). Where none is left, the approach aims at the flat's edge (LandingFor).
+        // Come to from every side (AllRound), from its middle out: its body is kept clear of by the refusal below.
+        float inner = AllRound ? 0.5f : Mathf.Max(Pit + clearance, Edge - LevelRadius, 0.5f);
+        float level = ground(Landing.x, Landing.y);
         var found = new List<(Vector2 at, float height, float distance)>();
         for (int z = Mathf.FloorToInt(FlatCentre.y - outer); z <= Mathf.CeilToInt(FlatCentre.y + outer); z++)
             for (int x = Mathf.FloorToInt(FlatCentre.x - outer); x <= Mathf.CeilToInt(FlatCentre.x + outer); x++)
             {
                 var p = new Vector2(x, z);
                 float d = Vector2.Distance(p, FlatCentre);
-                if (d < Mathf.Max(Pit + clearance, 0.5f) || d > outer || Vector2.Dot((p - FlatCentre) * (1f / d), Front) < cosCone) continue;
+                if (d < inner || d > outer || (!AllRound && Vector2.Dot((p - FlatCentre) * (1f / d), Front) < cosCone)) continue;
                 float here = ground(x, z);
-                if (!float.IsNaN(Entrance) && Mathf.Abs(here - Entrance) > LandingRise) continue;
+                if (!float.IsNaN(Entrance) && Mathf.Abs(here - level) > RoadNetworkGenerator.ReachRise) continue;
                 if (Refusal(p, clearance, clearance, bodyMargin) != "") continue;
                 float low = float.PositiveInfinity, high = float.NegativeInfinity;
                 int n = 0;
@@ -331,12 +456,126 @@ public sealed class PlacedSiteShape
     /// onto the landing from: a stair's own grade.</summary>
     public const float WalkStep = 0.5f;
 
+    /// <summary>The existing connected landing-height cells, fixed once for an approach and its ground snapshot.</summary>
+    public sealed class LandingRegion
+    {
+        internal readonly List<(Vector2 at, float height)> Landings;
+        internal readonly HashSet<(int x, int z)> Cells;
+        /// <summary>The landing's lip, where its level ground meets the slope: each cell beside ground left out for its height
+        /// or step only (not the pit or the place's rock, which no approach comes from), with the way out over it.</summary>
+        internal readonly List<(Vector2 at, Vector2 outward)> Lip;
+        private readonly Func<float, float, float> _ground;
+        internal LandingRegion(List<(Vector2 at, float height)> landings, HashSet<(int, int)> cells, List<(Vector2, Vector2)> lip,
+            Func<float, float, float> ground)
+        { Landings = landings; Cells = cells; Lip = lip; _ground = ground; }
+
+        /// <summary>How far inside the lip <paramref name="at"/> stands on the landing: 0 off it, or where it has no lip.</summary>
+        public float Depth(Vector2 at)
+        {
+            if (Lip.Count == 0 || !Contains(at)) return 0f;
+            float nearest = float.PositiveInfinity;
+            foreach (var (cell, _) in Lip) nearest = Mathf.Min(nearest, Vector2.Distance(at, cell));
+            return nearest;
+        }
+
+        /// <summary>
+        /// Where an approach aims for <paramref name="aim"/> on the landing: the aim itself within the lip
+        /// (<see cref="RoadStairRuns.WithinLip"/>), else the lip cell nearest it. The layout's search keeps every piece within
+        /// the lip, so an aim deeper on the landing can never be come near: the level landings of a cave on a knoll stood 9 m
+        /// inside its lip, and the staircase up a spur from the road's end at 20,0 found nothing nearer them and was laid from
+        /// 24 m further down. Moved to the nearest lip cell each, the landings in front of the mouth stay apart round the lip.
+        /// </summary>
+        public Vector2 AtLip(Vector2 aim)
+        {
+            if (RoadStairRuns.WithinLip(Depth(aim))) return aim;
+            Vector2 nearest = aim;
+            float best = float.PositiveInfinity;
+            foreach (var (cell, _) in Lip)
+            {
+                float d = Vector2.Distance(aim, cell);
+                if (d < best) (best, nearest) = (d, cell);
+            }
+            return nearest;
+        }
+
+        // Each visited lattice vertex owns its closed half-metre cell. Contact uses distance to those
+        // same cells; neither caller rounds independently nor substitutes the anchor flat's radius.
+        public bool Contains(Vector2 at)
+        {
+            int x = Mathf.FloorToInt(at.x + 0.5f), z = Mathf.FloorToInt(at.y + 0.5f);
+            if (Cells.Contains((x, z))) return true;
+            bool left = at.x == x - 0.5f, down = at.y == z - 0.5f;
+            return left && Cells.Contains((x - 1, z)) || down && Cells.Contains((x, z - 1))
+                || left && down && Cells.Contains((x - 1, z - 1));
+        }
+        public bool Near(Vector2 at, float distance)
+        {
+            if (Contains(at)) return true;
+            int x = Mathf.FloorToInt(at.x), z = Mathf.FloorToInt(at.y);
+            int reach = Mathf.CeilToInt(distance + 0.5f);
+            for (int row = z - reach; row <= z + reach + 1; row++)
+                for (int col = x - reach; col <= x + reach + 1; col++)
+                    if (Cells.Contains((col, row)))
+                    {
+                        float dx = Mathf.Max(0f, Mathf.Abs(at.x - col) - 0.5f);
+                        float dz = Mathf.Max(0f, Mathf.Abs(at.y - row) - 0.5f);
+                        if (dx * dx + dz * dz <= distance * distance) return true;
+                    }
+            return false;
+        }
+        public float Height(Vector2 at) => _ground(at.x, at.y);
+    }
+
+    private static readonly (int dx, int dz)[] LandingNeighbors = { (1, 0), (-1, 0), (0, 1), (0, -1) };
+
+    public LandingRegion ConnectedLanding(Func<float, float, float> ground, float clearance)
+    {
+        var landings = Landings(ground, clearance);
+        float outer = Edge + LandingSearch;
+        bool Inside(int x, int z) => Vector2.Distance(new Vector2(x, z), FlatCentre) <= outer;
+        bool Walkable(int x, int z) => Inside(x, z) && Refusal(new Vector2(x, z), clearance, clearance) == "";
+        var region = new HashSet<(int, int)>();
+        var queue = new Queue<(int x, int z, float level)>();
+        foreach (var (at, height) in landings)
+        {
+            var cell = (Mathf.RoundToInt(at.x), Mathf.RoundToInt(at.y));
+            if (Walkable(cell.Item1, cell.Item2) && region.Add(cell)) queue.Enqueue((cell.Item1, cell.Item2, height));
+        }
+        while (queue.Count > 0)
+        {
+            var (x, z, level) = queue.Dequeue();
+            float here = ground(x, z);
+            foreach (var (dx, dz) in LandingNeighbors)
+            {
+                var next = (x + dx, z + dz);
+                if (region.Contains(next) || !Walkable(next.Item1, next.Item2)) continue;
+                float there = ground(next.Item1, next.Item2);
+                // Level with the landing it is walked from (RoadNetworkGenerator.ArrivalLevel), not only a step from the
+                // last metre: stepping down WalkStep a metre, the edge aimed at at Hildir's cave lay a metre under its
+                // landing and 4 m short of it (at -2304,1536).
+                if (Mathf.Abs(there - here) > WalkStep || Mathf.Abs(there - level) > RoadNetworkGenerator.ArrivalLevel) continue;
+                region.Add(next);
+                queue.Enqueue((next.Item1, next.Item2, level));
+            }
+        }
+        var lip = new List<(Vector2, Vector2)>();
+        foreach (var (x, z) in region)
+        {
+            Vector2 outward = new Vector2(0f, 0f);
+            foreach (var (dx, dz) in LandingNeighbors)
+                if (!region.Contains((x + dx, z + dz)) && Walkable(x + dx, z + dz)) outward += new Vector2(dx, dz);
+            if (outward.sqrMagnitude >= 0.5f) lip.Add((new Vector2(x, z), outward.normalized));
+        }
+        return new LandingRegion(landings, region, lip, ground);
+    }
+
     /// <summary>
     /// Where an approach aims, best first (Hildir's cave: its levelled shelf stands
     /// 10-20 m proud of the face below its mouth; if the landing is a big overhang that part of it cannot be reached, but
     /// coming up where it connects to the mountain it likely can be). The
     /// ground walked onto the landings (<see cref="Landings"/>; a metre to the next rising or falling
-    /// <see cref="WalkStep"/> at most, clear of the pit and rock, out to <see cref="LandingSearch"/> past the flat) is followed out to its edges; an edge is joined where the ground outside it falls no more than
+    /// <see cref="WalkStep"/> at most and level with the landing it is walked from, within
+    /// <see cref="RoadNetworkGenerator.ArrivalLevel"/>, clear of the pit and rock, out to <see cref="LandingSearch"/> past the flat) is followed out to its edges; an edge is joined where the ground outside it falls no more than
     /// <see cref="JoinGrade"/> over <see cref="JoinReach"/>, and overhangs where it falls further. Aims: up to
     /// <see cref="JoinedEdges"/> joined edges <see cref="JoinApart"/> apart (out of the water) and the landings that are
     /// themselves joined, nearest <paramref name="from"/> first, then the overhanging landings; at most <paramref name="tries"/>. The face below
@@ -346,32 +585,15 @@ public sealed class PlacedSiteShape
     public List<(string name, Vector2 at)> Aims(Func<float, float, float> ground, Vector2 from, float clearance, int tries)
     {
         if (Door is Vector2 door) return new List<(string, Vector2)> { ("door landing", door) };
-        var landings = Landings(ground, clearance);
+        return Aims(ground, from, clearance, tries, ConnectedLanding(ground, clearance));
+    }
+
+    internal List<(string name, Vector2 at)> Aims(Func<float, float, float> ground, Vector2 from, float clearance, int tries, LandingRegion landing)
+    {
+        if (Door is Vector2 door) return new List<(string, Vector2)> { ("door landing", door) };
+        var landings = landing.Landings;
         var aims = new List<(string name, Vector2 at, bool joined, float distance)>();
         if (landings.Count == 0) return new List<(string, Vector2)>();
-        float outer = Edge + LandingSearch;
-        bool Inside(int x, int z) => Vector2.Distance(new Vector2(x, z), FlatCentre) <= outer;
-        bool Walkable(int x, int z) => Inside(x, z) && Refusal(new Vector2(x, z), clearance, clearance) == "";
-        var region = new HashSet<(int, int)>();
-        var queue = new Queue<(int, int)>();
-        foreach (var (at, _) in landings)
-        {
-            var cell = (Mathf.RoundToInt(at.x), Mathf.RoundToInt(at.y));
-            if (Walkable(cell.Item1, cell.Item2) && region.Add(cell)) queue.Enqueue(cell);
-        }
-        var steps = new[] { (1, 0), (-1, 0), (0, 1), (0, -1) };
-        while (queue.Count > 0)
-        {
-            var (x, z) = queue.Dequeue();
-            float here = ground(x, z);
-            foreach (var (dx, dz) in steps)
-            {
-                var next = (x + dx, z + dz);
-                if (region.Contains(next) || !Walkable(next.Item1, next.Item2) || Mathf.Abs(ground(next.Item1, next.Item2) - here) > WalkStep) continue;
-                region.Add(next);
-                queue.Enqueue(next);
-            }
-        }
         // Joined: the ground outside, away from the place and clear of its pit and rock, falls away no steeper than
         // JoinGrade as far as JoinReach, and does not rise into a wall.
         bool Joined(Vector2 at, Vector2 outward)
@@ -387,18 +609,10 @@ public sealed class PlacedSiteShape
             }
             return true;
         }
-        foreach (var (x, z) in region)
-        {
-            Vector2 outward = new Vector2(0f, 0f);
-            foreach (var (dx, dz) in steps)
-                // Toward ground left out for its height or step only: not the pit or the rock, which no approach comes from.
-                if (!region.Contains((x + dx, z + dz)) && Inside(x + dx, z + dz) && Refusal(new Vector2(x + dx, z + dz), clearance, clearance) == "")
-                    outward += new Vector2(dx, dz);
-            if (outward.sqrMagnitude < 0.5f) continue;
-            var at = new Vector2(x, z);
-            if (ground(x, z) >= RoadConstants.ShallowWaterHeight && Joined(at, outward.normalized))
+        // Over the landing's lip (LandingRegion.Lip).
+        foreach (var (at, outward) in landing.Lip)
+            if (RoadWater.BuiltDry(ground(at.x, at.y)) && Joined(at, outward))
                 aims.Add(("joined edge", at, true, Vector2.Distance(at, from)));
-        }
         // At most JoinedEdges edges, JoinApart apart (one per side, not a row along one), then every landing:
         // edges alone crowded out a Dvergr entrance's own landing, which a staircase had reached (at
         // 7872,1920). Joined ones first, nearest the road's end first; overhanging landings last.
@@ -406,9 +620,13 @@ public sealed class PlacedSiteShape
         var edges = new List<(string name, Vector2 at, bool joined, float distance)>();
         foreach (var a in aims)
             if (edges.Count < JoinedEdges && !edges.Exists(q => Vector2.Distance(q.at, a.at) < JoinApart)) edges.Add(a);
+        // Each landing aimed at within the lip, where the search may come (LandingRegion.AtLip).
         foreach (var (at, _) in landings)
-            if (!edges.Exists(q => Vector2.Distance(q.at, at) < LandingApart))
-                edges.Add(("level landing", at, Joined(at, Front), Vector2.Distance(at, from)));
+        {
+            Vector2 aim = landing.AtLip(at);
+            if (!edges.Exists(q => Vector2.Distance(q.at, aim) < LandingApart))
+                edges.Add(("level landing", aim, Joined(at, Front), Vector2.Distance(aim, from)));
+        }
         edges.Sort((a, b) => a.joined != b.joined ? (a.joined ? -1 : 1) : a.distance.CompareTo(b.distance));
         var picked = new List<(string name, Vector2 at)>();
         foreach (var a in edges)
@@ -420,5 +638,5 @@ public sealed class PlacedSiteShape
     }
 
     /// <summary>Whether a road's end is behind the place, where an approach is led round its rock.</summary>
-    public bool Behind(Vector2 roadEnd) => RockRadius > 0f && Vector2.Dot(roadEnd - Centre, Front) < 0f;
+    public bool Behind(Vector2 roadEnd) => !AllRound && RockRadius > 0f && Vector2.Dot(roadEnd - Centre, Front) < 0f;
 }

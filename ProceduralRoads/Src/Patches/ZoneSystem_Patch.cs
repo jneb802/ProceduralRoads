@@ -178,14 +178,122 @@ public static class ZoneSystem_Patch
     {
         // Location/zone placement mutates world state that the sealed island workers read. HUD and CLI still tick.
         // Held too while the host is asked what an explored world's first network does: nothing new is explored first.
+        // In the world the host's player is held where it stands meanwhile (RoadGeneration_Patch), so it never needs a
+        // zone this holds back; an operator's generation starts only with no other player connected.
         [HarmonyPrefix]
-        public static bool Prefix() => !RoadLifecycleManager.HoldsLoadingScreen;
+        public static bool Prefix() => !RoadLifecycleManager.HoldsTheWorld;
+
+        private static float s_nextReveal;
 
         [HarmonyPostfix]
-        public static void Postfix()
+        public static void Postfix(ZoneSystem __instance)
         {
             if (!RoadLifecycleManager.IsGenerating) ServerTerrainBake.Tick();
+            RevealSiteIcons(__instance);
         }
+
+        /// <summary>A place placed before its roads goes on the map once a player has come as near as the
+        /// game would have placed it from (<see cref="HiddenSiteIcons"/>): checked twice a second, as the
+        /// game's own zone creation for each player and the server's own position.</summary>
+        private static void RevealSiteIcons(ZoneSystem zones)
+        {
+            if (HiddenSiteIcons.Count == 0 || ZNet.instance == null || !ZNet.instance.IsServer() || Time.time < s_nextReveal) return;
+            s_nextReveal = Time.time + 0.5f;
+            var references = new List<Vector3> { ZNet.instance.GetReferencePosition() };
+            foreach (ZNetPeer peer in ZNet.instance.GetPeers()) references.Add(peer.GetRefPos());
+            List<Vector3> shown = HiddenSiteIcons.Reveal(references, zones.m_simulationDistance.TotalSimulationDistance, zones.m_simulationDistance.IsClassic);
+            if (shown.Count == 0) return;
+            if (RoadNetworkGenerator.RoadsLog)
+                foreach (Vector3 p in shown)
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[SITES] icon at {p} on the map: a player came near enough for the game to have placed it");
+            zones.SendLocationIcons(0L);
+        }
+    }
+
+    /// <summary>The server's map icons without the places placed before their roads that no player has come
+    /// near yet (<see cref="HiddenSiteIcons"/>); the list the server sends every player is built here too.</summary>
+    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.GetLocationIcons))]
+    public static class ZoneSystem_GetLocationIcons_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix(Dictionary<Vector3, string> icons)
+        {
+            if (ZNet.instance != null && ZNet.instance.IsServer()) HiddenSiteIcons.Filter(icons);
+        }
+    }
+
+    /// <summary>A location the mod has the game place early (<see cref="HiddenSiteIcons.PlacingEarly"/>) that the game shows
+    /// on the map once placed is hidden before PlaceLocations sends the icons (<see cref="HiddenSiteIcons.BeforePlacing"/>);
+    /// the game's own placing for a player is left alone.</summary>
+    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.PlaceLocations))]
+    public static class ZoneSystem_PlaceLocations_Icons_Patch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(ZoneSystem __instance, Vector2s zoneID, out bool __state)
+        {
+            __state = __instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance) &&
+                      HiddenSiteIcons.BeforePlacing(instance.m_position, instance.m_location.m_iconPlaced, instance.m_location.m_iconAlways, instance.m_placed);
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix(ZoneSystem __instance, Vector2s zoneID, bool __state)
+        {
+            if (!__state || !__instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance)) return;
+            HiddenSiteIcons.AfterPlacing(instance.m_position, __state, instance.m_placed);
+            if (instance.m_placed && RoadNetworkGenerator.RoadsLog)
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[SITES] {instance.m_location.m_prefab.Name} at {instance.m_position} placed before its roads: off the map until a player comes near");
+        }
+    }
+
+    /// <summary>
+    /// PROCEDURALROADS_FIXED_LOCATION_YAW (<see cref="FixedLocationYaw"/>): a zone's location is turned from its world seed,
+    /// prefab and zone instead of the unseeded Random. Not patched at all with the switch off (Prepare). The prefix seeds
+    /// Random for the zone's placing (a slope-turned location's ground samples); SpawnLocation seeds it again with the
+    /// game's location seed straight after, so nothing drawn from there on changes. The transpiler takes the one
+    /// Random.Range(int, int) in PlaceLocations, the random turn, through <see cref="FixedLocationYaw.Draw"/>.
+    /// </summary>
+    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.PlaceLocations))]
+    public static class ZoneSystem_PlaceLocations_Patch
+    {
+        private static int? s_step;
+
+        [HarmonyPrepare]
+        public static bool Prepare() => FixedLocationYaw.On;
+
+        [HarmonyPrefix]
+        public static void Prefix(ZoneSystem __instance, Vector2s zoneID)
+        {
+            s_step = null;
+            if (WorldGenerator.instance == null || !__instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance) || instance.m_placed)
+                return;
+            int seed = WorldGenerator.instance.GetSeed();
+            string prefab = instance.m_location.m_prefab.Name;
+            UnityEngine.Random.InitState(FixedLocationYaw.Seed(seed, prefab, zoneID.x, zoneID.y));
+            s_step = FixedLocationYaw.Step(seed, prefab, zoneID.x, zoneID.y);
+        }
+
+        [HarmonyPostfix]
+        public static void Postfix() => s_step = null;
+
+        [HarmonyTranspiler]
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            var code = new List<CodeInstruction>(instructions);
+            MethodInfo range = AccessTools.Method(typeof(UnityEngine.Random), nameof(UnityEngine.Random.Range), new[] { typeof(int), typeof(int) });
+            var draws = new List<int>();
+            for (int i = 0; i < code.Count; i++) if (code[i].Calls(range)) draws.Add(i);
+            if (draws.Count != 1)
+            {
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+                    $"PlaceLocations has changed shape ({draws.Count} Random.Range(int, int) draws): a randomly turned location keeps the game's random turn");
+                return code;
+            }
+            code[draws[0]].operand = AccessTools.Method(typeof(ZoneSystem_PlaceLocations_Patch), nameof(RandomTurn));
+            return code;
+        }
+
+        /// <summary>The random turn's draw, in steps of 22.5 degrees.</summary>
+        public static int RandomTurn(int min, int max) => FixedLocationYaw.Draw(min, max, s_step, UnityEngine.Random.Range);
     }
 
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.SpawnZone))]

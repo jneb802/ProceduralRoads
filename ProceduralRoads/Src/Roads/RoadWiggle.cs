@@ -17,7 +17,7 @@ namespace ProceduralRoads;
 /// scaled by the biome (the meander's table: none in mountains or Mistlands),
 /// eased on climbs (full up to 0.12 grade, then down to <see cref="SlopeFloor"/>
 /// of it at the road's grade cap, never to nothing), faded in over the first
-/// and last 24 m, and wherever the swayed point would be wet or inside a site. On a sidehill
+/// and last 24 m, round a structure end's held foot and apron, and wherever the swayed point would be wet or inside a site. On a sidehill
 /// it follows the hillside's contour instead of crossing it (<see cref="FollowContour"/>). A short swing (out and
 /// back within <see cref="ShortWave"/> m: a tight wave, a short piece between two ends, a gully followed) is
 /// eased to half its size, a long one kept (<see cref="EaseShortWaves"/>). The shaped road
@@ -90,13 +90,15 @@ public static class RoadWiggle
 
     /// <summary>
     /// The path, resampled every <see cref="Spacing"/> metres and swayed
-    /// sideways; the ends stay where they are.
+    /// sideways; the ends stay where they are, and so do the waypoints in
+    /// <paramref name="keep"/> (a structure end's stair foot and apron), the
+    /// sway held round each as round a point in <see cref="HeldAt"/>.
     /// </summary>
     public static List<Vector2> Apply(List<Vector2> path, Func<Vector2, float> ground, Func<Vector2, bool> wet,
-        Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad = null)
+        Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad = null, List<Vector2>? keep = null)
     {
         if (!Enabled || path.Count < 2) return path;
-        var even = Resample(path, Spacing);
+        var even = keep != null && keep.Count > 0 ? ResampleKeeping(path, Spacing, keep) : Resample(path, Spacing);
         if (even.Count < 4) return path;
         float total = (even.Count - 1) * Spacing;
         if (total < 2f * EndFade + Spacing) return path;
@@ -108,7 +110,8 @@ public static class RoadWiggle
         // on it, not sway beside it, or corners are drawn twice. Nor round a
         // spot the sway is held at (HeldAt).
         List<Vector2>? held = HeldAt;
-        bool Still(Vector2 p) => (onRoad != null && onRoad(p)) || (held != null && held.Exists(h => (h - p).sqrMagnitude <= HoldRadius * HoldRadius));
+        bool Near(List<Vector2>? spots, Vector2 p) => spots != null && spots.Exists(h => (h - p).sqrMagnitude <= HoldRadius * HoldRadius);
+        bool Still(Vector2 p) => (onRoad != null && onRoad(p)) || Near(held, p) || Near(keep, p);
         var shareFade = new float[even.Count];
         {
             int since = int.MaxValue / 2;
@@ -147,11 +150,37 @@ public static class RoadWiggle
         for (int i = 1; i < n - 1; i++)
         {
             Vector2 p = even[i], q = p + across[i] * offset[i];
-            if (hold[i] > 0f && (wet(q) || RoadSiteProtection.BlocksSegment(p, q, RoadSiteProtection.Clearance(width), null, null))) q = p;
+            if (hold[i] > 0f && wet(q)) q = p;
             result.Add(q);
         }
         result.Add(even[n - 1]);
-        return result;
+        return KeepClearOfSites(result, even, path, width) ?? path;
+    }
+
+    /// <summary>
+    /// The swayed line held to the site clearance the final road is checked against
+    /// (<see cref="RoadSiteProtection.BlocksRoad"/>, the road's width and its planned ends): the sway is taken back at
+    /// both ends of each leg that would come into a site's clearance, until none does. A leg that still does runs between
+    /// resampled points of the unswayed line, which cut a corner the search kept round a site: null then, and the road
+    /// keeps its line unswayed. Before, only the sideways step from each point was checked, and the legs between swayed
+    /// points were refused at the final check.
+    /// </summary>
+    internal static List<Vector2>? KeepClearOfSites(List<Vector2> swayed, List<Vector2> even, List<Vector2> path, float width)
+    {
+        Vector2 start = path[0], end = path[path.Count - 1];
+        for (int round = 0; round <= swayed.Count; round++)
+        {
+            bool changed = false;
+            for (int i = 1; i < swayed.Count; i++)
+            {
+                if (!RoadSiteProtection.BlocksRoad(swayed[i - 1], swayed[i], width, start, end)) continue;
+                if (swayed[i - 1] != even[i - 1]) { swayed[i - 1] = even[i - 1]; changed = true; }
+                if (swayed[i] != even[i]) { swayed[i] = even[i]; changed = true; }
+                if (!changed) return null;
+            }
+            if (!changed) return swayed;
+        }
+        return swayed;
     }
 
     /// <summary>Length of a swing, metres (from where the road leaves its plain line to where it is back on it), at
@@ -271,6 +300,25 @@ public static class RoadWiggle
         }
         if (Vector2.Distance(result[result.Count - 1], path[path.Count - 1]) > spacing * 0.25f) result.Add(path[path.Count - 1]);
         else result[result.Count - 1] = path[path.Count - 1];
+        return result;
+    }
+
+    /// <summary>
+    /// <see cref="Resample"/>, but every waypoint of the path in <paramref name="keep"/> is kept where it is: the
+    /// path is resampled between them.
+    /// </summary>
+    internal static List<Vector2> ResampleKeeping(List<Vector2> path, float spacing, List<Vector2> keep)
+    {
+        var result = new List<Vector2>();
+        int from = 0;
+        for (int i = 1; i < path.Count; i++)
+        {
+            if (i < path.Count - 1 && !keep.Contains(path[i])) continue;
+            var part = Resample(path.GetRange(from, i - from + 1), spacing);
+            if (result.Count > 0) part.RemoveAt(0);
+            result.AddRange(part);
+            from = i;
+        }
         return result;
     }
 

@@ -58,8 +58,8 @@ public sealed class NetworkRoundTripTests : IDisposable
         public override int GetSeed() => 77;
     }
 
-    [Fact]
-    public void AGeneratedNetworkWithFordsBridgesAndStaircasesLoadsBackAsItWasSaved()
+    /// <summary>The mixed world's network, generated: its four places, then the whole generation.</summary>
+    private MixedWorld Generate()
     {
         var world = new MixedWorld();
         _scope.WithWorld(world).WithZoneSystem();
@@ -77,6 +77,38 @@ public sealed class NetworkRoundTripTests : IDisposable
         RoadNetworkGenerator.Reset();
 
         RoadNetworkGenerator.GenerateRoads(force: true);
+        return world;
+    }
+
+    /// <summary>The staircase-end gate (StairEnds, the one end reader; tools' ends check reads the same lines from a whole
+    /// world's generation): every end of every staircase the generation lays has a way off it, read on its finished ground.
+    /// A miss (a top with nothing laid past its last stair) or a gap (no edge stepped off) fails with its line, coordinates
+    /// and all.</summary>
+    [Fact]
+    public void EveryStaircaseEndOfTheGeneratedNetworkHasAWayOff()
+    {
+        MixedWorld world = Generate();
+        Assert.True(StairStructures.Runs.Count >= 2, $"{StairStructures.Runs.Count} staircase(s); the ridge should take two");
+        var (lines, ok, miss, gap) = StairEnds.AuditAll(run => StairEnds.GroundOf(run, world));
+        Assert.True(miss + gap == 0, $"ends: {ok} ok, {miss} miss, {gap} gap\n" + string.Join("\n", lines.Where(l => l.verdict != StairEnds.Verdict.Ok).Select(l => l.line)));
+        Assert.Equal(2 * StairStructures.Runs.Count, ok);
+    }
+
+    /// <summary>The twin gate beside it (PlaceWaysIn.Twins, the rule's own test over the whole network; tools' ends check
+    /// reads its "twins: N" line from a whole world's generation): no place the generation reaches has two ways in arriving
+    /// the same way. A twin fails with its line, its place and both ways' ends.</summary>
+    [Fact]
+    public void NoPlaceOfTheGeneratedNetworkHasTwoWaysInUpOneFace()
+    {
+        Generate();
+        var twins = PlaceWaysIn.Twins();
+        Assert.True(twins.Count == 0, $"twins: {twins.Count}\n" + string.Join("\n", twins.Select(t => t.line)));
+    }
+
+    [Fact]
+    public void AGeneratedNetworkWithFordsBridgesAndStaircasesLoadsBackAsItWasSaved()
+    {
+        Generate();
 
         // What makes this network realistic, so the test proves something: every kind of point and structure.
         List<RoadSpatialGrid.RoadPoint> points = RoadSpatialGrid.SnapshotAllRoadPoints();

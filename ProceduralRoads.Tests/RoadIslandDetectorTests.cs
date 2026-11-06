@@ -44,8 +44,8 @@ public class RoadIslandDetectorTests
     {
         var world = new PointBiomeStripWorld { Strip = strip, StripHeight = stripHeight };
         // The two readings at a cell in the strip: water raw, dry land as rendered.
-        Assert.False(OnLand(world, 0, 0, world.GetHeight(0, 0)));
-        Assert.True(OnLand(world, 0, 0, BiomeBlendedHeight.GetBlendedHeight(0, 0, world)));
+        Assert.False(RoadWater.OnLand(world, new Vector2(0, 0), world.GetHeight(0, 0)));
+        Assert.True(RoadWater.OnLand(world, new Vector2(0, 0), BiomeBlendedHeight.GetBlendedHeight(0, 0, world)));
         var island = Assert.Single(RoadIslandDetector.Detect(world, worldRadius:128, minArea:1));
         Assert.True(island.ContainsPoint(-64, 0));
         Assert.True(island.ContainsPoint(64, 0));
@@ -57,15 +57,11 @@ public class RoadIslandDetectorTests
     public void RenderedWaterStillSplitsTheLand()
     {
         var world = new PointBiomeStripWorld { HalfWidth = 40f };
-        Assert.False(OnLand(world, 0, 0, BiomeBlendedHeight.GetBlendedHeight(0, 0, world)));
+        Assert.False(RoadWater.OnLand(world, new Vector2(0, 0), BiomeBlendedHeight.GetBlendedHeight(0, 0, world)));
         var islands = RoadIslandDetector.Detect(world, worldRadius:128, minArea:1);
         Assert.Equal(2, islands.Count);
         Assert.NotEqual(islands[0].ContainsPoint(-96, 0), islands[0].ContainsPoint(96, 0));
     }
-
-    /// <summary>The detector's own land test: at or over the water floor of the biome at the point.</summary>
-    private static bool OnLand(WorldGenerator world, float x, float z, float height) =>
-        height >= RoadPathfinder.FloorFor(world.GetBiome(x, z));
 
     private static Island At(int cells, float minX, float minY) => new()
     { CellCount = cells, Min = new Vector2(minX, minY), Max = new Vector2(minX + 48, minY + 48) };

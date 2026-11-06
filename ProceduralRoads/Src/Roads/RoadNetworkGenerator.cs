@@ -204,6 +204,21 @@ public static partial class RoadNetworkGenerator
         m_threadPathfinders != null ? m_threadPathfinders.Value : m_pathfinder;
     private static readonly object m_recordGate = new object();
     [System.ThreadStatic] private static int m_islandRoads;
+    /// <summary>This island's network version: one more at every write to what a road's search, its build and the served
+    /// test read (the grid's points, the staircases and their laid layouts, the viaducts laid, the places landed on, the
+    /// crossings recorded, the places off their level, the join's hints). Each owner bumps it as it writes, on the thread
+    /// that writes, which is the island's own worker: islands are disjoint, so another island's writes leave it alone.
+    /// Unchanged between two calls, the network an island's roads read is the same (<see cref="GenerateRoutedRoads"/>'s
+    /// join memo). Each value is taken once in the process (<see cref="s_networkVersions"/>), a thread's first read included,
+    /// so it names one thread's network state only: the carry cache (<see cref="RoadStairRuns"/>' CarryKey) outlives the
+    /// generation and is read on the main thread too (manual roads), where a per-thread count met a worker's. Its readers
+    /// only compare it for equality.</summary>
+    [System.ThreadStatic] private static int t_networkVersion;
+    /// <summary>The last network version handed out in the process (<see cref="IslandNetworkVersion"/>); 0 is never one.</summary>
+    private static int s_networkVersions;
+    internal static int IslandNetworkVersion =>
+        t_networkVersion != 0 ? t_networkVersion : t_networkVersion = System.Threading.Interlocked.Increment(ref s_networkVersions);
+    internal static void IslandNetworkChanged() => t_networkVersion = System.Threading.Interlocked.Increment(ref s_networkVersions);
     [System.ThreadStatic] internal static RoadIslandActivity.Token? IslandActivity;
     /// <summary>How many of an island's destinations the finished network
     /// reaches. Measured rather than tallied from what the planner attempted:
@@ -213,15 +228,33 @@ public static partial class RoadNetworkGenerator
     /// attempts answers neither.
     ///
     /// Islands are disjoint, so this is stable while other islands commit.</summary>
-    private static void CountDestinationsReached(
+    private static void CountDestinationsReached(Island island,
         List<(string name, Vector3 position, float radius)> selected)
     {
+        RecordCoastalLandings(island, selected);
         bool[] served = ServedDestinations(selected);
         int reached = 0; foreach (bool s in served) if (s) reached++;
         if (RoadsLog) LogUnconnected(selected);
         IslandActivity?.Measured(served);
         System.Threading.Interlocked.Add(ref m_destinationsSelected, selected.Count);
         System.Threading.Interlocked.Add(ref m_destinationsConnected, reached);
+    }
+
+    /// <summary>Notes each of the island's shore landings with whether its destinations took it and whether the network
+    /// reaches it: the landings that were not chosen too, a road passing one reaches it.</summary>
+    private static void RecordCoastalLandings(Island island, List<(string name, Vector3 position, float radius)> selected)
+    {
+        var places = new List<CoastalLandingPlace>(island.CoastalLandings.Count);
+        foreach (Vector3 p in island.CoastalLandings)
+        {
+            bool chosen = selected.Exists(d => d.name == RoadCoastalLandings.Name && d.position.Equals(p));
+            places.Add(new CoastalLandingPlace(p, island.Id, chosen, Reached(p, RoadCoastalLandings.Radius, RoadCoastalLandings.Name)));
+        }
+        lock (m_recordGate)
+        {
+            m_coastalLandings.RemoveAll(l => l.IslandId == island.Id);
+            m_coastalLandings.AddRange(places);
+        }
     }
 
     /// <summary>Marks a place done, noting whether the network serves it. Called by the island's serial planner.</summary>
@@ -244,6 +277,8 @@ public static partial class RoadNetworkGenerator
                 ? "a road was built to it but stops short" + (m_lastFailure.TryGetValue(key, out string? f0) ? $" (a refused attempt: {f0})" : "")
                 : m_lastFailure.TryGetValue(key, out string? f) ? f : "never attempted";
             string stairs = m_stairsFailed.TryGetValue(key, out string? st) ? $"; stairs tried: {st}" : "; stairs not tried";
+            if (PlacedSites.TryGetReady(new Vector2(d.position.x, d.position.z), out PlacedSite placed))
+                stairs += NearestToLanding(placed);
             Log.LogInfo(FormattableString.Invariant($"  unconnected: {d.name} at ({d.position.x:F0}, {d.position.z:F0}): {last}{stairs}"));
         }
     }
@@ -261,73 +296,740 @@ public static partial class RoadNetworkGenerator
         return served;
     }
 
-    /// <summary>Whether the network reaches this place: is there a road point
-    /// where a road TO it would have stopped, give or take a path-grid step.
-    ///
-    /// The reach is the trimmer's own radius, not the location's exterior
-    /// radius. Roads are cut back to RadiusAt() -- which is the larger of the
-    /// exterior radius and how far the site's own terrain modifiers reach --
-    /// plus half the road's width and two metres. On a site whose levelling
-    /// reaches well beyond its exterior radius, a road that served it
-    /// perfectly well stops far outside that radius, and measuring from the
-    /// exterior radius calls it unreached.
-    ///
-    /// That is not hypothetical: measuring from the exterior radius counted
-    /// 154 of 292 in game against 224 by the planner's own edges, while
-    /// offline it counted 247 and looked right. Offline has no terrain radius
-    /// to be wrong about -- the harness supplies exterior radii only -- so the
-    /// two agreed there for a reason that does not hold in the game.</summary>
-    internal static bool Reached(Vector3 centre, float radius, string? name = null)
+    /// <summary><see cref="Reached(Vector2, float, string?)"/> for a place's world position.</summary>
+    internal static bool Reached(Vector3 centre, float radius, string? name = null) => Reached(new Vector2(centre.x, centre.z), radius, name);
+
+    /// <summary>How far past a place's keep-out edge (<see cref="KeepOutEdge"/>) the network may run and still reach
+    /// it: one path cell, the search's own resolution.</summary>
+    internal const float ReachPastEdge = RoadPathfinder.CellSize;
+
+    /// <summary>
+    /// How far over or under a place's landing the network may arrive and still be level with it (a road always ends
+    /// level, even at the cost of a POI, and may end in stairs if needed): half a stair's rise
+    /// (<see cref="StairLayout.PieceRise"/>). Off by more, one stair is the nearer fit and the stairs builder lays it; off by less, no stair fits and it is the ground's own unevenness, which a landing
+    /// is allowed too (<see cref="PlacedSiteShape.LevelTolerance"/>, and a stair top's own <see cref="StairLayout.ReachHeight"/>).
+    /// The one level for the reached test (<see cref="Reached"/>), a road's end at its place, an approach staircase's
+    /// threshold and the landing's level ground (<see cref="PlacedSiteShape.Aims"/>).
+    /// </summary>
+    public const float ArrivalLevel = StairLayout.PieceRise / 2f;
+
+    /// <summary>
+    /// How far over or under the place's own level (<see cref="ArrivalHeight"/>) the network may end and still reach it: the one
+    /// height for "reached" (<see cref="Reached"/>, <see cref="LandingReached"/>) and for refusing a road whose end does not
+    /// (<see cref="EndNotLevel"/>). About a step (a road ending more than about a step under or over the place's
+    /// ground is not reached; it gets an approach or the place goes unserved). 1.5 m: a stair and a half
+    /// (<see cref="StairLayout.PieceRise"/>), which the player walks up over the ground between a road's end and the place's
+    /// edge (at least half a road's width, its blend and a path cell, 4 m or more: under 21 degrees). More is a climb: a
+    /// staircase is laid onto it where one can be (from <see cref="ArrivalLevel"/> off, where a stair fits), and without one
+    /// the end does not reach it. Before, a place with no single levelled flat (AbandonedLogCabin04, which only smooths) had no
+    /// known height and was reached by a road 10 m under it, and outside the Mountains every place was reached at any height.
+    /// </summary>
+    public const float ReachRise = 1.5f;
+
+    /// <summary>
+    /// Whether an approach staircase is laid onto the place at <paramref name="centre"/> (its prefab <paramref name="prefab"/>,
+    /// null where not known) where a road's end does not come level with it (<see cref="SiteApproaches"/>, and onto a placed
+    /// place's landing, <see cref="PlanEntryFrom"/>): at a boss's entrance anywhere (<see cref="OwnLandingOnly"/>), and at
+    /// every other place only in the Mountains, by the biome at its centre. Everywhere the network must first end level with
+    /// the place to reach it (<see cref="ReachRise"/>, <see cref="Reached"/>): elsewhere an end not level and with no road onto
+    /// its landing is refused (<see cref="EndNotLevel"/>); a place outside the Mountains left unserved that way then falls back
+    /// to a road ending off its level (<see cref="ReachOffLevel"/>). The one owner of that choice. From a road's end at
+    /// <paramref name="fromHeight"/> (null where not known), none down to a custom location standing below it (its own level,
+    /// <see cref="CustomLevel"/>, more than <see cref="ArrivalLevel"/> under the end, where a stair would fit): its first
+    /// attempt leaves it unserved, and its fallback ends the road at its ring off its level, with no stand-off
+    /// (<see cref="StandOffLevel"/> stands an end off only below the place). A staircase down onto such a place's flat ended
+    /// in the rocks the place keeps round it.
+    /// </summary>
+    internal static bool ApproachStairsAt(Vector2 centre, string? prefab, float? fromHeight = null)
     {
-        Vector2 flat = new Vector2(centre.x, centre.z);
+        if (prefab != null && OwnLandingOnly(prefab)) return true;
+        // Every place on the fallback (HeightNeeded false, OffLevelAllowed): the road ends at its ring, no staircase.
+        if (!HeightNeeded(centre)) return false;
+        if (fromHeight is float from && CustomLevel(centre, prefab, out _) is float own && from - own > ArrivalLevel) return false;
+        var world = GenerationWorld;
+        return world == null || world.GetBiome(centre.x, centre.y) == Heightmap.Biome.Mountain;
+    }
+
+    /// <summary>The one test of whether the network reaches the place at <paramref name="flat"/> (exterior
+    /// <paramref name="radius"/>, as asked, not trimmed), measured at the trim's keep-out edge (<see cref="KeepOutEdge"/>):
+    /// for the count, the planner's join (<see cref="PlaceServed"/>) and whether a road's own stub to the place is dropped
+    /// where it merges (<see cref="EndReached"/>).
+    ///
+    /// Reached only where the network ends level with the place (<see cref="ReachRise"/> of <see cref="ArrivalHeight"/>, the
+    /// place's own level, or its ground at its edge on the network's side), by road or by a staircase's walked piece, its top or foot, in every biome. A placed place is reached
+    /// on its landing (<see cref="LandingReached"/>), and outside the Mountains (<see cref="ApproachStairsAt"/>) at its ring as
+    /// well, level with its landing, but for a place with a door (a crypt, <see cref="PlacedSiteShape.DoorLandings"/>): only
+    /// a road that reaches its door reaches it. A place that waits for its placing and was not placed before its roads is never reached
+    /// (<see cref="PlacedSites.NotPlaced"/>). A point with no radius (a junction) is reached at any height, and so is a
+    /// place on the fallback, on its landing or at its ring (<see cref="HeightNeeded"/>, <see cref="ReachOffLevel"/>), but not by
+    /// network a ridge stands between it and the place (<see cref="BehindRidge"/>).</summary>
+    internal static bool Reached(Vector2 flat, float radius, string? name = null)
+    {
+        // A place placed before its roads is reached on its landing, not at its ring.
+        // A boss's entrance only by a road onto its own landing (OwnLandingOnly): placed, once one was carried onto it;
+        // not placed, never by a road passing within reach (the count and the planner's join alike).
+        // A place with a door only on its door landing (PlacedSiteShape.DoorLandings: a crypt's road reaches its door).
+        // At any height only on the fallback, its first attempt at height having left it unserved (HeightNeeded).
+        bool height = HeightNeeded(flat);
+        // A custom location reached without its own height stands its road's end off (StandOffLevel): on the fallback, or
+        // with no flat nor landing.
+        float? standOff = radius > 0f ? StandOffLevel(flat, radius, name) : null;
+        // On the fallback, at any height, but not from behind a ridge (BehindRidge).
+        Func<Vector2, float, bool>? clear = radius > 0f && !height ? (q, h) => !BehindRidge(flat, radius, q, h) : null;
+        // At its ring, and only there (not on its landing), a custom location standing its end off is reached at its stand-off
+        // (AtStandOff, the cheap test first).
+        Func<Vector2, float, bool>? atRing = clear != null ? (q, h) => OffLevelAt(flat, radius, standOff, q, h) : null;
+        float fallbackReach = radius > 0f ? FallbackReach(flat, radius, standOff) : 0f;
+        if (radius > 0f && PlacedSites.TryGetReady(flat, out PlacedSite placed))
+        {
+            if (OwnLandingOnly(placed.Record.Prefab)) return PlacedSites.Landed(placed.Centre);
+            if (height ? LandingReached(placed) : PlacedSites.Landed(placed.Centre) || NetworkNear(placed.Shape.Landing, LandingReach, clear!, true))
+                return true;
+            if (ApproachStairsAt(placed.Centre, placed.Record.Prefab) || PlacedSiteShape.HasDoor(placed.Record.Prefab)) return false;
+            // At its ring only on the side it is entered from (PlacedSiteShape.OnEntranceSide): a Dvergr town entrance's back
+            // is blocked rock.
+            PlacedSiteShape shape = placed.Shape;
+            Func<Vector2, float>? level = height ? ArrivalLevelFrom(flat, radius) : null;
+            Func<Vector2, float, bool> ring = height
+                ? (q, h) => shape.OnEntranceSide(q) && (level == null || Mathf.Abs(h - level(q)) <= ReachRise)
+                : (q, h) => shape.OnEntranceSide(q) && atRing!(q, h);
+            return NetworkNear(flat, height ? KeepOutEdge(flat, radius, RoadWidth) + ReachPastEdge : fallbackReach, ring, !height);
+        }
+        // One that waits for its placing and was not placed before its roads gets no road
+        // (PlacedSites.NotPlaced), nor is it reached by one passing within reach of its ring.
+        if (radius > 0f && PlacedSites.NotPlaced(flat)) return false;
+        if (name != null && OwnLandingOnly(name)) return false;
         float reach = radius > 0f
-            ? RoadSiteProtection.RadiusAt(flat, radius) + RoadWidth * 0.5f + 2f
+            ? KeepOutEdge(flat, radius, RoadWidth)
             : radius;
-        // Only network an approach could climb from counts (MaxApproachClimb): a staircase
-        // 45 m under Hildir's cave was counted as reaching it.
-        float? place = radius > 0f ? PlaceHeight(flat) : null;
         // A staircase is the network too: a road that reaches a place by one ends on its top or foot,
         // with no road there (MountainCave02 -2560,1536: its staircase's top 38.8 m out, the
         // nearest road 52 m, counted unreached).
-        // A place whose own road was built as its last resort (BuildLastResort) is reached by it:
-        // the planner built it on purpose as the best the network has, so the count says what the
-        // planner did, and the summary tallies how many places that serves.
-        float lowest = place.HasValue && !m_lastResortServed.ContainsKey(PlaceKey(flat)) ? place.Value - MaxApproachClimb : float.NegativeInfinity;
-        return RoadSpatialGrid.TryGetRoadWithin(flat, reach + RoadPathfinder.CellSize, out _, minHeight: lowest)
-            || StairStructures.PiecesNear(centre, reach + RoadPathfinder.CellSize).Exists(p => p.Kind != StructurePieceKind.StairSupport
-                && p.Position.y >= lowest);
+        if (atRing != null) return NetworkNear(flat, fallbackReach, atRing, true);
+        // With no flat nor landing, at height a custom location stands its road's end off where it stands above it; one
+        // under the network is reached level with its edge, as every other place.
+        if (standOff is float own && ArrivalLevelFrom(flat, radius) is Func<Vector2, float> edge)
+            return NetworkNear(flat, fallbackReach, (q, h) => h >= own
+                ? (q - flat).sqrMagnitude <= (reach + ReachPastEdge) * (reach + ReachPastEdge) && Mathf.Abs(h - edge(q)) <= ReachRise
+                : OffLevelAt(flat, radius, standOff, q, h), false);
+        return NetworkNear(flat, reach + ReachPastEdge, radius > 0f ? ArrivalLevelFrom(flat, radius) : null);
+    }
+
+    /// <summary>Whether a road must end level with the place at <paramref name="centre"/> to reach it (<see cref="ReachRise"/>,
+    /// <see cref="Reached"/>), the one owner behind the reached test, the refusal of a road whose end is not
+    /// (<see cref="EndNotLevel"/>) and the search to level doors only (<see cref="OnlyLevelDoors"/>): everywhere, but at a
+    /// place whose first attempt, at height, left it unserved and which is tried again without it
+    /// (<see cref="ReachOffLevel"/>, in the Mountains only a custom location). Mountains strict; everywhere else first arrive at
+    /// height, and only where no road can, fall back to the road ending at the place's ring off its level, the place reached.
+    /// Before, the Mistlands needed no height at all, and then, tried, nowhere but the Mountains.</summary>
+    internal static bool HeightNeeded(Vector2 centre) => !m_offLevel.ContainsKey(PlaceKey(centre));
+
+    /// <summary>The places reached without height (<see cref="ReachOffLevel"/>), by rounded centre (<see cref="PlaceKey"/>):
+    /// while a place's second attempt runs, and after it for good where it reached the place.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), bool> m_offLevel = new();
+    /// <summary>The custom locations among the destinations (<see cref="IsCustomPlace"/>), by rounded centre, for the
+    /// tests that know a place by its centre only (a road's trim, <see cref="OffLevelStandOff"/>): noted as an island's
+    /// destinations are planned (<see cref="GenerateRoutedRoads"/>) and as a place falls back (<see cref="ReachOffLevel"/>).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), bool> m_customPlaces = new();
+    /// <summary>Notes the place <paramref name="name"/> at <paramref name="position"/> among <see cref="m_customPlaces"/> where it is a custom location.</summary>
+    internal static void NoteCustomPlace(string name, Vector3 position)
+    {
+        if (IsCustomPlace(name)) m_customPlaces[PlaceKey(new Vector2(position.x, position.z))] = true;
     }
 
     /// <summary>
-    /// The most a road's end at a place may stand under the place's own ground and still reach it: what an approach staircase can climb from there. Its reach is
-    /// <see cref="RoadStairRuns.SiteReach"/> (40 m) at a flight's 0.5 grade, 20 m straight up;
-    /// the 56 approaches laid in runs 51-57 climbed at most 16-18 m (Hildir's cave 11 m in run
-    /// 55, the frost cave at -2560,1536 needs about 15 m). Settable for tests.
+    /// The level a road's end at the place at <paramref name="centre"/> (<paramref name="name"/>, null where only its centre
+    /// is known) stands off from, or null where it does not: a custom location's in any biome (<see cref="IsCustomPlace"/>) reached
+    /// or ended at without its own height, on the fallback (<see cref="HeightNeeded"/>) or with no flat nor landing (not placed
+    /// first, no single levelled platform, <see cref="LocationLevelling.ApproachHeight"/>: its ground at its edge is all the
+    /// reached test reads, the foot of the rock a fort stands on). Its own level: its landing's ground placed first, its flat,
+    /// else its root (<see cref="LocationLevelling.CentreHeight"/>). Null for every vanilla place.
     /// </summary>
-    internal static float MaxApproachClimb = 20f;
-
-    /// <summary>The ground a place's approach arrives at (its platform, never below its root), or
-    /// null where its levelling is not known.</summary>
-    internal static float? PlaceHeight(Vector2 centre)
+    private static float? StandOffLevel(Vector2 centre, float radius, string? name = null)
     {
-        var world = GenerationWorld;
-        if (world == null) return null;
-        IReadOnlyList<LevelOp>? ops = LocationLevelling.OpsAt(centre);
-        return ops == null ? null : LocationLevelling.ApproachHeight(LocationLevelling.CentreHeight(centre, world), ops);
+        if (radius <= 0f || CustomLevel(centre, name, out bool levelled) is not float own) return null;
+        return levelled && HeightNeeded(centre) ? null : own;
     }
 
-    /// <summary>Why a road's end at one of its places stands further under the place than an
-    /// approach climbs, or null. The end is where walking ends: the last road point, or the staircase the road ends on.</summary>
-    private static string? EndOutOfClimb(List<Vector2> path, List<RoadSpatialGrid.PlannedPath> plans, List<RoadStairSpan> stairs,
-        Vector2 startCenter, float startRadius, Vector2 endCenter, float endRadius, bool startAtPlace, bool endAtPlace,
-        out Vector2 shortOf, out float shortBy)
+    /// <summary>A custom location's own level (<see cref="IsCustomPlace"/>, by <paramref name="name"/>, else by its
+    /// centre among <see cref="m_customPlaces"/>): its landing's ground placed first, its flat, else its root
+    /// (<see cref="LocationLevelling.CentreHeight"/>), <paramref name="levelled"/> false for the root. Null for every vanilla
+    /// place. The level <see cref="StandOffLevel"/> and <see cref="ApproachStairsAt"/> read.</summary>
+    private static float? CustomLevel(Vector2 centre, string? name, out bool levelled)
     {
-        Vector2 at = default;
-        float by = 0f;
-        string? At(bool atStart, Vector2 centre, float radius, bool atPlace)
+        levelled = false;
+        var world = GenerationWorld;
+        if (world == null) return null;
+        if (!(name != null ? IsCustomPlace(name) : m_customPlaces.ContainsKey(PlaceKey(centre)))) return null;
+        levelled = true;
+        if (PlacedSites.TryGetReady(centre, out PlacedSite site)) return site.Ground(site.Shape.Landing.x, site.Shape.Landing.y);
+        float root = LocationLevelling.CentreHeight(centre, world);
+        float? flat = LocationLevelling.ApproachHeight(root, LocationLevelling.OpsAt(centre));
+        levelled = flat.HasValue;
+        return flat ?? root;
+    }
+
+    /// <summary>The one stand-off rule: how far from its centre a road's end at height <paramref name="h"/> stands at a custom
+    /// location of level <paramref name="place"/> standing its end off (<see cref="StandOffLevel"/>), its ring
+    /// <paramref name="ring"/> (<see cref="KeepOutEdge"/>) and past it the height the place stands over the end, over the road's
+    /// grade cap (<see cref="RoadGrade.Configured"/>): a place standing above the road's end (never one below it) gets a road
+    /// ending out in the open, the last climb the player's, not an end under a cliff.</summary>
+    private static float StandOffRadius(float ring, float place, float h) =>
+        ring + Mathf.Max(0f, place - h) / Mathf.Max(RoadGrade.Configured, 0.01f);
+
+    /// <summary>MWL stand-off, 30 m past the ring: a road's end at a custom location standing above it is
+    /// first tried this far past its ring (<see cref="StandOffInBand"/>); only where no end there works does it stand off at the
+    /// grade (<see cref="StandOffRadius"/>). Where the grade's stand-off is nearer (a small rise), the grade's is kept.</summary>
+    internal const float StandOffPastRing = 30f;
+
+    /// <summary>Whether the grade's stand-off <paramref name="graded"/> (<see cref="StandOffRadius"/>) past the ring
+    /// <paramref name="ring"/> lies beyond <see cref="StandOffPastRing"/>, so that is tried first.</summary>
+    private static bool BandBefore(float ring, float graded) => graded - ring > StandOffPastRing;
+
+    /// <summary>The end along <paramref name="dir"/> at <see cref="StandOffPastRing"/> past the ring <paramref name="ring"/>, or the
+    /// nearest acceptable cell short of it within one march step (<see cref="ReachPastEdge"/>), that the owners an end is judged by
+    /// accept, on the ground: dry (<see cref="RoadWater.BuiltDry(WorldGenerator, Vector2)"/>), the ground along the bearing within
+    /// the grade cap (<see cref="RoadGrade.Configured"/>), not behind a ridge from the place (<see cref="BehindRidge"/>). Null where
+    /// none does. The earthwork cap is the planner's: a road ending there that it refuses is searched again at the grade's
+    /// stand-off (<see cref="GenerateRoad"/>). The one owner of the MWL stand-off's ends: the trim asks it
+    /// (<see cref="OffLevelStandOff"/>) and so does the reached test (<see cref="AtBandEnd"/>).</summary>
+    private static float? StandOffInBand(Vector2 centre, float radius, float ring, Vector2 dir, WorldGenerator world)
+    {
+        float H(float r) { Vector2 q = centre + dir * r; return BiomeBlendedHeight.GetBlendedHeight(q.x, q.y, world); }
+        for (float r = BandOuter(ring); r >= BandInner(ring) - 0.01f; r -= ReachPastEdge)
+        {
+            Vector2 at = centre + dir * r;
+            if (!RoadWater.BuiltDry(world, at)) continue;
+            if (RoadGrade.Configured > 0f && Mathf.Abs(H(r + ReachPastEdge) - H(r - ReachPastEdge)) > 2f * ReachPastEdge * RoadGrade.Configured) continue;
+            if (BehindRidge(centre, radius, at, H(r))) continue;
+            return r;
+        }
+        return null;
+    }
+
+    /// <summary>The MWL stand-off's outermost end past the ring <paramref name="ring"/> (<see cref="StandOffPastRing"/>).</summary>
+    private static float BandOuter(float ring) => ring + StandOffPastRing;
+    /// <summary>The MWL stand-off's innermost end: one march step (<see cref="ReachPastEdge"/>) short of <see cref="BandOuter"/>.</summary>
+    private static float BandInner(float ring) => BandOuter(ring) - ReachPastEdge;
+
+    /// <summary>Whether network <paramref name="d"/> out from the place at <paramref name="centre"/> (at <paramref name="q"/>)
+    /// stands at the MWL stand-off's end on its own bearing, within a path cell of it: the end the trim would choose there
+    /// (<see cref="StandOffInBand"/>), so a bearing whose band end is wet, too steep or behind a ridge has none. The band's
+    /// span first, the cheap test.</summary>
+    private static bool AtBandEnd(Vector2 centre, float radius, float ring, Vector2 q, float d)
+    {
+        if (d < BandInner(ring) - ReachPastEdge - 0.01f || d > BandOuter(ring) + ReachPastEdge + 0.01f) return false;
+        var world = GenerationWorld;
+        if (world == null || d < 1e-3f) return false;
+        return StandOffInBand(centre, radius, ring, (q - centre) * (1f / d), world) is float end && Mathf.Abs(d - end) <= ReachPastEdge;
+    }
+
+    /// <summary>Set on the road's thread while it is searched again with no MWL stand-off (<see cref="GenerateRoad"/>).</summary>
+    [System.ThreadStatic] private static bool t_noStandOffBand;
+    /// <summary>The road's ends on this thread stood off at the MWL stand-off (<see cref="OffLevelStandOff"/>), nearer than the
+    /// grade's: each place's centre and the grade's stand-off there, the farthest the road searched again would end.</summary>
+    [System.ThreadStatic] private static List<(Vector2 centre, float graded)>? t_bandedEnds;
+    /// <summary>Where the road last refused on this thread was refused (<see cref="GenerateRoadCore"/>), where it says: null
+    /// where it does not.</summary>
+    [System.ThreadStatic] private static List<Vector2>? t_refusedAt;
+    /// <summary>A road on this thread whose way onto a placed place ran beside the approach another road laid there
+    /// (<see cref="ReEndOnAWayIn"/>): that place's centre, and where the approach's own road meets it, which the road is
+    /// searched again to end on (<see cref="GenerateRoad"/>). Null where none.</summary>
+    [System.ThreadStatic] private static (Vector2 place, Vector2 onItsRoad)? t_reEnd;
+
+    /// <summary>The refusal of a road whose way onto a place runs beside the approach already laid there (<see cref="ReEndOnAWayIn"/>).</summary>
+    internal const string BesideItsApproachRefusal = "its way onto the landing beside the place's approach";
+
+    /// <summary>Where a road arriving at <paramref name="place"/> as <paramref name="arrival"/> ends instead, on the network, or
+    /// null: where another way into that place arrives the same way (<see cref="PlaceWaysIn.Joining"/>, the one owner), on that
+    /// way's road (an approach's foot, where its road meets it; a road's arrival where it passes nearest), as a junction
+    /// (radius 0, as a place's join to the network ends, <see cref="JoinPlace"/>).</summary>
+    internal static Vector2? ReEndOnAWayIn(Vector2 place, PlaceWaysIn.Way? arrival) =>
+        PlaceWaysIn.Joining(place, arrival, out Vector2 at) != null ? at : null;
+
+    /// <summary>Where a road whose staircase onto <paramref name="place"/> was refused at every aim and start as a way in the
+    /// place has (<see cref="RoadStairRuns.BesideAnApproach"/>) ends instead: as its road arrives (<see cref="ReEndOnAWayIn"/>),
+    /// else at the foot of the approach of that place nearest its end, the way in its staircase would have built twice.</summary>
+    private static Vector2? WayInRefused(Vector2 place, bool atStart, List<RoadSpatialGrid.PlannedPath> plans)
+    {
+        if (ReEndOnAWayIn(place, ArrivalAt(place, atStart, plans, new(), new(), null)) is Vector2 on) return on;
+        var (points, _, _) = Flatten(plans);
+        if (points.Count == 0) return null;
+        Vector2 end = points[atStart ? 0 : points.Count - 1];
+        Vector2? best = null;
+        foreach (PlaceWaysIn.Way way in PlaceWaysIn.There(place))
+            if (way.Approach is StairRun run && RoadStairRuns.RoadEndOf(run, place) is var foot
+                && (best == null || Vector2.Distance(foot, end) < Vector2.Distance(best.Value, end)))
+                best = foot;
+        return best;
+    }
+
+    /// <summary>The staircase a road lays onto its place at its start or end: its way onto a placed place's landing, or its
+    /// approach (<see cref="SiteApproaches"/>, laid at its path's first or last point). Null where none.</summary>
+    private static RoadStairSpan? StairsAt(bool atStart, List<(PlacedSite site, RoadSpatialGrid.PlannedPath? road, RoadStairSpan? stairs)> entries,
+        List<RoadStairSpan> approaches, PlacedSite? site)
+    {
+        if (site != null && entries.Find(e => e.site == site).stairs is RoadStairSpan entry) return entry;
+        return approaches.Find(a => (a.FromIndex == 0) == atStart);
+    }
+
+    /// <summary>How a road arrives at <paramref name="place"/> at its start or end (<see cref="PlaceWaysIn.Way"/>): its staircase
+    /// there where it lays one (<see cref="StairsAt"/>), else its road with its road onto a placed place's landing, over its last
+    /// stretch.</summary>
+    private static PlaceWaysIn.Way? ArrivalAt(Vector2 place, bool atStart, List<RoadSpatialGrid.PlannedPath> plans,
+        List<(PlacedSite site, RoadSpatialGrid.PlannedPath? road, RoadStairSpan? stairs)> entries, List<RoadStairSpan> approaches, PlacedSite? site)
+    {
+        if (StairsAt(atStart, entries, approaches, site) is RoadStairSpan stairs) return PlaceWaysIn.Of(stairs.Plan, place);
+        var (points, heights, _) = Flatten(plans);
+        if (points.Count == 0) return null;
+        var line = new List<Vector2>(points);
+        var hs = new List<float>(heights);
+        if (atStart) { line.Reverse(); hs.Reverse(); }
+        if (site != null && entries.Find(e => e.site == site).road is RoadSpatialGrid.PlannedPath entry && entry.Points.Count > 0)
+        {
+            bool fromEnd = Vector2.Distance(entry.Points[0], line[line.Count - 1]) <= Vector2.Distance(entry.Points[entry.Points.Count - 1], line[line.Count - 1]);
+            for (int k = 0; k < entry.Points.Count; k++)
+            {
+                int i = fromEnd ? k : entry.Points.Count - 1 - k;
+                line.Add(entry.Points[i]);
+                hs.Add(entry.Heights[i]);
+            }
+        }
+        return PlaceWaysIn.Of(line, hs, place);
+    }
+
+    /// <summary>Whether a road refused at <paramref name="at"/> (null or empty where its refusal does not say) may yet be built
+    /// ending at the grade's stand-off instead of the MWL stand-off at <paramref name="bandedEnds"/>: refused where it does not
+    /// say, or somewhere on the stretch the grade's stand-off gives up (within it of a banded end's place, and a path cell). A
+    /// refusal elsewhere on the road is the same refusal searched again.</summary>
+    internal static bool RefusedAtABandedEnd(IReadOnlyList<Vector2>? at, IReadOnlyList<(Vector2 centre, float graded)>? bandedEnds)
+    {
+        if (at == null || at.Count == 0 || bandedEnds == null) return true;
+        foreach (var (centre, graded) in bandedEnds)
+            foreach (Vector2 p in at)
+                if ((p - centre).sqrMagnitude <= (graded + ReachPastEdge) * (graded + ReachPastEdge)) return true;
+        return false;
+    }
+
+    /// <summary>The stand-off radius (<see cref="StandOffRadius"/>) at the ground along <paramref name="dir"/>: the first path cell
+    /// out from the ring (<see cref="ReachPastEdge"/>) where the ground is low enough under the place for its own stand-off to
+    /// fall inside it. A march, not a fixed point, so ground steeper than the grade cap still gives the nearest such cell; never
+    /// past the stand-off from height 0.</summary>
+    private static float StandOffOnGround(Vector2 centre, float ring, float place, Vector2 dir, WorldGenerator world)
+    {
+        float limit = StandOffRadius(ring, place, 0f);
+        for (float r = ring; r < limit; r += ReachPastEdge)
+        {
+            Vector2 at = centre + dir * r;
+            if (StandOffRadius(ring, place, BiomeBlendedHeight.GetBlendedHeight(at.x, at.y, world)) <= r) return r;
+        }
+        return limit;
+    }
+
+    /// <summary>The stand-off radius kept per place (<see cref="PlaceKey"/>) for the reached test's reach (<see cref="FallbackReach"/>):
+    /// the largest of the grade's round the place (eight bearings, read once) and of every road end trimmed to it
+    /// (<see cref="OffLevelStandOff"/>). The grade's, the outermost a road's end may stand at, so an end at the MWL stand-off
+    /// (<see cref="StandOffPastRing"/>) and one at the grade's alike are in reach.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), float> m_standOffRadius = new();
+
+    private static float CompassStandOff(Vector2 centre, float ring, float place, WorldGenerator world)
+    {
+        float most = ring;
+        for (int i = 0; i < 8; i++)
+        {
+            float a = i * 45f * Mathf.Deg2Rad;
+            most = Mathf.Max(most, StandOffOnGround(centre, ring, place, new Vector2(Mathf.Sin(a), Mathf.Cos(a)), world));
+        }
+        return most;
+    }
+
+    /// <summary>
+    /// How much farther out than its ring (<see cref="KeepOutEdge"/>) a road arriving from <paramref name="toward"/> (where it
+    /// crosses the ring, <see cref="RingCrossing"/>) ends at a custom location that stands its road's end off
+    /// (<see cref="StandOffLevel"/>): the end on that bearing at the MWL stand-off (<see cref="StandOffInBand"/>), else
+    /// (none there, or the road searched again without it) its stand-off at the ground (<see cref="StandOffOnGround"/>), that
+    /// one kept where nearer than the MWL stand-off (a small rise); the grade's kept for the reached test (<see cref="m_standOffRadius"/>).
+    /// 0 for every other place.
+    /// </summary>
+    internal static float OffLevelStandOff(Vector2 centre, float radius, Vector2 toward)
+    {
+        var world = GenerationWorld;
+        if (world == null || StandOffLevel(centre, radius) is not float place) return 0f;
+        float ring = KeepOutEdge(centre, radius, RoadWidth);
+        Vector2 dir = toward - centre;
+        dir = dir.sqrMagnitude < 1e-4f ? new Vector2(0f, 1f) : dir.normalized;
+        float graded = StandOffOnGround(centre, ring, place, dir, world), at = graded;
+        if (!t_noStandOffBand && BandBefore(ring, graded) && StandOffInBand(centre, radius, ring, dir, world) is float near)
+        {
+            at = near;
+            (t_bandedEnds ??= new()).Add((centre, graded));
+        }
+        m_standOffRadius.AddOrUpdate(PlaceKey(centre), _ => Mathf.Max(CompassStandOff(centre, ring, place, world), graded), (_, old) => Mathf.Max(old, graded));
+        return at - ring;
+    }
+
+    /// <summary>Where a road's path first stands outside the ring of radius <paramref name="ring"/> round
+    /// <paramref name="centre"/>, from its start (<paramref name="fromStart"/>) or its end: the bearing the trim cuts it on. The
+    /// search starts at the place's centre (or its ground), so the path's own end gives no bearing. The path's far end where
+    /// none does.</summary>
+    internal static Vector2 RingCrossing(List<Vector2> path, Vector2 centre, float ring, bool fromStart)
+    {
+        for (int k = 0; k < path.Count; k++)
+        {
+            Vector2 q = path[fromStart ? k : path.Count - 1 - k];
+            if ((q - centre).sqrMagnitude > ring * ring) return q;
+        }
+        return path[fromStart ? path.Count - 1 : 0];
+    }
+
+    /// <summary>Whether network at <paramref name="q"/> (height <paramref name="h"/>) stands where a road to a custom location
+    /// standing its end off (<paramref name="place"/>, its <see cref="StandOffLevel"/>) ends (<see cref="StandOffRadius"/>): within
+    /// a path cell of it, or, where that lies past the MWL stand-off, at the MWL stand-off's end on its bearing
+    /// (<see cref="AtBandEnd"/>, the trim's own owner). True for every other place (<paramref name="place"/> null).</summary>
+    private static bool AtStandOff(Vector2 flat, float radius, float? place, Vector2 q, float h)
+    {
+        if (place is not float own) return true;
+        float ring = KeepOutEdge(flat, radius, RoadWidth), graded = StandOffRadius(ring, own, h), d = Vector2.Distance(q, flat);
+        return Mathf.Abs(d - graded) <= ReachPastEdge
+            || BandBefore(ring, graded) && AtBandEnd(flat, radius, ring, q, d);
+    }
+
+    /// <summary>The one ring test of network at <paramref name="q"/> (height <paramref name="h"/>) at a place reached off its
+    /// level (on the fallback, or a custom location standing its end off, <paramref name="place"/> its
+    /// <see cref="StandOffLevel"/>): at its stand-off (<see cref="AtStandOff"/>, the cheap test first) and not behind a ridge
+    /// from it (<see cref="BehindRidge"/>), both read from the network's own height. Asked by the reached test
+    /// (<see cref="Reached"/>) and by the refusal of a road's end (<see cref="EndNotLevel"/>) alike, so a road the fallback
+    /// commits is never left unserved.</summary>
+    private static bool OffLevelAt(Vector2 flat, float radius, float? place, Vector2 q, float h) =>
+        AtStandOff(flat, radius, place, q, h) && !BehindRidge(flat, radius, q, h);
+
+    /// <summary>How far past the ring the network is looked for at a place on the fallback (<see cref="ReachPastEdge"/>); for a
+    /// custom location standing its end off (<paramref name="place"/>, its <see cref="StandOffLevel"/>) out to its kept stand-off
+    /// (<see cref="m_standOffRadius"/>) and a path cell.</summary>
+    private static float FallbackReach(Vector2 flat, float radius, float? place)
+    {
+        float ring = KeepOutEdge(flat, radius, RoadWidth);
+        var world = GenerationWorld;
+        if (place is not float own || world == null) return ring + ReachPastEdge;
+        return m_standOffRadius.GetOrAdd(PlaceKey(flat), _ => CompassStandOff(flat, ring, own, world)) + ReachPastEdge;
+    }
+
+    /// <summary>How many places the network reaches only off their level, on the fallback (<see cref="ReachOffLevel"/>).</summary>
+    private static int m_reachedOffLevel;
+    /// <summary>For tests and the summary: places reached off level this generation.</summary>
+    internal static int ReachedOffLevelCount => m_reachedOffLevel;
+
+    /// <summary>Whether the place at <paramref name="centre"/> (<paramref name="prefab"/>, null where not known) may fall
+    /// back to a road ending off its level (<see cref="ReachOffLevel"/>): not a vanilla place in the Mountains, where it is reached at
+    /// height or not at all (its approach staircase or its landing), a custom location excepted (<see cref="IsCustomPlace"/>); not a boss's entrance (<see cref="OwnLandingOnly"/>), reached
+    /// only on its own landing; not a place with a door (a crypt, <see cref="PlacedSiteShape.DoorLandings"/>), reached only
+    /// at its door.</summary>
+    internal static bool OffLevelAllowed(Vector2 centre, string? prefab)
+    {
+        if (prefab != null && (OwnLandingOnly(prefab) || PlacedSiteShape.HasDoor(prefab))) return false;
+        if (PlacedSites.TryGetReady(centre, out PlacedSite placed)
+            && (OwnLandingOnly(placed.Record.Prefab) || PlacedSiteShape.HasDoor(placed.Record.Prefab))) return false;
+        var world = GenerationWorld;
+        if (world == null) return false;
+        return world.GetBiome(centre.x, centre.y) != Heightmap.Biome.Mountain || IsCustomPlace(prefab);
+    }
+
+    /// <summary>A location mod's place (<see cref="IsCustomLocation"/>: registered through the API or named in the CustomLocations
+    /// config, never one of the vanilla names in <see cref="LocationPriorities"/>), in any biome. It is the one Mountains place
+    /// that may fall back to a road ending off its level, and wherever it is reached without its height (every biome) its
+    /// road's end stands off from its own level (<see cref="StandOffLevel"/>). The fallback keeps every protection of
+    /// <see cref="ReachOffLevel"/> (<see cref="BehindRidge"/>, the earthwork cap, the grade cap).</summary>
+    private static bool IsCustomPlace(string? name) =>
+        name != null && !LocationPriorities.ContainsKey(name) && IsCustomLocation(name);
+
+    /// <summary>
+    /// The fallback for a place its first attempt, at height, left unserved: tried again without height
+    /// (<see cref="HeightNeeded"/> false for it alone), by <paramref name="attempt"/>, the old behaviour, a road ending at its
+    /// ring off its level reaching it. Asked only of a place the network does not reach at height and that may fall back
+    /// (<see cref="OffLevelAllowed"/>); first whether the network already there reaches it off level, no road needed. True
+    /// where the place is reached that way: it stays without height for the rest of the generation (the count, a later
+    /// road's stub), counted and logged ("reached off level"). Otherwise it needs height again, and is unserved; where only
+    /// network behind a ridge from it was in reach (<see cref="BehindRidge"/>), counted and logged as that ("behind a ridge").
+    /// </summary>
+    internal static bool ReachOffLevel(string name, Vector3 position, float radius, Func<bool> attempt)
+    {
+        var centre = new Vector2(position.x, position.z);
+        if (radius <= 0f || !OffLevelAllowed(centre, name) || Reached(centre, radius, name)) return false;
+        (int, int) key = PlaceKey(centre);
+        m_offLevel[key] = true;
+        NoteCustomPlace(name, position);
+        IslandNetworkChanged();
+        if (Reached(centre, radius, name) || attempt() && Reached(centre, radius, name))
+        {
+            System.Threading.Interlocked.Increment(ref m_reachedOffLevel);
+            string prefab = PlacedSites.TryGetReady(centre, out PlacedSite placed) ? placed.Record.Prefab : name;
+            string off = ArrivalOffset(centre, radius) is (float place, float offset) ? FormattableString.Invariant($", the network {offset:+0.0;-0.0} m off its level ({place:F1} m)") : "";
+            Log.LogInfo(FormattableString.Invariant($"  reached off level: {prefab} at ({position.x:F0}, {position.z:F0}){off}"));
+            return true;
+        }
+        // Network behind a place entered only from its front is not in its reach (PlacedSiteShape.OnEntranceSide).
+        Func<Vector2, float, bool> inReach = PlacedSites.TryGetReady(centre, out PlacedSite site) ? (q, _) => site.Shape.OnEntranceSide(q) : (_, _) => true;
+        if (NetworkNear(centre, KeepOutEdge(centre, radius, RoadWidth) + ReachPastEdge, inReach, true))
+        {
+            System.Threading.Interlocked.Increment(ref m_behindRidge);
+            Log.LogInfo(FormattableString.Invariant($"  behind a ridge: {name} at ({position.x:F0}, {position.z:F0}), the network in reach ends behind ground over {RidgeRise:F0} m above it and the place: unserved"));
+        }
+        m_offLevel.TryRemove(key, out _);
+        IslandNetworkChanged();
+        return false;
+    }
+
+    /// <summary>How many places the fallback left unserved because the network in their reach ends behind a ridge from them
+    /// (<see cref="ReachOffLevel"/>, <see cref="BehindRidge"/>).</summary>
+    private static int m_behindRidge;
+    /// <summary>For tests and the summary: places left unserved behind a ridge this generation.</summary>
+    internal static int BehindRidgeCount => m_behindRidge;
+
+    /// <summary>
+    /// How far the ground between a road's end and the place it reaches off level may rise over both of them
+    /// (<see cref="RidgeOver"/>) before the end is behind a ridge from the place and does not reach it (<see cref="BehindRidge"/>).
+    /// Mistlands_DvergrTownEntrance2 at (1344, 7168) was reached by a road ending 42 m off, at 46.4 m, behind a ridge 61.6 m
+    /// high, the entrance at 36.1 m beyond it: stranded on the wrong side of the ridge (15.2 m over the end, on the ground in
+    /// the game). A climb up to a place higher than the end, which the player sees from the road, rises no higher than the
+    /// place: 0 m over both, however high the place, and is kept. The most ground a road is cut through
+    /// (<see cref="ShapedLimit"/>: the earthwork cap, 8 m, never past what the terrain moves); a rise past it between the end
+    /// and the place is ground no road could have been carried through, the place on its other side. Measured offline on eight worlds' fallbacks (143 arrivals): that ridge 15.6 m,
+    /// then none over 7.2 m.
+    /// </summary>
+    internal static float RidgeRise => ShapedLimit;
+    /// <summary>The ground over the first metres from a road's end is not read for a ridge: the road's own half-width
+    /// (<see cref="RoadWidth"/>) and the blend past its edge (<see cref="RoadConstants.TerrainBlendMargin"/>), where its cut or
+    /// fill, not the ground, decides.</summary>
+    internal static float RidgePastEnd => RoadWidth / 2f + RoadConstants.TerrainBlendMargin;
+
+    /// <summary>
+    /// How far the highest ground on the straight line from <paramref name="end"/> (a road's end, at
+    /// <paramref name="endHeight"/>) to <paramref name="place"/> (the place's landing or edge, at <paramref name="placeHeight"/>)
+    /// rises over the higher of the two, read every metre on <paramref name="ground"/> from <see cref="RidgePastEnd"/> on; 0 or
+    /// less where nothing stands over them. The one measure of a ridge between them (<see cref="BehindRidge"/>).
+    /// </summary>
+    internal static float RidgeOver(Vector2 end, float endHeight, Vector2 place, float placeHeight, Func<Vector2, float> ground)
+    {
+        float length = Vector2.Distance(end, place), peak = float.NegativeInfinity;
+        int steps = Mathf.Max(1, Mathf.CeilToInt(length));
+        for (int i = 0; i <= steps; i++)
+            if (length * i / steps >= RidgePastEnd) peak = Mathf.Max(peak, ground(Vector2.Lerp(end, place, (float)i / steps)));
+        return float.IsNegativeInfinity(peak) ? 0f : peak - Mathf.Max(endHeight, placeHeight);
+    }
+
+    /// <summary>
+    /// Whether network at <paramref name="at"/> (its height <paramref name="height"/>) is behind a ridge from the place at
+    /// <paramref name="centre"/> (exterior <paramref name="radius"/>, as asked): the ground on the line to the place's landing
+    /// (placed first) or to its edge on that side, at its arrival height (<see cref="ArrivalHeight"/>), rises more than
+    /// <see cref="RidgeRise"/> over both (<see cref="RidgeOver"/>), on the ground as places leave it
+    /// (<see cref="PlacedSites.GroundAt(float, float, WorldGenerator)"/>). The one test, asked only on the fallback, where an end
+    /// off level is otherwise accepted: by the reached test (<see cref="Reached"/>) and the refusal of a road's end
+    /// (<see cref="EndNotLevel"/>). At height a road's end is level with its place, and is not asked.
+    /// </summary>
+    internal static bool BehindRidge(Vector2 centre, float radius, Vector2 at, float height)
+    {
+        var world = GenerationWorld;
+        if (world == null || radius <= 0f || ArrivalHeight(centre, radius, at) is not float level) return false;
+        Vector2 to;
+        if (PlacedSites.TryGetReady(centre, out PlacedSite placed)) to = placed.Shape.Landing;
+        else
+        {
+            Vector2 out1 = at - centre;
+            out1 = out1.sqrMagnitude < 1e-4f ? new Vector2(0f, 1f) : out1.normalized;
+            to = centre + out1 * RoadSiteProtection.ArrivalRadiusAt(centre, radius);
+        }
+        return RidgeOver(at, height, to, level, q => PlacedSites.GroundAt(q.x, q.y, world)) > RidgeRise;
+    }
+
+    /// <summary>Whether a road's end at the place at <paramref name="centre"/> (exterior <paramref name="radius"/>, as
+    /// asked) is already reached by other network, so the road's own stub there may be dropped (<see cref="DropStubs"/>):
+    /// the one reached test (<see cref="Reached"/>), with the place's name, so a boss's entrance not placed first keeps its
+    /// own stub. An end with no place (radius 0) is a junction on the network.</summary>
+    internal static bool EndReached(Vector2 centre, float radius) =>
+        radius <= 0f || RoadSpatialGrid.IsInitialized && Reached(centre, radius, PrefabAt(centre));
+
+    /// <summary>The prefab of the place standing at <paramref name="centre"/> (the location in its zone, within a metre of
+    /// it), or null where there is none.</summary>
+    private static string? PrefabAt(Vector2 centre)
+    {
+        Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
+        return ZoneSystem.instance != null && ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance instance)
+            && new Vector2(instance.m_position.x - centre.x, instance.m_position.z - centre.y).sqrMagnitude <= 1f
+            ? instance.m_location.m_prefab.Name : null;
+    }
+
+    /// <summary>Whether road or a staircase's walked piece (its walking surface, <see cref="RoadStairRuns.Surface"/>) lies
+    /// within <paramref name="reach"/> of <paramref name="at"/>, level with <paramref name="level"/> (within
+    /// <see cref="ReachRise"/>; at any height where it is not known): the network a place is reached by. The one height
+    /// guard for every place, placed first or not.</summary>
+    private static bool NetworkNear(Vector2 at, float reach, float? level) =>
+        NetworkNear(at, reach, level.HasValue ? _ => level.Value : null);
+
+    /// <summary><see cref="NetworkNear(Vector2, float, float?)"/> with the level the network must meet where it stands
+    /// (a place's ground at its edge on that side, <see cref="ArrivalHeight"/>).</summary>
+    private static bool NetworkNear(Vector2 at, float reach, Func<Vector2, float>? level)
+    {
+        if (level == null)
+            return RoadSpatialGrid.TryGetRoadWithin(at, reach, out _)
+                || StairStructures.PiecesNear(new Vector3(at.x, 0f, at.y), reach).Exists(p => p.Kind != StructurePieceKind.StairSupport);
+        return NetworkNear(at, reach, (q, h) => Mathf.Abs(h - level(q)) <= ReachRise, false);
+    }
+
+    /// <summary><see cref="NetworkNear(Vector2, float, float?)"/> for network a test <paramref name="accepts"/> where it stands
+    /// (its point and its height): level with the place, road only; or on the fallback not behind a ridge from it
+    /// (<see cref="BehindRidge"/>), with <paramref name="paintToo"/> the same network as at any height, a ford's painted points
+    /// as well (<see cref="RoadSpatialGrid.TryGetRoadWithin"/>: Bonemass and a sunken crypt, reached over a ford).</summary>
+    private static bool NetworkNear(Vector2 at, float reach, Func<Vector2, float, bool> accepts, bool paintToo)
+    {
+        foreach (RoadSpatialGrid.RoadPoint q in RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(at.x, 0f, at.y), reach))
+            if ((paintToo ? !q.cutOnly : q.IsRoad) && (q.p - at).sqrMagnitude <= reach * reach && accepts(q.p, q.h)) return true;
+        return StairStructures.PiecesNear(new Vector3(at.x, 0f, at.y), reach).Exists(p => p.Kind != StructurePieceKind.StairSupport
+            && accepts(new Vector2(p.Position.x, p.Position.z), RoadStairRuns.Surface(p)));
+    }
+
+    /// <summary>For the reports (an unreached place's line): the height the place is arrived at
+    /// (a placed place's landing ground, else <see cref="ArrivalHeight"/>) and how far over (+) or under (-) it the network
+    /// within the place's reach comes nearest to level, road or a staircase's walked piece; offset null where no network is
+    /// in reach. Null where the place's height is not known.</summary>
+    internal static (float place, float? offset)? ArrivalOffset(Vector2 flat, float radius)
+    {
+        if (radius <= 0f || !RoadSpatialGrid.IsInitialized) return null;
+        Vector2 at;
+        float reach;
+        float? height;
+        if (PlacedSites.TryGetReady(flat, out PlacedSite placed))
+        {
+            at = placed.Shape.Landing;
+            reach = LandingReach;
+            height = placed.Ground(at.x, at.y);
+        }
+        else
+        {
+            at = flat;
+            reach = KeepOutEdge(flat, radius, RoadWidth) + ReachPastEdge;
+            height = ArrivalHeight(flat, radius, flat);
+        }
+        if (height is not float place) return null;
+        Func<Vector2, float> level = ArrivalLevelFrom(flat, radius) ?? (_ => place);
+        float? best = null;
+        void Offer(Vector2 q, float h) { float off = h - level(q); if (best == null || Mathf.Abs(off) < Mathf.Abs(best.Value)) best = off; }
+        foreach (var (q, h) in RoadsNear(at, reach)) Offer(q, h);
+        foreach (StructurePiece p in StairStructures.PiecesNear(new Vector3(at.x, 0f, at.y), reach))
+            if (p.Kind != StructurePieceKind.StairSupport && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), at) <= reach)
+                Offer(new Vector2(p.Position.x, p.Position.z), RoadStairRuns.Surface(p));
+        return (place, best);
+    }
+
+    /// <summary>How near a placed place's landing the network must come to reach it: the road onto it keeps
+    /// its own reach (half its width and its blend) off the entrance's pit, so it stops a few metres short
+    /// of the shape's landing point (4.8 m on the test cave).</summary>
+    public const float LandingReach = 8f;
+
+    /// <summary>For an unreached placed place's line: how near the network comes to its landing.</summary>
+    private static string NearestToLanding(PlacedSite site)
+    {
+        Vector2 landing = site.Shape.Landing;
+        float road = RoadSpatialGrid.IsInitialized && RoadSpatialGrid.TryGetRoadWithin(landing, 200f, out Vector2 r) ? Vector2.Distance(r, landing) : float.PositiveInfinity;
+        float stair = float.PositiveInfinity;
+        foreach (StructurePiece p in StairStructures.PiecesNear(new Vector3(landing.x, 0f, landing.y), 200f))
+            if (p.Kind != StructurePieceKind.StairSupport) stair = Mathf.Min(stair, Vector2.Distance(new Vector2(p.Position.x, p.Position.z), landing));
+        return FormattableString.Invariant($"; placed first, its landing ({landing.x:F1}, {landing.y:F1}): nearest road {road:F1} m, nearest stair piece {stair:F1} m");
+    }
+
+    /// <summary>Whether <paramref name="prefab"/> is reached only by a road onto its own landing (a boss's entrance), not by a
+    /// road passing within reach of it.</summary>
+    internal static bool OwnLandingOnly(string prefab) =>
+        prefab.IndexOf("BossEntrance", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    /// <summary>Whether the network comes onto a placed place's landing: a road or staircase was carried on
+    /// onto it (<see cref="PlacedSites.MarkLanded"/>: laid to its landing's level ground, <see cref="PlacedSiteShape.Aims"/>),
+    /// or road or a staircase's walked piece is near the shape's landing point, level with the ground there
+    /// (<see cref="NetworkNear"/>, as every other place: without a height guard network 20-45 m under a landing counted
+    /// it reached).</summary>
+    internal static bool LandingReached(PlacedSite site) =>
+        PlacedSites.Landed(site.Centre) || NetworkNear(site.Shape.Landing, LandingReach, site.Ground(site.Shape.Landing.x, site.Shape.Landing.y));
+
+    /// <summary>
+    /// The height the network arriving at the place at <paramref name="centre"/> (exterior <paramref name="radius"/>, as asked)
+    /// from <paramref name="from"/> must end level with to reach it (<see cref="ReachRise"/>): the one owner of a place's arrival
+    /// height (the place's ground at its edge). Placed before its roads, its landing's ground
+    /// (<see cref="PlacedSiteShape.Landing"/> on its placed ground). Else its single levelled platform, never below its root
+    /// (<see cref="LocationLevelling.ApproachHeight"/>), the flat it is entered on. Else (no flat, several levels, or no
+    /// levelling known) its ground at its edge on that side: the edge of the ground it shapes
+    /// (<see cref="RoadSiteProtection.ArrivalRadiusAt"/>) toward <paramref name="from"/>, as its levelling round its centre leaves
+    /// it (<see cref="LocationLevelling.PlacedGroundAt"/>). A cabin only smooths the ground round it: with no level known, a
+    /// road 10 m under AbandonedLogCabin04 reached it; its ground at its edge on the road's side (10 m out, 185.3 m) is still 4.7
+    /// m over the road's end. Its root, the ground under its centre, is not the level of a place entered from its side on a
+    /// hillside (a troll cave's mouth). Null outside a generation, or for a point with no radius.
+    /// </summary>
+    internal static float? ArrivalHeight(Vector2 centre, float radius, Vector2 from)
+    {
+        if (PlacedSites.TryGetReady(centre, out PlacedSite site)) return site.Ground(site.Shape.Landing.x, site.Shape.Landing.y);
+        var world = GenerationWorld;
+        if (world == null || radius <= 0f) return null;
+        float root = LocationLevelling.CentreHeight(centre, world);
+        IReadOnlyList<LevelOp>? ops = LocationLevelling.OpsAt(centre);
+        if (LocationLevelling.ApproachHeight(root, ops) is float platform) return platform;
+        Vector2 out1 = from - centre;
+        out1 = out1.sqrMagnitude < 1e-4f ? new Vector2(0f, 1f) : out1.normalized;
+        Vector2 edge = centre + out1 * RoadSiteProtection.ArrivalRadiusAt(centre, radius);
+        return LocationLevelling.PlacedGroundAt(edge, centre, root, ops, BiomeBlendedHeight.GetBlendedHeight(edge.x, edge.y, world));
+    }
+
+    /// <summary><see cref="ArrivalHeight"/> for network anywhere round the place, its edge read once a 5 degree bearing (a
+    /// reached test asks of every road point in reach); null where the height is not known. Pure while preparation is
+    /// closed (<see cref="LocationLevelling.Sealed"/>: the places placed, their levelling and roots fixed), so kept per place
+    /// for the rest of that generation's islands (<see cref="m_levelFrom"/>), its bearings shared by every worker.</summary>
+    private static Func<Vector2, float>? ArrivalLevelFrom(Vector2 centre, float radius)
+    {
+        if (!LocationLevelling.Sealed) return BuildArrivalLevelFrom(centre, radius);
+        int seal = LocationLevelling.SealCount;
+        if (m_levelFromSeal != seal)
+            lock (m_levelFrom)
+                if (m_levelFromSeal != seal) { m_levelFrom.Clear(); m_levelFromSeal = seal; }
+        return m_levelFrom.GetOrAdd((PlaceKey(centre), radius), _ => BuildArrivalLevelFrom(centre, radius));
+    }
+
+    /// <summary>The places' arrival levels (<see cref="ArrivalLevelFrom"/>) while preparation stays closed, by rounded centre
+    /// and radius as asked; emptied when it is next closed (<see cref="m_levelFromSeal"/>).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<((int, int), float), Func<Vector2, float>?> m_levelFrom = new();
+    private static volatile int m_levelFromSeal = -1;
+
+    private static Func<Vector2, float>? BuildArrivalLevelFrom(Vector2 centre, float radius)
+    {
+        if (ArrivalHeight(centre, radius, centre) is not float level) return null;
+        if (PlacedSites.TryGetReady(centre, out _)) return _ => level;
+        var world = GenerationWorld!;
+        if (LocationLevelling.ApproachHeight(LocationLevelling.CentreHeight(centre, world), LocationLevelling.OpsAt(centre)).HasValue)
+            return _ => level;
+        var byBearing = new System.Collections.Concurrent.ConcurrentDictionary<int, float>();
+        return q =>
+        {
+            int bearing = Mathf.RoundToInt(Mathf.Atan2(q.y - centre.y, q.x - centre.x) * Mathf.Rad2Deg / 5f);
+            return byBearing.GetOrAdd(bearing, b =>
+            {
+                float a = b * 5f * Mathf.Deg2Rad;
+                return ArrivalHeight(centre, radius, centre + new Vector2(Mathf.Cos(a), Mathf.Sin(a)))!.Value;
+            });
+        };
+    }
+
+    /// <summary>Why a road's end at one of its places does not end level with the place (<see cref="ReachRise"/> of
+    /// <see cref="ArrivalHeight"/> on its side, the one test <see cref="Reached"/> makes) and no approach staircase was laid from it onto the
+    /// place (<see cref="SiteApproaches"/>) nor a way onto its landing (a placed place's, <see cref="PlanEntry"/>), or null. The
+    /// end is where walking ends: the last road point, or the staircase the road ends on. Over as well as under, in every
+    /// biome: such a road would not reach its place, so it is refused and the planner tries its other candidates (or the
+    /// place goes unserved), but at a place on its second attempt, without height (<see cref="HeightNeeded"/>,
+    /// <see cref="ReachOffLevel"/>). Before, only in the Mountains or at a boss's entrance; elsewhere an end off level was
+    /// kept and counted reached, which is now that fallback.</summary>
+    internal static (string refusal, string why)? EndNotLevel(List<Vector2> path, List<RoadSpatialGrid.PlannedPath> plans, List<RoadStairSpan> stairs,
+        List<RoadStairSpan> approaches, Vector2 startCenter, float startRadius, Vector2 endCenter, float endRadius, bool startAtPlace,
+        bool endAtPlace)
+    {
+        (string, string)? At(bool atStart, Vector2 centre, float radius, bool atPlace)
         {
             if (!atPlace || radius <= 0f || plans.Count == 0) return null;
-            if (PlaceHeight(centre) is not float place) return null;
+            if (approaches.Exists(a => a.FromIndex == (atStart ? 0 : path.Count - 1))) return null;
             float height;
             RoadStairSpan? last = stairs.Find(s => atStart ? s.FromIndex == 0 : s.ToIndex == path.Count - 1);
             if (last != null) height = atStart ? last.FromHeight : last.ToHeight;
@@ -337,69 +1039,104 @@ public static partial class RoadNetworkGenerator
                 if (piece.Heights.Count == 0) return null;
                 height = atStart ? piece.Heights[0] : piece.Heights[piece.Heights.Count - 1];
             }
-            // Under only: a road ending over its place (22-23 m over sunken Mistlands entrances on
-            // RoadSeedB) arrives at another kind of ground, and refusing those lost four places.
-            float under = place - height;
-            if (under <= MaxApproachClimb) return null;
-            (at, by) = (centre, under);
-            return FormattableString.Invariant($"ends {under:F0} m under its place, past an approach's {MaxApproachClimb:F0} m climb");
+            Vector2 end = path[atStart ? 0 : path.Count - 1];
+            // On the fallback an end at any height reaches its place, at its stand-off (a custom location's) and not from
+            // behind a ridge: the reached test's own ring test (OffLevelAt), read from the end's height. On a placed place's
+            // landing, as the reached test, not behind a ridge alone.
+            if (!HeightNeeded(centre))
+            {
+                float? standOff = StandOffLevel(centre, radius);
+                bool onLanding = PlacedSites.TryGetReady(centre, out PlacedSite placed)
+                    && (end - placed.Shape.Landing).sqrMagnitude <= LandingReach * LandingReach;
+                if (onLanding ? !BehindRidge(centre, radius, end, height) : OffLevelAt(centre, radius, standOff, end, height)) return null;
+                return onLanding || AtStandOff(centre, radius, standOff, end, height)
+                    ? (RidgeRefusal, FormattableString.Invariant($"ends behind ground over {RidgeRise:F0} m above it and its place"))
+                    : (NotLevelRefusal, FormattableString.Invariant($"ends {(standOff ?? height) - height:+0.0;-0.0} m off its place, not at its stand-off, {Vector2.Distance(end, centre):F1} m out"));
+            }
+            // A custom location with no flat nor landing standing above the end: at its stand-off, as the reached test.
+            if (StandOffLevel(centre, radius) is float own && height < own)
+                return OffLevelAt(centre, radius, own, end, height) ? null
+                    : (NotLevelRefusal, FormattableString.Invariant($"ends {own - height:F1} m under its place, not at its stand-off, {Vector2.Distance(end, centre):F1} m out"));
+            if (ArrivalHeight(centre, radius, end) is not float place) return null;
+            float off = height - place;
+            if (Mathf.Abs(off) <= ReachRise)
+            {
+                // Level enough to reach it, but a stair or more off (no staircase outside the Mountains): counted, kept.
+                if (RoadsLog && Mathf.Abs(off) > ArrivalLevel) System.Threading.Interlocked.Increment(ref m_closeEnds);
+                return null;
+            }
+            return (NotLevelRefusal, FormattableString.Invariant($"ends {Mathf.Abs(off):F1} m {(off > 0f ? "over" : "under")} its place, not level with it, and no approach staircase onto it"));
         }
-        string? why = At(true, startCenter, startRadius, startAtPlace) ?? At(false, endCenter, endRadius, endAtPlace);
-        (shortOf, shortBy) = (at, by);
-        return why;
+        return At(true, startCenter, startRadius, startAtPlace) ?? At(false, endCenter, endRadius, endAtPlace);
     }
+
+    /// <summary>How many road ends were carried on from a place's ring to its edge (<see cref="CarryOnToEdges"/>).</summary>
+    private static int m_carriedToEdge;
+    /// <summary>For tests and the summary: road ends carried on to their place's edge this generation.</summary>
+    internal static int CarriedToEdgeCount => m_carriedToEdge;
+    /// <summary>A road end nearer its place's edge than this is not carried on.</summary>
+    private const float CarryOnMin = 0.5f;
 
     /// <summary>
-    /// A road refused only for ending further under one of its places than an approach climbs is the
-    /// place's last resort: kept here, by that place, the one ending least far under (then the
-    /// shortest), and built after all when the planner would otherwise leave the place unconnected
-    /// (Hildir's cave at -2304,1536 lost its 100 m staircase to the 20 m rule).
+    /// The last stretch of a road whose end arrives level with a place that has no flat nor landing (not placed first, no single
+    /// levelled platform, <see cref="LocationLevelling.ApproachHeight"/>): from its end at the ring (<see cref="KeepOutEdge"/>)
+    /// straight on to the place's edge on its side, where its arrival height was measured (<see cref="ArrivalHeight"/>,
+    /// <see cref="RoadSiteProtection.ArrivalRadiusAt"/>), from the road's height to that height, as a crypt's road is carried on
+    /// to its door. In game: AbandonedLogCabin04 (-1867, 7101), the road at the right height but its end stopping
+    /// short of the cabin, the road's whole blend kept outside the ground the cabin shapes. Not on the fallback (an end off
+    /// level, <see cref="HeightNeeded"/>), nor from an end on stairs or with an approach staircase; none where the stretch
+    /// cannot be planned (<see cref="RoadSpatialGrid.PlanSiteEntry"/>) or its end is in water: the road keeps its end.
     /// </summary>
-
-    private sealed class UnderRoad
+    private static List<RoadSpatialGrid.PlannedPath> CarryOnToEdges(List<Vector2> path, List<RoadSpatialGrid.PlannedPath> plans,
+        List<RoadStairSpan> stairs, List<RoadStairSpan> approaches, float width, Vector2 startCenter, float startRadius,
+        Vector2 endCenter, float endRadius, bool startAtPlace, bool endAtPlace)
     {
-        public Vector2 StartCenter, EndCenter;
-        public float StartRadius, EndRadius, Width, Under, Length;
-        public string? Label;
-        public List<Vector2>? Hints;
-    }
-
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), UnderRoad> m_underRoads = new();
-    /// <summary>Places reached by their last-resort road, and how far under them it ends.</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), float> m_lastResortServed = new();
-    /// <summary>Set while a last-resort road is built: its end is not refused for standing under its place.</summary>
-    [System.ThreadStatic] private static bool t_lastResort;
-
-    private static void RememberUnder(Vector2 place, UnderRoad road) =>
-        m_underRoads.AddOrUpdate(PlaceKey(place), road, (_, kept) =>
-            road.Under < kept.Under - 0.5f || (road.Under <= kept.Under + 0.5f && road.Length < kept.Length) ? road : kept);
-
-    /// <summary>The place's last-resort road ((see <see cref="RememberUnder"/>), built now; false where it
-    /// has none or it no longer builds.</summary>
-    internal static bool BuildLastResort(Vector3 position)
-    {
-        var key = PlaceKey(new Vector2(position.x, position.z));
-        if (!m_underRoads.TryRemove(key, out var road)) return false;
-        bool built;
-        t_lastResort = true;
-        try { built = GenerateRoad(road.StartCenter, road.StartRadius, road.EndCenter, road.EndRadius, road.Width, road.Label, road.Hints); }
-        finally { t_lastResort = false; }
-        if (built) m_lastResortServed[key] = road.Under;
-        if (RoadsLog)
+        var carried = new List<RoadSpatialGrid.PlannedPath>();
+        var world = GenerationWorld;
+        if (world == null || path.Count < 2 || plans.Count == 0) return carried;
+        void At(bool atStart, Vector2 centre, float radius, bool atPlace)
         {
-            System.Threading.Interlocked.Increment(ref m_lastResortTried);
-            if (built) System.Threading.Interlocked.Increment(ref m_lastResortBuilt);
-            Log.LogInfo(FormattableString.Invariant(
-                $"  Road {road.Label}: last resort for a place no other road reaches, ending {road.Under:F0} m under it: {(built ? "built" : "refused")}"));
+            if (!atPlace || radius <= 0f || PlacedSites.TryGetReady(centre, out _) || !HeightNeeded(centre)) return;
+            if (approaches.Exists(a => a.FromIndex == (atStart ? 0 : path.Count - 1))) return;
+            if (RoadEnd(atStart, path, plans, stairs) is not var (end, height, onStairs) || onStairs != null) return;
+            float root = LocationLevelling.CentreHeight(centre, world);
+            IReadOnlyList<LevelOp>? ops = LocationLevelling.OpsAt(centre);
+            if (LocationLevelling.ApproachHeight(root, ops).HasValue) return;
+            // Its end stood off a custom location standing above it (StandOffLevel) stays there.
+            if (StandOffLevel(centre, radius) is float own && height < own) return;
+            Vector2 out1 = end - centre;
+            float arrival = RoadSiteProtection.ArrivalRadiusAt(centre, radius), from = out1.magnitude;
+            if (from - arrival < CarryOnMin) return;
+            if (ArrivalHeight(centre, radius, end) is not float place || Mathf.Abs(height - place) > ReachRise) return;
+            Vector2 edge = centre + out1 * (arrival / from);
+            float Ground(Vector2 q) => LocationLevelling.PlacedGroundAt(q, centre, root, ops, BiomeBlendedHeight.GetBlendedHeight(q.x, q.y, world));
+            world.GetRiverWeight(edge.x, edge.y, out float river, out _);
+            if (!RoadWater.BuiltDry(Ground(edge), river)) return;
+            var line = new List<Vector2> { end, edge };
+            RoadSpatialGrid.PlannedPath? plan = RoadGrade.Trial(() => RoadSpatialGrid.PlanSiteEntry(line, width, world, height, place, Ground));
+            if (plan != null && plan.Points.Count >= 2) carried.Add(plan);
         }
-        return built;
+        At(true, startCenter, startRadius, startAtPlace);
+        At(false, endCenter, endRadius, endAtPlace);
+        return carried;
     }
+
+    /// <summary>The refusal a road whose end is not level with its place is counted under (<see cref="EndNotLevel"/>).</summary>
+    internal const string NotLevelRefusal = "end not level with its place";
+    /// <summary>The refusal a road on the fallback whose end is behind a ridge from its place is counted under
+    /// (<see cref="EndNotLevel"/>, <see cref="BehindRidge"/>).</summary>
+    internal const string RidgeRefusal = "end behind a ridge from its place";
+
     /// <summary>Read the crossing registry under the same gate used by commits.
     /// Another island may append while this road looks for shared banks.</summary>
     internal static void SnapToExistingCrossings(IEnumerable<RoadCrossing> crossings)
     {
         lock (m_recordGate)
         {
+            // Only this island's crossings and untagged ones: another island's is not this island's network (CrossIslandReads).
+            int me = CrossIslandReads.Me;
+            RoadCrossing? passed = null;
+            bool Seen(RoadCrossing existing) { if (CrossIslandReads.Sees(me, existing.Island)) return true; passed = existing; return false; }
             // A run of back-to-back crossings (a raised pool, a wade, a bridge: one river crossed in
             // pieces) that spans the same water as a crossing another road built is replaced by that
             // one crossing (measured: a 3-piece chain ran 6 m beside a 53 m bridge; piece by piece
@@ -417,7 +1154,7 @@ public static partial class RoadNetworkGenerator
                         (crossingsList[a].FromBank + crossingsList[b].ToBank) * 0.5f, 0f, crossingsList[a].Kind, crossingsList[a].Style);
                     RoadCrossing? match = null; float best = float.MaxValue;
                     foreach (RoadCrossing existing in m_roadCrossings)
-                        if (SameCorridorCrossing(existing, span, out float d) && d < best) { best = d; match = existing; }
+                        if (SameCorridorCrossing(existing, span, out float d) && d < best && Seen(existing)) { best = d; match = existing; }
                     if (match == null) { a = b; continue; }
                     var first = crossingsList[a];
                     int toIndex = crossingsList[b].ToIndex;
@@ -434,7 +1171,7 @@ public static partial class RoadNetworkGenerator
             {
                 RoadCrossing? match = null;
                 foreach (RoadCrossing existing in m_roadCrossings)
-                    if (RoadCrossing.SameBanks(existing, crossing)) { match = existing; break; }
+                    if (RoadCrossing.SameBanks(existing, crossing) && Seen(existing)) { match = existing; break; }
                 // Two roads crossing the same water side by side share one crossing (the corridor
                 // snap's rule for crossings; measured: two roads left one place through a pool,
                 // each with its own ford 6.5 m apart). Nearest qualifying site wins.
@@ -442,7 +1179,7 @@ public static partial class RoadNetworkGenerator
                 {
                     float best = float.MaxValue;
                     foreach (RoadCrossing existing in m_roadCrossings)
-                        if (SameCorridorCrossing(existing, crossing, out float d) && d < best) { best = d; match = existing; }
+                        if (SameCorridorCrossing(existing, crossing, out float d) && d < best && Seen(existing)) { best = d; match = existing; }
                 }
                 if (match != null)
                 {
@@ -450,6 +1187,7 @@ public static partial class RoadNetworkGenerator
                     crossing.Shared = true;
                 }
             }
+            if (passed != null) CrossIslandReads.Skipped(CrossIslandReads.Kind.Crossings, passed.Island, passed.Center);
         }
     }
 
@@ -476,6 +1214,7 @@ public static partial class RoadNetworkGenerator
     private static int m_roadsGeneratedCount = 0;
     private static List<(Vector2 position, string label)> m_roadStartPoints = new();
     private static readonly List<RoadCrossing> m_roadCrossings = new();
+    private static readonly List<CoastalLandingPlace> m_coastalLandings = new();
 
     public static bool RoadsGenerated => m_roadsGenerated;
     /// <summary>
@@ -495,6 +1234,14 @@ public static partial class RoadNetworkGenerator
     /// <summary>River crossings of the generated roads (fords and bridges
     /// prototypes): empty unless the network was generated with either on.</summary>
     public static IReadOnlyList<RoadCrossing> GetRoadCrossings() => m_roadCrossings;
+    /// <summary>The shore landings of the islands the network was built for (name <see cref="RoadCoastalLandings.Name"/>), by
+    /// island then position, each with whether its island's destinations took it and whether the network reaches it.
+    /// Saved with the network.</summary>
+    public static IReadOnlyList<CoastalLandingPlace> GetCoastalLandings()
+    {
+        lock (m_recordGate)
+            return m_coastalLandings.OrderBy(l => l.IslandId).ThenBy(l => l.Position.x).ThenBy(l => l.Position.z).ToList();
+    }
     /// <summary>The crossings and the road start points in a fixed order, whichever island committed its roads first
     /// (the same rule as <see cref="StairStructures.SortCanonical"/>): generation lays islands in parallel, and the saved
     /// bytes must not depend on which finished first. Crossings by their banks, start points by position then label. No
@@ -523,10 +1270,31 @@ public static partial class RoadNetworkGenerator
             });
         }
     }
+    /// <summary>The crossings built so far, copied under the gate commits take (another island may append meanwhile): on an
+    /// island worker, its own island's and untagged ones (CrossIslandReads).</summary>
+    internal static List<RoadCrossing> CrossingsSnapshot()
+    {
+        lock (m_recordGate) return Visible(m_roadCrossings);
+    }
+
+    /// <summary>A copy of <paramref name="all"/> holding what this thread sees of it (<see cref="CrossIslandReads.Sees(int, byte)"/>).
+    /// The caller holds the gate. Not counted: the whole list is filtered, near or far; the reads near a place count.</summary>
+    private static List<RoadCrossing> Visible(List<RoadCrossing> all)
+    {
+        int me = CrossIslandReads.Me;
+        if (me == 0) return new List<RoadCrossing>(all);
+        var visible = new List<RoadCrossing>(all.Count);
+        foreach (RoadCrossing c in all)
+            if (CrossIslandReads.Sees(me, c.Island)) visible.Add(c);
+        return visible;
+    }
     public static bool RoadsLoadedFromZDO => m_roadsLoadedFromZDO;
     /// <summary>Whether the network must be saved in full (<see cref="m_networkDirty"/>).</summary>
     public static bool NetworkDirty => m_networkDirty;
-    public static bool RoadsAvailable => !RoadLifecycleManager.WorkersOwnWorld && (m_roadsGenerated || m_roadsLoadedFromZDO || m_networkDirty);
+    public static bool RoadsAvailable => !RoadLifecycleManager.WorkersOwnWorld && NetworkInMemory;
+    /// <summary>Whether a network is in memory (generated, loaded, or added to), whoever may use it now: a generation that
+    /// replaces it asks this, as <see cref="RoadsAvailable"/> is false while the generation's workers own the world.</summary>
+    internal static bool NetworkInMemory => m_roadsGenerated || m_roadsLoadedFromZDO || m_networkDirty;
 
     /// <summary>
     /// Whether a world without persisted roads generates its network when the
@@ -538,19 +1306,15 @@ public static partial class RoadNetworkGenerator
     /// </summary>
     public static bool GenerateOnLoad = true;
 
-    /// <summary>Load-time entry: generate unless GenerateOnLoad is off. Returns whether it generated.</summary>
-    public static bool GenerateRoadsOnLoad()
-    {
-        if (!GenerateOnLoad)
-        {
-            Log.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +
-                        "no roads until road_generate or road_regen_island");
-            return false;
-        }
-        GenerateRoads();
-        if (RoadsAvailable) ApplyGeneratedNetworkToLoadedZones();
-        return RoadsAvailable;
-    }
+    /// <summary>
+    /// Between choosing the destinations and building the roads: the preparation steps that place the places their
+    /// landing waits for (<see cref="SitesFirstLoad"/>), each step a stage with its own progress on the loading panel.
+    /// Every generation runs them (<see cref="PrepareSteps"/>): the places a generation will visit are the places it
+    /// places first. Placing waits for the game's frames, so every generation is the owned one, run over frames
+    /// (<see cref="RoadLifecycleManager.Tick"/>); only the offline tools drain a preparation in one call, with a hook of
+    /// their own that needs no frames. Settable for tests.
+    /// </summary>
+    internal static Func<GenerationWork, RoadPreparation, IEnumerable<bool>>? SitesFirst;
 
     internal static void ApplyGeneratedNetworkToLoadedZones()
     {
@@ -588,59 +1352,66 @@ public static partial class RoadNetworkGenerator
         Log.LogDebug("Roads marked as loaded from ZDO persistence");
     }
 
+#if ROADS_TESTS
     /// <summary>
-    /// Main entry point for road generation. Calls various generation methods.
+    /// Tests: a whole-world generation run to its end as the game runs it (<see cref="RoadLifecycleManager.Begin"/>, its
+    /// frames pumped): with <paramref name="force"/> as road_generate runs it (<see cref="RoadLifecycleManager.BeginForOperator"/>),
+    /// without as the load does. Throws as the game's console would say it: busy, or the generation failed.
     /// </summary>
-    /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
-    public static void GenerateRoads(bool force = false)
+    internal static void GenerateRoads(bool force = false)
     {
         if (RoadsAvailable && !force) return;
-        RoadLifecycleManager.RunSynchronous(() =>
-        {
-            var work = PrepareGeneration(force);
-            if (work == null) return;
-            RoadLifecycleManager.ReportPrepared(work);
-            try { work.Compute(); RoadLifecycleManager.ReportFinished(work); CompleteGeneration(work); }
-            finally { ReleaseGenerationResources(); }
-        });
+        string? refused = force
+            ? RoadLifecycleManager.BeginForOperator(null, line => Log.LogInfo(line))
+            : RoadLifecycleManager.Begin(new RoadLifecycleManager.GenerationRequest()) ? null : RoadLifecycleManager.Busy;
+        if (refused == RoadLifecycleManager.Busy) throw new InvalidOperationException(refused);
+        RoadLifecycleManager.RunToEndForTests();
     }
 
-    // The asynchronous load path and explicit synchronous callers use these same phases.
-    internal static GenerationWork? PrepareGeneration(bool force)
+    /// <summary>Tests: road_regen_island at <paramref name="worldPos"/>, run to its end as the game runs it. Returns whether it
+    /// was regenerated, and its summary or why not.</summary>
+    internal static bool RegenerateIslandAt(Vector3 worldPos, out string summary)
     {
-        using var preparation=BeginPreparation(force);
-        preparation.Drain();
-        preparation.LogTimings();
-        return preparation.TakeResult();
+        GenerationWork? done = null;
+        var told = new List<string>();
+        string? refused = RoadLifecycleManager.BeginForOperator(worldPos, told.Add, work => done = work);
+        if (refused == RoadLifecycleManager.Busy) throw new InvalidOperationException(refused);
+        if (refused == null) RoadLifecycleManager.RunToEndForTests();
+        summary = done?.Summary ?? refused ?? (told.Count > 0 ? told[told.Count - 1] : "Nothing was regenerated");
+        return done != null;
     }
-    internal static RoadPreparation BeginPreparation(bool force)
+#endif
+
+    /// <summary>
+    /// A generation's main-thread preparation, as steps the owned generation runs over frames: the destinations chosen,
+    /// the places among them that wait for their placing placed first (<see cref="SitesFirst"/>) and made ready, then
+    /// everything the island workers read. The one way a network is prepared, for the whole world or (with
+    /// <paramref name="island"/>) for the one island there, which replaces the network.
+    /// </summary>
+    internal static RoadPreparation BeginPreparation(bool force, Vector3? island = null)
     {
         var world=WorldGenerator.instance;
         var zones=ZoneSystem.instance;
         var options=NetworkOptions.Snapshot();
         var start=DateTime.Now;
         int percentage=IslandRoadPercentage,maxLocations=MaxLocationsPerIsland;
-        return new RoadPreparation(p=>PrepareSteps(force,world,zones,options,start,percentage,maxLocations,p));
+        return new RoadPreparation(p=>PrepareSteps(force,island,world,zones,options,start,percentage,maxLocations,p));
     }
-    private static IEnumerable<bool> PrepareSteps(bool force,WorldGenerator? capturedWorld,ZoneSystem? capturedZones,
+    private static IEnumerable<bool> PrepareSteps(bool force,Vector3? only,WorldGenerator? capturedWorld,ZoneSystem? capturedZones,
         RoadNetworkOptions options,DateTime startTime,int percentage,int maxLocations,RoadPreparation preparation)
     {
         if (!RoadLifecycleManager.HoldsTheNetwork)
         {
-            Log.LogWarning("Roads are generated only on the server; this peer holds no road network");
+            preparation.Refuse("Roads are generated only on the server; this peer holds no road network");
             yield break;
         }
-        if (RoadsAvailable && !force) yield break;
-        if (force && RoadsAvailable) ResetData();
-        if (capturedWorld == null)
+        if (NetworkInMemory && !force) yield break;
+        // The whole world starts afresh here; one island only once its island is found and has places to go to
+        // (a point in the ocean leaves the network as it is).
+        if (only == null && force && NetworkInMemory) ResetData();
+        if (capturedWorld == null || capturedZones == null)
         {
-            Log.LogWarning("WorldGenerator not available, cannot generate roads");
-            yield break;
-        }
-
-        if (capturedZones == null)
-        {
-            Log.LogWarning("ZoneSystem not available, cannot generate roads");
+            preparation.Refuse(capturedWorld == null ? "WorldGenerator not available, cannot generate roads" : "ZoneSystem not available, cannot generate roads");
             yield break;
         }
 
@@ -648,49 +1419,25 @@ public static partial class RoadNetworkGenerator
         Log.LogDebug("Starting road network generation...");
 
         RegisterConfiguredLocations();
-        NetworkCutoff.BeginNewNetwork();
-
         var world = capturedWorld;
-        float clearance = RoadWidth * 0.5f + 2f;
-        m_generationWorld = world;
-        m_pathfinder = new RoadPathfinder(world) { SiteClearance = clearance };
-        m_threadPathfinders?.Dispose();
-        m_threadPathfinders = new System.Threading.ThreadLocal<RoadPathfinder>(
-            () => new RoadPathfinder(world) { SiteClearance = clearance }, true);
-        RoadTerrainSamples.ResetTotals();
-        SearchStats.Reset();
-        m_destinationsSelected = 0;
-        m_destinationsConnected = 0;
-        m_roadsGeneratedCount = 0;
-        m_roadsRefusedForGrade = 0;
-        m_refusalReasons.Clear();
-        m_lastFailure.Clear();
-        ClearStairNotes();
-        m_builtTo.Clear();
-        m_roadsWithNoRoute = 0;
-        m_earthworkReroutes = 0;
-        m_pullReroutes = 0;
-        m_underRoads.Clear();
-        m_lastResortServed.Clear();
-        m_offLandEnds = 0;
-        RoadCrossingDetector.DeckLineWalkedIn = RoadCrossingDetector.DeckLineRefused = RoadCrossingDetector.DeckLineSpanDropped = 0;
-        RoadPitches.ResetCounters();
-        m_corridorSnapped = 0;
-        m_chainsShared = 0;
-        m_shallowFordsWalked = 0;
-        RoadSpatialGrid.SwayKept = RoadSpatialGrid.SwayRefused = RoadSpatialGrid.SwayMoreEarth = 0;
-        RoadSpatialGrid.SlopeSwayPlans = 0; System.Array.Clear(RoadSpatialGrid.SlopeSwayMillimetres, 0, 3);
-        RoadPathfinder.SqueezeHits.Clear();
-        m_earthworkUnavoided = 0;
-        RoadGrade.SteepestPlanned = 0f;
-        RoadSiteProtection.Reset();
+        if (only == null)
+        {
+            NetworkCutoff.BeginNewNetwork();
+            ResetGenerationState(world, options);
+        }
 
         LocationData? locations=null;
         foreach(var step in GatherLocationSteps(capturedZones,preparation,value=>locations=value)) yield return step;
-        if(locations==null) yield break;
+        if(locations==null) { preparation.Refuse("No location data available"); yield break; }
 
         List<Island>? islands=null;
         foreach(var step in IslandDetector.DetectRoadIslandsSteps(world,options,preparation,value=>islands=value)) yield return step;
+        if (only is Vector3 at)
+        {
+            Island? there = islands!.FirstOrDefault(i => i.ContainsPoint(at));
+            if (there == null) { preparation.Refuse($"No island at ({at.x:F0},{at.z:F0})"); yield break; }
+            islands = new List<Island> { there };
+        }
         preparation.BeginStage("Indexing island membership",islands!.Sum(i=>(long)i.Cells.Count),"cells"); yield return true;
         foreach(var island in islands!)
             foreach(var step in island.PrepareMembership(preparation)) yield return step;
@@ -702,17 +1449,25 @@ public static partial class RoadNetworkGenerator
             var found=new List<(string name,Vector3 position,float radius)>();
             foreach(var loc in locations.Value.AllLocations)
             {
-                if(island.ContainsPoint(loc.position) && IsRoadLocation(loc.name) && options.Allows(world.GetBiome(loc.position.x,loc.position.z))) found.Add(loc);
+                if(IsIslandDestination(island,loc,world,options)) found.Add(loc);
                 if(preparation.Checkpoint()) yield return true;
             }
             eligible[island]=found;
         }
-        var selectedIslands = RoadNetworkSelection.Islands(islands, i => eligible[i].Count, percentage);
-        Log.LogDebug($"Islands: {islands.Count} total, {selectedIslands.Count} selected (target {IslandRoadPercentage}%; boss islands are not automatically included)");
-
+        List<Island> selectedIslands;
+        if (only != null)
+        {
+            if (eligible[islands[0]].Count == 0) { preparation.Refuse($"Island {islands[0].Id} has no road-eligible locations"); yield break; }
+            selectedIslands = islands;
+        }
+        else
+        {
+            selectedIslands = RoadNetworkSelection.Islands(islands, i => eligible[i].Count, percentage);
+            Log.LogDebug($"Islands: {islands.Count} total, {selectedIslands.Count} selected (target {IslandRoadPercentage}%; boss islands are not automatically included)");
+        }
 
         preparation.BeginStage("Selecting road destinations",selectedIslands.Count,"islands"); yield return true;
-        var work = new GenerationWork(startTime);
+        var work = new GenerationWork(startTime, oneIsland: only != null);
         foreach (var island in selectedIslands)
         {
             var candidates = eligible[island];
@@ -725,8 +1480,28 @@ public static partial class RoadNetworkGenerator
                 locations.Value.SpawnRadius));
             preparation.Checkpoint(); yield return true;
         }
+        if (only != null)
+        {
+            // One island replaces the whole network, from here as a whole-world generation does from its start.
+            bool locationsWereReady = m_locationsReady;
+            ResetData();
+            m_locationsReady = locationsWereReady;
+            NetworkCutoff.BeginNewNetwork();
+            ResetGenerationState(world, options);
+        }
+        // The places whose landings wait for their placing are placed now, before their roads; then their ground is
+        // rebuilt and their landings found, before the islands share them. Both before "Reading saved location
+        // placements": it indexes the placements, these among them.
+        if (SitesFirst != null)
+            foreach (var step in RoadPreparation.Own(SitesFirst(work, preparation))) yield return step;
+        foreach (var step in PlacedSites.PrepareSteps(NaturalGround(world), preparation)) yield return step;
+        if (RoadsLog && PlacedSites.ReadyCount > 0) Log.LogInfo($"  {PlacedSites.ReadyCount} place(s) placed before the roads, their roads to go onto their landings");
+        // Which of the destinations get no road, their landing not known (PlacedSites.NotPlaced): once, here on the
+        // main thread, for the island workers to read.
+        PlacedSites.FindNotPlaced(work.AllSelected.Select(d => new Vector2(d.position.x, d.position.z)), world);
         RoadParallel.IslandsRunning = Math.Min(work.Islands.Count, RoadParallel.IslandWorkers);
         foreach(var step in PrepareAndSealSteps(preparation)) yield return step;
+        CatalogueDoors(work);
         preparation.Result=work;
     }
 
@@ -743,10 +1518,19 @@ public static partial class RoadNetworkGenerator
     internal sealed class GenerationWork
     {
         internal readonly DateTime StartTime;
-        internal GenerationWork(DateTime startTime) { StartTime = startTime; }
+        /// <summary>One island's regeneration (road_regen_island): it says how it went in <see cref="Summary"/>.</summary>
+        internal readonly bool OneIsland;
+        /// <summary>One island's regeneration, as it went: set once the network is complete.</summary>
+        internal string? Summary;
+        internal GenerationWork(DateTime startTime, bool oneIsland = false) { StartTime = startTime; OneIsland = oneIsland; }
+        /// <summary>This generation's network replaced the one in memory (set as <see cref="CompleteGeneration"/> publishes it):
+        /// a failure after this keeps it; one before discards it.</summary>
+        internal bool Published;
         internal readonly List<IslandWork> Islands = new();
         internal readonly int Workers = RoadParallel.IslandWorkers;
         internal readonly System.Collections.Concurrent.ConcurrentQueue<string> Finished = new();
+        /// <summary>Every island's chosen destinations, in the order the islands were chosen.</summary>
+        internal IEnumerable<(string name, Vector3 position, float radius)> AllSelected => Islands.SelectMany(i => i.Locations);
         internal System.Threading.CancellationToken Cancellation;
         internal RoadIslandActivity? Activity;
         internal void Compute()
@@ -763,6 +1547,7 @@ public static partial class RoadNetworkGenerator
                     var clock = System.Diagnostics.Stopwatch.StartNew();
                     var token=Activity?.Claim((int)number+1,island.Locations.Count);
                     IslandActivity=token;
+                    CrossIslandReads.Current = (int)number + 1;
                     if(Finder!=null) Finder.Activity=token;
                     try
                     {
@@ -770,13 +1555,13 @@ public static partial class RoadNetworkGenerator
                     if (SearchStats.Enabled) SearchStats.ResetThread();
                     GenerateIslandRoads(island.Island, island.Locations, island.Spawn, island.Radius);
                     Cancellation.ThrowIfCancellationRequested();
-                    CountDestinationsReached(island.Locations);
+                    CountDestinationsReached(island.Island, island.Locations);
                     Finished.Enqueue(SearchStats.Enabled
                         ? $"island {number + 1} (id {island.Island.Id}): {m_islandRoads} road(s) from {island.Locations.Count} destination(s) " +
                           $"in {clock.Elapsed.TotalSeconds:F0}s ({SearchStats.BriefThread()}); so far {SearchStats.Brief()}"
                         : $"island {number + 1}: {m_islandRoads} road(s) from {island.Locations.Count} destination(s) in {clock.Elapsed.TotalSeconds:F0}s");
                     }
-                    finally { if(Finder!=null) Finder.Activity=null; IslandActivity=null; token?.Finish(); }
+                    finally { if(Finder!=null) Finder.Activity=null; IslandActivity=null; CrossIslandReads.Current = 0; token?.Finish(); }
                 });
         }
     }
@@ -789,11 +1574,31 @@ public static partial class RoadNetworkGenerator
         LogTerrainMemoCounters();
 
         TimeSpan elapsed = DateTime.Now - work.StartTime;
+        if (work.OneIsland)
+        {
+            Island island = work.Islands[0].Island;
+            work.Summary =
+                $"Island {island.Id} ({island.ApproxArea / 1_000_000f:F1}km²): " +
+                $"{work.Islands[0].Locations.Count} locations, {m_roadsGeneratedCount} roads, " +
+                $"{RoadSpatialGrid.Statistics.LengthText()} in {elapsed.TotalSeconds:F1}s; " +
+                $"{m_destinationsConnected}/{m_destinationsSelected} destinations connected ({m_reachedOffLevel} off level), " +
+                $"{m_roadsWithNoRoute} attempt(s) found no route" +
+                (m_refusalReasons.IsEmpty ? "" : "; refused when built: " + string.Join("; ",
+                    System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderByDescending(m_refusalReasons, kv => kv.Value), kv => $"{kv.Value} {kv.Key}")));
+            // Also to the log: a console answer is lost when the command outlives
+            // the caller's timeout, and a check needs a line to wait for.
+            Log.LogInfo($"Island regenerated: {work.Summary}");
+        }
         Log.LogInfo($"Roads done: {m_roadsGeneratedCount} road(s), " +
                     $"{RoadSpatialGrid.Statistics.LengthText("F1",1000f," km")}, connecting " +
                     $"{m_destinationsConnected} of {m_destinationsSelected} destination(s), " +
                     $"in {elapsed.TotalSeconds:F0}s.");
         int unconnected = m_destinationsSelected - m_destinationsConnected;
+        Log.LogInfo($"  {m_carriedToEdge} road end(s) carried on from a place's ring to its edge, level with it (a place with no flat nor landing).");
+        Log.LogInfo($"  {m_reachedOffLevel} destination(s) reached off level: no road could arrive level with them, so on the fallback a road ending off their level reaches them (outside the Mountains).");
+        Log.LogInfo($"  {m_behindRidge} destination(s) left unserved behind a ridge: on the fallback the network in their reach ends behind ground over {RidgeRise:F0} m above it and the place.");
+        if (m_destinationsNotPlaced > 0)
+            Log.LogInfo($"  {m_destinationsNotPlaced} destination(s) given no road: their landing turns with them and they were not placed before their roads.");
         if (unconnected > 0)
             // Attempts, not destinations: a place is offered several candidate
             // connections and every one of them can fail before it is given up
@@ -819,8 +1624,8 @@ public static partial class RoadNetworkGenerator
         if (!m_refusalReasons.IsEmpty)
             Log.LogInfo("  Roads refused when built, by rule: " + string.Join("; ",
                 System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderByDescending(m_refusalReasons, kv => kv.Value), kv => $"{kv.Value} {kv.Key}")));
-        if (EarthworkCap > 0f)
-            Log.LogInfo($"  Earthwork cap {EarthworkCap:F0} m: {m_earthworkReroutes} road(s) re-routed round deep cuts or fills, {m_earthworkUnavoided} refused as still past it; {m_pullReroutes} re-routed round a stretch held over {HoldPullLimit:F0} m off its profile to a road already laid");
+        if (EarthworkCapped)
+            Log.LogInfo($"  Earthwork cap {EarthworkCap:F0} m: {m_earthworkReroutes} road(s) re-routed round deep cuts or fills, {m_earthworkUnavoided} refused as still past it; {m_pullReroutes} re-routed round a stretch held over {HoldPullLimit:F0} m off its profile to a road already laid; {m_ridgeReroutes} re-routed off a trench or ridge, {m_ridgeStairs} onto stairs");
         if (RoadCrossingDetector.ToWater)
             Log.LogInfo($"  Bridge ends walked in off land above the deck: {m_offLandEnds}; deck line through the ground ({RoadCrossingDetector.DeckLineStep:0} m samples, candidates included): {RoadCrossingDetector.DeckLineWalkedIn} bridge(s) ended at the first dry ground, {RoadCrossingDetector.DeckLineRefused} refused, {RoadCrossingDetector.DeckLineSpanDropped} ford span(s) laid as another style");
         if (RoadCrossingDetector.Shallows)
@@ -832,22 +1637,52 @@ public static partial class RoadNetworkGenerator
             Log.LogInfo($"  Shallow-water fords (pools the road walks): {sr} raised, {sw} waded, {ss} spanned; {m_shallowFordsWalked} road plan(s) walked their pools instead (a ford made them unbuildable)");
         }
         if (CorridorSnap > RoadSnap)
-            Log.LogInfo($"  Corridor snap (a road alongside another merges onto it, within {CorridorSnap:F0} m): {m_corridorSnapped} waypoint(s) moved, {m_chainsShared} chain(s) of crossings shared, candidates included");
+            Log.LogInfo($"  Corridor snap (a road alongside another merges onto it, within {CorridorSnap:F0} m): {m_corridorSnapped} waypoint(s) moved, {m_chainsShared} chain(s) of crossings shared, candidates included; {m_reEndedOnApproach} road(s) ended on a place's approach's road instead of beside it, {m_reEndRefused} refused so");
         if (!RoadSpatialGrid.BendFallbacks.IsEmpty)
             Log.LogInfo("  Bend rounding refused with full arcs (plans, trials included): " + string.Join(", ",
                 System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderBy(RoadSpatialGrid.BendFallbacks, kv => kv.Key.Item1.ToString() + kv.Key.Item2),
                     kv => $"{(kv.Key.Item1 == RoadSpatialGrid.BendStage.Least ? "least arcs" : "corners kept")} after '{kv.Key.Item2}' {kv.Value}")));
+        if (RoadJunctionFillet.Radius > 0f)
+            Log.LogInfo($"  Junction fillets (a road's end carried onto the road it joins, its inside corners filled to a {RoadJunctionFillet.Radius:F0} m curve): {m_junctionFills} junction(s)");
+        LogStairEnds();
+        Log.LogInfo($"  Staircase start pads (the road levelled where a staircase starts at its end, RoadEndRing.PadUnder): {RoadStairRuns.PadsAtFeet} at feet, {RoadStairRuns.PadsAtTops} at tops ({RoadStairRuns.PadsPartial} with points over falling ground left out); not laid: "
+            + (RoadStairRuns.PadsRefused.IsEmpty ? "none" : string.Join(", ", System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderBy(RoadStairRuns.PadsRefused, kv => kv.Key, StringComparer.Ordinal), kv => $"{kv.Key} {kv.Value}"))));
+        Log.LogInfo($"  Staircase end floors carried over by the road to the landing row next to the stair (RoadStairRuns.CarryRoadOntoStairs): {RoadStairRuns.FeetCarriedOnto} feet, {RoadStairRuns.TopsCarriedOnto} tops; ends (every lay tried) with 1/2/3/4+ floor rows {string.Join("/", RoadStairRuns.EndsByFloorRows)}, left as laid by the min-rows switch (PROCEDURALROADS_CARRY_MIN_ROWS {RoadStairRuns.CarryMinRows}) {RoadStairRuns.EndsSkippedByRows}, tried {RoadStairRuns.EndsTried}, carried {RoadStairRuns.EndsCarried} (one landing row kept); {RoadStairRuns.RoadOntoCalls} road(s) tried onto an end, {RoadStairRuns.RoadOntoUnplanned} refused before planning, {RoadStairRuns.CarriesReused} end(s) decided again from this generation's cache; kept (every lay tried): "
+            + (RoadStairRuns.EndFloorsKept.IsEmpty ? "none" : string.Join(", ", System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderBy(RoadStairRuns.EndFloorsKept, kv => kv.Key, StringComparer.Ordinal), kv => $"{kv.Key} {kv.Value}"))));
+        Log.LogInfo(FormattableString.Invariant($"  One road (RoadRide): {RoadRide.RiddenMetres:F0} m of planned road riding the network left to the road laid there, {RoadRide.CrossingsRidden} crossing(s) left to the road that built them, {RoadRide.CaughtAtCommit} ridden stretch(es) caught at the commit"));
+        LogDoors();
+        Log.LogInfo($"  Cross-island reads (an island worker's reads that passed over a road point, ride line, staircase, crossing or viaduct another island committed; islands build as separate networks): {CrossIslandReads.Describe()}");
+        Log.LogInfo($"  Structure ends met by earthwork (their landing filled over ground under the road's floor, StructureEnds.MeetEnds): {m_endEarthworks}; left from their landing pad off their line: {m_endPads}; on a landing shared with the next structure: {m_endShared}; where the road's last point stands, off their line: {m_endStands}; steps laid at them: {m_endSteps}; ends with none, one, more: {m_endFlat}/{m_endOneStep}/{m_endMoreSteps}");
         if (RoadsLog)
-            Log.LogInfo($"  Viaducts: {m_viaductsLaid} Mistlands viaduct(s) laid over dry valleys (DvergrViaduct); road attempts turned onto a bridge end's apron after the search {m_viaductFeetPut}, ends the road could not be brought to {m_viaductFeetUnmet}; searched again without a viaduct whose end the road did not meet {m_viaductsRefusedAtEnds}; river bridge ends not met {m_bridgeEndsUnmet}; roads planned again with ends as they were {m_endsKeptAsTheyWere}");
+            Log.LogInfo($"  Crossing ends: searched again round a crossing with an end no way of meeting reaches {m_crossingsUnmetSearchedRound}, refused with one past those searches {m_bridgeEndsUnmet}; viaducts: {m_viaductsLaid} Mistlands viaduct(s) laid over dry valleys (DvergrViaduct), searched again without one the built road did not allow {m_viaductsRefusedAtEnds}");
+        if (RoadsLog)
+        {
+            // The kits' shares outside the Mistlands, counted over the sites: each the kit it has, or the one its first build
+            // would choose among the kits installed now (BridgeStructures.KitFor).
+            int rail = 0, braced = 0, stone = 0;
+            List<RoadCrossing> sites;
+            lock (m_recordGate) sites = BridgeLayout.DistinctSites(m_roadCrossings);
+            foreach (RoadCrossing c in sites)
+            {
+                BridgeStructures.Kit? kit = BridgeStructures.KitFor(c, GenerationWorld);
+                if (kit == BridgeStructures.Kit.WoodRail) rail++;
+                else if (kit == BridgeStructures.Kit.WoodBraced) braced++;
+                else if (kit == BridgeStructures.Kit.Stone) stone++;
+            }
+            Log.LogInfo($"  Bridge kits outside the Mistlands (as first built with the kits installed now): {rail} WoodRail, {braced} WoodBraced, {stone} Stone");
+        }
         if (RoadWiggle.Enabled)
             Log.LogInfo($"  Sway (planned pieces, candidates included): kept {RoadSpatialGrid.SwayKept} ({RoadSpatialGrid.SwayKeptHeld} with it held round the stretches at fault), dropped as refused {RoadSpatialGrid.SwayRefused}, dropped for more earth {RoadSpatialGrid.SwayMoreEarth}; full sway to {RoadWiggle.Flat:P0} ground grade, {RoadWiggle.SlopeFloor:P0} of it at the {RoadGrade.Configured:P0} cap, meander fades out at {RoadPathfinder.MeanderFlat:P0}");
             Log.LogInfo($"  Sway on slopes (kept plans, over {RoadWiggle.Flat:P0} grade and more than 1 m off the plain line): {RoadSpatialGrid.SlopeSwayPlans} plan(s), metres by grade band 12-20%: {RoadSpatialGrid.SlopeSwayMillimetres[0] / 1000}, 20-28%: {RoadSpatialGrid.SlopeSwayMillimetres[1] / 1000}, over 28%: {RoadSpatialGrid.SlopeSwayMillimetres[2] / 1000}");
         if (RoadPitches.Enabled)
             Log.LogInfo($"  Climbs that lost rests (too steep even with pitches the whole way): {RoadPitches.ClimbsThatLostEases}");
+        if (RoadPitches.JunctionLanding > 0f)
+            Log.LogInfo($"  Place ends on a level landing (held at the place's ground, RoadPitches.ApplyJunctionLanding): {RoadSpatialGrid.PlaceLandingsStored}");
         if (SearchStats.Enabled)
             foreach (string line in SearchStats.Describe())
                 Log.LogInfo("  " + line);
         if (RoadsLog) LogStairs();
+        Log.LogInfo("  Staircases refused across their road: " + RoadStairRuns.AcrossCounts());
         LogSqueeze();
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
 
@@ -858,6 +1693,7 @@ public static partial class RoadNetworkGenerator
         NetworkCutoff.UseNewNetwork();
         m_roadsGenerated = true;
         m_networkDirty = true;
+        work.Published = true;
         ReleasePathfinders();
         
         RoadNetworkPersistence.EnsureMetadataInstance();
@@ -879,6 +1715,7 @@ public static partial class RoadNetworkGenerator
     internal static void ReleaseGenerationResources()
     {
         LocationLevelling.Unseal();
+        PlacedSites.ForgetNotPlaced();
         ReleasePathfinders();
         m_generationWorld = null;
         m_generationOptions = null;
@@ -915,6 +1752,9 @@ public static partial class RoadNetworkGenerator
     /// given up on, so the two do not add up to each other.</summary>
     private static int m_destinationsSelected;
     private static int m_destinationsConnected;
+    /// <summary>Destinations given no road as they were not placed before their roads (<see cref="PlacedSites.NotPlaced"/>):
+    /// counted among those chosen and not reached.</summary>
+    private static int m_destinationsNotPlaced;
 
     /// <summary>How many roads found no route at all. With a grade cap on,
     /// most of these are a destination the cap put out of reach rather than
@@ -946,13 +1786,16 @@ public static partial class RoadNetworkGenerator
     /// <summary>Per place (rounded centre), with <see cref="RoadsLog"/>: the staircase that failed where a road to it gave
     /// up its stairs.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), string> m_stairsFailed = new();
-    /// <summary>With <see cref="RoadsLog"/>: why roads were tried again without stairs, and how often.</summary>
+    /// <summary>With <see cref="RoadsLog"/>: why roads were searched as a plain road, and how often.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> m_stairFallbacks = new();
     /// <summary>With <see cref="RoadsLog"/>: road ends at a place, by what became of an approach staircase there.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> m_siteApproaches = new();
     /// <summary>With <see cref="RoadsLog"/>: the generation's staircase tallies for the summary.</summary>
-    private static int m_stairRuns, m_stairRoadsUnlaid, m_stretchRetries, m_stretchRetriesKept, m_tightTurnStairs, m_tightTurnStairsBuilt,
-        m_lastResortTried, m_lastResortBuilt;
+    private static int m_stairRuns, m_stairRoadsUnlaid, m_stretchRetries, m_stretchRetriesKept, m_tightTurnStairs, m_tightTurnStairsBuilt, m_notLevelEnds;
+    /// <summary>With <see cref="RoadsLog"/>: road ends kept close to their place, within <see cref="ReachRise"/> of its level
+    /// but more than <see cref="ArrivalLevel"/> off (<see cref="EndNotLevel"/>), or short of a placed place's landing
+    /// (<see cref="PlanEntry"/>), with no staircase onto it.</summary>
+    private static int m_closeEnds;
     /// <summary>Staircases laid by this thread, with <see cref="RoadsLog"/>: a retry reads it to know whether it kept the road's stairs.</summary>
     [System.ThreadStatic] private static int t_stairRunsLaidHere;
 
@@ -962,19 +1805,24 @@ public static partial class RoadNetworkGenerator
         m_stairFallbacks.Clear();
         m_siteApproaches.Clear();
         m_stairRuns = m_stairRoadsUnlaid = m_stretchRetries = m_stretchRetriesKept = m_tightTurnStairs = m_tightTurnStairsBuilt = 0;
-        m_lastResortTried = m_lastResortBuilt = 0;
+        m_notLevelEnds = m_closeEnds = 0;
     }
 
     /// <summary>The summary's staircase lines, with <see cref="RoadsLog"/>.</summary>
-    private static void LogStairs()
+    internal static void LogStairs()
     {
         static string ByCount(IEnumerable<KeyValuePair<string, int>> tally) =>
             string.Join("; ", tally.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Value} {kv.Key}"));
         Log.LogInfo($"  Staircases: {m_stairRuns} laid on roads; {m_stretchRetries} search(es) again with a staircase's stretch closed, " +
-                    $"{m_stretchRetriesKept} of them built with stairs; {RoadStairRuns.FeetBeside} set beside their road ({RoadStairRuns.FeetBesideRefused} could not be); " +
+                    $"{m_stretchRetriesKept} of them built with stairs; " +
                     $"{m_tightTurnStairs} search(es) again with stairs open at switchback turns too close to fit, {m_tightTurnStairsBuilt} of them built with stairs; " +
-                    $"{m_lastResortTried} place(s) given their last-resort road ending past an approach's {MaxApproachClimb:F0} m climb, {m_lastResortBuilt} built; " +
-                    $"{RoadStairRuns.Crests} top(s) crested onto a lip; {m_stairRoadsUnlaid} road(s) tried again without stairs" +
+                    $"{m_notLevelEnds} road(s) refused for an end not level with its place ({ReachRise:F1} m) and no approach staircase onto it; " +
+                    $"{m_closeEnds} end(s) kept close to their place, within {ReachRise:F1} m of its level or short of its landing, with no approach staircase; " +
+                    $"{RoadStairRuns.FeetStartedLower} started further back down their road; {RoadStairRuns.KitsRelaid} stretch(es) laid again in the kit their staircase stood in; " +
+                    $"{RoadStairRuns.RidgesToFeet} start(s) onto a place's landing refused over a ridge or trench to the foot; " +
+                    $"{RoadStairRuns.ApproachesNotFacingIn} approach(es) laid not facing into their place ({RoadStairRuns.ApproachFacingReruns} searched again not facing in); " +
+                    $"{RoadStairRuns.AimsBuried} aim(s) whose first stair facing in was buried, {RoadStairRuns.LaidBesideTheirAim} approach(es) laid beside such an aim along the lip; " +
+                    $"{RoadStairRuns.Crests} top(s) crested onto a lip; {m_humpsLevelled} crest pair(s) planned as road across their hump (built or not); {m_stairRoadsUnlaid} road(s) searched as a plain road after closing stretches to stairs" +
                     (m_stairFallbacks.IsEmpty ? "" : ": " + ByCount(m_stairFallbacks)));
         if (!m_siteApproaches.IsEmpty)
             Log.LogInfo("  Site approach staircases, by road end at a place: " + ByCount(m_siteApproaches));
@@ -1031,7 +1879,7 @@ public static partial class RoadNetworkGenerator
         float? levelled = LocationLevelling.GroundAt(endPoint, center, centreGround, ops);
         if (!levelled.HasValue)
             return null;
-        return levelled.Value < RoadConstants.ShallowWaterHeight ? null : levelled;
+        return RoadWater.BuiltDry(levelled.Value) ? levelled : null;
     }
 
     internal static List<Vector2> ImproveSiteApproach(List<Vector2> path, Vector2 centre,
@@ -1042,14 +1890,14 @@ public static partial class RoadNetworkGenerator
         var ops = LocationLevelling.OpsAt(centre);
         // Copy the terrain facts once: scoring must not reload the template
         // for every vertex. Unknown location shaping retains the old approach.
-        if (ops == null || ops.Count == 0) return path;
+        if (!LocationLevelling.Levels(ops)) return path;
         float centreHeight = LocationLevelling.CentreHeight(centre, world);
         float? platform = LocationLevelling.ApproachHeight(centreHeight, ops);
-        if (platform < RoadConstants.ShallowWaterHeight) platform = null;
+        if (platform is float level && !RoadWater.BuiltDry(level)) platform = null;
         Log.LogDebug($"Site approach {centre}: keep-out edge {radius:F1}m, approach {(platform.HasValue ? platform.Value.ToString("F2") : "unknown")}m");
         float Ground(Vector2 p) => LocationLevelling.GroundAt(p, centre, centreHeight, ops)
             ?? BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
-        float? Target(Vector2 p) => platform.HasValue && Mathf.Abs(Ground(p) - platform.Value) <= 1.5f
+        float? Target(Vector2 p) => platform.HasValue && Mathf.Abs(Ground(p) - platform.Value) <= ArrivalLevel
             ? Ground(p) : LocationLevelling.GroundAt(p, centre, centreHeight, ops);
         return RoadSiteApproach.Improve(path, centre, radius, width, world, atStart, Target, Ground, platform);
     }
@@ -1061,11 +1909,21 @@ public static partial class RoadNetworkGenerator
         var world = GenerationWorld;
         float centreHeight = LocationLevelling.CentreHeight(centre, world);
         float? platform = LocationLevelling.ApproachHeight(centreHeight, LocationLevelling.OpsAt(centre));
+        float natural = BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, world);
         // Never make an arbitrary high embankment merely to hit a platform.
         // The approach search must first find naturally nearby elevation.
-        if (platform.HasValue && platform.Value >= RoadConstants.ShallowWaterHeight &&
-            Mathf.Abs(BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, world) - platform.Value) <= 1.5f)
-            return BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, world);
+        if (platform.HasValue)
+            return RoadWater.BuiltDry(platform.Value) && Mathf.Abs(natural - platform.Value) <= ArrivalLevel ? natural : null;
+        // A place with no flat (a cabin that only smooths round its centre, not placed first or placed with no landing to go
+        // onto: PlacedSites.Prepare) is arrived at its ground at its edge on the road's side (ArrivalHeight). An end whose
+        // ground is level with that, as the reached test has it (ReachRise), is held there and so ends on the level landing
+        // every place's end gets (RoadSpatialGrid.PlaceEnds), at a road's start as at its end; from there it is carried on
+        // level to the edge (CarryOnToEdges). No higher bank or deeper cut than the reached test allows. The edge is the
+        // place's own (its footprint's arrival radius): the radius asked here is the road's ring, outside it.
+        float arrival = RoadSiteProtection.ArrivalRadiusAt(centre, 0f);
+        if (arrival > 0f && !PlacedSites.TryGetReady(centre, out _) && ArrivalHeight(centre, arrival, point) is float edge
+            && RoadWater.BuiltDry(edge) && Mathf.Abs(natural - edge) <= ReachRise)
+            return edge;
         return null;
     }
 
@@ -1087,11 +1945,8 @@ public static partial class RoadNetworkGenerator
         GenerateRoad(startCenter, startRadius, endCenter, endRadius, width, label, null);
 
     /// <summary>How many stretches whose staircase could not be laid a road closes to stairs, one at a time,
-    /// searched again after each with stairs open everywhere else, before it is refused. One stretch that
-    /// would not lay cost the whole road its stairs: 65 of 96 roads, and 12 of
-    /// the 16 Mistlands staircases lost to the ledge price were the other staircases of four such roads
-    /// (no collateral). Offline, on RoadSeedA-E: 80 staircases and 3883
-    /// build searches with no retry, 96 and 4075 with one, 98 and 4247 with two; destinations the same.</summary>
+    /// searched again after each with stairs open everywhere else, before it is searched once as a plain road, so one
+    /// stretch that will not lay does not cost the whole road its other staircases.</summary>
     public const int StairStretchRetries = 3;
     /// <summary>Cells round a failed stretch also closed, so the search does not lay the same
     /// staircase one column over.</summary>
@@ -1110,23 +1965,92 @@ public static partial class RoadNetworkGenerator
         if (t_inRoad || Finder == null)
             return GenerateRoadCore(startCenter, startRadius, endCenter, endRadius, width, label, networkHints, default);
         t_inRoad = true;
-        Finder.ClearNoStairs();
-        try { return GenerateRoadCore(startCenter, startRadius, endCenter, endRadius, width, label, networkHints, default); }
-        finally { Finder?.ClearNoStairs(); t_inRoad = false; }
+        t_bandedEnds?.Clear();
+        t_refusedAt = null;
+        t_reEnd = null;
+        try
+        {
+            bool built = GenerateRoadByDoors(startCenter, startRadius, endCenter, endRadius, width, label, networkHints);
+            // It arrived at a place the way another way into it does (ReEndOnAWayIn): searched once more,
+            // ending on that approach's road instead of at the place, as a junction (radius 0, as a place's join ends).
+            if (!built && t_reEnd is var (place, onItsRoad))
+            {
+                t_reEnd = null;
+                bool atStart = (startCenter - place).sqrMagnitude <= (endCenter - place).sqrMagnitude;
+                Finder?.ClearNoStairs();
+                t_doors = null;
+                built = atStart
+                    ? GenerateRoadByDoors(onItsRoad, 0f, endCenter, endRadius, width, label, networkHints)
+                    : GenerateRoadByDoors(startCenter, startRadius, onItsRoad, 0f, width, label, networkHints);
+                if (built) System.Threading.Interlocked.Increment(ref m_reEndedOnApproach);
+                else System.Threading.Interlocked.Increment(ref m_reEndRefused);
+                if (label != null) Log.LogDebug(FormattableString.Invariant(
+                    $"Road {label}: ended on the place's approach's road at ({onItsRoad.x:F1}, {onItsRoad.y:F1}) instead: {(built ? "built" : "refused (" + RoadSpatialGrid.LastRefusal + ")")}"));
+                return built;
+            }
+            if (built || t_bandedEnds == null || t_bandedEnds.Count == 0) return built;
+            // A road ending at a custom location's MWL stand-off (OffLevelStandOff) refused in its planning (the earthwork
+            // cap, the grade cap) on the stretch the grade's stand-off gives up, or where the refusal does not say:
+            // searched once more ending at the grade's stand-off. Refused anywhere else, the search again is the same refusal.
+            if (!RefusedAtABandedEnd(t_refusedAt, t_bandedEnds))
+            {
+                if (label != null) Log.LogDebug($"Road {label}: refused ending at the MWL stand-off ({RoadSpatialGrid.LastRefusal}) away from that end; not searched again");
+                return false;
+            }
+            if (label != null) Log.LogDebug($"Road {label}: refused ending at the MWL stand-off ({RoadSpatialGrid.LastRefusal}); searched again at the grade's stand-off");
+            t_noStandOffBand = true;
+            Finder?.ClearNoStairs();
+            t_doors = null;
+            return GenerateRoadByDoors(startCenter, startRadius, endCenter, endRadius, width, label, networkHints);
+        }
+        finally { Finder?.ClearNoStairs(); t_inRoad = false; t_doors = null; t_noStandOffBand = false; t_bandedEnds?.Clear(); t_refusedAt = null; t_reEnd = null; }
     }
 
+    /// <summary>How far out from a door its road's search ends, the road then running straight in to the door
+    /// (<see cref="RoadDoor.LeadIn"/>): a search cell.</summary>
+    public const float LeadInLength = RoadPathfinder.CellSize;
+
+    /// <summary>
+    /// Where a road to the place at <paramref name="centre"/> (exterior <paramref name="radius"/>) stops, from its
+    /// centre: the one owner for the trim (<see cref="TrimPathToRadii"/>) and for whether the network reaches the
+    /// place (<see cref="Reached"/>). Enough room for the road's whole terrain blend outside the
+    /// ground the place shapes (<see cref="RoadSiteProtection.ArrivalRadiusAt"/>): over ground the place only
+    /// paints the road is carried on, stored into the site so it levels and paints there only along
+    /// itself (<see cref="RoadSpatialGrid.Commit"/>). A place placed first keeps its whole footprint: its road is
+    /// carried on onto its landing by its own owner (<see cref="PlanEntry"/>).
+    /// </summary>
+    internal static float KeepOutEdge(Vector2 centre, float radius, float width) =>
+        KeepOutEdge(centre, radius, width, PlacedSites.TryGetReady(centre, out _));
+
+    /// <summary><see cref="KeepOutEdge(Vector2, float, float)"/> for a place known to be placed first or not (the
+    /// preparation that is making it ready asks before it is).</summary>
+    internal static float KeepOutEdge(Vector2 centre, float radius, float width, bool placed) =>
+        (placed ? RoadSiteProtection.RadiusAt(centre, radius) : RoadSiteProtection.ArrivalRadiusAt(centre, radius))
+        + RoadSiteProtection.Clearance(width);
+
     /// <summary>A road's searches again, each against its own budget: closing a stretch to stairs (StairStretchRetries), the
-    /// one tight-turn search with stairs opened, and banning a viaduct (ViaductRetries). One spent never spends another.</summary>
+    /// one tight-turn search with stairs opened, and banning a crossing (CrossingRetries). One spent never spends another.</summary>
     internal readonly struct RoadRetries
     {
         public readonly int StairStretches;
         public readonly bool TightTurn;
-        public readonly int ViaductBans;
-        private RoadRetries(int stairStretches, bool tightTurn, int viaductBans)
-        { StairStretches = stairStretches; TightTurn = tightTurn; ViaductBans = viaductBans; }
-        public RoadRetries NextStairStretch() => new(StairStretches + 1, TightTurn, ViaductBans);
-        public RoadRetries WithTightTurn() => new(StairStretches, true, ViaductBans);
-        public RoadRetries NextViaductBan() => new(StairStretches, TightTurn, ViaductBans + 1);
+        public readonly int CrossingBans;
+        /// <summary>The route the search found before the last crossing was banned: a search that finds it again took no
+        /// notice of the ban, and is not searched again.</summary>
+        public readonly IReadOnlyList<Vector2>? BeforeBan;
+        private RoadRetries(int stairStretches, bool tightTurn, int crossingBans, IReadOnlyList<Vector2>? beforeBan)
+        { StairStretches = stairStretches; TightTurn = tightTurn; CrossingBans = crossingBans; BeforeBan = beforeBan; }
+        public RoadRetries NextStairStretch() => new(StairStretches + 1, TightTurn, CrossingBans, BeforeBan);
+        public RoadRetries WithTightTurn() => new(StairStretches, true, CrossingBans, BeforeBan);
+        public RoadRetries NextCrossingBan(IReadOnlyList<Vector2> searched) => new(StairStretches, TightTurn, CrossingBans + 1, searched);
+        /// <summary>Whether <paramref name="searched"/> is the route found before the last ban.</summary>
+        public bool SameAsBeforeBan(IReadOnlyList<Vector2> searched)
+        {
+            if (BeforeBan == null || BeforeBan.Count != searched.Count) return false;
+            for (int i = 0; i < searched.Count; i++)
+                if ((BeforeBan[i] - searched[i]).sqrMagnitude > 0.01f) return false;
+            return true;
+        }
     }
 
     private static bool GenerateRoadCore(
@@ -1143,35 +2067,31 @@ public static partial class RoadNetworkGenerator
         // provide marks the road rather than only the log.
         LocationLevelling.BeginRoad();
         float askedStartRadius = startRadius, askedEndRadius = endRadius;
-        // The road again with no stairs, as roads were built before them: when a
-        // staircase the search bought cannot be laid, or the road round it cannot
-        // be built.
-        bool WithoutStairs(string why)
-        {
-            if (RoadsLog)
-            {
-                System.Threading.Interlocked.Increment(ref m_stairRoadsUnlaid);
-                m_stairFallbacks.AddOrUpdate(why, 1, (_, n) => n + 1);
-                m_stairsFailed[PlaceKey(startCenter)] = why;
-                m_stairsFailed[PlaceKey(endCenter)] = why;
-                if (label != null) Log.LogDebug($"Road {label}: built without stairs ({why})");
-            }
-            var noStairs = Finder!;
-            noStairs.Stairs = false;
-            try { return GenerateRoadCore(startCenter, askedStartRadius, endCenter, askedEndRadius, width, label, networkHints, retries); }
-            finally { noStairs.Stairs = true; }
-        }
+        // Where this road is refused, where its refusal says (RefusedAtABandedEnd): left null by a refusal that does not.
+        t_refusedAt = null;
+        var refusedAt = new List<Vector2>();
         // A staircase that could not be laid: its stretch is closed to stairs and the road searched again with them open
-        // everywhere else, each failing stretch in turn, up to StairStretchRetries; then the road is refused. The road
-        // keeps every staircase that lays: it is never searched again without stairs.
+        // everywhere else, each failing stretch in turn, up to StairStretchRetries; then once as a plain road, else refused.
+        // The road keeps every staircase that lays (no collateral).
         bool WithoutThatStaircase(RoadPathfinder finder, List<Vector2> laidOn)
         {
             if (retries.StairStretches >= StairStretchRetries)
             {
-                m_refusalReasons.AddOrUpdate("a staircase could not be laid", 1, (_, n) => n + 1);
-                NoteFailure(startCenter, endCenter, "refused: a staircase could not be laid");
-                System.Threading.Interlocked.Increment(ref m_roadsRefusedForGrade);
-                return false;
+                // Last resort: one plain road search before the road is refused.
+                // A routing fallback, not a stairs switch: there is no setting for stairs, and the plain road keeps every grade
+                // cap. Refused outright after the closings, the roads lost 35 destinations over RoadSeedA-E
+                // against 12 with this search.
+                if (RoadsLog)
+                {
+                    System.Threading.Interlocked.Increment(ref m_stairRoadsUnlaid);
+                    m_stairFallbacks.AddOrUpdate("a staircase could not be laid", 1, (_, n) => n + 1);
+                    m_stairsFailed[PlaceKey(startCenter)] = m_stairsFailed[PlaceKey(endCenter)] = "a staircase could not be laid";
+                    if (label != null) Log.LogDebug($"Road {label}: a staircase could not be laid on {StairStretchRetries} stretch(es) closed in turn; searched once as a plain road");
+                }
+                bool stairs = finder.Stairs;
+                finder.Stairs = false;
+                try { return GenerateRoadCore(startCenter, askedStartRadius, endCenter, askedEndRadius, width, label, networkHints, retries); }
+                finally { finder.Stairs = stairs; }
             }
             var (from, to) = RoadStairRuns.LastFailedStretch;
             from = Mathf.Clamp(from, 0, laidOn.Count - 1);
@@ -1191,112 +2111,107 @@ public static partial class RoadNetworkGenerator
             return built;
         }
 
+        // A road to a place is searched to its doors (DoorsOf); one with none, to the ground at its centre.
+        PlacedSite? startSite = startRadius > 0f && PlacedSites.TryGetReady(startCenter, out PlacedSite s0) ? s0 : null;
+        PlacedSite? endSite = endRadius > 0f && PlacedSites.TryGetReady(endCenter, out PlacedSite s1) ? s1 : null;
+        Vector2? startAim = null, endAim = null;
         Vector2 pathStart = RoadEndpoint.FindGround(GenerationWorld, startCenter, startRadius);
         Vector2 pathEnd = RoadEndpoint.FindGround(GenerationWorld, endCenter, endRadius);
-        List<Vector2>? path = SnapToNetwork(Finder.FindPath(pathStart, pathEnd), width);
+        IReadOnlyList<RoadDoor> startDoors = DoorsLeft(startCenter, startRadius, width);
+        IReadOnlyList<RoadDoor> endDoors = DoorsLeft(endCenter, endRadius, width);
+        bool startDoor = startDoors.Count > 0, endDoor = endDoors.Count > 0;
+        List<Vector2>? path;
+        if (startDoor || endDoor)
+        {
+            // To every door at once (DoorsOf): the road ends at the cheapest it gets to, its ring point then joined head on
+            // from its lead-in. A place placed first is exempt from nothing, as its lead-in is not; a place not placed
+            // first lets the search through its own footprint, as its centre's ground does.
+            if (startDoor) pathStart = startDoors[0].LeadIn;
+            if (endDoor) pathEnd = endDoors[0].LeadIn;
+            path = Finder.FindPathBetween(SearchEnds(startDoors, pathStart), SearchEnds(endDoors, pathEnd),
+                startDoor && startSite == null ? startCenter : pathStart, endDoor && endSite == null ? endCenter : pathEnd);
+            if (RoadsLog)
+            {
+                System.Threading.Interlocked.Increment(ref m_doorRoads);
+                if (path != null && path.Count >= 2) System.Threading.Interlocked.Increment(ref m_doorRoadsFound);
+            }
+            if (startDoor) { pathStart = startDoors[Finder.LastStartIndex].LeadIn; startAim = startDoors[Finder.LastStartIndex].At; }
+            if (endDoor) { pathEnd = endDoors[Finder.LastEndIndex].LeadIn; endAim = endDoors[Finder.LastEndIndex].At; }
+            NoteDoorsTaken(path != null && path.Count >= 2, startDoor ? startAim : null, endDoor ? endAim : null);
+        }
+        else
+        {
+            if (RoadsLog && (startRadius > 0f || endRadius > 0f)) System.Threading.Interlocked.Increment(ref m_doorFallbacks);
+            path = Finder.FindPath(pathStart, pathEnd);
+        }
+        // In to a placed place's ring point head on from its lead-in, so the road onto its landing
+        // carries straight on: arriving along the ring, its staircase ran beside the road's own end
+        // and was refused "on its road" (14 of the 36 placed places on one test world).
+        if (path != null && path.Count >= 2)
+        {
+            if (startAim is Vector2 s2) path.Insert(0, s2);
+            if (endAim is Vector2 e2) path.Add(e2);
+        }
+        path = SnapToNetwork(path, width);
 
         if (path == null || path.Count < 2)
         {
             if (label != null)
                 Log.LogDebug($"Could not find path: {label}");
-            NoteFailure(startCenter, endCenter, Finder.Stairs ? "no route" : "no route without stairs");
+            NoteFailure(startCenter, endCenter, "no route");
             System.Threading.Interlocked.Increment(ref m_roadsWithNoRoute);
             return false;
         }
 
-        // Leave enough space for the entire terrain blend, not just the
-        // centreline. Sites retain their own authored terrain and paint.
-        if (startRadius > 0f) startRadius = RoadSiteProtection.RadiusAt(startCenter, startRadius) + width * 0.5f + 2f;
-        if (endRadius > 0f) endRadius = RoadSiteProtection.RadiusAt(endCenter, endRadius) + width * 0.5f + 2f;
-        path = TrimPathToRadii(path, startCenter, startRadius, endCenter, endRadius);
-        path = TrimWetEnds(path);
-
-        if (path == null || path.Count < 2)
-        {
-            // The two sites are close enough that what is left between their
-            // protected footprints is shorter than a road. A failed attempt
-            // like any other -- the planner goes on to its next candidate, as
-            // it always did. Whether the destination ends up reached is not
-            // decided here: it is measured once the island is built.
-            if (label != null)
-                Log.LogDebug($"Nothing to lay between the two sites once their footprints were cleared: {label}");
-            NoteFailure(startCenter, endCenter, "nothing between the two footprints");
-            System.Threading.Interlocked.Increment(ref m_roadsRefusedForGrade);
-            return false;
-        }
-
-        path = ImproveSiteApproach(path, startCenter, startRadius, width, true);
-        path = ImproveSiteApproach(path, endCenter, endRadius, width, false);
-        Vector2 beforeStart = path[0], beforeEnd = path[path.Count - 1];
-        var withStubs = path;
-        path = DropStubs(path, PlaceReached(startCenter, startRadius), PlaceReached(endCenter, endRadius)) ?? path;
-        // An end moved to a junction takes its height from the road it joins,
-        // not from the place it no longer reaches: aiming at the place's edge
-        // from the junction refused short roads as "ends too far apart for
-        // the cap".
-        bool startAtPlace = path[0] == beforeStart, endAtPlace = path[path.Count - 1] == beforeEnd;
-
-        // Fords (prototype): where the road jumped a river, the water is
-        // crossed in the ford's style, not paved like the land. Record the
-        // crossings and paint the land and each crossing on its own; without
-        // fords (or on a road that crossed no river) the whole path is one
-        // road as before.
+        // Whether other network already reaches each end's place, by the one reached test on the radius as asked; the
+        // network does not change while this road is planned and re-routed.
+        bool startReached = EndReached(startCenter, startRadius), endReached = EndReached(endCenter, endRadius);
+        // On the bearing the trim cuts the path on, where it crosses the ring (not the search's own end, the centre).
+        float startOut = startRadius > 0f ? OffLevelStandOff(startCenter, startRadius, RingCrossing(path, startCenter, KeepOutEdge(startCenter, startRadius, width), true)) : 0f;
+        float endOut = endRadius > 0f ? OffLevelStandOff(endCenter, endRadius, RingCrossing(path, endCenter, KeepOutEdge(endCenter, endRadius, width), false)) : 0f;
+        if (startRadius > 0f) startRadius = KeepOutEdge(startCenter, startRadius, width) + startOut;
+        if (endRadius > 0f) endRadius = KeepOutEdge(endCenter, endRadius, width) + endOut;
+        // The one planning pipeline (PlanFromPath), as the earthwork re-route plans too.
         var finder = Finder!;
-        List<RoadCrossing> crossings = DetectCrossings(finder, path);
-        // A crossing a few metres from one an earlier road made is the same
-        // site: it takes that site's banks, so this road is painted up to
-        // the one bridge built there instead of pointing at water beside it.
-        SnapToExistingCrossings(crossings);
-        foreach (var c in crossings) c.Road = label;
-        if (!TryLayStairs(finder, path, crossings, out List<RoadStairSpan> stairs))
-            return WithoutThatStaircase(finder, path);
-        // The heights to meet are asked for at the road's OWN ends, after
-        // trimming - not at the locations' centres. A road stops at the
-        // exterior radius, which on a hillside is metres below the middle of
-        // the place it is going to, and aiming at the middle builds that
-        // difference as a rim around the doorstep.
-        float? startGround = startAtPlace ? ApproachGround(path[0], startCenter, startRadius) : null;
-        float? endGround = endAtPlace ? ApproachGround(path[path.Count - 1], endCenter, endRadius) : null;
-        // Something this road needed was not prepared. Building it anyway
-        // would put it through a footprint nothing could see, or land it on a
-        // height nothing could read. Leaving the destination unconnected is
-        // the recoverable half of that choice.
-        if (LocationLevelling.PreparationMissedHere)
+        var searched = new List<Vector2>(path);
+        // Read after the plan (refusedAt): never one an earlier plan on this thread left.
+        RoadSpatialGrid.RefusedAt = null;
+        RoadPlan planned = PlanFromPath(finder, path, startCenter, startRadius, endCenter, endRadius,
+            startSite != null, endSite != null, startReached, endReached, width);
+        switch (planned.Stop)
         {
-            if (label != null)
-                Log.LogDebug($"Road refused: preparation was incomplete for it, destination left unconnected: {label}");
-            NoteFailure(startCenter, endCenter, "refused: preparation incomplete");
-            System.Threading.Interlocked.Increment(ref m_roadsRefusedForGrade);
-            return false;
+            case PlanStop.NothingBetween:
+                // The two sites are close enough that what is left between their
+                // protected footprints is shorter than a road. A failed attempt
+                // like any other -- the planner goes on to its next candidate, as
+                // it always did. Whether the destination ends up reached is not
+                // decided here: it is measured once the island is built.
+                if (label != null)
+                    Log.LogDebug($"Nothing to lay between the two sites once their footprints were cleared: {label}");
+                NoteFailure(startCenter, endCenter, "nothing between the two footprints");
+                System.Threading.Interlocked.Increment(ref m_roadsRefusedForGrade);
+                return false;
+            case PlanStop.Staircase:
+                return WithoutThatStaircase(finder, planned.Path);
+            case PlanStop.Preparation:
+                if (label != null)
+                    Log.LogDebug($"Road refused: preparation was incomplete for it, destination left unconnected: {label}");
+                NoteFailure(startCenter, endCenter, "refused: preparation incomplete");
+                System.Threading.Interlocked.Increment(ref m_roadsRefusedForGrade);
+                return false;
         }
-
-        RoadSpatialGrid.LastRefusal = null;
-        var plans = PlanRoadPathWithCrossings(path, crossings, width, startGround, endGround, stairs);
-        if (plans == null && !ReferenceEquals(withStubs, path))
-        {
-            // Dropping the stubs is cosmetic: a road refused without them is
-            // planned with them. With both ends at places other roads reach,
-            // the 40-60 m connector left between two parts of the network can
-            // be too steep where the full road is not.
-            // The stubs put back: both ends are on their places' rings again.
-            startAtPlace = endAtPlace = true;
-            path = withStubs;
-            crossings = DetectCrossings(finder, path);
-            SnapToExistingCrossings(crossings);
-            foreach (var c in crossings) c.Road = label;
-            startGround = ApproachGround(path[0], startCenter, startRadius);
-            endGround = ApproachGround(path[path.Count - 1], endCenter, endRadius);
-            RoadSpatialGrid.LastRefusal = null;
-            if (!TryLayStairs(finder, path, crossings, out stairs))
-                return WithoutThatStaircase(finder, path);
-            plans = PlanRoadPathWithCrossings(path, crossings, width, startGround, endGround, stairs);
-        }
+        path = planned.Path;
+        if (planned.Plans == null && planned.Unmet == null && RoadSpatialGrid.RefusedAt is Vector2 planRefused) refusedAt.Add(planRefused);
+        List<RoadCrossing> crossings = planned.Crossings;
+        List<RoadStairSpan> stairs = planned.Stairs;
+        var plans = planned.Plans;
+        bool startAtPlace = planned.StartAtPlace, endAtPlace = planned.EndAtPlace;
         // Switchback turns too close to fit their curves, even tightened: the search climbs that
         // stretch on stairs instead, once, and carries on as road beyond it. On the five offline
         // worlds it was tried 11 times and built none with stairs (one road was built without them):
         // their staircases there could not be laid. One test world refused 22 roads for these turns.
-        if (plans == null && finder.Stairs && !retries.TightTurn
-            && RoadSpatialGrid.LastRefusal == "switchback: turns too close to fit their curves" && RoadSwitchbacks.LastRefusalAt is Vector2 tight)
+        if (plans == null && !retries.TightTurn
+            && RoadSpatialGrid.LastRefusal == SwitchbackRefusal.TurnsTooClose && RoadSwitchbacks.LastRefusalAt is Vector2 tight)
         {
             finder.OpenToStairs(new[] { tight }, TightTurnStairReachCells);
             if (!RoadsLog) return GenerateRoadCore(startCenter, askedStartRadius, endCenter, askedEndRadius, width, label, networkHints, retries.WithTightTurn());
@@ -1307,9 +2222,7 @@ public static partial class RoadNetworkGenerator
             if (label != null) Log.LogDebug($"Road {label}: switchback turns at {tight} too close to fit; searched again with {finder.OpenStairCells} cell(s) open to stairs: {(built ? "built" : "not built")}");
             return built;
         }
-        if (plans == null && stairs.Count > 0)
-            return WithoutStairs("road round the stairs: " + (RoadSpatialGrid.LastRefusal ?? "refused"));
-        if (plans != null && EarthworkCap > 0f)
+        if (plans != null && EarthworkCapped)
         {
             // A road the game cannot build as planned -- a cut or fill past the
             // terrain limit is clamped, so the surface tilts across the road
@@ -1318,7 +2231,7 @@ public static partial class RoadNetworkGenerator
             // up, up to EarthworkRetries times; a plan with none past the
             // limit is kept, and if none is found the road is refused.
             var where = new List<Vector2>();
-            int past = PastTerrainLimit(plans, EarthworkCap, where) + InvalidCrossings(crossings, where) + HeldRidges(plans, where);
+            int past = PastTerrainLimit(plans, EarthworkLimit, where) + InvalidCrossings(crossings, where) + HeldRidges(plans, where);
             // Stretches held to a road already laid far off this road's own profile are re-routed
             // round too, but never refuse a road: the fill or cut they build is a ridge beside the
             // network (at -2486,1716 a stretch held +8.8 m was a large earthwork ridge).
@@ -1328,13 +2241,22 @@ public static partial class RoadNetworkGenerator
             for (int attempt = 0; (past > 0 || pulled > 0) && attempt < EarthworkRetries; attempt++)
             {
                 foreach (var w in where) finder.PenalizeAround(w, EarthworkPenaltyRadius);
-                var retry = Replan(finder, pathStart, pathEnd, startCenter, startRadius, endCenter, endRadius, width);
+                var retry = Replan(finder, pathStart, pathEnd, startCenter, startRadius, endCenter, endRadius, width, startAim, endAim, startReached, endReached);
                 if (retry == null)
                 { Log.LogDebug($"Road {label}: earthwork re-route {attempt + 1} did not route or build ({RoadSpatialGrid.LastRefusal ?? "no route"}), {finder.EarthworkPenaltyCells} cell(s) priced up"); continue; }
                 var whereRetry = new List<Vector2>();
-                int pastRetry = PastTerrainLimit(retry.Value.plans, EarthworkCap, whereRetry) + InvalidCrossings(retry.Value.crossings, whereRetry) + HeldRidges(retry.Value.plans, whereRetry);
+                int pastRetry = PastTerrainLimit(retry.Value.plans, EarthworkLimit, whereRetry) + InvalidCrossings(retry.Value.crossings, whereRetry) + HeldRidges(retry.Value.plans, whereRetry);
                 int pulledRetry = HeldOffProfile(retry.Value.plans, whereRetry);
                 Log.LogDebug($"Road {label}: earthwork re-route {attempt + 1}: {pastRetry} point(s) past the cap (was {past}), {retry.Value.crossings.Count} crossing(s), {finder.EarthworkPenaltyCells} cell(s) priced up, {finder.PenalizedWaypoints(retry.Value.path)} of {retry.Value.path.Count} waypoints in them; first offending point {(whereRetry.Count > 0 ? whereRetry[0].ToString() : "-")}, crossing {(retry.Value.crossings.Count > 0 ? retry.Value.crossings[0].FromBank + "->" + retry.Value.crossings[0].ToBank : "-")}");
+                // Only a re-route the network takes as it meets it is offered: one that then crosses another road or runs
+                // beside one was refused for it after it had replaced a first plan that would have been built.
+                if ((pastRetry < past || (pastRetry == past && pulledRetry < pulled)) && MeetingRefusal(retry.Value.plans, out Vector2 meets) is string meeting)
+                {
+                    Log.LogDebug(FormattableString.Invariant($"Road {label}: earthwork re-route {attempt + 1} not taken: it {meeting} at ({meets.x:F1}, {meets.y:F1})"));
+                    // Priced up there too: the next attempt goes round where this one met the network, not the same way again.
+                    where.Add(meets);
+                    continue;
+                }
                 if (pastRetry < past || (pastRetry == past && pulledRetry < pulled))
                 {
                     Log.LogDebug($"Road {label}: re-routed round deep earthwork, {past} -> {pastRetry} points past {EarthworkCap:F0} m, {pulled} -> {pulledRetry} held off its profile");
@@ -1353,66 +2275,57 @@ public static partial class RoadNetworkGenerator
                 // refused, even if that leaves a destination unserved.
                 bool water = crossings.Exists(c => c.Invalid && c.Shallow);
                 bool throughDeck = !water && crossings.Exists(c => c.Invalid && !c.Shallow);
-                bool ridge = !water && !throughDeck && HeldRidges(plans, null) > 0 && PastTerrainLimit(plans, EarthworkCap, new List<Vector2>()) == 0;
+                bool ridge = !water && !throughDeck && HeldRidges(plans, null) > 0 && PastTerrainLimit(plans, EarthworkLimit, new List<Vector2>()) == 0;
                 if (!water && !throughDeck) System.Threading.Interlocked.Increment(ref m_earthworkUnavoided);
                 plans = null;
+                refusedAt.AddRange(where);
                 RoadSpatialGrid.LastRefusal = water
                     ? "shallow water too long or deep to cross"
                     : throughDeck ? "bridge deck through the ground between its banks"
                     : ridge ? $"a junction ridge: held to a road on more than {JunctionFillLimit:F0} m of fill"
-                    : $"earthwork past the {EarthworkCap:F0} m terrain limit";
+                    : EarthworkRefusal;
             }
+            else if (!crossings.Exists(c => c.Invalid))
+                (path, crossings, plans, stairs, startAtPlace, endAtPlace) = OffRidges(finder, (path, crossings, plans, stairs, startAtPlace, endAtPlace), pulled,
+                    pathStart, pathEnd, startCenter, startRadius, endCenter, endRadius, width, startAim, endAim, startReached, endReached);
         }
-        // The one owner's final check (StructureEnds): a player walks from the road onto every bridge end it is built with.
-        // A valley viaduct whose end the road as planned does not meet is not built: the road is searched again without it
-        // (four viaduct ends could not be walked onto). A road refused outright with a
-        // valley viaduct on it is searched again without its viaducts too: the road as it would be without them.
-        if (retries.ViaductBans < ViaductRetries)
+        // A crossing with an end no way of meeting reaches (StructureEnds.MeetEnds) is not built: the road is searched again
+        // round it. A valley viaduct the built road does not allow (BuiltRefusal) is not built either, nor one a road
+        // refused outright had on it: the road is searched again without it.
+        // Each is banned as the search used it (RoadCrossing.Searched): its banks, and every move it lies on. A search that
+        // finds the same route again is not searched again.
+        bool bansSpent = retries.CrossingBans >= CrossingRetries || retries.SameAsBeforeBan(searched);
+        if (!bansSpent)
         {
-            Vector2 at = default;
             string builtWhy = "";
-            RoadCrossing? unmet = plans != null ? BuiltRefusal(plans, crossings, out at, out builtWhy) : null;
-            var jumps = unmet != null ? (unmet.ValleyJump ? new List<RoadCrossing> { unmet } : new List<RoadCrossing>())
-                : plans == null ? (LastStubBetween is RoadCrossing stubbed && crossings.Contains(stubbed) ? new List<RoadCrossing> { stubbed } : crossings.FindAll(c => c.ValleyJump && !c.Shared))
+            RoadCrossing? unmet = plans != null ? BuiltRefusal(plans, crossings, out _, out builtWhy) : null;
+            var banned = planned.Unmet != null ? new List<RoadCrossing> { planned.Unmet }
+                : unmet != null ? (unmet.ValleyJump ? new List<RoadCrossing> { unmet } : new List<RoadCrossing>())
+                : plans == null ? (LastStubBetween is RoadCrossing stubbed && crossings.Contains(stubbed) ? new List<RoadCrossing> { stubbed }
+                    : crossings.FindAll(c => c.ValleyJump && !c.Shared))
                 : new List<RoadCrossing>();
-            if (jumps.Count > 0)
+            if (banned.Count > 0)
             {
-                foreach (RoadCrossing c in jumps) finder.BanViaduct(c.FromBank, c.ToBank);
-                System.Threading.Interlocked.Increment(ref m_viaductsRefusedAtEnds);
+                foreach (RoadCrossing c in banned)
+                {
+                    finder.BanJump(c.FromBank, c.ToBank);
+                    if (c.Searched != null) foreach (var (from, to) in c.Searched) finder.BanJump(from, to);
+                }
+                System.Threading.Interlocked.Increment(ref planned.Unmet != null ? ref m_crossingsUnmetSearchedRound : ref m_viaductsRefusedAtEnds);
                 if (label != null && RoadsLog)
-                    Log.LogInfo(FormattableString.Invariant($"[VIADUCT] road {label}: {(unmet != null ? builtWhy : "refused with")} viaduct {jumps[0].FromBank} -> {jumps[0].ToBank}; searched again without it"));
-                return GenerateRoadCore(startCenter, askedStartRadius, endCenter, askedEndRadius, width, label, networkHints, retries.NextViaductBan());
-            }
-            if (unmet != null)
-            {
-                // A river bridge's end: counted (its kit is the crossing's), the road built as it is.
-                System.Threading.Interlocked.Increment(ref m_bridgeEndsUnmet);
-                if (RoadsLog) Log.LogInfo(FormattableString.Invariant($"[BRIDGES] road {label}: an end of the bridge {unmet.FromBank} -> {unmet.ToBank} not met at {at}"));
+                    Log.LogInfo(FormattableString.Invariant($"[BRIDGES] road {label}: {(planned.Unmet != null ? "an end not met of " + planned.Unmet : unmet != null ? builtWhy + " at " + unmet : "refused with a viaduct")} ({banned[0].FromBank} -> {banned[0].ToBank}, {banned[0].Searched?.Count ?? 0} move(s)); searched again without it"));
+                return GenerateRoadCore(startCenter, askedStartRadius, endCenter, askedEndRadius, width, label, networkHints, retries.NextCrossingBan(searched));
             }
         }
+        if (planned.Unmet != null) System.Threading.Interlocked.Increment(ref m_bridgeEndsUnmet);
         // Past the searches again, a valley viaduct the built road does not allow is not built: the road is refused with it
         // (three were built where the retries had run out and the check was skipped).
-        if (plans != null && retries.ViaductBans >= ViaductRetries
+        if (plans != null && bansSpent
             && BuiltRefusal(plans, crossings, out _, out string lastWhy) is RoadCrossing lastUnmet && lastUnmet.ValleyJump && !lastUnmet.Shared)
         {
             plans = null;
+            refusedAt.Add(lastUnmet.FromBank); refusedAt.Add(lastUnmet.ToBank);
             RoadSpatialGrid.LastRefusal = "a viaduct the built road does not allow (" + lastWhy + ")";
-        }
-        // A road whose end at its place stands further under (or over) the place's own ground than
-        // an approach can climb does not reach it: counted connected, the planner stopped looking,
-        // and a 100 m staircase ended 45 m under Hildir's cave with a stub of road on top
-        // (a staircase that ends short of the goal and adds a little stub road looks terrible). Refused, the planner tries
-        // its other candidates, and reached the cave from the west with an 11 m approach.
-        if (plans != null && !t_lastResort && EndOutOfClimb(path, plans, stairs, startCenter, askedStartRadius, endCenter, askedEndRadius,
-                startAtPlace, endAtPlace, out Vector2 shortOf, out float shortBy) is string climb)
-        {
-            if (RoadsLog && label != null) Log.LogDebug($"Road {label}: {climb}");
-            float length = 0f;
-            for (int i = 1; i < path.Count; i++) length += Vector2.Distance(path[i - 1], path[i]);
-            RememberUnder(shortOf, new UnderRoad { StartCenter = startCenter, StartRadius = askedStartRadius, EndCenter = endCenter,
-                EndRadius = askedEndRadius, Width = width, Under = shortBy, Length = length, Label = label, Hints = networkHints });
-            plans = null;
-            RoadSpatialGrid.LastRefusal = $"end past an approach's {MaxApproachClimb:F0} m climb of its place";
         }
         if (plans != null && DanglingBridge(plans, crossings, path[0], path[path.Count - 1], out var dangling))
         {
@@ -1420,38 +2333,150 @@ public static partial class RoadNetworkGenerator
             // 3 m of water.
             Log.LogWarning($"Bridge with no road beyond it on {label}: {dangling.FromBank} -> {dangling.ToBank}; road refused");
             plans = null;
+            refusedAt.Add(dangling.FromBank); refusedAt.Add(dangling.ToBank);
             RoadSpatialGrid.LastRefusal = "bridge with no road at one end";
         }
+        // A place placed before its roads: the road carried on onto its landing, on its placed ground, as
+        // a road or else a staircase, as part of this road. Where neither gets there the road is refused
+        // and the planner tries its other candidates: there is no approach left to lay later. Outside the
+        // Mountains (ApproachStairsAt) there is no staircase but at a boss's entrance, and a road that gets no further
+        // keeps its end at the ring.
+        var entries = new List<(PlacedSite site, RoadSpatialGrid.PlannedPath? road, RoadStairSpan? stairs)>();
+        if (plans != null)
+            foreach (var (site, atStart, atPlace) in new[] { (startSite, true, startAtPlace), (endSite, false, endAtPlace) })
+            {
+                if (site == null || !atPlace) continue;
+                // The ground the road's other end was planned to meet (PlanFromPath), held there where the way onto the landing
+                // starts lower and the road is planned again (EntryFromLower); where a way onto its own place's landing was laid
+                // already, the height it was laid from.
+                float? farGround = entries.Count > 0 ? plans[0].Heights[0]
+                    : atStart ? (endAtPlace ? ApproachGround(path[path.Count - 1], endCenter, endRadius) : null)
+                    : startAtPlace ? ApproachGround(path[0], startCenter, startRadius) : null;
+                bool entered = PlanEntry(site, atStart, path, plans, stairs, crossings, width, out var entryRoad, out var entryStairs, out string noEntry, farGround);
+                // No staircase laid, and at least one aim refused as another way into the place (PlaceWaysIn): the place has
+                // its way in already, so the road is searched again ending on that way's road (GenerateRoad, ReEndOnAWayIn),
+                // as an arrival that way is (below).
+                if (!entered && noEntry.Contains(RoadStairRuns.BesideAnApproach) && WayInRefused(site.Centre, atStart, plans) is Vector2 onItsRoad)
+                {
+                    if (RoadsLog) Log.LogDebug(FormattableString.Invariant(
+                        $"Road {label ?? "(unlabelled)"}: its staircase onto the landing of the place at {site.Centre} is a way in the place has; searched again to that way's road at ({onItsRoad.x:F1}, {onItsRoad.y:F1})"));
+                    t_reEnd ??= (site.Centre, onItsRoad);
+                    plans = null;
+                    refusedAt.Add(path[atStart ? 0 : path.Count - 1]);
+                    RoadSpatialGrid.LastRefusal = BesideItsApproachRefusal;
+                    break;
+                }
+                if (entered)
+                {
+                    entries.Add((site, entryRoad, entryStairs));
+                    if (RoadsLog) m_siteApproaches.AddOrUpdate(entryRoad != null ? "placed first: road onto its landing" : "placed first: staircase onto its landing", 1, (_, n) => n + 1);
+                    continue;
+                }
+                // A place with a door is reached only in front of it (a crypt): a road kept at its ring would not reach it.
+                // Nor one entered only from its front, kept at its ring behind it (PlacedSiteShape.OnEntranceSide).
+                if (!ApproachStairsAt(site.Centre, site.Record.Prefab) && !PlacedSiteShape.HasDoor(site.Record.Prefab)
+                    && site.Shape.OnEntranceSide(path[atStart ? 0 : path.Count - 1]))
+                {
+                    if (RoadsLog)
+                    {
+                        System.Threading.Interlocked.Increment(ref m_closeEnds);
+                        m_siteApproaches.AddOrUpdate("placed first: kept at its ring outside the mountains", 1, (_, n) => n + 1);
+                        Log.LogDebug($"Road {label ?? "(again without stairs)"}: no road onto the landing of the place at {site.Centre}, kept at its ring: {noEntry}");
+                    }
+                    continue;
+                }
+                if (RoadsLog)
+                {
+                    m_siteApproaches.AddOrUpdate("placed first: refused", 1, (_, n) => n + 1);
+                    Log.LogDebug($"Road {label ?? "(again without stairs)"}: no way onto the landing of the place at {site.Centre}: {noEntry}");
+                }
+                plans = null;
+                refusedAt.Add(path[atStart ? 0 : path.Count - 1]);
+                RoadSpatialGrid.LastRefusal = "no way onto a placed place's landing";
+                break;
+            }
         // No road under a viaduct's deck laid before it (the built-result check, StructureEnds.UnderTheDeck).
         if (plans != null && UnderALaidDeck(plans, out Vector2 underAt) is string underDeck)
         {
             plans = null;
+            refusedAt.Add(underAt);
             RoadSpatialGrid.LastRefusal = underDeck;
             if (RoadsLog) Log.LogDebug(FormattableString.Invariant($"Road {label ?? "(unlabelled)"}: {underDeck} at ({underAt.x:F1}, {underAt.y:F1}); refused"));
         }
-        // No road crosses another, nor runs beside one at its height (MeetingRefusal).
-        if (plans != null && MeetingRefusal(plans, out Vector2 meetsAt) is string meetingRefused)
+        // No road crosses another, nor runs beside one at its height, nor on a staircase's flight but onto a landing level
+        // with the row it reaches (MeetingRefusal).
+        RoadStairRuns.FlightLanding? landing = null;
+        if (plans != null && MeetingRefusal(plans, out Vector2 meetsAt, out landing, landOnFlight: true) is string meetingRefused)
         {
             plans = null;
+            refusedAt.Add(meetsAt);
             RoadSpatialGrid.LastRefusal = meetingRefused;
             if (RoadsLog) Log.LogDebug(FormattableString.Invariant($"Road {label ?? "(unlabelled)"}: {meetingRefused} at ({meetsAt.x:F1}, {meetsAt.y:F1}); refused"));
         }
-        // Refused with stairs on it -- its earthwork or a bridge end may come from
-        // the stair's held heights: tried again without them, as before stairs.
-        if (plans == null && stairs.Count > 0)
-            return WithoutStairs("road round the stairs: " + (RoadSpatialGrid.LastRefusal ?? "refused"));
-        // A structure's end never costs a road: refused with ends brought through the owner, the road is planned again once,
-        // the whole road, with every structure's ends kept as the road had them (every kit but a viaduct, whose ends are
-        // always met: MeetsTheRoad).
-        if (plans == null && !t_endsAsTheyWere && crossings.Exists(c => MeetsTheRoad(c) && !IsViaduct(c)))
+        if (plans != null && landing != null) LandOnTheFlight(plans, landing);
+        // A road whose end at its place does not arrive level with it, and from which no approach staircase onto it can be
+        // laid, does not reach it (EndNotLevel): refused, even at the cost of a POI; the planner tries its other candidates.
+        var approaches = plans == null ? new List<RoadStairSpan>()
+            : SiteApproaches(path, plans, stairs, startCenter, startSite != null ? 0f : askedStartRadius,
+                endCenter, endSite != null ? 0f : askedEndRadius, startAtPlace, endAtPlace);
+        // A placed place's end is judged where no way onto its landing was laid (kept at its ring outside the Mountains).
+        bool Entered(PlacedSite? site) => site != null && entries.Exists(e => e.site == site);
+        // A place has one way in up a face (PlaceWaysIn, the one owner): an end arriving at its place the way another way into
+        // it does, by staircase or as road, is not built so; the road is searched again ending on that way's road
+        // (GenerateRoad, ReEndOnAWayIn).
+        if (plans != null)
+            foreach (var (atStart, centre, asked, atPlace, site) in new[]
+                { (true, startCenter, askedStartRadius, startAtPlace, startSite), (false, endCenter, askedEndRadius, endAtPlace, endSite) })
+            {
+                if (!atPlace || asked <= 0f) continue;
+                Vector2 place = site?.Centre ?? centre;
+                if (ReEndOnAWayIn(place, ArrivalAt(place, atStart, plans, entries, approaches, site)) is not Vector2 onItsRoad) continue;
+                if (RoadsLog) Log.LogDebug(FormattableString.Invariant(
+                    $"Road {label ?? "(unlabelled)"}: arrives at the place at {place} the way another way into it does; searched again to that way's road at ({onItsRoad.x:F1}, {onItsRoad.y:F1})"));
+                t_reEnd ??= (place, onItsRoad);
+                plans = null;
+                refusedAt.Add(path[atStart ? 0 : path.Count - 1]);
+                RoadSpatialGrid.LastRefusal = BesideItsApproachRefusal;
+                break;
+            }
+        if (plans != null && EndNotLevel(path, plans, stairs, approaches, startCenter, askedStartRadius, endCenter, askedEndRadius,
+                startAtPlace && !Entered(startSite), endAtPlace && !Entered(endSite)) is (string refusal, string notLevel))
         {
-            System.Threading.Interlocked.Increment(ref m_endsKeptAsTheyWere);
-            t_endsAsTheyWere = true;
-            try { return GenerateRoadCore(startCenter, askedStartRadius, endCenter, askedEndRadius, width, label, networkHints, retries); }
-            finally { t_endsAsTheyWere = false; }
+            if (RoadsLog)
+            {
+                if (refusal == NotLevelRefusal) System.Threading.Interlocked.Increment(ref m_notLevelEnds);
+                if (label != null) Log.LogDebug($"Road {label}: {notLevel}");
+            }
+            plans = null;
+            // At one of its ends (which, the refusal does not say).
+            refusedAt.Add(path[0]); refusedAt.Add(path[path.Count - 1]);
+            RoadSpatialGrid.LastRefusal = refusal;
         }
+        // Arriving level with a place that has no flat nor landing, carried on from its ring to the place's edge (CarryOnToEdge).
+        var carried = plans == null ? new List<RoadSpatialGrid.PlannedPath>()
+            : CarryOnToEdges(path, plans, stairs, approaches, width, startCenter, askedStartRadius, endCenter, askedEndRadius,
+                startAtPlace && startSite == null, endAtPlace && endSite == null);
+        // A staircase whose foot is not at its road's level where it ends (RoadStairRuns.FootLeftOver): refused, never laid
+        // with the staircase hanging over its road.
+        if (plans != null)
+        {
+            var laying = stairs.FindAll(st => !st.Existing);
+            laying.AddRange(approaches);
+            foreach (var entry in entries) if (entry.stairs != null) laying.Add(entry.stairs);
+            if (RoadStairRuns.FootLeftOver(laying, plans, out Vector2 footAt, (x, z) => RoadStairRuns.GroundAt(x, z, GenerationWorld)) is string footRefused)
+            {
+                plans = null;
+                refusedAt.Add(footAt);
+                RoadSpatialGrid.LastRefusal = footRefused;
+                if (RoadsLog) Log.LogInfo(FormattableString.Invariant($"[STAIRS] road {label ?? "(unlabelled)"}: {footRefused} at ({footAt.x:F1}, {footAt.y:F1}); refused"));
+            }
+        }
+        // Refused with stairs on it, it is refused: stairs are always on, and a road is never searched again without them
+        // (there is no flag for them, nor code to work
+        // around them). The planner tries its other candidates.
         if (plans == null)
         {
+            t_refusedAt = refusedAt.Count > 0 ? refusedAt : null;
             string why = RoadSpatialGrid.LastRefusal ?? "other (crossing or footprint)";
             m_refusalReasons.AddOrUpdate(why, 1, (_, n) => n + 1);
             if (label != null)
@@ -1461,13 +2486,55 @@ public static partial class RoadNetworkGenerator
             return false;
         }
 
-        var approaches = finder.Stairs ? SiteApproaches(path, plans, stairs, startCenter, askedStartRadius, endCenter, askedEndRadius, startAtPlace, endAtPlace)
-            : new List<RoadStairSpan>();
-        foreach (RoadSpatialGrid.PlannedPath plan in plans)
-        {
-            RoadSpatialGrid.Commit(plan);
-            PieceCommitted?.Invoke(plan, label);
-        }
+        // One road where two would ride along each other (RoadRide, the one owner): where this road rides the network --
+        // within a road's width of a road laid before it, or of a structure that road crosses or climbs on, heading its way
+        // -- it stores nothing: not its points, nor a crossing of its own there (the road that built it carries it). Asked
+        // of the network as it stands before this road is stored.
+        var plannedCrossings = crossings;
+        var crossingLines = RoadRide.Around(crossings.SelectMany(c => new[] { c.FromBank, c.Center, c.ToBank }).ToList(), RoadRide.Reach);
+        int crossingsBefore = crossings.Count;
+        crossings = crossings.FindAll(c => !RoadRide.RidesCrossing(crossingLines, c));
+        if (crossings.Count < crossingsBefore) System.Threading.Interlocked.Add(ref RoadRide.m_crossingsRidden, crossingsBefore - crossings.Count);
+        // Its own decks too: a structure replaces the road over its gap, so no piece of it runs on under its own
+        // span or bridge (a neighbouring ford's piece in a pool chain did, under a deck turned onto a buildable heading).
+        // A bridge whose ends the owner brings the road to (MeetsTheRoad) is left to StructureEnds' own trimming.
+        // The other roads on a structure end's landing ground are raised to it with the road (StructureEnds.MeetEnds).
+        CrossingGround crossingGround = GroundOf(crossings, width);
+        crossingGround.RaiseOthers();
+        foreach (RoadCrossing c in crossings)
+            if (!c.Shared)
+            {
+                System.Threading.Interlocked.Add(ref m_endPads, (c.FromPad ? 1 : 0) + (c.ToPad ? 1 : 0));
+                System.Threading.Interlocked.Add(ref m_endShared, (c.FromShared ? 1 : 0) + (c.ToShared ? 1 : 0));
+                System.Threading.Interlocked.Add(ref m_endStands, (c.FromStands ? 1 : 0) + (c.ToStands ? 1 : 0));
+                foreach (var end in new[] { c.FromEnd, c.ToEnd })
+                    if (end is StructureEnds.End { IsStructure: true } e)
+                    {
+                        System.Threading.Interlocked.Add(ref m_endSteps, e.Steps);
+                        System.Threading.Interlocked.Increment(ref e.Steps == 0 ? ref m_endFlat : ref e.Steps == 1 ? ref m_endOneStep : ref m_endMoreSteps);
+                    }
+                // An end met by earthwork (StructureEnds.MeetEnds): its landing filled over ground under the road's floor.
+                int earthworks = (c.FromEarthwork ? 1 : 0) + (c.ToEarthwork ? 1 : 0);
+                if (earthworks == 0) continue;
+                System.Threading.Interlocked.Add(ref m_endEarthworks, earthworks);
+                if (RoadsLog) Log.LogInfo(FormattableString.Invariant($"[BRIDGES] road {label}: {earthworks} end(s) of the bridge {c.FromBank} -> {c.ToBank} met by earthwork, {c.FromEnd?.Steps.ToString() ?? "-"}/{c.ToEnd?.Steps.ToString() ?? "-"} steps laid"));
+            }
+        if (landing != null && RoadStairRuns.LayLanding(landing) && RoadsLog)
+            Log.LogDebug(FormattableString.Invariant($"[STAIRS] road {label ?? "(unlabelled)"}: landing at {landing.Height:F2} onto the staircase {landing.Run.From} -> {landing.Run.To}, {landing.Removed.Count} walked piece(s) under it taken away, its foot now ({landing.Foot.x:F1}, {landing.Foot.y:F1})"));
+        var own = OwnPieces(plans, crossings, out float ridden, out var decks);
+        if (ridden > 0f) System.Threading.Interlocked.Add(ref RoadRide.m_riddenCentimetres, (long)(ridden * 100f));
+        // Where its ends meet the network as it stands, the junctions' fill (RoadJunctionFillet), stored with it.
+        // Its own staircases are laid after the fills are read: given to them as the road's own structures.
+        var ownStairs = stairs.FindAll(st => !st.Existing);
+        ownStairs.AddRange(approaches);
+        foreach (var entry in entries) if (entry.stairs != null) ownStairs.Add(entry.stairs);
+        var fills = RoadJunctionFillet.For(own, GenerationWorld, plannedCrossings, ownStairs);
+        // Where its staircases start at its ends, a small level pad under their start (RoadEndRing.PadUnder, the ring's).
+        var pads = RoadStairRuns.StartPads(own, ownStairs, GenerationWorld, label);
+        RoadSpatialGrid.CommitRoad(own, committed: plan => PieceCommitted?.Invoke(plan, label), decks: decks, ownChecked: true);
+        foreach (var fill in fills) RoadSpatialGrid.CommitLevelled(fill.Points, fill.Heights, fill.Width);
+        foreach (var pad in pads) RoadSpatialGrid.CommitLevelled(pad.Points, pad.Heights, pad.Width, unpainted: true);
+        if (fills.Count > 0) System.Threading.Interlocked.Add(ref m_junctionFills, fills.Count);
         if (IslandActivity != null)
         {
             // A crossing snapped to a site an earlier road built is that bridge, not a new one.
@@ -1475,21 +2542,56 @@ public static partial class RoadNetworkGenerator
             foreach (var c in crossings) if (c.Kind == CrossingKind.Bridge && !c.Shared && !c.Invalid) bridges++;
             IslandActivity.BuiltBridges(bridges);
         }
+        foreach (var (entrySite, entryRoad, entryStairs) in entries)
+        {
+            if (entryRoad != null)
+            {
+                RoadSpatialGrid.CommitRoad(RoadRide.Own(new List<RoadSpatialGrid.PlannedPath> { entryRoad }, out _), intoSite: true,
+                    committed: plan => PieceCommitted?.Invoke(plan, label), ownChecked: true);
+                PlacedSites.MarkLanded(entrySite.Centre);
+                if (RoadsLog && label != null) Log.LogDebug($"Road {label}: carried on onto the landing, {entryRoad.TotalLength:F0} m of road into the place");
+            }
+            if (entryStairs != null)
+            {
+                JoinNetwork(entryStairs.FromPoint, entryStairs.ToPoint, entryStairs.Plan, entryStairs.Kit, atPlace: true);
+                RoadStairRuns.TallyRing(entryStairs.Plan);
+                PlacedSites.MarkLanded(entrySite.Centre);
+                if (RoadsLog && label != null) Log.LogDebug($"Road {label}: carried on onto the landing, {entryStairs.Kit.Name} staircase {entryStairs.Plan.Rise:F0} m {(entryStairs.Plan.Reversed ? "down" : "up")}");
+            }
+        }
+        // Its ends arriving at their places as road (no staircase there): ways into those places from now on (PlaceWaysIn).
+        foreach (var (atStart, centre, asked, atPlace, site) in new[]
+            { (true, startCenter, askedStartRadius, startAtPlace, startSite), (false, endCenter, askedEndRadius, endAtPlace, endSite) })
+        {
+            if (!atPlace || asked <= 0f || !PlaceWaysIn.On) continue;
+            Vector2 place = site?.Centre ?? centre;
+            if (StairsAt(atStart, entries, approaches, site) == null && ArrivalAt(place, atStart, plans, entries, approaches, site) is PlaceWaysIn.Way way)
+                PlaceWaysIn.Record(place, way);
+        }
+        foreach (RoadSpatialGrid.PlannedPath edge in carried)
+        {
+            RoadSpatialGrid.CommitRoad(RoadRide.Own(new List<RoadSpatialGrid.PlannedPath> { edge }, out _), intoSite: true,
+                committed: plan => PieceCommitted?.Invoke(plan, label), ownChecked: true);
+            System.Threading.Interlocked.Increment(ref m_carriedToEdge);
+            if (RoadsLog && label != null) Log.LogDebug($"Road {label}: carried on to its place's edge, {edge.TotalLength:F1} m into the place");
+        }
         foreach (RoadStairSpan approach in approaches)
         {
             // An approach crosses its place's footprint by design: it is a staircase at its place, as an entry is.
-            JoinNetwork(approach.FromPoint, approach.ToPoint, approach.Plan, approach.Kit, atPlace: true);
+            JoinNetwork(approach.FromPoint, approach.ToPoint, approach.Plan, approach.Kit, atPlace: true, expectedPlace: approach.ExpectedPlace);
+            RoadStairRuns.TallyRing(approach.Plan);
             if (RoadsLog && label != null) Log.LogDebug($"Road {label}: site approach staircase, {approach.Kit.Name} {approach.Plan.Rise:F0} m {(approach.Plan.Reversed ? "down" : "up")}");
         }
         foreach (RoadStairSpan stair in stairs)
         {
             StairStructures.MarkLaid(path.GetRange(stair.FromIndex, stair.ToIndex - stair.FromIndex + 1));
             if (stair.Existing) continue;
-            JoinNetwork(path[stair.FromIndex], path[stair.ToIndex], stair.Plan, stair.Kit, atPlace: false);
+            RoadStairRuns.TallyRing(stair, plans);
+            JoinNetwork(path[stair.FromIndex], path[stair.ToIndex], stair.Plan, stair.Kit, atPlace: false, stair.FromPoint, stair.ToPoint);
         }
+        crossingGround.CommitGround();
         if (RoadCrossingDetector.ToWater)
         {
-            GroundUnderDeck(crossings, width);
             foreach (var c in crossings)
             {
                 if (c.FromLand is Vector2 f) { System.Threading.Interlocked.Increment(ref m_offLandEnds); Log.LogDebug($"Bridge end off land on {label}: {f} -> {c.FromBank}"); }
@@ -1504,37 +2606,27 @@ public static partial class RoadNetworkGenerator
                 // later road joined an earlier bridge's waypoint in mid-river
                 // and built a second bridge out to it, ending mid-river.
                 bool onCrossing = false;
-                foreach (var crossing in crossings)
+                foreach (var crossing in plannedCrossings)
                     if (i >= crossing.FromIndex && i <= crossing.ToIndex) { onCrossing = true; break; }
                 // Nor on a staircase: there is no road there to join.
                 foreach (var stair in stairs)
                     if (i >= stair.FromIndex && i <= stair.ToIndex) { onCrossing = true; break; }
-                if (!onCrossing) networkHints.Add(path[i]);
+                if (!onCrossing) { networkHints.Add(path[i]); IslandNetworkChanged(); }
             }
         m_islandRoads++;
         int roadNumber;
-        // Each crossing's kit decided once, as it is stored (BridgeStructures.KitFor): saved with it, never decided again.
-        // Decided before the lock every island records its roads under: a viaduct's test samples its piers and ends.
-        foreach (RoadCrossing c in crossings) c.Kit ??= BridgeStructures.KitFor(c, GenerationWorld);
+        // Each crossing's kind decided once, as it is stored (BridgeStructures.DecideKind): a viaduct, or a deck whose kit
+        // is chosen when it is first built. Decided before the lock every island records its roads under: a viaduct's
+        // test samples its piers and ends.
+        foreach (RoadCrossing c in crossings) BridgeStructures.DecideKind(c, GenerationWorld);
+        foreach (RoadCrossing c in crossings) c.Island = CrossIslandReads.Tag;
         lock (m_recordGate)
         {
             m_roadCrossings.AddRange(crossings);
             roadNumber = ++m_roadsGeneratedCount;
         }
-        foreach (var c in crossings)
-            if (!c.Shared && IsViaduct(c))
-            {
-                DvergrViaduct.MarkLaid(c);
-                var (near, far) = DvergrViaduct.Ends(c, GenerationWorld);
-                lock (m_laidDecks) m_laidDecks.Add((near, far, DvergrViaduct.DeckHeight(c, GenerationWorld), c.Center, c.Width * 0.5f + DvergrViaduct.HalfWidth + 4f));
-            }
-        foreach (var c in crossings)
-        {
-            if (!c.ValleyJump || c.Shared) continue;
-            DvergrViaduct.MarkStanding(c);
-            System.Threading.Interlocked.Increment(ref m_viaductsLaid);
-            if (RoadsLog) Log.LogInfo($"[VIADUCT] road {label ?? "(unlabelled)"}: {DvergrViaduct.Describe(c, GenerationWorld)}");
-        }
+        IslandNetworkChanged();
+        KeepClearOfViaducts(crossings, label);
         foreach (var c in crossings)
             if (c.Shallow && c.ShallowNote != null) Log.LogDebug("  " + c.ShallowNote);
 
@@ -1562,50 +2654,89 @@ public static partial class RoadNetworkGenerator
     /// painted in its style: waded at the ground's own height, or raised to
     /// the bank clearance so the leveled road stands above the water.
     /// </summary>
-    /// <summary>Metres of road carried in under each end of a bridge deck,
-    /// over land only, so road and bridge look built together.</summary>
+    /// <summary>Metres of levelled ground carried in under each end of a bridge deck,
+    /// over land only.</summary>
     public const float DeckGroundReach = 3f;
     /// <summary>Ground under a deck end is held at least this far below the deck.</summary>
     public const float DeckUnderClearance = 0.4f;
 
     /// <summary>
-    /// Road carried in under each end of every bridge, up to
-    /// <see cref="DeckGroundReach"/> and only while the ground is above the
-    /// waterline, levelled to the ground or <see cref="DeckUnderClearance"/>
-    /// under the deck, whichever is lower. It paints the road in under the
-    /// deck, and it cuts what the height estimate missed: measured at one
-    /// bridge, the estimate put the ground 1 m in at 31.2 m while the game's
-    /// terrain stood 31.9-32.4 m under a 31.8 m deck, poking through it.
+    /// What a road's crossings change besides the road itself, the one list a generated road and a manual road both store
+    /// with it: the other roads on an end's landing raised to it (StructureEnds.MeetEnds), and the ground under each
+    /// bridge's deck ends (<see cref="CrossingGround.UnderDecks"/>).
     /// </summary>
-    private static void GroundUnderDeck(List<RoadCrossing> crossings, float width)
+    internal sealed class CrossingGround
     {
+        /// <summary>The other roads' points on the landings of the road's own crossings' ends, each to its new height.</summary>
+        public readonly List<(RoadSpatialGrid.RoadPoint at, float to)> Raised = new();
+        /// <summary>The ground cut to each step under a viaduct's end stairs, decided from the road's arrival (StructureEnds),
+        /// <see cref="CutWidth"/> wide.</summary>
+        public readonly List<Vector3> Cuts = new();
+        public static float CutWidth => BridgeLayout.DeckHalfWidth * 2f;
+        /// <summary>
+        /// Road carried in under each end of every bridge, up to
+        /// <see cref="DeckGroundReach"/> and only while the ground is above the
+        /// waterline, levelled to the ground or <see cref="DeckUnderClearance"/>
+        /// under the deck, whichever is lower, and never painted: the paint stops
+        /// at the end's stairs' foot (StructureEnds.Unpainted). It cuts what the
+        /// height estimate missed: measured at one bridge, the estimate put the
+        /// ground 1 m in at 31.2 m while the game's terrain stood 31.9-32.4 m
+        /// under a 31.8 m deck, poking through it. Null where there is none.
+        /// </summary>
+        public RoadSpatialGrid.PlannedPath? UnderDecks;
+
+        /// <summary>The other roads raised (generation: before the road is stored, so its junctions meet them as raised).</summary>
+        public void RaiseOthers() => RoadSpatialGrid.SetRoadHeights(Raised);
+
+        /// <summary>The cuts and the ground under the decks stored (generation: once the road and its staircases are).</summary>
+        public void CommitGround()
+        {
+            if (Cuts.Count > 0) RoadSpatialGrid.CommitCuts(Cuts, CutWidth);
+            if (UnderDecks != null) RoadSpatialGrid.CommitLevelled(UnderDecks.Points, UnderDecks.Heights, UnderDecks.Width, unpainted: true);
+        }
+    }
+
+    /// <summary><see cref="CrossingGround"/> of <paramref name="crossings"/>, a road's of <paramref name="width"/>: the raises of
+    /// those it builds (not of one shared with a road laid before, which that road raised), the ground under every bridge's
+    /// deck ends where crossings are built over water (<see cref="RoadCrossingDetector.ToWater"/>).</summary>
+    internal static CrossingGround GroundOf(List<RoadCrossing> crossings, float width)
+    {
+        var ground = new CrossingGround();
+        foreach (RoadCrossing c in crossings)
+            if (!c.Shared)
+                foreach (var raised in new[] { c.FromRaised, c.ToRaised })
+                    if (raised != null) ground.Raised.AddRange(raised);
+        if (!RoadCrossingDetector.ToWater) return ground;
         var world = GenerationWorld;
         var temp = new List<Vector2>(); var hs = new List<float>();
         foreach (var c in crossings)
         {
+            // A bridge's alone: a ford's span keeps its deck's line clear of road (OwnPieces, RoadRide.DeckLines), its
+            // footbridge low over shallow water where no ground stands under the deck to cut.
             if (c.Kind != CrossingKind.Bridge) continue;
             float span = Vector2.Distance(c.FromBank, c.ToBank);
             if (span < 2f) continue;
             float ceiling = BridgeStructures.DeckHeight(c, world) - DeckUnderClearance;
-            // Under a viaduct's end stairs, decided from the road's arrival (StructureEnds), the ground is cut to each step.
+            // Under a viaduct's end stairs the ground is cut to each step.
             if (IsViaduct(c))
             {
                 var (near, far) = DvergrViaduct.Ends(c, world);
-                var cuts = new List<Vector3>();
                 foreach (StructureEnds.End end in new[] { near, far })
                     for (int k = 0; k < end.Steps; k++)
                     {
                         Vector2 at = end.Edge - end.Up * (BridgeLayout.StairHalfRun + k * BridgeLayout.StairRun);
-                        cuts.Add(new Vector3(at.x, end.Height - BridgeLayout.StairRise * (k + 1), at.y));
+                        ground.Cuts.Add(new Vector3(at.x, end.Height - BridgeLayout.StairRise * (k + 1), at.y));
                     }
-                if (cuts.Count > 0) RoadSpatialGrid.CommitCuts(cuts, BridgeLayout.DeckHalfWidth * 2f);
             }
             // No road painted in under a viaduct's deck at the ground's height: its road runs on under the end module at the
             // meeting height (StructureEnds.JoinOverlap), and road at the ground under a deck end is wrong.
             if (IsViaduct(c)) continue;
             float reach = Mathf.Min(DeckGroundReach, span * 0.5f);
-            foreach (var (bank, other) in new[] { (c.FromBank, c.ToBank), (c.ToBank, c.FromBank) })
-                for (float d = 0.5f; d <= reach; d += 0.5f)
+            // Nor at an end with no stairs laid (met level, or landed on its last row, StructureEnds.MeetEnds): its road runs on
+            // under the deck's end at the deck's height, as a viaduct's does.
+            var (nearEnd, farEnd) = BridgeStructures.Ends(c, world);
+            foreach (var (bank, other, end) in new[] { (c.FromBank, c.ToBank, nearEnd), (c.ToBank, c.FromBank, farEnd) })
+                for (float d = 0.5f; d <= reach && end.Steps != 0; d += 0.5f)
                 {
                     var p = bank + (other - bank) * (d / span);
                     float g = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
@@ -1613,7 +2744,10 @@ public static partial class RoadNetworkGenerator
                     temp.Add(p); hs.Add(Mathf.Min(g, ceiling));
                 }
         }
-        if (temp.Count > 0) RoadSpatialGrid.CommitLevelled(temp, hs, width);
+        if (temp.Count > 0)
+            ground.UnderDecks = new RoadSpatialGrid.PlannedPath(temp, hs, temp.ConvertAll(_ => default(RoadPointDebugInfo)), width, 0f, false)
+                { Unpainted = temp.ConvertAll(_ => true) };
+        return ground;
     }
 
     /// <summary>
@@ -1692,13 +2826,6 @@ public static partial class RoadNetworkGenerator
 
     public const float StubLength = 80f;
 
-    /// <summary>A road already built comes within this place's trim radius
-    /// (where a road to it stops). A place with no radius (a junction) is.</summary>
-    internal static bool PlaceReached(Vector2 centre, float trimRadius) =>
-        trimRadius <= 0f || (RoadSpatialGrid.IsInitialized && RoadSpatialGrid.TryGetRoadWithin(centre, trimRadius + 4f, out _));
-    /// <summary>Drop a road's own stub where it merges within <see cref="StubLength"/>. Settable for tests.</summary>
-    internal static bool OneBranch = true;
-
     /// <summary>The first waypoint from one end that lies on a road already
     /// built, within <see cref="StubLength"/> along the path; -1 if none, or
     /// if the end itself is on a road.</summary>
@@ -1768,7 +2895,7 @@ public static partial class RoadNetworkGenerator
         return to - from >= 1 ? path.GetRange(from, to - from + 1) : null;
     }
 
-    /// <summary>A bridge whose bank has no planned road piece starting or ending at it.</summary>
+    /// <summary>A crossing with a deck (BridgeStructures.HasDeck) whose bank has no planned road piece starting or ending at it.</summary>
     private static bool DanglingBridge(List<RoadSpatialGrid.PlannedPath> plans, List<RoadCrossing> crossings,
         Vector2 roadStart, Vector2 roadEnd, out RoadCrossing dangling)
     {
@@ -1778,7 +2905,7 @@ public static partial class RoadNetworkGenerator
         dangling = null!;
         foreach (var c in crossings)
         {
-            if (c.Kind != CrossingKind.Bridge) continue;
+            if (!BridgeStructures.HasDeck(c)) continue;
             bool from = false, to = false;
             // The road ends at a bank, or where the one owner meets the bridge's end (StructureEnds: its stairs' foot).
             var (near, far) = MeetsTheRoad(c) ? BridgeStructures.Ends(c, GenerationWorld) : default;
@@ -1810,22 +2937,122 @@ public static partial class RoadNetworkGenerator
     /// road leans into the join instead of jogging. Settable for tests; 0 is off.
     /// </summary>
     internal static float CorridorSnap = DebugSwitches.Number("CORRIDOR_SNAP", 14f, 0f, 40f);
-    internal const float CorridorAngle = 25f;
+    internal const float CorridorAngle = RoadRide.Angle;
     internal const float CorridorHeight = 3f;
     internal const float CorridorRun = 12f;
 
     /// <summary>Why a planned road may not meet the network as it would: it crosses another road (<see cref="CrossesNetwork"/>;
     /// it meets one at a junction, at its ends or along a stretch it shares, or it is not built, even if that rejects a POI), or it runs beside one at its height (<see cref="BraidsNetwork"/>;
     /// where its search did not put it on the other road it braids beside it: roads at 3354,6308 and -5487,5808 were a
-    /// mess). Null where it does neither; <paramref name="at"/>: where. The one test of
-    /// a road against the roads it meets, for the road, its earthwork re-routes and the ways onto a placed place's landing.</summary>
-    internal static string? MeetingRefusal(List<RoadSpatialGrid.PlannedPath> plans, out Vector2 at)
+    /// mess), or it runs on or under a staircase's flight laid before it (<see cref="RoadStairRuns.OnALaidFlight"/>: it meets
+    /// a staircase only at its foot or top, straight on). Null where it does none of these; <paramref name="at"/>: where. The
+    /// one test of a road against the network it meets, for the road, its earthwork re-routes and the ways onto a placed
+    /// place's landing.</summary>
+    internal static string? MeetingRefusal(List<RoadSpatialGrid.PlannedPath> plans, out Vector2 at) => MeetingRefusal(plans, out at, out _, landOnFlight: false);
+
+    /// <summary>
+    /// <see cref="MeetingRefusal(List{RoadSpatialGrid.PlannedPath}, out Vector2)"/>; with <paramref name="landOnFlight"/>, a road
+    /// on or under a staircase's flight is not refused where a landing level with the row it reaches fits
+    /// (RoadStairRuns.LandingOnto, its fill within the earthwork cap): <paramref name="landed"/>, which the road is then laid
+    /// with (<see cref="LandOnTheFlight"/>). It meets the foot straight on, else it lands on the row it reaches, else it is
+    /// refused. Only the road itself is laid with one: its re-routes and its ways onto a place's landing are refused as before.
+    /// </summary>
+    internal static string? MeetingRefusal(List<RoadSpatialGrid.PlannedPath> plans, out Vector2 at, out RoadStairRuns.FlightLanding? landed, bool landOnFlight)
     {
         at = default;
+        landed = null;
         if (CrossesNetwork(plans, out at)) return "crosses another road";
         if (BraidsNetwork(plans, out at)) return "runs beside another road";
-        return null;
+        var (points, heights, _) = Flatten(plans);
+        if (!RoadStairRuns.OnALaidFlight(points, heights, out at)) return null;
+        if (landOnFlight && RoadStairRuns.LandingOnto(points, heights, (x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, GenerationWorld),
+                EarthworkLimit) is RoadStairRuns.FlightLanding fits)
+        {
+            landed = fits;
+            return null;
+        }
+        return OnAFlightRefusal;
     }
+
+    /// <summary>
+    /// Why a way onto a placed place's landing from the road's end at <paramref name="end"/> (a road or a staircase) may not
+    /// meet the road and the network as it would (<see cref="PlanEntry"/>), or null: a staircase that doubles back beside its
+    /// own road (<see cref="DoublesBackBesideItsRoad"/>), and, with <paramref name="network"/>, the road with it against the
+    /// network (<see cref="MeetingRefusal(List{RoadSpatialGrid.PlannedPath}, out Vector2)"/>).
+    /// </summary>
+    /// <param name="own">The road's own earlier stretch (<see cref="OwnRoadOf"/>), built once for every candidate way from the
+    /// same road; built here where not given.</param>
+    internal static string? EntryMeetingRefusal(bool atStart, List<RoadSpatialGrid.PlannedPath> plans, Vector2 end,
+        RoadSpatialGrid.PlannedPath? road, RoadStairSpan? span, bool network, Lazy<OwnRoad?>? own = null)
+    {
+        var all = WithEntry(atStart, plans, end, road, span);
+        if (span != null && all.Count > plans.Count
+            && DoublesBackBesideItsRoad((own ?? new Lazy<OwnRoad?>(() => OwnRoadOf(plans, atStart), false)).Value, all[atStart ? 0 : all.Count - 1], out Vector2 back))
+            return FormattableString.Invariant($"{DoublesBackRefusal} at ({back.x:F1}, {back.y:F1})");
+        return network && MeetingRefusal(all, out Vector2 at) is string meeting ? FormattableString.Invariant($"{meeting} at ({at.x:F1}, {at.y:F1})") : null;
+    }
+
+    /// <summary>The refusal of a way onto a landing that doubles back beside its own road (<see cref="DoublesBackBesideItsRoad"/>).</summary>
+    internal const string DoublesBackRefusal = "doubles back beside its own road";
+
+    /// <summary>
+    /// Whether a way onto a placed place's landing (<paramref name="entry"/>, on the road's end at the place: its start where
+    /// <paramref name="atStart"/>) ends beside the road's own earlier stretch at that road's height, as a road beside a road
+    /// is judged (<see cref="RoadBeside"/>: within its reach across, within its height), away from the junction where the
+    /// two meet (<see cref="JunctionEnd"/> back along the road from its end). The road was already at that height there: the
+    /// staircase climbed or came down to it beside itself (a road coming in level with a landing, down a dip to its end, and
+    /// a staircase from there doubling back up beside it onto the landing, its top a few metres from the road at the road's
+    /// height), and is laid from further back along the road instead. A staircase that doubles back to end well above or
+    /// below its road is not beside it. The network's roads are <see cref="BraidsNetwork"/>'s.
+    /// </summary>
+    internal static bool DoublesBackBesideItsRoad(OwnRoad? own, RoadSpatialGrid.PlannedPath entry, out Vector2 at)
+    {
+        at = default;
+        if (own == null || entry.Points.Count == 0) return false;
+        // Where it ends: its end away from the road's.
+        int first = 0, last = entry.Points.Count - 1;
+        int far = Vector2.Distance(entry.Points[first], own.End) >= Vector2.Distance(entry.Points[last], own.End) ? first : last;
+        if (!own.Lines.Nearest(entry.Points[far], RoadBeside.Reach, out _, height: entry.Heights[far], heightTolerance: RoadBeside.Height)) return false;
+        at = entry.Points[far];
+        return true;
+    }
+
+    /// <summary>A road's own line short of its end at a place (<see cref="DoublesBackBesideItsRoad"/>), and that end.</summary>
+    internal sealed class OwnRoad
+    {
+        internal readonly RoadRide.Lines Lines;
+        internal readonly Vector2 End;
+        internal OwnRoad(RoadRide.Lines lines, Vector2 end) { Lines = lines; End = end; }
+    }
+
+    /// <summary>The road <paramref name="plans"/>' own line, its junction with the way onto the landing at its end (its
+    /// start where <paramref name="atStart"/>) left out (<see cref="JunctionEnd"/>); null where nothing is left.</summary>
+    internal static OwnRoad? OwnRoadOf(List<RoadSpatialGrid.PlannedPath> plans, bool atStart)
+    {
+        var (points, heights, along) = Flatten(plans);
+        if (points.Count < 2) return null;
+        float total = along[points.Count - 1];
+        var ownPoints = new List<Vector2>();
+        var ownHeights = new List<float>();
+        for (int i = 0; i < points.Count; i++)
+            if ((atStart ? along[i] : total - along[i]) >= JunctionEnd) { ownPoints.Add(points[i]); ownHeights.Add(heights[i]); }
+        if (ownPoints.Count == 0) return null;
+        RoadRide.Lines lines = RoadRide.Around(Array.Empty<Vector2>(), 0f);
+        lines.AddRoad(ownPoints, ownHeights);
+        return new OwnRoad(lines, points[atStart ? 0 : points.Count - 1]);
+    }
+
+    /// <summary>A road laid with a landing onto a staircase's lower stairs (<see cref="MeetingRefusal(List{RoadSpatialGrid.PlannedPath}, out Vector2, out RoadStairRuns.FlightLanding?, bool)"/>):
+    /// its heights levelled over the landing, as the landing found them.</summary>
+    internal static void LandOnTheFlight(List<RoadSpatialGrid.PlannedPath> plans, RoadStairRuns.FlightLanding landing)
+    {
+        int k = 0;
+        foreach (RoadSpatialGrid.PlannedPath plan in plans)
+            for (int i = 0; i < plan.Heights.Count; i++) plan.Heights[i] = landing.Heights[k++];
+    }
+
+    /// <summary>The refusal of a road that runs on or under a staircase's flight (<see cref="MeetingRefusal"/>).</summary>
+    internal const string OnAFlightRefusal = "runs under a staircase's flight";
 
     /// <summary>A stretch of a road this long or longer running on another road shares it (a trunk both walk); shorter, it
     /// passes through.</summary>
@@ -1857,28 +3084,23 @@ public static partial class RoadNetworkGenerator
         var (points, _, along) = Flatten(plans);
         if (points.Count < 3) return false;
         float total = along[points.Count - 1], touch = RoadWidth * 0.5f;
+        // The network's line (RoadRide): a crossing's or a staircase's line is road too, so a road through a structure's gap
+        // in another road crosses it as it crosses the road.
+        var lines = RoadRide.Around(points, 4f);
         int k = 0;
         while (k < points.Count)
         {
-            if (!RoadSpatialGrid.TryGetRoadWithin(points[k], touch, out _)) { k++; continue; }
+            if (!lines.Nearest(points[k], touch, out _)) { k++; continue; }
             int first = k;
-            while (k + 1 < points.Count && RoadSpatialGrid.TryGetRoadWithin(points[k + 1], touch, out _)) k++;
+            while (k + 1 < points.Count && lines.Nearest(points[k + 1], touch, out _)) k++;
             int last = k++;
             if (along[first] < JunctionEnd || total - along[last] < JunctionEnd) continue;
             if (along[last] - along[first] >= SharedRun) continue;
-            // The other road's line here: the road points round the middle of the touch. Not a staircase's cut-only points
-            // (its guard cuts): near a staircase's end they outnumber the road points and turned the line.
+            // The other road's line here: its heading at the middle of the touch (RoadRide: from its road points 1.5-4 m
+            // apart, never a staircase's cut-only points, which near a staircase's end turned the line).
             Vector2 mid = points[(first + last) / 2];
-            var near = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(mid.x, 0f, mid.y), 4f);
-            near.RemoveAll(q => q.cutOnly);
-            if (near.Count < 2) continue;
-            Vector2 centre = new Vector2(0f, 0f);
-            foreach (var q in near) centre += q.p;
-            centre *= 1f / near.Count;
-            float sxx = 0f, sxy = 0f, syy = 0f;
-            foreach (var q in near) { Vector2 d = q.p - centre; sxx += d.x * d.x; sxy += d.x * d.y; syy += d.y * d.y; }
-            float angle = 0.5f * Mathf.Atan2(2f * sxy, sxx - syy);
-            Vector2 dir = new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)), normal = new Vector2(-dir.y, dir.x);
+            if (!lines.Nearest(mid, 4f, out RoadRide.Hit line) || !line.HasHeading) continue;
+            Vector2 centre = line.At, dir = line.Dir, normal = new Vector2(-dir.y, dir.x);
             // Its own points a few metres before and after the touch, either side of the other road's line.
             int before = first, after = last;
             while (before > 0 && along[first] - along[before] < 4f) before--;
@@ -1910,8 +3132,12 @@ public static partial class RoadNetworkGenerator
         var (points, heights, along) = Flatten(plans);
         if (points.Count < 3) return false;
         float total = along[points.Count - 1];
+        // Where it rides the network (RoadRide: within a road's width, its way, at its height) it is on the other road, the
+        // trunk the two share, whose road it then stores none of; beside it is past that, within RoadBeside's reach.
+        var lines = RoadRide.Around(points, RoadBeside.Reach);
+        bool[] rides = RoadRide.Rides(lines, points, heights);
         var place = new RoadBeside.Place[points.Count];
-        for (int i = 0; i < points.Count; i++) place[i] = RoadBeside.At(points[i], heights[i]);
+        for (int i = 0; i < points.Count; i++) place[i] = rides[i] ? RoadBeside.Place.On : RoadBeside.At(lines, points[i], heights[i]);
         // Whether the road is on the other road from point i to its end (step +1) or from its start to i (step -1), its
         // junction's mouth aside.
         bool OnToItsEnd(int i, int step)
@@ -1938,19 +3164,36 @@ public static partial class RoadNetworkGenerator
         return false;
     }
 
-    internal static List<Vector2>? SnapToNetwork(List<Vector2>? path, float? width = null)
+    /// <summary>Waypoints moved onto the network's line nearby. A held waypoint (<paramref name="held"/>: a structure's end
+    /// the road was brought to) stays where it is and in the path, neither snapped nor eased toward a corridor.</summary>
+    internal static List<Vector2>? SnapToNetwork(List<Vector2>? path, float? width = null, System.Func<Vector2, bool>? held = null)
     {
         if (path == null || RoadSnap <= 0f || path.Count < 3 || !RoadSpatialGrid.IsInitialized) return path;
         var moved = new Vector2[path.Count];
         var fixedPoint = new bool[path.Count];
-        for (int i = 0; i < path.Count; i++) moved[i] = path[i];
+        var keep = new bool[path.Count];
+        for (int i = 0; i < path.Count; i++) { moved[i] = path[i]; keep[i] = held != null && held(path[i]); }
+        // Onto the network's line (RoadRide): a crossing's or a staircase's line too, so a road coming along another over
+        // its bridge or ford snaps onto the deck's line, not to the banks either side of the gap.
+        var lines = RoadRide.Around(path, Mathf.Max(RoadSnap, CorridorSnap * 1.5f));
+        // A structure's line only about the ground's height here (never a flight or deck far over or under the waypoint).
         for (int i = 1; i < path.Count - 1; i++)
-            if (RoadSpatialGrid.TryGetRoadWithin(path[i], RoadSnap, out Vector2 onRoad)) { moved[i] = onRoad; fixedPoint[i] = true; }
+        {
+            if (keep[i]) { fixedPoint[i] = true; continue; }
+            bool road = lines.Nearest(path[i], RoadSnap, out RoadRide.Hit onRoad, structures: false);
+            if (GenerationWorld != null && lines.Nearest(path[i], road ? onRoad.Distance : RoadSnap, out RoadRide.Hit onDeck, height: BiomeBlendedHeight.GetBlendedHeight(path[i].x, path[i].y, GenerationWorld),
+                    heightTolerance: RoadRide.StructureHeight, roads: false))
+            { onRoad = onDeck; road = true; }
+            if (road) { moved[i] = onRoad.At; fixedPoint[i] = true; }
+        }
         if (CorridorSnap > RoadSnap && GenerationWorld != null)
         {
+            // The nearest of the network's line within the corridor's reach heading this way, at about this ground's height.
             var corridor = new Vector2?[path.Count];
             for (int i = 1; i < path.Count - 1; i++)
-                if (!fixedPoint[i]) corridor[i] = SameCorridor(path[i], path[i + 1] - path[i - 1]);
+                if (!fixedPoint[i] && lines.Nearest(path[i], CorridorSnap, out RoadRide.Hit same, path[i + 1] - path[i - 1],
+                        BiomeBlendedHeight.GetBlendedHeight(path[i].x, path[i].y, GenerationWorld), CorridorHeight, paintOnly: false))
+                    corridor[i] = same.At;
             int a = 1;
             while (a < path.Count - 1)
             {
@@ -1962,67 +3205,42 @@ public static partial class RoadNetworkGenerator
                 if (run >= CorridorRun)
                 {
                     for (int k = a; k <= b; k++) if (corridor[k] is Vector2 q) moved[k] = q;
-                    if (a - 1 > 0 && !fixedPoint[a - 1] && RoadSpatialGrid.TryGetRoadWithin(path[a - 1], CorridorSnap * 1.5f, out Vector2 qa))
-                        moved[a - 1] = Vector2.Lerp(path[a - 1], qa, 0.5f);
-                    if (b + 1 < path.Count - 1 && !fixedPoint[b + 1] && RoadSpatialGrid.TryGetRoadWithin(path[b + 1], CorridorSnap * 1.5f, out Vector2 qb))
-                        moved[b + 1] = Vector2.Lerp(path[b + 1], qb, 0.5f);
+                    if (a - 1 > 0 && !fixedPoint[a - 1] && lines.Nearest(path[a - 1], CorridorSnap * 1.5f, out RoadRide.Hit qa))
+                        moved[a - 1] = Vector2.Lerp(path[a - 1], qa.At, 0.5f);
+                    if (b + 1 < path.Count - 1 && !fixedPoint[b + 1] && lines.Nearest(path[b + 1], CorridorSnap * 1.5f, out RoadRide.Hit qb))
+                        moved[b + 1] = Vector2.Lerp(path[b + 1], qb.At, 0.5f);
                     System.Threading.Interlocked.Add(ref m_corridorSnapped, b - a + 1);
                 }
                 a = b + 1;
             }
         }
         var result = new List<Vector2>(path.Count) { path[0] };
+        bool lastKept = true;
         for (int i = 1; i < path.Count - 1; i++)
-            if (Vector2.Distance(result[result.Count - 1], moved[i]) > 0.5f) result.Add(moved[i]);
+        {
+            bool near = Vector2.Distance(result[result.Count - 1], moved[i]) <= 0.5f;
+            if (!near) { result.Add(moved[i]); lastKept = keep[i]; }
+            // A held waypoint takes the place of a snapped one it landed on.
+            else if (keep[i] && !lastKept) { result[result.Count - 1] = moved[i]; lastKept = true; }
+        }
         result.Add(path[path.Count - 1]);
         // Snapping is cosmetic. Its new connecting legs have not been checked
         // by the route search, so keep the original path when the merge cuts
-        // a protected site. Before trimming, only the route's own endpoint
-        // footprints are exempt, just as they are during the search.
+        // a protected site. Before trimming, the route's own endpoint
+        // footprints are crossed only as its departure and arrival, just as
+        // during the search (RoadSiteProtection.BlocksRoute).
         float clearance = RoadSiteProtection.Clearance(width ?? RoadWidth);
         for (int i = 1; i < result.Count; i++)
-            if (RoadSiteProtection.BlocksSegment(result[i - 1], result[i], clearance, path[0], path[path.Count - 1]))
+            if (RoadSiteProtection.BlocksRoute(result[i - 1], result[i], clearance, path[0], path[path.Count - 1]))
                 return path;
         return result;
     }
 
     private static int m_corridorSnapped;
+    /// <summary>Roads ended on a place's approach's road instead of beside it (<see cref="ReEndOnAWayIn"/>), and those still refused so.</summary>
+    private static int m_reEndedOnApproach, m_reEndRefused;
+    private static int m_junctionFills;
     private static int m_chainsShared;
-
-    /// <summary>The nearest road point within <see cref="CorridorSnap"/> of <paramref name="p"/> on a
-    /// road heading along <paramref name="heading"/> at about this ground's height, or null.</summary>
-    private static Vector2? SameCorridor(Vector2 p, Vector2 heading)
-    {
-        if (heading.sqrMagnitude < 1e-4f) return null;
-        heading.Normalize();
-        var near = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(p.x, 0f, p.y), CorridorSnap);
-        if (near.Count < 2) return null;
-        float ground = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, GenerationWorld);
-        float cosLimit = Mathf.Cos(CorridorAngle * Mathf.PI / 180f);
-        Vector2? best = null; float bestD = float.MaxValue;
-        foreach (var q in near)
-        {
-            if (!q.IsRoad) continue;
-            float d = Vector2.Distance(q.p, p);
-            if (d >= bestD || Mathf.Abs(q.h - ground) > CorridorHeight) continue;
-            // The other road's heading at q: from its neighbours 1.5-4 m away.
-            Vector2 dir = new Vector2(0f, 0f);
-            foreach (var r in near)
-            {
-                if (r.cutOnly) continue;
-                float dr = Vector2.Distance(r.p, q.p);
-                if (dr < 1.5f || dr > 4f) continue;
-                Vector2 v = r.p - q.p;
-                if (Vector2.Dot(v, dir) < 0f) v = -v;
-                dir += v;
-            }
-            if (dir.sqrMagnitude < 1e-4f) continue;
-            dir.Normalize();
-            if (Mathf.Abs(Vector2.Dot(dir, heading)) < cosLimit) continue;
-            best = q.p; bestD = d;
-        }
-        return best;
-    }
 
     /// <summary>
     /// Why a planned road may not be built as it stands, and where; null when it may. The one list of generation's refusals
@@ -2036,7 +3254,7 @@ public static partial class RoadNetworkGenerator
     {
         at = default;
         var where = new List<Vector2>();
-        if (EarthworkCap > 0f && PastTerrainLimit(plans, EarthworkCap, where) > 0) { at = where[0]; return $"earthwork past the {EarthworkCap:F0} m terrain limit"; }
+        if (PastTerrainLimit(plans, EarthworkLimit, where) > 0) { at = where[0]; return EarthworkRefusal; }
         if (InvalidCrossings(crossings, where) > 0)
         {
             at = where.Count > 0 ? where[where.Count - 1] : at;
@@ -2051,6 +3269,38 @@ public static partial class RoadNetworkGenerator
         if (points.Count > 1 && DanglingBridge(plans, crossings, points[0], points[points.Count - 1], out RoadCrossing dangling))
         { at = dangling.Center; return "a bridge with no road at one end"; }
         return null;
+    }
+
+    /// <summary>
+    /// What generation searches a road again round, where it can, and where: a stretch held to a road already laid more than
+    /// <see cref="HoldPullLimit"/> off its own profile (HeldOffProfile, the earthwork re-route), then a trench or ridge
+    /// (RoadRidges, read on the ground as <see cref="OffRidges"/> reads it); asked only as GenerateRoadCore asks them, with an
+    /// earthwork cap and its retries. Null where none. Generation builds a road anyway where no way round clears these; a road
+    /// with no other way to search (a staircase's end carried on to its first stair, tried once) is refused for them instead:
+    /// the consequence of its one try, not another rule.
+    /// </summary>
+    internal static string? SearchedRound(List<RoadSpatialGrid.PlannedPath> plans, out Vector2 at)
+    {
+        at = default;
+        if (!EarthworkCapped) return null;
+        var where = new List<Vector2>();
+        if (EarthworkRetries > 0 && HeldOffProfile(plans, where) > 0)
+        { at = where[0]; return $"held to a road more than {HoldPullLimit:F0} m off its profile"; }
+        if (RidgeRetries > 0 && RoadRidges.Find(plans, NaturalGround) is { Count: > 0 } ridges)
+        {
+            at = ridges[0].Points[0];
+            return FormattableString.Invariant($"a {(ridges[0].Kind == RoadRidges.Kind.Ridge ? "ridge" : "trench")}: {ridges[0].Worst:F1} m for {ridges[0].Length:F0} m");
+        }
+        return null;
+    }
+
+    /// <summary>What a road stores of its planned pieces: none of what rides the network (RoadRide.Own), with its own decks
+    /// (a spanned ford's, a bridge's whose ends are not met) kept clear.</summary>
+    internal static List<RoadSpatialGrid.PlannedPath> OwnPieces(List<RoadSpatialGrid.PlannedPath> plans, List<RoadCrossing> crossings,
+        out float ridden, out List<RoadRide.Segment> decks)
+    {
+        decks = RoadRide.DeckLines(plans, crossings.FindAll(c => (c.Kind == CrossingKind.Ford && c.Style == FordStyle.Span) || (c.Kind == CrossingKind.Bridge && !MeetsTheRoad(c))));
+        return RoadRide.Own(plans, out ridden, decks);
     }
 
     /// <summary>The search a road is planned with: generation's finders and a manual road's alike.</summary>
@@ -2071,6 +3321,29 @@ public static partial class RoadNetworkGenerator
     /// off.</summary>
     internal static float EarthworkCap = 8f;
 
+    // ---- The earthwork cap as each kind of rule reads it: the one place its unset case (EarthworkCap 0) is decided ----
+    // Three readings, each meant, none a copy of another:
+    //  - EarthworkCapped: the searches that exist only to keep a road within the cap (the re-routes round deep earthwork,
+    //    held stretches and ridges; the humps laid as road) run only with one.
+    //  - EarthworkLimit: what a road, a landing or a structure's end is judged by; without a cap there is no limit. A test
+    //    skipped and a limit no height passes are the same reading.
+    //  - Shaped: how far ground is cut or filled to a height (a start pad, an ease's reach, ground no road is cut through):
+    //    within the limit, and never past what the terrain itself moves (RoadConstants.TerrainDeltaMax, where the game
+    //    clamps a level delta). Without a cap, the terrain's own.
+
+    /// <summary>Whether a cap is set (<see cref="EarthworkCap"/>): the searches that keep a road within it run only then.</summary>
+    internal static bool EarthworkCapped => EarthworkCap > 0f;
+
+    /// <summary>The limit a road, a landing or an end is judged by: <see cref="EarthworkCap"/>, or none (infinity) without one.</summary>
+    internal static float EarthworkLimit => EarthworkCap > 0f ? EarthworkCap : float.PositiveInfinity;
+
+    /// <summary>How far ground is shaped within <paramref name="limit"/>: never past what the terrain moves
+    /// (<see cref="RoadConstants.TerrainDeltaMax"/>).</summary>
+    internal static float Shaped(float limit) => Mathf.Min(limit, RoadConstants.TerrainDeltaMax);
+
+    /// <summary><see cref="Shaped(float)"/> of <see cref="EarthworkLimit"/>: the cap, or without one the terrain's own limit.</summary>
+    internal static float ShapedLimit => Shaped(EarthworkLimit);
+
     /// <summary>Crossings that may not be built, counted into the earthwork re-route so the search goes round them:
     /// shallow water no ford style may cross (too long or deep), and a bridge whose deck would meet ground between its
     /// banks (RoadCrossingDetector.ClearOfGround). Each adds its banks and the line between to
@@ -2090,6 +3363,86 @@ public static partial class RoadNetworkGenerator
         return n;
     }
     internal static int EarthworkRetries = 2;
+    /// <summary>Searches round a road's trenches and ridges (<see cref="RoadRidges"/>) per road; 0 is none. Settable for tests.</summary>
+    internal static int RidgeRetries = 2;
+    private static int m_ridgeReroutes;
+    /// <summary>Roads re-routed off a trench or ridge this generation.</summary>
+    internal static int RidgeReroutes => m_ridgeReroutes;
+
+    private static float NaturalGround(Vector2 p) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, GenerationWorld);
+
+    /// <summary>
+    /// A road within the earthwork cap laid in a trench or along a ridge (<see cref="RoadRidges"/>) is searched again round
+    /// it, up to <see cref="RidgeRetries"/> times, the cells round each such stretch priced up as the earthwork re-route
+    /// prices them. A re-route is kept only where it lays a third fewer metres of trench and ridge and passes what the
+    /// plan it replaces passed: nothing past the cap, no held ridge, no more stretches held off its profile, no invalid
+    /// crossing, and the network takes it as it meets it. Otherwise the road keeps its plan.
+    /// </summary>
+    private static (List<Vector2> path, List<RoadCrossing> crossings, List<RoadSpatialGrid.PlannedPath> plans, List<RoadStairSpan> stairs, bool startAtPlace, bool endAtPlace) OffRidges(
+        RoadPathfinder finder, (List<Vector2> path, List<RoadCrossing> crossings, List<RoadSpatialGrid.PlannedPath> plans, List<RoadStairSpan> stairs, bool startAtPlace, bool endAtPlace) road,
+        int pulled, Vector2 pathStart, Vector2 pathEnd, Vector2 startCenter, float startRadius, Vector2 endCenter, float endRadius, float width,
+        Vector2? startAim, Vector2? endAim, bool startReached, bool endReached)
+    {
+        var stretches = RoadRidges.Find(road.plans, NaturalGround);
+        float metres = RoadRidges.Metres(stretches);
+        for (int attempt = 0; attempt < RidgeRetries && stretches.Count > 0; attempt++)
+        {
+            foreach (var stretch in stretches) PenalizeStretch(finder, stretch);
+            var retry = Replan(finder, pathStart, pathEnd, startCenter, startRadius, endCenter, endRadius, width, startAim, endAim, startReached, endReached);
+            if (retry == null) continue;
+            var after = RoadRidges.Find(retry.Value.plans, NaturalGround);
+            if (!KeepsOffRidges(retry.Value.plans, retry.Value.crossings, metres, after, pulled)) { stretches = after; continue; }
+            System.Threading.Interlocked.Increment(ref m_ridgeReroutes);
+            road = retry.Value;
+            stretches = after;
+            metres = RoadRidges.Metres(after);
+        }
+        // What no way round clears goes up or down on stairs: the stretches left are opened to stairs, their road priced
+        // up as before and their staircases not, and searched once more.
+        if (stretches.Count > 0 && finder.Stairs && RidgeRetries > 0)
+        {
+            foreach (var stretch in stretches) PenalizeStretch(finder, stretch);
+            var opened = finder.OpenToStairs(stretches.SelectMany(st => st.Points), RidgeStairReachCells);
+            var retry = Replan(finder, pathStart, pathEnd, startCenter, startRadius, endCenter, endRadius, width, startAim, endAim, startReached, endReached);
+            finder.ShutToStairs(opened);
+            if (retry != null && KeepsOffRidges(retry.Value.plans, retry.Value.crossings, metres, RoadRidges.Find(retry.Value.plans, NaturalGround), pulled))
+            {
+                System.Threading.Interlocked.Increment(ref m_ridgeStairs);
+                road = retry.Value;
+            }
+        }
+        finder.ClearEarthworkPenalty();
+        return road;
+    }
+
+    /// <summary>Cells round a trench or ridge opened to stairs where no re-route clears it.</summary>
+    internal const int RidgeStairReachCells = 1;
+    private static int m_ridgeStairs;
+    /// <summary>Roads taken off a trench or ridge onto stairs this generation.</summary>
+    internal static int RidgeStairs => m_ridgeStairs;
+
+    /// <summary>The cells round a trench or ridge priced up, a point every <see cref="EarthworkPenaltyRadius"/> along it.</summary>
+    private static void PenalizeStretch(RoadPathfinder finder, RoadRidges.Stretch stretch)
+    {
+        Vector2? last = null;
+        foreach (var p in stretch.Points)
+        {
+            if (last is Vector2 l && Vector2.Distance(l, p) < EarthworkPenaltyRadius * 0.5f && p != stretch.Points[stretch.Points.Count - 1]) continue;
+            finder.PenalizeAround(p, EarthworkPenaltyRadius);
+            last = p;
+        }
+    }
+
+    /// <summary>Whether a re-planned road replaces one with <paramref name="before"/> metres of trench and ridge and
+    /// <paramref name="pulled"/> stretches held off its profile: a third fewer metres (<paramref name="after"/>), no more held
+    /// stretches, and nothing a road is refused for.</summary>
+    private static bool KeepsOffRidges(List<RoadSpatialGrid.PlannedPath> plans, List<RoadCrossing> crossings, float before, List<RoadRidges.Stretch> after, int pulled)
+    {
+        if (RoadRidges.Metres(after) * 3f > before * 2f) return false;
+        var none = new List<Vector2>();
+        return PastTerrainLimit(plans, EarthworkLimit, none) + InvalidCrossings(crossings, none) + HeldRidges(plans, none) == 0
+            && HeldOffProfile(plans, none) <= pulled && MeetingRefusal(plans, out _) == null;
+    }
     /// <summary>Cells within this of an offending point are priced up.</summary>
     internal const float EarthworkPenaltyRadius = 12f;
     private static int m_earthworkReroutes, m_earthworkUnavoided;
@@ -2102,6 +3455,9 @@ public static partial class RoadNetworkGenerator
         int steps = 0, landings = 0;
         foreach (var kv in hits) { steps += kv.Value.steps; landings += kv.Value.landings; }
         Log.LogInfo($"  Squeeze between a place and the water: refused {steps} search step(s) and {landings} crossing landing(s) beside {hits.Length} place(s)");
+        int fills = 0;
+        foreach (var kv in RoadPathfinder.ShoreFillCells) fills += kv.Value;
+        Log.LogInfo($"  Shallows built out beside a place: the search went through {fills} cell(s) beside {RoadPathfinder.ShoreFillCells.Count} place(s)");
         var locations = ZoneSystem.instance != null ? ZoneSystem.instance.GetLocationList() : null;
         foreach (var kv in System.Linq.Enumerable.OrderByDescending(hits, h => h.Value.steps + h.Value.landings))
         {
@@ -2118,6 +3474,15 @@ public static partial class RoadNetworkGenerator
     private static int m_offLandEnds;
     internal static (int reroutes, int unavoided) EarthworkCounts => (m_earthworkReroutes, m_earthworkUnavoided);
 
+    /// <summary>Why a road past the earthwork cap is refused (<see cref="BuiltRoadRefusal"/>).</summary>
+    internal static string EarthworkRefusal => $"earthwork past the {EarthworkCap:F0} m terrain limit";
+
+    /// <summary>Whether a road point at <paramref name="p"/> stored at <paramref name="height"/> is past <paramref name="cap"/>
+    /// of earthwork: the one reading of a point against the cap (<see cref="PastTerrainLimit(List{RoadSpatialGrid.PlannedPath}, float, List{Vector2})"/>,
+    /// and a point known before its road is planned, RoadStairRuns.RoadOnto).</summary>
+    internal static bool PastTerrainLimit(Vector2 p, float height, float cap, WorldGenerator? world = null) =>
+        Mathf.Abs(height - BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world ?? GenerationWorld)) > cap;
+
     /// <summary>Points of the plans (not wades) cut or filled past <paramref name="cap"/>, listed in <paramref name="where"/>.</summary>
     internal static int PastTerrainLimit(List<RoadSpatialGrid.PlannedPath> plans, float cap, List<Vector2> where)
     {
@@ -2129,7 +3494,7 @@ public static partial class RoadNetworkGenerator
             for (int i = 0; i < plan.Points.Count; i++)
             {
                 var p = plan.Points[i];
-                if (Mathf.Abs(plan.Heights[i] - BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world)) > cap)
+                if (PastTerrainLimit(p, plan.Heights[i], cap, world))
                 {
                     past++;
                     if (where.Count == 0 || Vector2.Distance(where[where.Count - 1], p) > 6f) where.Add(p);
@@ -2171,33 +3536,201 @@ public static partial class RoadNetworkGenerator
     }
 
     /// <summary>The road searched and planned again, with the pathfinder's
-    /// current penalties; null when it does not route or build.</summary>
-    private static (List<Vector2> path, List<RoadCrossing> crossings, List<RoadSpatialGrid.PlannedPath> plans, List<RoadStairSpan> stairs, bool startAtPlace, bool endAtPlace)? Replan(
+    /// current penalties; null when it does not route or build. <paramref name="startAim"/> and <paramref name="endAim"/>:
+    /// the doors the road's own search ended at (<see cref="DoorsOf"/>; null where it searched to the place), which the
+    /// re-route comes in to head on as the road did.</summary>
+    internal static (List<Vector2> path, List<RoadCrossing> crossings, List<RoadSpatialGrid.PlannedPath> plans, List<RoadStairSpan> stairs, bool startAtPlace, bool endAtPlace)? Replan(
         RoadPathfinder finder, Vector2 pathStart, Vector2 pathEnd, Vector2 startCenter, float startRadius,
-        Vector2 endCenter, float endRadius, float width)
+        Vector2 endCenter, float endRadius, float width, Vector2? startAim, Vector2? endAim, bool startReached, bool endReached)
     {
-        var path = SnapToNetwork(finder.FindPath(pathStart, pathEnd), width);
+        PlacedSite? startSite = startRadius > 0f && PlacedSites.TryGetReady(startCenter, out PlacedSite s0) ? s0 : null;
+        PlacedSite? endSite = endRadius > 0f && PlacedSites.TryGetReady(endCenter, out PlacedSite s1) ? s1 : null;
+        bool startPlaced = startSite != null, endPlaced = endSite != null;
+        var path = finder.FindPath(pathStart, pathEnd);
         if (path == null || path.Count < 2) return null;
-        path = TrimPathToRadii(path, startCenter, startRadius, endCenter, endRadius);
-        path = TrimWetEnds(path);
+        // In head on from the lead-in to the ring point the road's search was aimed at, as GenerateRoadCore does.
+        if (startAim is Vector2 sa) path.Insert(0, sa);
+        if (endAim is Vector2 ea) path.Add(ea);
+        path = SnapToNetwork(path, width);
         if (path == null || path.Count < 2) return null;
-        path = ImproveSiteApproach(path, startCenter, startRadius, width, true);
-        path = ImproveSiteApproach(path, endCenter, endRadius, width, false);
+        RoadPlan planned = PlanFromPath(finder, path, startCenter, startRadius, endCenter, endRadius,
+            startPlaced, endPlaced, startReached, endReached, width);
+        return planned.Stop != PlanStop.Planned || planned.Plans == null ? null
+            : (planned.Path, planned.Crossings, planned.Plans, planned.Stairs, planned.StartAtPlace, planned.EndAtPlace);
+    }
+
+    /// <summary>Where <see cref="PlanFromPath"/> stopped.</summary>
+    internal enum PlanStop
+    {
+        /// <summary>Planned, or refused by the planner (<see cref="RoadPlan.Plans"/> null; its refusal in RoadSpatialGrid.LastRefusal).</summary>
+        Planned,
+        /// <summary>Nothing left between the two footprints once trimmed.</summary>
+        NothingBetween,
+        /// <summary>A staircase could not be laid on <see cref="RoadPlan.Path"/>.</summary>
+        Staircase,
+        /// <summary>Something the road needed was not prepared.</summary>
+        Preparation,
+    }
+
+    /// <summary>A searched path made a road: what <see cref="PlanFromPath"/> returns.</summary>
+    internal sealed class RoadPlan
+    {
+        public PlanStop Stop;
+        public List<Vector2> Path = new();
+        public List<RoadCrossing> Crossings = new();
+        public List<RoadStairSpan> Stairs = new();
+        public List<RoadSpatialGrid.PlannedPath>? Plans;
+        public bool StartAtPlace, EndAtPlace;
+        /// <summary>A crossing with an end no way of meeting reaches (StructureEnds.MeetEnds), with the search's moves it was
+        /// detected on (<see cref="RoadCrossing.Searched"/>); <see cref="Plans"/> then null.</summary>
+        public RoadCrossing? Unmet;
+    }
+
+    /// <summary>Why a road is refused where a crossing on it has an end no way of meeting reaches.</summary>
+    internal const string EndNotMet = "a bridge end the road does not meet";
+
+    /// <summary>
+    /// The one pipeline from a searched (and snapped) path to a planned road: trim to the keep-out edges
+    /// (<paramref name="startRadius"/>, <paramref name="endRadius"/> are those edges) and off wet ends, improve the
+    /// approach to a place not placed first, drop the stubs where other network reaches the place
+    /// (<paramref name="startReached"/>, <paramref name="endReached"/>: <see cref="EndReached"/>), detect and snap the
+    /// crossings, lay the staircases, read the ground to meet at each end, refuse what preparation missed, plan; a road
+    /// refused without its stubs is planned once with them. Used by the road's own build and by its earthwork re-route
+    /// (<see cref="Replan"/>).
+    /// </summary>
+    internal static RoadPlan PlanFromPath(RoadPathfinder finder, List<Vector2> path, Vector2 startCenter, float startRadius,
+        Vector2 endCenter, float endRadius, bool startPlaced, bool endPlaced, bool startReached, bool endReached, float width)
+    {
+        var result = new RoadPlan { Path = path };
+        List<Vector2>? trimmed = TrimWetEnds(TrimPathToRadii(path, startCenter, startRadius, endCenter, endRadius));
+        if (trimmed == null || trimmed.Count < 2) { result.Stop = PlanStop.NothingBetween; return result; }
+        path = trimmed;
+        // A placed place's end is already on its landing's side, and is carried on onto the landing.
+        if (!startPlaced) path = ImproveSiteApproach(path, startCenter, startRadius, width, true);
+        if (!endPlaced) path = ImproveSiteApproach(path, endCenter, endRadius, width, false);
         Vector2 beforeStart = path[0], beforeEnd = path[path.Count - 1];
-        path = DropStubs(path, PlaceReached(startCenter, startRadius), PlaceReached(endCenter, endRadius)) ?? path;
+        var withStubs = path;
+        path = DropStubs(path, startReached, endReached) ?? path;
         // An end moved to a junction takes its height from the road it joins,
         // not from the place it no longer reaches: aiming at the place's edge
         // from the junction refused short roads as "ends too far apart for
         // the cap".
         bool startAtPlace = path[0] == beforeStart, endAtPlace = path[path.Count - 1] == beforeEnd;
-        var crossings = DetectCrossings(finder, path);
-        SnapToExistingCrossings(crossings);
-        if (!TryLayStairs(finder, path, crossings, out List<RoadStairSpan> stairs)) return null;
-        float? startGround = startAtPlace ? ApproachGround(path[0], startCenter, startRadius) : null;
-        float? endGround = endAtPlace ? ApproachGround(path[path.Count - 1], endCenter, endRadius) : null;
-        var plans = PlanRoadPathWithCrossings(path, crossings, width, startGround, endGround, stairs);
-        return plans == null ? null : (path, crossings, plans, stairs, startAtPlace, endAtPlace);
+        // Detected, snapped to a crossing an earlier road made a few metres off (it takes that site's banks and ends, so this
+        // road is painted up to the one bridge built there), each crossing's ends met (StructureEnds.MeetEnds, the road
+        // brought to each end's foot), stairs laid, the ground to meet at each end read, and planned.
+        bool Plan(List<Vector2> on, bool atStart, bool atEnd, IReadOnlyList<(Vector2 from, Vector2 to)>? steps = null)
+        {
+            result.Stop = PlanStop.Planned;
+            result.Path = on;
+            result.StartAtPlace = atStart; result.EndAtPlace = atEnd;
+            result.Crossings = DetectCrossings(finder, on);
+            SnapToExistingCrossings(result.Crossings);
+            foreach (RoadCrossing c in result.Crossings) c.Searched = SearchedMoves(on, c);
+            result.Unmet = null;
+            if (MeetEnds(finder, on, result.Crossings) is RoadCrossing unmet)
+            {
+                // No way of meeting one of its ends reaches the road: the road is searched round that crossing
+                // (GenerateRoadCore), or refused.
+                (result.Unmet, result.Plans) = (unmet, null);
+                RoadSpatialGrid.LastRefusal = EndNotMet;
+                return true;
+            }
+            if (!TryLayStairs(steps ?? finder.LastStairSteps, on, result.Crossings, out List<RoadStairSpan> stairs)) { result.Stop = PlanStop.Staircase; return false; }
+            result.Stairs = stairs;
+            // The heights to meet are asked for at the road's OWN ends, after
+            // trimming - not at the locations' centres. A road stops at the
+            // exterior radius, which on a hillside is metres below the middle of
+            // the place it is going to, and aiming at the middle builds that
+            // difference as a rim around the doorstep.
+            float? startGround = atStart ? ApproachGround(on[0], startCenter, startRadius) : null;
+            float? endGround = atEnd ? ApproachGround(on[on.Count - 1], endCenter, endRadius) : null;
+            // Something this road needed was not prepared. Building it anyway
+            // would put it through a footprint nothing could see, or land it on a
+            // height nothing could read. Leaving the destination unconnected is
+            // the recoverable half of that choice.
+            if (LocationLevelling.PreparationMissedHere) { result.Stop = PlanStop.Preparation; return false; }
+            RoadSpatialGrid.LastRefusal = null;
+            // An end at its place that does not come level with it is where an approach staircase may be laid up from
+            // (SiteApproaches, once the road is planned): no tight switchback narrows the road into it (RoadSpatialGrid.StairStarts).
+            bool ApproachFrom(bool at, bool placed, float? ground, Vector2 centre, float radius) =>
+                at && !placed && ground == null && radius > 0f && ApproachStairsAt(centre, PrefabAt(centre));
+            result.Plans = PlanRoadPathWithCrossings(on, result.Crossings, width, startGround, endGround, stairs,
+                (ApproachFrom(atStart, startPlaced, startGround, startCenter, startRadius), ApproachFrom(atEnd, endPlaced, endGround, endCenter, endRadius)));
+            // A staircase across the road as planned at either end (RoadStairRuns.SpanAcrossItsRoad): its stretch closed to stairs
+            // and the road searched again, as for one that could not be laid.
+            if (result.Plans != null)
+                foreach (RoadStairSpan stair in stairs)
+                {
+                    if (stair.Existing || RoadStairRuns.SpanAcrossItsRoad(stair, result.Plans, out string piece) is not string end) continue;
+                    RoadStairRuns.Refuse(stair, end, piece);
+                    result.Plans = null;
+                    result.Stop = PlanStop.Staircase;
+                    return false;
+                }
+            return true;
+        }
+        // Over a hump the search climbed on stairs and came down again close by, the road straight across it on earthwork
+        // first: both staircases dropped where that plans within the caps and meets the network as any road must.
+        if (AcrossTheHumps(path, startAtPlace, endAtPlace)) return result;
+        if (!Plan(path, startAtPlace, endAtPlace)) return result;
+        // Dropping the stubs is cosmetic: a road refused without them is
+        // planned with them. With both ends at places other roads reach,
+        // the 40-60 m connector left between two parts of the network can
+        // be too steep where the full road is not.
+        if (result.Plans == null && !ReferenceEquals(withStubs, path)) Plan(withStubs, true, true);
+        return result;
+
+        // Each crest pair whose ends stand within RoadStairRuns.HumpReach (RoadStairRuns.Humps), last first: its stretch
+        // laid as a straight road between its two ends, its stair steps dropped, and the road planned so. Kept where it
+        // plans, its earthwork within the cap, no trench or ridge (RoadRidges) and no crossing, and it meets the network as any
+        // road must (MeetingRefusal) near the stretch; a hump the caps, a trench or the network refuses stays stairs, and with no cap none is tried. True where the
+        // road is planned so.
+        bool AcrossTheHumps(List<Vector2> on, bool atStart, bool atEnd)
+        {
+            // Only within an earthwork cap: with none (0), nothing bounds the cut a hump's road would take.
+            if (!EarthworkCapped || finder.LastStairSteps.Count == 0 || GenerationWorld == null) return false;
+            List<(int from, int to)> humps = RoadStairRuns.Humps(on, finder.LastStairSteps, GenerationWorld);
+            if (humps.Count == 0) return false;
+            IReadOnlyList<(Vector2 from, Vector2 to)> steps = finder.LastStairSteps;
+            bool across = false;
+            for (int k = humps.Count - 1; k >= 0; k--)
+            {
+                var (from, to) = humps[k];
+                Vector2 a = on[from], b = on[to];
+                var straight = new List<Vector2>(on.GetRange(0, from + 1));
+                int cells = Mathf.Max(1, Mathf.CeilToInt(Vector2.Distance(a, b) / RoadPathfinder.CellSize));
+                for (int c = 1; c < cells; c++) straight.Add(Vector2.Lerp(a, b, c / (float)cells));
+                straight.AddRange(on.GetRange(to, on.Count - to));
+                var kept = RoadStairRuns.StepsOff(on, from, to, steps);
+                if (!Plan(straight, atStart, atEnd, kept) || result.Plans == null) continue;
+                bool Near(Vector2 p)
+                {
+                    Vector2 ab = b - a;
+                    float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / Mathf.Max(ab.sqrMagnitude, 1e-6f));
+                    return Vector2.Distance(p, a + ab * t) <= HumpCheckReach;
+                }
+                var past = new List<Vector2>();
+                PastTerrainLimit(result.Plans, EarthworkLimit, past);
+                if (past.Exists(Near)
+                    || RoadRidges.Find(result.Plans, NaturalGround).Exists(st => st.Points.Exists(Near))
+                    || result.Crossings.Exists(c => c.FromIndex <= from + cells && c.ToIndex >= from)
+                    || MeetingRefusal(result.Plans, out Vector2 meets) != null && Near(meets)) continue;
+                (on, steps, across) = (straight, kept, true);
+                System.Threading.Interlocked.Increment(ref m_humpsLevelled);
+                if (RoadsLog) Log.LogDebug(FormattableString.Invariant($"[STAIRS] hump between ({a.x:F1}, {a.y:F1}) and ({b.x:F1}, {b.y:F1}): laid as road on earthwork, both staircases dropped"));
+            }
+            return across && Plan(on, atStart, atEnd, steps) && result.Plans != null;
+        }
     }
+
+    /// <summary>How far from a hump's straight road its plan is read for earthwork past the cap and the network it meets
+    /// (PlanFromPath): the stretch and the blend either side.</summary>
+    private const float HumpCheckReach = 16f;
+
+    private static int m_humpsLevelled;
+    /// <summary>Crest pairs planned as road straight across their hump this generation, built or not (PlanFromPath).</summary>
+    public static int HumpsLevelled => m_humpsLevelled;
 
     /// <summary>Plans every piece of the road and stores them; nothing is
     /// stored if any piece is refused.</summary>
@@ -2212,10 +3745,10 @@ public static partial class RoadNetworkGenerator
 
     internal static List<RoadSpatialGrid.PlannedPath>? PlanRoadPathWithCrossings(
         List<Vector2> path, List<RoadCrossing> crossings, float width, float? startGround, float? endGround,
-        List<RoadStairSpan>? stairs = null)
+        List<RoadStairSpan>? stairs = null, (bool start, bool end) approaches = default)
     {
         using var fitting = new RoadFittingActivity(IslandActivity);
-        var plans = PlanPieces(path, crossings, width, startGround, endGround, stairs);
+        var plans = PlanPieces(path, crossings, width, startGround, endGround, stairs, approaches);
         // A shallow ford is a style, never a reason a road cannot be built: its banks hold their
         // natural heights and split the road, and a short piece between two held ends can be too
         // steep for the cap (measured: a road refused at a 17 m piece 7 m high between a pool's
@@ -2224,7 +3757,7 @@ public static partial class RoadNetworkGenerator
         if (plans == null && crossings.Exists(c => c.Shallow && !c.Invalid))
         {
             var walked = crossings.FindAll(c => !(c.Shallow && !c.Invalid));
-            var retry = PlanPieces(path, walked, width, startGround, endGround, stairs);
+            var retry = PlanPieces(path, walked, width, startGround, endGround, stairs, approaches);
             if (retry != null)
             {
                 System.Threading.Interlocked.Increment(ref m_shallowFordsWalked);
@@ -2238,24 +3771,24 @@ public static partial class RoadNetworkGenerator
     private static int m_shallowFordsWalked;
     /// <summary>The crossings of a finished path: its river crossings (RoadCrossingDetector) and
     /// the Mistlands viaducts its search bought over dry valleys (DvergrViaduct.AddJumps), in path
-    /// order. Where a structure's end stairs would not land on the road, the path is first put
-    /// through their foot (StructureEnds.MeetTheRoad) and its crossings found again.</summary>
+    /// order.</summary>
     private static List<RoadCrossing> DetectCrossings(RoadPathfinder finder, List<Vector2> path)
     {
-        List<RoadCrossing> Find()
-        {
-            List<RoadCrossing> found = finder.Fords || finder.Bridges
-                ? RoadCrossingDetector.Detect(path, GenerationWorld, finder.Bridges, finder.Fords)
-                : new List<RoadCrossing>();
-            if (finder.Viaducts && finder.Bridges)
-                DvergrViaduct.AddJumps(path, finder.LastViaductJumps, GenerationWorld, found);
-            return found;
-        }
-        List<RoadCrossing> crossings = Find();
-        if (!finder.Bridges) return crossings;
-        // Every structure's end the one owner meets (MeetsTheRoad) meets the road through its apron (StructureEnds).
-        var viaducts = crossings.FindAll(MeetsTheRoad);
-        if (viaducts.Count == 0) return crossings;
+        List<RoadCrossing> found = finder.Fords || finder.Bridges
+            ? RoadCrossingDetector.Detect(path, GenerationWorld, finder.Bridges, finder.Fords)
+            : new List<RoadCrossing>();
+        if (finder.Viaducts && finder.Bridges)
+            DvergrViaduct.AddJumps(path, finder.LastViaductJumps, GenerationWorld, found);
+        return found;
+    }
+
+    /// <summary>
+    /// Every crossing's ends met on <paramref name="path"/> (StructureEnds.MeetEnds, the one owner, every kind alike), the
+    /// road brought to each end's foot; the first crossing with an end no way of meeting reaches, with the search's jump it
+    /// lies on, or null. A stair step the search bought is never cut; each end's landing is within the earthwork cap.
+    /// </summary>
+    private static RoadCrossing? MeetEnds(RoadPathfinder finder, List<Vector2> path, List<RoadCrossing> crossings)
+    {
         var steps = finder.LastStairSteps;
         bool IsStep(Vector2 a, Vector2 b)
         {
@@ -2264,27 +3797,39 @@ public static partial class RoadNetworkGenerator
                     return true;
             return false;
         }
-        var unmetFeet = RoadsLog ? new List<Vector2>() : null;
-        int turned = StructureEnds.MeetTheRoad(path, viaducts, GenerationWorld, out int unmet, out int pinned, IsStep, unmetFeet);
-        if (turned > 0) System.Threading.Interlocked.Add(ref m_viaductFeetPut, turned);
-        if (unmet > 0) System.Threading.Interlocked.Add(ref m_viaductFeetUnmet, unmet);
-        if (unmetFeet != null)
-            foreach (Vector2 foot in unmetFeet)
-                Log.LogInfo(FormattableString.Invariant($"[VIADUCT] a bridge end at ({foot.x:F1}, {foot.y:F1}) not met by this road: it ends under the flight or comes to it on a staircase"));
-        return turned + pinned > 0 ? Find() : crossings;
+        return StructureEnds.MeetEnds(path, crossings, GenerationWorld, EarthworkLimit, IsStep);
+    }
+
+    /// <summary>The moves of the search's <paramref name="path"/> that <paramref name="c"/> lies on, from its
+    /// <see cref="RoadCrossing.FromIndex"/> to its <see cref="RoadCrossing.ToIndex"/>: each step of a ford walked cell by
+    /// cell, of a bank walked out to dry ground or moved back to a higher one, and the jump of a bridge or viaduct.</summary>
+    internal static List<(Vector2 from, Vector2 to)> SearchedMoves(List<Vector2> path, RoadCrossing c)
+    {
+        var moves = new List<(Vector2 from, Vector2 to)>();
+        int from = Mathf.Clamp(c.FromIndex, 0, path.Count - 1), to = Mathf.Clamp(c.ToIndex, 0, path.Count - 1);
+        for (int i = from; i < to; i++) moves.Add((path[i], path[i + 1]));
+        if (moves.Count == 0) moves.Add((c.FromBank, c.ToBank));
+        return moves;
     }
 
     /// <summary>
     /// A staircase joins the network: its earthwork goes in with the road's (at a place, only outside every footprint: the
     /// terrain writer leaves the place's own ground alone, and its clearance keeps the place's own rocks), its pieces are a
     /// structure source's, standing from now on for later roads. The one way a road's, an entry's and an approach's
-    /// staircase is laid.
+    /// staircase is laid. <paramref name="fromMeet"/> and <paramref name="toMeet"/>: where the road meets each end, where that is
+    /// not the end recorded (a road's own staircase, recorded at the path points it climbs: its span's ends);
+    /// <paramref name="expectedPlace"/>: an approach's place, laid out over the ground it is expected to leave.
     /// </summary>
-    private static void JoinNetwork(Vector2 from, Vector2 to, StairPlan plan, StairKit kit, bool atPlace)
+    private static void JoinNetwork(Vector2 from, Vector2 to, StairPlan plan, StairKit kit, bool atPlace, Vector2? fromMeet = null, Vector2? toMeet = null,
+        (Vector2 Centre, float Ground)? expectedPlace = null)
     {
-        RoadSpatialGrid.CommitCuts(atPlace ? plan.Cuts.FindAll(c => !RoadSiteProtection.Contains(new Vector2(c.x, c.z))) : plan.Cuts, StairLayout.CutRadius * 2f);
+        RoadSpatialGrid.CommitCuts(atPlace ? RoadStairRuns.CutsOutsideFootprints(plan) : plan.Cuts, StairLayout.CutRadius * 2f);
         var run = StairRun.FromPlan(from, to, RoadStairRuns.Width, plan, kit);
         run.KeepsSiteRocks = atPlace;
+        run.ExpectedPlace = expectedPlace;
+        run.FromMeet = fromMeet;
+        // At a place, where its ground meets a floor laid out onto it from the foot (StairPlan.PlaceMeet): the place's end.
+        run.ToMeet = toMeet ?? (atPlace ? plan.PlaceMeet : null);
         AddToNetwork(run, plan, kit);
     }
 
@@ -2300,75 +3845,45 @@ public static partial class RoadNetworkGenerator
         {
             System.Threading.Interlocked.Increment(ref m_stairRuns);
             t_stairRunsLaidHere++;
+            // One line per end as laid, read on the ground its layout was decided on (StairEnds, the one end reader).
+            foreach (StairEnds.End end in StairEnds.Read(run, RoadStairRuns.PlanningGround(run, GenerationWorld), StairStructures.MetAtEnds(run)))
+                Log.LogInfo(StairEnds.Line(end) + " (as laid)");
         }
     }
 
-    /// <summary>Whether this thread's road is being planned again with its structures' ends kept as the road had them (a road
-    /// refused with them brought through the owner; see GenerateRoadCore).</summary>
-    [ThreadStatic] private static bool t_endsAsTheyWere;
-    private static int m_endsKeptAsTheyWere;
+    /// <summary>Every staircase end of the network as generated, read on its finished ground (StairEnds.AuditAll): the counts,
+    /// and a line for each end with no way off it. The one invariant every gate reads ("ends: N ok, M miss, K gap"); and
+    /// beside it the network's twin ways into places ("twins: N").</summary>
+    private static void LogStairEnds()
+    {
+        var world = GenerationWorld;
+        var (lines, ok, miss, gap) = StairEnds.AuditAll(run => StairEnds.GroundOf(run, world));
+        Log.LogInfo($"  Staircase ends (StairEnds, on the finished ground): ends: {ok} ok, {miss} miss, {gap} gap; approaches laid with a bare top, no layout with a way off it: {RoadStairRuns.BareTopsKept}");
+        foreach (var (verdict, line) in lines)
+            if (verdict != StairEnds.Verdict.Ok) Log.LogInfo("  " + line);
+        // Beside it, the ways into places (PlaceWaysIn.Twins, the rule's own test over the whole network): no place has two
+        // ways in arriving the same way ("twins: N", each named with its place and both ways' ends).
+        var twins = PlaceWaysIn.Twins();
+        Log.LogInfo($"  Ways into places (PlaceWaysIn, the whole network): twins: {twins.Count}");
+        foreach (var twin in twins) Log.LogInfo("  " + twin.line);
+    }
 
-    /// <summary>Whether a crossing is built as a Dvergr viaduct: its kit (BridgeStructures.KitFor, the one owner; the kit stored
+    /// <summary>Whether a crossing is built as a Dvergr viaduct (BridgeStructures.IsViaduct, the one owner; the kind stored
     /// with it once the road is recorded).</summary>
-    private static bool IsViaduct(RoadCrossing c) =>
-        c.Kind == CrossingKind.Bridge && BridgeStructures.KitFor(c, GenerationWorld) == BridgeStructures.Kit.DvergrViaduct;
+    private static bool IsViaduct(RoadCrossing c) => BridgeStructures.IsViaduct(c, GenerationWorld);
 
-    /// <summary>A crossing whose two ends the one owner brings the road to (StructureEnds): every structure with ends, a
-    /// viaduct, a wooden or Dvergr wood bridge and a ford's spanned footbridge alike. The road ends on the foot of each end's
-    /// stairs, on their line, straight on. A viaduct's ends always are, and are always checked (a road that cannot meet them
-    /// is refused, or searched again without the viaduct); a wooden kit's or a span's are wherever that approach is clear of
-    /// protected sites, and not while the road is planned again with its ends as they were.</summary>
-    internal static bool MeetsTheRoad(RoadCrossing c)
-    {
-        var (near, far) = BridgeStructures.Ends(c, GenerationWorld);
-        if (!near.IsSet) return false;
-        if (IsViaduct(c)) return true;
-        if (t_endsAsTheyWere) return false;
-        // Where the straight approach to an end (1.5 aprons out along its line) would cross a protected site, the end
-        // keeps the road it had: brought through the owner there, the road would be refused for the site.
-        float reach = StructureEnds.ApronLength * 1.5f, clearance = RoadSiteProtection.Clearance(RoadConstants.DefaultRoadWidth);
-        foreach (StructureEnds.End end in new[] { near, far })
-            if (RoadSiteProtection.BlocksSegment(end.Joint, end.Meet - end.Up * reach, clearance, null, null)) return false;
-        return true;
-    }
+    /// <summary>A crossing with a structure at each end the road is held to (StructureEnds.Of): a viaduct, a bridge or a
+    /// ford's spanned footbridge in any kit. The road ends on each end's foot at its height, come along its line or from its
+    /// landing pad, as the one owner decided (StructureEnds.MeetEnds). A waded or raised ford is road.</summary>
+    internal static bool MeetsTheRoad(RoadCrossing c) => BridgeStructures.Ends(c, GenerationWorld).near.IsSet;
 
     /// <summary>
-    /// The final check of the one owner (StructureEnds.Reachable): every end of every bridge on the road, as planned, met by
-    /// a piece of the road at its meeting point (the stairs' foot, or the deck's edge) within a step of its height. The first
-    /// end that is not, with its crossing (a valley viaduct's before any other's), or null. A player walks onto every structure the road is built with.
-    /// </summary>
-    internal static RoadCrossing? UnreachableEnd(List<RoadSpatialGrid.PlannedPath> plans, List<RoadCrossing> crossings, out Vector2 where)
-    {
-        where = default;
-        RoadCrossing? first = null;
-        foreach (RoadCrossing c in crossings)
-        {
-            if (!MeetsTheRoad(c) || (first != null && !c.ValleyJump)) continue;
-            var (near, far) = BridgeStructures.Ends(c, GenerationWorld);
-            foreach (StructureEnds.End end in new[] { near, far })
-            {
-                bool met = false;
-                foreach (var (_, h, _) in StructureEnds.BuiltRoadNear(end.Meet, 0.75f, plans))
-                    if (StructureEnds.Reachable(h, end)) { met = true; break; }
-                if (met) continue;
-                // A valley viaduct's first, wherever it is on the road: it is the one a re-route can drop.
-                where = end.Meet;
-                if (c.ValleyJump) return c;
-                first = c;
-                break;
-            }
-        }
-        return first;
-    }
-
-    /// <summary>
-    /// The one owner's final check, on the road as BUILT (StructureEnds): the road this road plans together
+    /// The final check of a road's structures, on the road as BUILT: the road this road plans together
     /// with the network laid before it. Judging only the ends of this road's own planned pieces passed viaducts with road
     /// under their deck ends (another road, and the 3 m every bridge's road was painted in under its deck at the
     /// ground's height after the check), and a floor raised by a road's fill. The first
     /// crossing on the road that fails, with where and why, or null:
     /// <list type="bullet">
-    /// <item>an end a player cannot walk onto from the road (UnreachableEnd);</item>
     /// <item>road under its deck (StructureEnds.UnderTheDeck), this road's or the network's;</item>
     /// <item>a valley viaduct under the floor over the finished ground (UnderTheFloor).</item>
     /// </list>
@@ -2379,12 +3894,6 @@ public static partial class RoadNetworkGenerator
         RoadCrossing? first = null;
         why = "";
         where = default;
-        if (UnreachableEnd(plans, crossings, out Vector2 end) is RoadCrossing unmet)
-        {
-            where = end; why = "an end the road does not meet";
-            if (unmet.ValleyJump) return unmet;
-            first = unmet;
-        }
         foreach (RoadCrossing c in crossings)
         {
             if (!MeetsTheRoad(c) || c.Shared || (first != null && !c.ValleyJump)) continue;
@@ -2411,12 +3920,17 @@ public static partial class RoadNetworkGenerator
     internal static string? UnderALaidDeck(List<RoadSpatialGrid.PlannedPath> plans, out Vector2 at)
     {
         at = default;
-        List<(StructureEnds.End near, StructureEnds.End far, float deck, Vector2 centre, float reach)> decks;
+        List<(StructureEnds.End near, StructureEnds.End far, float deck, Vector2 centre, float reach, byte island)> decks;
         lock (m_laidDecks) { if (m_laidDecks.Count == 0) return null; decks = new(m_laidDecks); }
+        int me = CrossIslandReads.Me;
         foreach (var d in decks)
             foreach (var (p, h, w) in PlanPointsNear(plans, d.centre, d.reach))
                 if (StructureEnds.UnderTheDeck(p, h, w, d.near, d.far, d.deck, DvergrViaduct.HalfWidth))
-                { at = p; return "passes under a viaduct's deck"; }
+                {
+                    // Another island's viaduct is not this island's network (CrossIslandReads).
+                    if (!CrossIslandReads.Sees(me, d.island)) { CrossIslandReads.Skipped(CrossIslandReads.Kind.Viaducts, d.island, p); break; }
+                    at = p; return "passes under a viaduct's deck";
+                }
         return null;
     }
 
@@ -2428,8 +3942,32 @@ public static partial class RoadNetworkGenerator
                 if ((plan.Points[i] - at).sqrMagnitude <= r2) yield return (plan.Points[i], plan.Heights[i], plan.Width);
     }
 
+    /// <summary>
+    /// What later roads keep clear of, for each viaduct a road laid (a shared one is the other road's): its ends and
+    /// clearance (DvergrViaduct.MarkLaid), its deck (<see cref="UnderALaidDeck"/>) and, for a valley's, the cells under it
+    /// (DvergrViaduct.MarkStanding). A generated road and a manual one alike.
+    /// </summary>
+    private static void KeepClearOfViaducts(IEnumerable<RoadCrossing> crossings, string? label)
+    {
+        foreach (var c in crossings)
+            if (!c.Shared && IsViaduct(c))
+            {
+                DvergrViaduct.MarkLaid(c);
+                var (near, far) = DvergrViaduct.Ends(c, GenerationWorld);
+                lock (m_laidDecks) m_laidDecks.Add((near, far, DvergrViaduct.DeckHeight(c, GenerationWorld), c.Center, c.Width * 0.5f + DvergrViaduct.HalfWidth + 4f, CrossIslandReads.Tag));
+                IslandNetworkChanged();
+            }
+        foreach (var c in crossings)
+        {
+            if (!c.ValleyJump || c.Shared) continue;
+            DvergrViaduct.MarkStanding(c);
+            System.Threading.Interlocked.Increment(ref m_viaductsLaid);
+            if (RoadsLog) Log.LogInfo($"[VIADUCT] road {label ?? "(unlabelled)"}: {DvergrViaduct.Describe(c, GenerationWorld)}");
+        }
+    }
+
     /// <summary>The viaducts laid this generation, their ends and deck, for <see cref="UnderALaidDeck"/>.</summary>
-    private static readonly List<(StructureEnds.End near, StructureEnds.End far, float deck, Vector2 centre, float reach)> m_laidDecks = new();
+    private static readonly List<(StructureEnds.End near, StructureEnds.End far, float deck, Vector2 centre, float reach, byte island)> m_laidDecks = new();
 
     /// <summary>A valley viaduct on the road whose tallest pier over the finished ground (the road built under it, this
     /// road's plans and the network so far) is under the floor (DvergrViaduct.MinViaductPier), or null.</summary>
@@ -2443,18 +3981,29 @@ public static partial class RoadNetworkGenerator
         return null;
     }
 
-    private static int m_viaductFeetPut, m_viaductFeetUnmet, m_viaductsRefusedAtEnds, m_bridgeEndsUnmet;
-    /// <summary>Road searches made again without a valley viaduct whose end the road did not meet (or refused with it).</summary>
+    private static int m_viaductsRefusedAtEnds, m_crossingsUnmetSearchedRound, m_bridgeEndsUnmet, m_endEarthworks, m_endPads, m_endShared, m_endStands, m_endSteps, m_endFlat, m_endOneStep, m_endMoreSteps;
+    /// <summary>Structure ends laid the road leaves from their landing pad, off their line (StructureEnds.PadLength).</summary>
+    public static int EndPads => m_endPads;
+    /// <summary>Structure ends laid on a landing shared with the facing end of the next structure (StructureEnds.Share).</summary>
+    public static int EndShared => m_endShared;
+    /// <summary>Structure ends laid where the road's last point stands, no point of it clear of the end
+    /// (StructureEnds.Approach).</summary>
+    public static int EndStands => m_endStands;
+    /// <summary>Stair steps laid at structure ends.</summary>
+    public static int EndSteps => m_endSteps;
+    /// <summary>Structure ends laid with no stairs, with one step, and with more.</summary>
+    public static (int none, int one, int more) EndsBySteps => (m_endFlat, m_endOneStep, m_endMoreSteps);
+    /// <summary>Structure ends laid met by earthwork (StructureEnds.MeetEnds): their landing filled over ground under the
+    /// road's floor.</summary>
+    public static int EndEarthworks => m_endEarthworks;
+    /// <summary>Road searches made again without a valley viaduct the built road did not allow (or refused with it).</summary>
     public static int ViaductsRefusedAtEnds => m_viaductsRefusedAtEnds;
-    /// <summary>River bridge ends the road as built does not meet (their kit stands).</summary>
+    /// <summary>Road searches made again round a crossing with an end no way of meeting reaches (StructureEnds.MeetEnds).</summary>
+    public static int CrossingsUnmetSearchedRound => m_crossingsUnmetSearchedRound;
+    /// <summary>Road attempts refused with a crossing with an end no way of meeting reaches, its searches round it spent.</summary>
     public static int BridgeEndsUnmet => m_bridgeEndsUnmet;
-    /// <summary>Searches again without a viaduct, past the staircase retries.</summary>
-    internal const int ViaductRetries = 3;
-    /// <summary>Structure end stairs whose foot the road was turned onto after its search (StructureEnds.MeetTheRoad: it
-    /// came at them off their line), and ends whose foot it could not be made to meet. Counted per road attempt, built
-    /// or not.</summary>
-    public static int ViaductFeetPut => m_viaductFeetPut;
-    public static int ViaductFeetUnmet => m_viaductFeetUnmet;
+    /// <summary>Searches again round a crossing, past the staircase retries.</summary>
+    internal const int CrossingRetries = 3;
     /// <summary>Told of every road piece a generated road stores, with the road's label: for offline maps and the
     /// viaduct tests. Called from island workers.</summary>
     public static Action<RoadSpatialGrid.PlannedPath, string?>? PieceCommitted;
@@ -2473,9 +4022,12 @@ public static partial class RoadNetworkGenerator
     /// <summary>A staircase's end this far or further from the junction its road ends at is met by road laid to it.</summary>
     internal const float StairEndReach = 0.75f;
 
+    /// <param name="approaches">Whether an approach staircase may be laid up from the road's own start, and its end
+    /// (SiteApproaches): those ends, as every staircase's foot the road is held at, are where a staircase starts
+    /// (RoadSpatialGrid.StairStarts).</param>
     private static List<RoadSpatialGrid.PlannedPath>? PlanPieces(
         List<Vector2> path, List<RoadCrossing> crossings, float width, float? startGround, float? endGround,
-        List<RoadStairSpan>? stairs = null)
+        List<RoadStairSpan>? stairs = null, (bool start, bool end) approaches = default)
     {
         // Every piece is worked out before any of it is stored. A piece can be
         // refused - too steep to build - and a road stored up to the river it
@@ -2484,29 +4036,50 @@ public static partial class RoadNetworkGenerator
         // meet a place, and the ends of a staircase, which the road meets level.
         var pieces = new List<(List<Vector2> points, bool followTerrain, float minHeight, float? startHeight, float? endHeight)>();
         var between = new List<(List<Vector2> points, float from, float to, RoadCrossing? fromCrossing, RoadCrossing? toCrossing)>();
-        // A stretch of road to or from a structure's end is planned as two pieces, split at the apron's far end: the road up
-        // to it, held there at the meeting height, and the apron itself, level (the stairs' rule: the road runs to
-        // the structure at its height). One piece, the grade limiter spread the climb to a rim into the apron and tilted it
-        // (most viaduct ends a little off level, seven a step or more).
-        void AddLand(List<Vector2> land, float? startH, float? endH, StructureEnds.End? startEnd, StructureEnds.End? endEnd)
+        // A stretch of road to or from a structure's end is planned as two pieces, split where its levelled stretch starts
+        // (StructureEnds.ApronLength along the road from the foot, the joining piece beyond it): the road up to it, held there
+        // at the meeting height, and the levelled stretch itself (the stairs' rule: the road runs to the structure at its
+        // height). One piece, the grade limiter spread the climb to a rim into the apron and tilted it (most viaduct ends a
+        // little off level, seven a step or more).
+        void AddLand(List<Vector2> land, float? startH, float? endH, bool startEnd, bool endEnd)
         {
             float landFloor = LandFloor;
-            int last = land.Count - 1;
-            int i0 = startEnd is StructureEnds.End se && startH.HasValue ? land.FindIndex(q => (q - se.Apron).sqrMagnitude < 0.09f) : -1;
-            int i1 = endEnd is StructureEnds.End ee && endH.HasValue ? land.FindLastIndex(q => (q - ee.Apron).sqrMagnitude < 0.09f) : -1;
-            int from = 0, to = last;
+            int i0 = startEnd && startH.HasValue ? SplitAt(land, fromEnd: false) : -1;
+            int i1 = endEnd && endH.HasValue ? SplitAt(land, fromEnd: true) : -1;
+            if (i0 >= 0 && i1 >= 0 && i1 <= i0) i0 = i1 = -1;
+            int last = land.Count - 1, from = 0, to = last;
             if (i0 > 0 && i0 < last) { pieces.Add((land.GetRange(0, i0 + 1), false, landFloor, startH, startH)); from = i0; }
             bool levelTail = i1 > from && i1 < last;
             if (levelTail) to = i1;
             if (to > from) pieces.Add((land.GetRange(from, to - from + 1), false, landFloor, startH, endH));
             if (levelTail) pieces.Add((land.GetRange(i1, last - i1 + 1), false, landFloor, endH, endH));
         }
+        // The index in land of the point StructureEnds.ApronLength + JoinOverlap along it from its start or end, put in where
+        // no point stands within 0.3 m of it; -1 where the land is no longer.
+        static int SplitAt(List<Vector2> land, bool fromEnd)
+        {
+            float want = StructureEnds.ApronLength + StructureEnds.JoinOverlap, along = 0f;
+            for (int n = 1; n < land.Count; n++)
+            {
+                int a = fromEnd ? land.Count - n : n - 1, b = fromEnd ? a - 1 : a + 1;
+                float run = Vector2.Distance(land[a], land[b]);
+                if (along + run < want - 0.3f) { along += run; continue; }
+                if (along + run <= want + 0.3f) return b;
+                Vector2 at = Vector2.Lerp(land[a], land[b], (want - along) / run);
+                int insert = fromEnd ? a : b;
+                land.Insert(insert, at);
+                return insert;
+            }
+            return -1;
+        }
         LastStubBetween = null;
 
-        // What the road is cut at, in path order: river crossings and staircases.
+        // What the road is cut at, in path order: river crossings and staircases. Every crossing's ends are the one owner's
+        // (StructureEnds.MeetEnds), which brought the path to them: a structure's at its crossing's FromIndex and ToIndex,
+        // where the road ends at the end's foot at its height, its last ApronLength levelled to it
+        // (RoadSpatialGrid.LevelledEnds), and runs on under the joining piece (StructureEnds.JoinOverlap), unpainted; a
+        // crossing that is road at its banks.
         var gaps = new List<(int from, int to, Vector2 fromPoint, Vector2 toPoint, Vector2? fromLand, Vector2? toLand, float? fromHeight, float? toHeight, RoadCrossing? crossing)>();
-        // A bridge end the one owner meets (StructureEnds): the road ends at its meeting point (the stairs' foot, or the
-        // deck's edge) at its height, its last ApronLength levelled to it (RoadSpatialGrid.LevelledEnds).
         var levelled = new List<(Vector2 at, float height)>();
         var ups = new Dictionary<RoadCrossing, (StructureEnds.End near, StructureEnds.End far)>();
         foreach (RoadCrossing c in crossings)
@@ -2519,50 +4092,7 @@ public static partial class RoadNetworkGenerator
                 levelled.Add((far.Joint, far.MeetHeight));
                 gaps.Add((c.FromIndex, c.ToIndex, near.Meet, far.Meet, null, null, near.MeetHeight, far.MeetHeight, c));
             }
-            else gaps.Add((c.FromIndex, c.ToIndex, c.FromBank, c.ToBank, c.FromLand, c.ToLand, null, null, c));
-        }
-        // The road's last ApronLength to a meeting point is laid on the structure's line, whichever way the road came:
-        // points every half apron, held (HeldPoints) like the two ends, so its curve cannot bow off the line. The road is
-        // cut back to its last point outside the apron and turned onto the line from there (the stairs' rule: the road
-        // runs onto the structure's line).
-        var apronPoints = new List<Vector2>();
-        void AlongTheApron(List<Vector2> land, StructureEnds.End end, bool atEnd)
-        {
-            if (land.Count == 0) return;
-            if (!atEnd) land.Reverse();   // worked at the end, the meeting point last
-            Vector2 outward = -end.Up, across = new(-outward.y, outward.x);
-            float Out(Vector2 p) => Vector2.Dot(p - end.Meet, outward);
-            float further = StructureEnds.ApronLength * 1.5f;
-            bool OnLine(Vector2 p) => Mathf.Abs(Vector2.Dot(p - end.Meet, across)) <= 1f;
-            // The road is kept from half an apron past the apron's far end out, and turned onto the line there, so the
-            // bend's rounding stays outside the apron.
-            bool Clear(Vector2 p) => Out(p) >= further + 1f;
-            int k = land.Count;
-            while (k > 1 && !Clear(land[k - 1])) k--;
-            // What the road had from there on is replaced by the apron; its first point (where it starts: a resumed
-            // structure's end, or the road's own end) is always kept.
-            float from = Clear(land[k - 1]) ? further : Mathf.Max(0f, Out(land[k - 1]) - 0.5f);
-            land.RemoveRange(k, land.Count - k);
-            var on = new List<Vector2>();
-            if (from >= further && !OnLine(land[k - 1])) on.Add(end.Meet + outward * further);
-            for (float d = StructureEnds.ApronLength; d > 0.25f; d -= StructureEnds.ApronLength * 0.5f)
-                if (d < from - 0.25f) on.Add(end.Meet + outward * d);
-            land.AddRange(on);
-            apronPoints.AddRange(on);
-            if (!atEnd) land.Reverse();
-        }
-        // What lies past a meeting point, toward its structure (between the foot and the deck, under the flight), is not road.
-        // Where that is all the road there is (it ends under the flight), it is left as it was, ending at the bank: that end
-        // is not met (UnreachableEnd).
-        static bool TrimPast(List<Vector2> land, Vector2 meet, Vector2 up, bool atEnd)
-        {
-            int keep = land.Count;
-            if (atEnd) while (keep > 0 && Vector2.Dot(land[keep - 1] - meet, up) > -0.25f) keep--;
-            else { int k = 0; while (k < land.Count && Vector2.Dot(land[k] - meet, up) > -0.25f) k++; keep = land.Count - k; }
-            if (keep == 0 && land.Count > 0) return false;
-            if (atEnd) land.RemoveRange(keep, land.Count - keep);
-            else land.RemoveRange(0, land.Count - keep);
-            return true;
+            else gaps.Add((c.FromIndex, c.ToIndex, c.FromEnd?.Meet ?? c.FromBank, c.ToEnd?.Meet ?? c.ToBank, c.FromLand, c.ToLand, null, null, c));
         }
         if (stairs != null)
             foreach (RoadStairSpan st in stairs)
@@ -2578,7 +4108,7 @@ public static partial class RoadNetworkGenerator
         else
         {
             int cursor = 0;
-            Vector2? resumeAt = null, resumeLand = null, resumeUp = null, resumeBank = null, resumeJoint = null;
+            Vector2? resumeAt = null, resumeLand = null, resumeJoint = null;
             // What a piece runs from and to, where both are structures (a staircase, or a bridge end the owner meets).
             RoadCrossing? resumeCrossing = null;
             StructureEnds.End? resumeEnd = null;
@@ -2601,28 +4131,21 @@ public static partial class RoadNetworkGenerator
                 List<Vector2> land = gap.from > cursor
                     ? path.GetRange(cursor, gap.from - cursor + 1)
                     : new List<Vector2>();
+                // A staircase starts at its own first point, not at the path point it was laid from: that point is dropped
+                // where it is still the stretch's last (never a meeting point or apron the stretch was brought to).
+                Vector2? stepFrom = gap.crossing == null && gap.from > cursor ? path[gap.from] : null;
                 if (resumeLand.HasValue && (land.Count == 0 || Vector2.Distance(resumeLand.Value, land[0]) > 0.5f))
                     land.Insert(0, resumeLand.Value);
                 if (resumeOnStair && land.Count > 1) land.RemoveAt(0);
-                if (resumeUp is Vector2 rUp && resumeAt is Vector2 rAt)
-                {
-                    if (!TrimPast(land, rAt, rUp, atEnd: false)) { resumeAt = resumeBank; resumeHeight = null; resumeJoint = null; }
-                    else if (resumeEnd is StructureEnds.End re) AlongTheApron(land, re, atEnd: false);
-                }
                 if (resumeAt.HasValue && (land.Count == 0 || Vector2.Distance(resumeAt.Value, land[0]) > 0.5f))
                     land.Insert(0, resumeAt.Value);
                 if (resumeJoint is Vector2 rj) land.Insert(0, rj);
                 // A deck end walked in off land: the road runs on over the strip.
                 if (gap.fromLand is Vector2 fromLand && land.Count > 0 && Vector2.Distance(fromLand, land[land.Count - 1]) > 0.5f)
                     land.Add(fromLand);
-                if (gap.crossing == null && land.Count > 1) land.RemoveAt(land.Count - 1);
+                if (stepFrom is Vector2 sf && land.Count > 1 && land[land.Count - 1] == sf) land.RemoveAt(land.Count - 1);
                 Vector2 endAt = gap.fromPoint;
                 float? endHeight = gap.fromHeight;
-                if (gap.crossing != null && ups.TryGetValue(gap.crossing, out var meetEnds))
-                {
-                    if (!TrimPast(land, gap.fromPoint, meetEnds.near.Up, atEnd: true)) { endAt = gap.crossing.FromBank; endHeight = null; }
-                    else AlongTheApron(land, meetEnds.near, atEnd: true);
-                }
                 if (land.Count > 0 && Vector2.Distance(endAt, land[land.Count - 1]) > 0.5f)
                     land.Add(endAt);
                 // On under the joining piece (StructureEnds.JoinOverlap): the road ends under the deck's end module or the
@@ -2634,8 +4157,7 @@ public static partial class RoadNetworkGenerator
                     RoadCrossing? toCrossing = gap.crossing != null && ups.ContainsKey(gap.crossing) ? gap.crossing : null;
                     if (resumeHeight.HasValue && endHeight.HasValue)
                         between.Add((land, resumeHeight.Value, endHeight.Value, resumeCrossing, toCrossing));
-                    AddLand(land, resumeHeight, endHeight, resumeJoint.HasValue ? resumeEnd : null,
-                        toCrossing != null && endHeight.HasValue && ups.TryGetValue(toCrossing, out var splitEnds) ? splitEnds.near : null);
+                    AddLand(land, resumeHeight, endHeight, resumeJoint.HasValue, toCrossing != null);
                 }
 
                 // A bridge or a spanned ford is left to its pieces: nothing is
@@ -2644,16 +4166,16 @@ public static partial class RoadNetworkGenerator
                 RoadCrossing? crossing = gap.crossing;
                 if (crossing != null && crossing.Kind == CrossingKind.Ford && crossing.Style != FordStyle.Span && !crossing.Shared)
                 {
-                    List<Vector2> ford = new() { crossing.FromBank };
+                    List<Vector2> ford = new() { gap.fromPoint };
                     for (int k = Mathf.Max(crossing.FromIndex + 1, cursor + 1); k < crossing.ToIndex; k++)
                         ford.Add(path[k]);
-                    ford.Add(crossing.ToBank);
+                    ford.Add(gap.toPoint);
                     if (ford.Count >= 2)
                         pieces.Add(crossing.Style == FordStyle.Wade
                             ? (crossing.Shallow
                                 ? (ford, false, RoadConstants.SeaLevel - RoadCrossingDetector.ShallowWadeCover, null, null) // built up to wading depth
                                 : (ford, true, float.NegativeInfinity, null, null))
-                            : (ford, false, crossing.Shallow ? RoadConstants.DryRoadFloor : RoadPathfinder.LandingFloor, null, null));
+                            : (ford, false, crossing.Shallow ? RoadConstants.DryRoadFloor : RoadWater.LandingFloor, null, null));
                 }
 
                 resumeAt = gap.toPoint;
@@ -2661,8 +4183,6 @@ public static partial class RoadNetworkGenerator
                 resumeHeight = gap.toHeight;
                 resumeCrossing = gap.crossing != null && ups.ContainsKey(gap.crossing) ? gap.crossing : null;
                 resumeOnStair = gap.crossing == null;
-                resumeUp = gap.crossing != null && ups.TryGetValue(gap.crossing, out var resumeEnds) ? resumeEnds.far.Up : null;
-                resumeBank = gap.crossing?.ToBank;
                 resumeEnd = gap.crossing != null && ups.TryGetValue(gap.crossing, out var farEnds) ? farEnds.far : null;
                 resumeJoint = resumeEnd?.Joint;
                 cursor = gap.to;
@@ -2681,37 +4201,34 @@ public static partial class RoadNetworkGenerator
                 && RoadSpatialGrid.TryGetRoadHeightWithin(tail[0], RoadSnap, out _))
                 endsOnStair = false;
             if (resumeOnStair && tail.Count > 1) tail.RemoveAt(0);
-            if (resumeUp is Vector2 tUp && resumeAt is Vector2 tAt)
-            {
-                if (!TrimPast(tail, tAt, tUp, atEnd: false)) { resumeAt = resumeBank; resumeHeight = null; resumeJoint = null; }
-                else if (resumeEnd is StructureEnds.End te) AlongTheApron(tail, te, atEnd: false);
-            }
             if (resumeLand.HasValue && Vector2.Distance(resumeLand.Value, tail[0]) > 0.5f)
                 tail.Insert(0, resumeLand.Value);
             if (resumeAt.HasValue && Vector2.Distance(resumeAt.Value, tail[0]) > 0.5f)
                 tail.Insert(0, resumeAt.Value);
             if (resumeJoint is Vector2 tj) tail.Insert(0, tj);
             if (tail.Count >= 2 && !endsOnStair)
-                AddLand(tail, resumeHeight, null, resumeJoint.HasValue ? resumeEnd : null, null);
+                AddLand(tail, resumeHeight, null, resumeJoint.HasValue, false);
         }
 
         if (pieces.Count == 0)
             return null;
 
-        // Between two structures (a viaduct's end and a staircase, or two staircases), no stub of road. A stretch shorter
-        // than StructureEnds.StubLength is one level landing at the joining height: within a
-        // step (StepTolerance) of both it is that; further apart, the viaduct is not built with this road, which is searched
-        // again without it (GenerateRoadCore). Two staircases of one road keep their own meeting (StairChain).
+        // Between two structures (a crossing's end and a staircase, or two crossings' ends), no stub of road. A stretch
+        // shorter than StructureEnds.StubLength is one level landing at the joining height: within a step (StepTolerance) of
+        // both it is that; further apart the road is not planned so (the stretch is levelled to the crossing's end all the
+        // way, and a staircase's foot is always at the road's height where it starts). A crossing this road builds is not
+        // built with it, and the road is searched again without it (GenerateRoadCore); another road's is met as it stands.
+        // Two staircases of one road keep their own meeting (StairChain).
         foreach (var (points, fromH, toH, from, to) in between)
         {
-            RoadCrossing? viaduct = from != null && from.ValleyJump && !from.Shared ? from : to != null && to.ValleyJump && !to.Shared ? to : null;
-            // A river viaduct's kit is its crossing's (it stands whatever the road does), and a shared one is its first road's.
-            if (viaduct == null) continue;
+            RoadCrossing? structure = from ?? to;
+            if (structure == null) continue;
             if (StructureEnds.IsStub(points, fromH, toH) is string stub)
             {
                 RoadSpatialGrid.LastRefusal = "a stub of road between two structures";
-                LastStubBetween = viaduct;
-                if (RoadsLog) Log.LogDebug(FormattableString.Invariant($"[VIADUCT] {stub} at ({points[0].x:F1}, {points[0].y:F1}); the viaduct {viaduct.FromBank} -> {viaduct.ToBank} is not built with this road"));
+                RoadCrossing? own = from != null && !from.Shared ? from : to != null && !to.Shared ? to : null;
+                LastStubBetween = own;
+                if (RoadsLog) Log.LogDebug(FormattableString.Invariant($"[BRIDGES] {stub} at ({points[0].x:F1}, {points[0].y:F1}); the crossing {structure.FromBank} -> {structure.ToBank} {(own != null ? "is not built with this road" : "stands: the road is refused")}"));
                 return null;
             }
         }
@@ -2721,26 +4238,47 @@ public static partial class RoadNetworkGenerator
         // the end of a staircase, which the road meets at the stair's height.
         var plans = new List<RoadSpatialGrid.PlannedPath>(pieces.Count);
         System.Func<Vector2, float>? ground = StripGround(crossings, width);
-        // The meeting points and apron ends of the bridges' ends, which the road was put through (StructureEnds.MeetTheRoad),
-        // stay on it; and its last ApronLength to each is levelled to it.
+        // Each structure's end the road was brought to (StructureEnds.MeetEnds) stays on it: the point under its joining
+        // piece, its foot and its apron, on its line; and its last ApronLength to each is levelled to it.
         List<Vector2>? feet = null;
+        var ends = new List<StructureEnds.End>();
         foreach (var (near, far) in ups.Values)
             foreach (StructureEnds.End end in new[] { near, far })
-                (feet ??= new List<Vector2>()).AddRange(new[] { end.Joint, end.Meet, end.Apron });
-        if (apronPoints.Count > 0) (feet ??= new List<Vector2>()).AddRange(apronPoints);
+            {
+                (feet ??= new List<Vector2>()).AddRange(new[] { end.Joint, end.Meet, end.Meet - end.Up * StructureEnds.PadTurn, end.Meet - end.Up * (StructureEnds.ApronLength * 0.5f), end.Apron });
+                ends.Add(end);
+            }
         RoadSpatialGrid.HeldPoints = feet;
         RoadSpatialGrid.LevelledEnds = levelled.Count > 0 ? levelled : null;
+        // Where a staircase starts: each staircase's foot (its lower end), which a piece is held at.
+        var stairFeet = new List<Vector2>();
+        if (stairs != null)
+            foreach (RoadStairSpan st in stairs) stairFeet.Add(st.FromHeight <= st.ToHeight ? st.FromPoint : st.ToPoint);
+        bool AtAFoot(Vector2 p) => stairFeet.Exists(f => (f - p).sqrMagnitude < 0.25f);
         try
         {
             for (int i = 0; i < pieces.Count; i++)
             {
+                // The road's own ends held at a place's ground end on a level landing (RoadSpatialGrid.PlaceEnds).
+                RoadSpatialGrid.PlaceEnds = (i == 0 && pieces[i].startHeight == null && startGround.HasValue,
+                    i == pieces.Count - 1 && pieces[i].endHeight == null && endGround.HasValue);
+                // And so does an end held at a staircase's foot, where the landing fits (else within the cap into it); there, and
+                // at an end an approach may start from, no tight switchback narrows the road (RoadSpatialGrid.StairStarts).
+                var points = pieces[i].points;
+                RoadSpatialGrid.StairStarts = (
+                    pieces[i].startHeight != null && AtAFoot(points[0]) || i == 0 && pieces[i].startHeight == null && approaches.start,
+                    pieces[i].endHeight != null && AtAFoot(points[points.Count - 1]) || i == pieces.Count - 1 && pieces[i].endHeight == null && approaches.end);
                 RoadSpatialGrid.PlannedPath? plan = RoadSpatialGrid.PlanRoadPath(
                     pieces[i].points, width, GenerationWorld,
                     pieces[i].startHeight ?? (i == 0 ? startGround : null),
                     pieces[i].endHeight ?? (i == pieces.Count - 1 ? endGround : null),
                     pieces[i].followTerrain, pieces[i].minHeight, ground);
+                RoadSpatialGrid.PlaceEnds = default;
+                RoadSpatialGrid.StairStarts = default;
                 if (plan == null)
                     return null;
+                // Past a structure's end (its stairs' foot, or its deck's edge) the road is levelled under it but not painted.
+                plan.Unpainted = StructureEnds.Unpainted(plan.Points, ends, width * 0.5f);
                 plans.Add(plan);
             }
         }
@@ -2748,15 +4286,18 @@ public static partial class RoadNetworkGenerator
         {
             RoadSpatialGrid.HeldPoints = null;
             RoadSpatialGrid.LevelledEnds = null;
+            RoadSpatialGrid.PlaceEnds = default;
+            RoadSpatialGrid.StairStarts = default;
         }
 
         return plans;
     }
 
     /// <summary>
-    /// The network's staircases settled on the ground the terrain writer will leave (natural, the roads' earthwork and
-    /// the staircases' cuts): columns carried down where it lies lower than their layout read, then pieces wholly under
-    /// it not placed, which the game breaks once it weighs them and drops their resources (<see cref="BuriedPieces"/>).
+    /// The network's staircases settled on the ground the terrain writer will leave (natural, a placed place's own
+    /// levelling, the roads' earthwork and the staircases' cuts): columns carried down where it lies lower than their layout
+    /// read, then pieces wholly under it not placed, which the game breaks once it weighs them and drops their resources
+    /// (<see cref="BuriedPieces"/>).
     /// Once, after every island is built.
     /// </summary>
     private static void DropBuriedPieces()
@@ -2764,10 +4305,268 @@ public static partial class RoadNetworkGenerator
         WorldGenerator? world = WorldGenerator.instance;
         if (world == null || StairStructures.Runs.Count == 0) return;
         var byPrefab = RoadsLog ? new SortedDictionary<string, int>(StringComparer.Ordinal) : null;
-        var (carried, dropped) = StairStructures.SettleOnFinishedGround(StructureGround.Vertices(world), byPrefab);
+        int dropped = StairStructures.SettleOnFinishedGround(StructureGround.Vertices(world), byPrefab);
         if (byPrefab != null)
-            Log.LogInfo($"  Staircases on the finished ground: {carried} pillar(s) carried down under earthwork; pieces wholly under it, not placed: {dropped}" +
+            Log.LogInfo($"  Staircases on the finished ground: pieces wholly under it, not placed: {dropped}; pieces the search left with nothing within reach to hold them: {StairLayout.SupportRefusals}" +
                 (byPrefab.Count == 0 ? "" : " (" + string.Join(", ", byPrefab.Select(kv => $"{kv.Value} {kv.Key}")) + ")"));
+    }
+
+    /// <summary>
+    /// The road from <paramref name="path"/>'s end at a place placed before its roads onto the place's
+    /// landing, on its placed ground: a road where one gets there (<see cref="RoadSiteEntry"/>), else, in the Mountains
+    /// or at a boss's entrance (<see cref="ApproachStairsAt"/>), a staircase (<see cref="RoadStairRuns.PlanPlacedSiteApproach"/>), carried on from the top row of the
+    /// staircase the road ends on where it ends on one. False, with <paramref name="why"/>, where neither does.
+    /// <paramref name="farGround"/>: the ground the road's other end was planned to meet (PlanFromPath).
+    /// </summary>
+    internal static bool PlanEntry(PlacedSite site, bool atStart, List<Vector2> path, List<RoadSpatialGrid.PlannedPath> plans,
+        List<RoadStairSpan> stairs, List<RoadCrossing> crossings, float width, out RoadSpatialGrid.PlannedPath? road, out RoadStairSpan? span, out string why,
+        float? farGround = null)
+    {
+        why = "";
+        long began = SearchStats.Enabled ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+        int tries = 0;
+        try
+        {
+        // From the road's end, else from further back along its last stretch with the road cut there: the
+        // way onto the landing then has more length to climb, and a staircase from there takes the road's
+        // place instead of running beside it. From its end alone, 111 roads were refused at their
+        // landings, "grade: ends too far apart for the cap" and "stairs: on its road" (5568,3904: 29 times).
+        // The way onto the landing is part of the road: it may not cross another road nor run beside one at its height
+        // either (MeetingRefusal), and is planned again (as a staircase where a road onto it fails, from further back) where
+        // it does. A road that fails on its own is left to the road's own check, which names it. A staircase is held off the
+        // road's own earlier stretch too (EntryMeetingRefusal): one that doubles back to end beside it at its height is
+        // refused, and is laid from further back along the road, where the road is already at that height.
+        bool checkMeeting = MeetingRefusal(plans, out _) == null;
+        // The road's own line is built once for every candidate from the same road (OwnRoadOf), when one is first asked.
+        Func<RoadSpatialGrid.PlannedPath?, RoadStairSpan?, string?> MeetsFrom(List<RoadSpatialGrid.PlannedPath> withPlans, Vector2 end)
+        {
+            var own = new Lazy<OwnRoad?>(() => OwnRoadOf(withPlans, atStart), false);
+            return (entryRoad, entryStairs) => EntryMeetingRefusal(atStart, withPlans, end, entryRoad, entryStairs, checkMeeting, own);
+        }
+        // A start refused because the road to its foot is built as a ridge or a trench (RoadStairRuns.RidgeToFoot).
+        bool ridged = false;
+        foreach (float back in EntryCutBacks)
+        {
+            List<Vector2> p = path;
+            RoadSpatialGrid.PlannedPath piece = atStart ? plans[0] : plans[plans.Count - 1];
+            int shift = 0;
+            if (back > 0f && !CutBack(atStart, back, path, piece, stairs, crossings, out p, out piece, out shift)) break;
+            var cutPlans = new List<RoadSpatialGrid.PlannedPath>(plans);
+            cutPlans[atStart ? 0 : plans.Count - 1] = piece;
+            tries++;
+            Vector2 end = p[atStart ? 0 : p.Count - 1];
+            if (!PlanEntryFrom(site, atStart, p, cutPlans, stairs, width, shift, MeetsFrom(cutPlans, end), out road, out span, out string whyHere))
+            {
+                if (back == 0f) why = whyHere;
+                ridged |= whyHere.Contains(RoadStairRuns.RidgeToFootRefusal);
+                continue;
+            }
+            if (back > 0f)
+            {
+                ApplyCutBack(atStart, path, p, plans, piece, stairs, crossings, shift);
+                if (RoadsLog) m_siteApproaches.AddOrUpdate(FormattableString.Invariant($"placed first: onto its landing from {back:F0} m back along its road"), 1, (_, c) => c + 1);
+            }
+            why = "";
+            return true;
+        }
+        // The road to the foot built as a ridge or a trench: the staircase starts lower, from where the road climbs to it on
+        // its ground, the road's heights planned again to meet the ground there (EntryFromLower), as a road staircase's foot
+        // is started lower (RoadStairRuns.StartLower).
+        if (ridged)
+        {
+            tries++;
+            string lower = EntryFromLower(site, atStart, path, plans, stairs, crossings, width, farGround, MeetsFrom, out road, out span);
+            if (lower == "") { why = ""; return true; }
+            why += "; from lower: " + lower;
+        }
+        road = null;
+        span = null;
+        why += FormattableString.Invariant($" (also from up to {EntryCutBacks[EntryCutBacks.Length - 1]:F0} m back along the road)");
+        return false;
+        }
+        finally { if (SearchStats.Enabled) SearchStats.Record(SearchStats.LandingEntry, why == "", false, tries, began); }
+    }
+
+    /// <summary>The ground a placed place's road is judged on (RoadStairRuns.RidgeToFoot, LowerEnd): the place's placed ground,
+    /// the natural ground past its grid.</summary>
+    private static Func<Vector2, float> PlacedGround(PlacedSite site) =>
+        q => site.Ground(q.x, q.y) is float h && h < PlacedSiteGround.OffGrid ? h : NaturalGround(q);
+
+    /// <summary>
+    /// The way onto a placed place's landing from lower down the road, where the road to its end is built as a ridge or a
+    /// trench (RoadStairRuns.RidgeToFoot): the road's end moved back along it to the nearest point it climbs to on its ground
+    /// (RoadStairRuns.LowerEnd, within <see cref="PlacedSiteReach"/>), the road planned again to meet its ground there (its
+    /// other end to meet <paramref name="farGround"/>, as it was planned), and the way onto the landing laid from there; taken
+    /// (the path, its plans, and the staircases' and crossings' indices moved with it) where it is, its road within the
+    /// earthwork cap and held to no ridge. Why not, else "". The new end meets its own ground, not a target: a target holds the
+    /// end ramp toward it for its whole length (RoadEndpointRamp.BaseHeight), a level shelf on fill down the slope.
+    /// </summary>
+    private static string EntryFromLower(PlacedSite site, bool atStart, List<Vector2> path, List<RoadSpatialGrid.PlannedPath> plans,
+        List<RoadStairSpan> stairs, List<RoadCrossing> crossings, float width, float? farGround,
+        Func<List<RoadSpatialGrid.PlannedPath>, Vector2, Func<RoadSpatialGrid.PlannedPath?, RoadStairSpan?, string?>> meetsFrom,
+        out RoadSpatialGrid.PlannedPath? road, out RoadStairSpan? span)
+    {
+        road = null;
+        span = null;
+        // The structure nearest the end: the road is not cut back past it.
+        int structures = -1;
+        foreach (RoadStairSpan s in stairs) structures = atStart ? (structures < 0 ? s.FromIndex : Mathf.Min(structures, s.FromIndex)) : Mathf.Max(structures, s.ToIndex);
+        foreach (RoadCrossing c in crossings) structures = atStart ? (structures < 0 ? c.FromIndex : Mathf.Min(structures, c.FromIndex)) : Mathf.Max(structures, c.ToIndex);
+        Func<Vector2, float> ground = PlacedGround(site);
+        int j = RoadStairRuns.LowerEnd(path, atStart, structures, ground, PlacedSiteReach);
+        if (j < 0) return "no point back along the road it climbs to on its ground";
+        var lowPath = atStart ? path.GetRange(j, path.Count - j) : path.GetRange(0, j + 1);
+        int shift = atStart ? j : 0;
+        var lowCrossings = new List<RoadCrossing>(crossings);
+        void Shift(int by) { foreach (RoadStairSpan s in stairs) { s.FromIndex -= by; s.ToIndex -= by; } foreach (RoadCrossing c in crossings) { c.FromIndex -= by; c.ToIndex -= by; } }
+        Shift(shift);
+        List<RoadSpatialGrid.PlannedPath>? lowPlans = PlanRoadPathWithCrossings(lowPath, lowCrossings, width,
+            atStart ? null : farGround, atStart ? farGround : null, stairs);
+        Shift(-shift);
+        if (lowPlans == null) return "the road to it not planned: " + (RoadSpatialGrid.LastRefusal ?? "refused");
+        var none = new List<Vector2>();
+        if (PastTerrainLimit(lowPlans, EarthworkLimit, none) > 0 || HeldRidges(lowPlans, none) > 0)
+            return "the road to it past the earthwork cap or held on a ridge";
+        Vector2 end = lowPath[atStart ? 0 : lowPath.Count - 1];
+        if (!PlanEntryFrom(site, atStart, lowPath, lowPlans, stairs, width, shift, meetsFrom(lowPlans, end), out road, out span, out string why))
+            return why;
+        path.Clear(); path.AddRange(lowPath);
+        plans.Clear(); plans.AddRange(lowPlans);
+        Shift(shift);
+        crossings.Clear(); crossings.AddRange(lowCrossings);
+        System.Threading.Interlocked.Increment(ref RoadStairRuns.FeetStartedLower);
+        if (RoadsLog) m_siteApproaches.AddOrUpdate("placed first: onto its landing from lower down its road, off a ridge to its foot", 1, (_, c) => c + 1);
+        return "";
+    }
+
+    /// <summary>The road's planned pieces with the way onto a placed place's landing (a road, or a staircase's walked pieces)
+    /// on its end at the place, running from <paramref name="end"/>, the road's end, onto the landing: the road as it meets the
+    /// network (<see cref="MeetingRefusal"/>).</summary>
+    internal static List<RoadSpatialGrid.PlannedPath> WithEntry(bool atStart, List<RoadSpatialGrid.PlannedPath> plans, Vector2 end,
+        RoadSpatialGrid.PlannedPath? road, RoadStairSpan? span)
+    {
+        var points = new List<Vector2>();
+        var heights = new List<float>();
+        if (road != null) { points.AddRange(road.Points); heights.AddRange(road.Heights); }
+        else if (span != null)
+        {
+            // Its walk: the pieces are laid a row at a time, side by side across the width, so each row (consecutive
+            // walked pieces at one height) is one point at its middle, on its walking surface (RoadStairRuns.Surface).
+            var row = new List<StructurePiece>();
+            void EndRow()
+            {
+                if (row.Count == 0) return;
+                points.Add(new Vector2(row.Average(q => q.Position.x), row.Average(q => q.Position.z)));
+                heights.Add(RoadStairRuns.Surface(row[0]));
+                row.Clear();
+            }
+            foreach (StructurePiece piece in StairRun.FromPlan(span.FromPoint, span.ToPoint, RoadStairRuns.Width, span.Plan).Pieces)
+            {
+                if (piece.Kind != StructurePieceKind.StairStep && piece.Kind != StructurePieceKind.StairFloor) continue;
+                if (row.Count > 0 && (Mathf.Abs(piece.Position.y - row[0].Position.y) > 0.05f || piece.Kind != row[0].Kind
+                    || Vector2.Distance(new Vector2(piece.Position.x, piece.Position.z), new Vector2(row[0].Position.x, row[0].Position.z)) > RoadStairRuns.Width + 0.5f))
+                    EndRow();
+                row.Add(piece);
+            }
+            EndRow();
+        }
+        var all = new List<RoadSpatialGrid.PlannedPath>(plans);
+        if (points.Count == 0) return all;
+        // From the road's end onto the landing; before the road where the road starts at the place.
+        if ((points[0] - end).sqrMagnitude > (points[points.Count - 1] - end).sqrMagnitude) { points.Reverse(); heights.Reverse(); }
+        if (atStart) { points.Reverse(); heights.Reverse(); }
+        var entry = new RoadSpatialGrid.PlannedPath(points, heights, points.ConvertAll(_ => default(RoadPointDebugInfo)), RoadWidth, 0f, false);
+        if (atStart) all.Insert(0, entry); else all.Add(entry);
+        return all;
+    }
+
+    /// <summary>How far back along a road's last stretch the way onto a placed place's landing may start,
+    /// the road cut there, tried in turn (<see cref="PlanEntry"/>); the first is the road's own end. Settable for tests.</summary>
+    internal static float[] EntryCutBacks = { 0f, 12f, 24f };
+
+    /// <summary>The stair layout's allowance for a way onto a placed place's landing, per landing and start
+    /// tried: a road's staircase's (<see cref="RoadStairRuns.GenerationTotalExpansions"/>).</summary>
+    internal static int EntryTotalExpansions = RoadStairRuns.GenerationTotalExpansions, EntryStall = RoadStairRuns.GenerationStall;
+
+    /// <summary>Starts within a cell of this size (and a metre of height) lay the same staircase onto a landing.</summary>
+    private const float EntryStartCell = 2f;
+    /// <summary>How many starts' staircases onto one placed place's landing are laid out before no more are. Settable for tests.</summary>
+    internal static int EntryStairsPerPlace = 4;
+    /// <summary>Staircases onto placed places' landings laid out this generation (tests).</summary>
+    internal static int EntryStairLayouts;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), int> m_entryStairsTried = new();
+    /// <summary>Staircases onto placed places' landings that could not be laid, by place, start and height:
+    /// read and written by the island worker that owns the place (TryGetValue and the indexer only).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<((int, int) place, int x, int z, int h, bool onTop), string> m_entryStairsFailed = new();
+
+    /// <summary>How far from where a road ends a placed place's landing may be for the road to be carried on
+    /// onto it: from the ring round a Dvergr entrance (41 m out, its landing 24 m) anywhere but its back. A
+    /// landing facing the sea is reached along the shore from the side or behind (at -6016,4736: water
+    /// 6-14 m out to the N, NE, E and SE of its landing, dry ground only to the S, SW and W; refused "too far"
+    /// at the old 40 m, <see cref="RoadStairRuns.SiteReach"/>).</summary>
+    public const float PlacedSiteReach = 64f;
+
+    /// <summary>
+    /// The road with its end at a place pulled <paramref name="back"/> metres back along its last planned
+    /// stretch: that stretch cut at the planned point there, and the waypoints past it replaced by it.
+    /// False where the stretch is too short, or a staircase or a river crossing lies in the part cut away.
+    /// <paramref name="shift"/> is how many waypoints the start lost: everything indexed along the path (its
+    /// staircases and its crossings) moves down by it when the cut is taken (<see cref="ApplyCutBack"/>). The
+    /// one owner of cutting a road back: the crossings' indices were not moved with the staircases', and the
+    /// network hints then read stale crossing ranges (a hint on a bridge or ford waypoint).
+    /// </summary>
+    internal static bool CutBack(bool atStart, float back, List<Vector2> path, RoadSpatialGrid.PlannedPath piece,
+        List<RoadStairSpan> stairs, List<RoadCrossing> crossings, out List<Vector2> cutPath, out RoadSpatialGrid.PlannedPath cutPiece, out int shift)
+    {
+        cutPath = path;
+        cutPiece = piece;
+        shift = 0;
+        int n = piece.Points.Count;
+        if (n < 3 || path.Count < 2) return false;
+        // The planned point `back` metres in from the place's end, leaving at least a few metres of stretch.
+        int k = -1;
+        float walked = 0f;
+        for (int i = 1; i < n - 1; i++)
+        {
+            int a = atStart ? i - 1 : n - i, b2 = atStart ? i : n - 1 - i;
+            walked += Vector2.Distance(piece.Points[a], piece.Points[b2]);
+            if (walked >= back) { k = b2; break; }
+        }
+        if (k < 0) return false;
+        int from = atStart ? k : 0, count = atStart ? n - k : k + 1;
+        float rest = 0f;
+        for (int i = from + 1; i < from + count; i++) rest += Vector2.Distance(piece.Points[i - 1], piece.Points[i]);
+        if (rest < 4f) return false;
+        Vector2 cut = piece.Points[k];
+        // The waypoints within `back` of the place's end go; the cut point takes their place.
+        int drop = 0;
+        float along = 0f;
+        for (int i = 1; i < path.Count - 1; i++)
+        {
+            int a = atStart ? i - 1 : path.Count - i, b2 = atStart ? i : path.Count - 1 - i;
+            along += Vector2.Distance(path[a], path[b2]);
+            if (along >= back) break;
+            drop = i;
+        }
+        int dropped = drop + 1;
+        foreach (RoadStairSpan s in stairs)
+            if (atStart ? s.FromIndex < dropped : s.ToIndex > path.Count - 1 - dropped) return false;
+        foreach (RoadCrossing c in crossings)
+            if (atStart ? c.FromIndex < dropped : c.ToIndex > path.Count - 1 - dropped) return false;
+        var trimmed = atStart ? path.GetRange(dropped, path.Count - dropped) : path.GetRange(0, path.Count - dropped);
+        if (atStart) trimmed.Insert(0, cut); else trimmed.Add(cut);
+        if (trimmed.Count < 2) return false;
+        shift = atStart ? dropped - 1 : 0;
+        var points = piece.Points.GetRange(from, count);
+        cutPiece = new RoadSpatialGrid.PlannedPath(points, piece.Heights.GetRange(from, count), piece.DebugInfos.GetRange(from, count),
+            piece.Width, rest, piece.FollowTerrain)
+        {
+            Widths = piece.Widths?.GetRange(from, count),
+            Junctions = piece.Junctions?.FindAll(j => points.Exists(q => (q - j.At).sqrMagnitude <= 1f)),
+            Unpainted = piece.Unpainted?.GetRange(from, count),
+        };
+        cutPath = trimmed;
+        return true;
     }
 
     /// <summary>
@@ -2801,11 +4600,126 @@ public static partial class RoadNetworkGenerator
     /// <param name="meets">Why the road with this way onto the landing would not meet the network as the rules allow, or null
     /// (<see cref="PlanEntry"/>): a road onto it that fails gives way to a staircase, a staircase that fails is not laid out
     /// again from the same start.</param>
+    private static bool PlanEntryFrom(PlacedSite site, bool atStart, List<Vector2> path, List<RoadSpatialGrid.PlannedPath> plans,
+        List<RoadStairSpan> stairs, float width, int shift, Func<RoadSpatialGrid.PlannedPath?, RoadStairSpan?, string?> meets,
+        out RoadSpatialGrid.PlannedPath? road, out RoadStairSpan? span, out string why)
+    {
+        road = null;
+        span = null;
+        var world = GenerationWorld;
+        int index = atStart ? 0 : path.Count - 1;
+        if (RoadEnd(atStart, path, plans, stairs, shift) is not var (end, height, onStairs)) { why = "no road at the end"; return false; }
+        var tail = new List<Vector2>();
+        if (atStart) for (int i = Mathf.Min(SiteApproachRequest.TailPoints, path.Count - 1); i >= 0; i--) tail.Add(path[i]);
+        else for (int i = Mathf.Max(0, path.Count - 1 - SiteApproachRequest.TailPoints); i < path.Count; i++) tail.Add(path[i]);
+        tail[tail.Count - 1] = end;
+        var request = new SiteApproachRequest
+        {
+            RoadEnd = end, RoadHeight = height, Arriving = RoadStairRuns.ArrivingTravel(path, atStart ? plans[0] : plans[plans.Count - 1], end, atStart), Centre = site.Centre, RoadTail = tail,
+            Reach = PlacedSiteReach, TotalExpansions = EntryTotalExpansions, Stall = EntryStall,
+            Leg = RoadStairRuns.GenerationExpansions,
+        };
+        PlacedSiteRecord r = site.Record;
+        string noRoad = "road: arrives on a staircase";
+        if (onStairs == null)
+        {
+            road = RoadSiteEntry.Plan(request, site.Shape, width, site.Ground, world, out noRoad, RoadsNear);
+            if (road != null && meets(road, null) is string roadMeets) { noRoad = "road: " + roadMeets; road = null; }
+            if (road != null) { why = ""; return true; }
+        }
+        // Outside the Mountains a road onto the landing or nothing, but at a boss's entrance (ApproachStairsAt).
+        // Nor down onto a custom location standing below the end: its fallback ends the road at its ring.
+        if (!ApproachStairsAt(site.Centre, site.Record.Prefab, height)) { why = noRoad + "; stairs: none outside the mountains nor down to a custom location"; return false; }
+        // Nor from a road built as a ridge or a trench to its foot (RoadStairRuns.RidgeToFoot): PlanEntry starts it lower.
+        RoadSpatialGrid.PlannedPath endPiece = atStart ? plans[0] : plans[plans.Count - 1];
+        if (onStairs == null && RoadStairRuns.RidgeToFoot(endPiece.Points, endPiece.Heights, atStart, PlacedGround(site)) is { } ridge)
+        {
+            System.Threading.Interlocked.Increment(ref RoadStairRuns.RidgesToFeet);
+            why = noRoad + "; stairs: " + RoadStairRuns.RidgeRefusal(ridge);
+            return false;
+        }
+        // Where it starts, the road's end is a level landing (RoadPitches.LandEnd), as from an end at a place not placed first
+        // (SiteApproaches): limited again with that end held; where that does not fit, left as it was if within the cap into
+        // it, else no staircase from it.
+        List<float>? landed = onStairs == null ? new List<float>(endPiece.Heights) : null;
+        if (landed != null && !RoadPitches.LandEnd(endPiece.Points, landed, atStart, RoadGrade.Configured))
+        {
+            why = noRoad + "; stairs: " + ApproachLandingRefusal;
+            return false;
+        }
+        StairContinuation? top = onStairs == null ? null
+            : RoadStairRuns.TopAt(end, height, StairRun.FromPlan(onStairs.FromPoint, onStairs.ToPoint, RoadStairRuns.Width, onStairs.Plan).Pieces);
+        // The same start onto the same landing lays the same staircase: a failed one is not laid out again.
+        // Roads to a place come in on its one aimed ring point, and each failing layout cost seconds: one
+        // place took 36 of them, 34 s (the game's slowest islands 570 s).
+        var failedKey = (PlaceKey(site.Centre), Mathf.RoundToInt(end.x / EntryStartCell), Mathf.RoundToInt(end.y / EntryStartCell),
+            Mathf.RoundToInt(height), top.HasValue);
+        string noStairs;
+        // Laid out on the ground its kit will hold it up on (RoadStairRuns.PlanningGround, one owner): the lattice, the place's
+        // preload in its footprint. On the place's own ground out to its grid's edge, a flight up the slope just past the
+        // footprint was priced on the grid's metres and held up on the continuous ground between them.
+        Func<float, float, float> stairGround = RoadStairRuns.PlanningGround(expectedPlace: null, world);
+        // And a place whose landing no staircase reached from EntryStairsPerPlace starts gets no more: its
+        // roads may still go on as road. Three places took 84 layouts and 65 s there.
+        m_entryStairsTried.TryGetValue(failedKey.Item1, out int triedHere);
+        if (m_entryStairsFailed.TryGetValue(failedKey, out string? failed)) { span = null; noStairs = failed; }
+        else if (triedHere >= EntryStairsPerPlace) { span = null; noStairs = FormattableString.Invariant($"no staircase from {triedHere} other starts, none laid out again"); }
+        else
+        {
+            System.Threading.Interlocked.Increment(ref EntryStairLayouts);
+            span = RoadStairRuns.PlanPlacedSiteApproach(request, r.Yaw, r.Ops, stairGround, (x, z) => world.GetBiome(x, z), world.GetSeed(),
+                out noStairs, r.RockRadius, RoadSiteProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, top, placed: site.Shape);
+            if (span == null)
+            {
+                m_entryStairsFailed[failedKey] = noStairs;
+                m_entryStairsTried[failedKey.Item1] = triedHere + 1;
+            }
+        }
+        if (span != null)
+        {
+            // It may touch the road's own staircase where the road ends on it, or just past its top: a road
+            // that climbed to the ring by a staircase and ran its last metres on was refused "on another
+            // staircase" at a frost cave.
+            string conflict = RoadStairRuns.SiteConflict(span.Plan, site.Centre, path, index, stairGround, world, stairs,
+                onStairs != null || RoadStairRuns.EndsOnStairs(end, stairs) ? end : null, request.Arriving, request.RoadHeight);
+            // Laid out and clear of the place, but meeting the network as the rules forbid: as a failed layout, not laid
+            // out again from this start, and counted toward the place's EntryStairsPerPlace.
+            if (conflict == "" && meets(null, span) is string stairsMeet)
+            {
+                conflict = stairsMeet;
+                m_entryStairsFailed[failedKey] = stairsMeet;
+                m_entryStairsTried[failedKey.Item1] = triedHere + 1;
+            }
+            if (conflict == "")
+            {
+                if (landed != null) for (int i = 0; i < landed.Count; i++) endPiece.Heights[i] = landed[i];
+                why = "";
+                return true;
+            }
+            noStairs = conflict;
+            span = null;
+        }
+        why = noRoad + "; stairs: " + noStairs;
+        return false;
+    }
+
+    /// <summary>The network's road points within <paramref name="within"/> of a point (any thread: the grid is read under its lock).</summary>
+    internal static IEnumerable<(Vector2 at, float height)> RoadsNear(Vector2 p, float within)
+    {
+        foreach (RoadSpatialGrid.RoadPoint q in RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(p.x, 0f, p.y), within))
+            if (q.IsRoad && (q.p - p).sqrMagnitude <= within * within) yield return (q.p, q.h);
+    }
+
+    /// <summary>Why no approach is laid from a road's end (<see cref="SiteApproaches"/>, <see cref="PlanEntryFrom"/>): its last
+    /// metres cannot be levelled for its foot within the grade cap (RoadPitches.LandEnd).</summary>
+    internal const string ApproachLandingRefusal = "the road's end cannot be levelled for the approach's foot within the grade cap";
+
     /// <summary>
     /// Staircases from the road's ends that stop at a place up to the place's
     /// flat ground (<see cref="RoadStairRuns.LaySiteApproach"/>). An end is at
     /// its place unless it was moved to a junction (<paramref name="startAtPlace"/>,
-    /// <paramref name="endAtPlace"/>); a place with no radius (an island's edge) has none.
+    /// <paramref name="endAtPlace"/>); a place with no radius (an island's edge) has none, nor one outside the Mountains
+    /// but a boss's entrance (<see cref="ApproachStairsAt"/>).
     /// Judged by distance from the trimmed ring, an end the approach bend or the contour
     /// search had moved a few metres out (by design) counted as moved off its place, and
     /// its approach was never tried (at the frost cave -2560,1536 the road did
@@ -2821,13 +4735,50 @@ public static partial class RoadNetworkGenerator
         void At(bool atStart, Vector2 centre, float asked, bool atPlace)
         {
             if (asked <= 0f || !atPlace) return;
+            if (RoadEnd(atStart, path, plans, stairs) is not var (end, height, onStairs)) return;
+            // Nor down to a custom location standing below the end: its fallback ends the road at its ring.
+            if (!ApproachStairsAt(centre, PrefabAt(centre), height))
+            {
+                if (RoadsLog) m_siteApproaches.AddOrUpdate("none outside the mountains nor down to a custom location", 1, (_, n) => n + 1);
+                return;
+            }
             int index = atStart ? 0 : path.Count - 1;
-            if (RoadEnd(atStart, path, plans, stairs) is not var (end, height, _)) return;
+            // Not from a road built as a ridge or a trench to its foot (RoadStairRuns.RidgeToFoot): none, and the road's end
+            // is then not level with its place (EndNotLevel).
+            RoadSpatialGrid.PlannedPath piece = atStart ? plans[0] : plans[plans.Count - 1];
+            if (onStairs == null && RoadStairRuns.RidgeToFoot(piece.Points, piece.Heights, atStart, NaturalGround) != null)
+            {
+                System.Threading.Interlocked.Increment(ref RoadStairRuns.RidgesToFeet);
+                if (RoadsLog) m_siteApproaches.AddOrUpdate(RoadStairRuns.RidgeToFootRefusal, 1, (_, n) => n + 1);
+                return;
+            }
+            // Where it starts, the road's end is a level landing, as at every staircase's foot the road is held at
+            // (RoadSpatialGrid.StairStarts): planned before the approach, the road's last metres are limited again with that
+            // end held (RoadPitches.LandEnd); where they cannot be, the road is left as it was if it keeps within the cap into
+            // that end, else no approach is laid from it, and the road is not built so (EndNotLevel; the planner tries its other
+            // candidates). Its last 8 m at a pitch's grade ran into an approach's foot.
+            List<float>? landed = null;
+            if (onStairs == null)
+            {
+                landed = new List<float>(piece.Heights);
+                if (!RoadPitches.LandEnd(piece.Points, landed, atStart, RoadGrade.Configured))
+                {
+                    if (RoadsLog) m_siteApproaches.AddOrUpdate(ApproachLandingRefusal, 1, (_, n) => n + 1);
+                    return;
+                }
+            }
             var both = new List<RoadStairSpan>(stairs);
             both.AddRange(laid);
-            RoadStairSpan? span = RoadStairRuns.LaySiteApproach(end, height, RoadStairRuns.ArrivingTravel(path, end, atStart), centre,
-                LocationLevelling.CentreHeight(centre, world), LocationLevelling.OpsAt(centre), path, index, both, world, out string why);
-            if (span != null) laid.Add(span);
+            RoadStairSpan? span = RoadStairRuns.LaySiteApproach(end, height, RoadStairRuns.ArrivingTravel(path, piece, end, atStart), centre,
+                LocationLevelling.CentreHeight(centre, world), LocationLevelling.OpsAt(centre), LocationLevelling.FacesDownhill(centre),
+                path, index, both, world, out string why);
+            // A place placed before its road was carried on onto its landing (PlanEntry); one that could not be
+            // placed before its roads has no road (PlacedSites.NotPlaced), so none ends here.
+            if (span != null)
+            {
+                laid.Add(span);
+                if (landed != null) for (int i = 0; i < landed.Count; i++) piece.Heights[i] = landed[i];
+            }
             if (RoadsLog) m_siteApproaches.AddOrUpdate(span != null ? "laid" : why, 1, (_, n) => n + 1);
         }
         At(true, startCenter, askedStartRadius, startAtPlace);
@@ -2837,11 +4788,11 @@ public static partial class RoadNetworkGenerator
 
     /// <summary>The staircases on <paramref name="path"/> laid out from the stair
     /// steps the last search bought; false when one cannot be laid.</summary>
-    private static bool TryLayStairs(RoadPathfinder finder, List<Vector2> path, List<RoadCrossing> crossings, out List<RoadStairSpan> stairs)
+    private static bool TryLayStairs(IReadOnlyList<(Vector2 from, Vector2 to)> steps, List<Vector2> path, List<RoadCrossing> crossings, out List<RoadStairSpan> stairs)
     {
         stairs = new List<RoadStairSpan>();
-        if (!finder.Stairs || finder.LastStairSteps.Count == 0) return true;
-        List<RoadStairSpan>? laid = RoadStairRuns.Lay(path, finder.LastStairSteps, crossings, GenerationWorld);
+        if (steps.Count == 0) return true;
+        List<RoadStairSpan>? laid = RoadStairRuns.Lay(path, steps, crossings, GenerationWorld);
         if (laid == null) return false;
         stairs = laid;
         return true;
@@ -2891,9 +4842,10 @@ public static partial class RoadNetworkGenerator
         foreach(var location in source)
         {
             var item=(location.m_location.m_prefab.Name!,location.m_position,location.m_location.m_exteriorRadius);
-            all.Add(item);
-            if(item.Item1=="StartTemple") { spawn=item.Item2; radius=item.Item3; }
-            else if(BossLocationNames.Contains(item.Item1)) bosses.Add(item);
+            if(item.Item1=="StartTemple") { spawn=item.Item2; radius=item.Item3; all.Add(item); }
+            // HARD RULE: a place the game leaves for a player to find is never a destination (PlacedSites.PlayerDecides).
+            else if(PlacedSites.PlayerDecides(item.Item1,location.m_location.m_unique,location.m_location.m_iconPlaced,location.m_location.m_iconAlways)) { }
+            else { all.Add(item); if(BossLocationNames.Contains(item.Item1)) bosses.Add(item); }
             if(preparation.Checkpoint()) yield return true;
         }
         if(!spawn.HasValue) { Log.LogWarning("Could not find spawn point (StartTemple)"); spawn=Vector3.zero; }
@@ -2901,31 +4853,24 @@ public static partial class RoadNetworkGenerator
         complete(new LocationData {SpawnPoint=spawn.Value,SpawnRadius=radius,BossLocations=bosses,AllLocations=all});
     }
 
-    private static LocationData? GatherLocationData()
-    {
-        LocationData? result=null;
-        var zones=ZoneSystem.instance;
-        using var preparation=new RoadPreparation(p=>GatherLocationSteps(zones,p,value=>result=value));
-        preparation.Drain();
-        return result;
-    }
+    /// <summary>Whether a location is a destination on <paramref name="island"/>: on it, a road location, and in a biome the
+    /// network allows.</summary>
+    private static bool IsIslandDestination(Island island, (string name, Vector3 position, float radius) location,
+        WorldGenerator world, RoadNetworkOptions options) =>
+        island.ContainsPoint(location.position) && IsRoadLocation(location.name)
+        && options.Allows(world.GetBiome(location.position.x, location.position.z));
 
-    private static List<(string name, Vector3 position, float radius)> GetLocationsOnIsland(
-        Island island, List<(string name, Vector3 position, float radius)> allLocations)
-    {
-        var result = new List<(string name, Vector3 position, float radius)>();
-        foreach (var loc in allLocations)
-        {
-            if (island.ContainsPoint(loc.position) && IsRoadLocation(loc.name)
-                && (GenerationWorld == null || GenerationOptions.Allows(
-                    GenerationWorld.GetBiome(loc.position.x, loc.position.z))))
-                result.Add(loc);
-        }
-        return result;
-    }
+    /// <summary>Hildir's quest sites: her cave, crypt and tower. Not her camp (unique, a vendor).</summary>
+    internal static bool IsHildirQuestSite(string name) => name == "Hildir_cave" || name == "Hildir_crypt" || name == "Hildir_plainsfortress";
+
+    /// <summary>The one rule for Hildir's quest sites: roads go to them only with their setting on (config
+    /// Locations.AttemptRoadsToHildirQuestSites). Then they are required destinations, placed before their roads; off, they
+    /// are left for a player, as the game leaves them.</summary>
+    internal static bool HildirRoads(string name) => IsHildirQuestSite(name) && NetworkOptions.HildirQuestSites;
 
     private static bool IsRoadLocation(string locationName)
     {
+        if (IsHildirQuestSite(locationName)) return HildirRoads(locationName);
         return BossLocationNames.Contains(locationName) ||
                LocationPriorities.ContainsKey(locationName) ||
                IsCustomLocation(locationName);
@@ -2935,7 +4880,7 @@ public static partial class RoadNetworkGenerator
         || ConfiguredLocationNames.Contains(name);
 
     private static bool IsRequiredLocation(string name) => BossLocationNames.Contains(name)
-        || name == "Hildir_cave" || name == "Hildir_crypt" || name == "Hildir_plainsfortress"
+        || HildirRoads(name)
         || name == RoadCoastalLandings.Name;
 
     private static List<(string name, Vector3 position, float radius)> SelectIslandDestinations(
@@ -2949,9 +4894,6 @@ public static partial class RoadNetworkGenerator
         Log.LogDebug($"Coastal landings on island {island.Id}: {selected.Count(p => p.name == RoadCoastalLandings.Name)} selected; connection and boat access are not guaranteed");
         return selected;
     }
-
-    private static int GetMaxLocationsForIsland(Island island) =>
-        RoadNetworkSelection.Quota(island.ApproxArea, MaxLocationsPerIsland);
 
     private static List<(string name, Vector3 position, float radius)> SelectLocations(
         List<(string name, Vector3 position, float radius)> candidates, int maxCount, float area = 0) =>
@@ -3037,20 +4979,6 @@ public static partial class RoadNetworkGenerator
         LocationLevelling.Seal();
     }
 
-    private static bool PrepareAndSeal()
-    {
-        RoadSiteProtection.Prime();
-        LocationLevelling.Prime?.Invoke();
-        if (RoadSiteProtection.InstalledButUnprepared)
-        {
-            Log.LogError("the site footprint index could not be built, so no road could avoid a POI. " +
-                         "No roads were generated. This is a gap in preparation, not in the world.");
-            return false;
-        }
-        LocationLevelling.Seal();
-        return true;
-    }
-
     private static void ReportMissesAfterSealing()
     {
         if (LocationLevelling.MissesAfterSealing > 0)
@@ -3058,140 +4986,12 @@ public static partial class RoadNetworkGenerator
                          "roads near those places meet natural terrain. See the errors above for what was missing.");
     }
 
-    /// <summary>
-    /// Clear the network and regenerate roads for the single island containing
-    /// worldPos: the same island selection, location selection and pathfinding
-    /// as the global pass, restricted to one island. A validation loop that
-    /// iterates on one site runs in seconds instead of a whole-world generation.
-    /// </summary>
-    public static bool RegenerateIslandAt(Vector3 worldPos, out string summary)
-    {
-        bool result = false;
-        string detail = "";
-        RoadLifecycleManager.RunSynchronous(() => result = RegenerateIslandCore(worldPos, out detail));
-        summary = detail;
-        return result;
-    }
-
-    private static bool RegenerateIslandCore(Vector3 worldPos, out string summary)
-    {
-        if (!RoadLifecycleManager.HoldsTheNetwork)
-        {
-            summary = "Roads are generated only on the server; this peer holds no road network";
-            return false;
-        }
-        if (GenerationWorld == null || ZoneSystem.instance == null)
-        {
-            summary = "World not ready";
-            return false;
-        }
-
-        RegisterConfiguredLocations();
-
-        var locations = GatherLocationData();
-        if (locations == null)
-        {
-            summary = "No location data available";
-            return false;
-        }
-
-        var islands = IslandDetector.DetectRoadIslands();
-        Island? island = islands.FirstOrDefault(i => i.ContainsPoint(worldPos));
-        if (island == null)
-        {
-            summary = $"No island at ({worldPos.x:F0},{worldPos.z:F0})";
-            return false;
-        }
-
-        var islandLocations = GetLocationsOnIsland(island, locations.Value.AllLocations);
-        if (islandLocations.Count == 0)
-        {
-            summary = $"Island {island.Id} has no road-eligible locations";
-            return false;
-        }
-
-        var selected = SelectIslandDestinations(island, islandLocations, GetMaxLocationsForIsland(island));
-
-        DateTime startTime = DateTime.Now;
-        bool locationsWereReady = m_locationsReady;
-        ResetData();
-        m_locationsReady = locationsWereReady;
-        m_pathfinder = new RoadPathfinder(GenerationWorld) { SiteClearance = RoadWidth * 0.5f + 2f };
-        m_threadPathfinders?.Dispose();
-        m_threadPathfinders = new System.Threading.ThreadLocal<RoadPathfinder>(
-            () => new RoadPathfinder(GenerationWorld) { SiteClearance = RoadWidth * 0.5f + 2f }, true);
-        RoadTerrainSamples.ResetTotals();
-        SearchStats.Reset();
-        m_destinationsSelected = 0;
-        m_destinationsConnected = 0;
-        m_roadsGeneratedCount = 0;
-        m_roadsRefusedForGrade = 0;
-        m_refusalReasons.Clear();
-        m_lastFailure.Clear();
-        ClearStairNotes();
-        m_builtTo.Clear();
-        m_roadsWithNoRoute = 0;
-        m_earthworkReroutes = 0;
-        m_pullReroutes = 0;
-        m_offLandEnds = 0;
-        RoadCrossingDetector.DeckLineWalkedIn = RoadCrossingDetector.DeckLineRefused = RoadCrossingDetector.DeckLineSpanDropped = 0;
-        RoadPathfinder.SqueezeHits.Clear();
-        m_earthworkUnavoided = 0;
-        RoadGrade.SteepestPlanned = 0f;
-        RoadSiteProtection.Reset();
-
-        // One island: its connection pricing may use every worker, so the
-        // same main-thread preparation and seal as a whole-world generation.
-        RoadParallel.IslandsRunning = 1;
-        if (!PrepareAndSeal())
-        {
-            ReleasePathfinders();
-            summary = "Preparation failed: the site footprint index could not be built (see the log)";
-            return false;
-        }
-        try
-        {
-            if (island.ContainsPoint(locations.Value.SpawnPoint))
-                GenerateIslandRoads(island, selected, locations.Value.SpawnPoint, locations.Value.SpawnRadius);
-            else
-                GenerateIslandRoads(island, selected);
-        }
-        finally { LocationLevelling.Unseal(); }
-        ReportMissesAfterSealing();
-        DropBuriedPieces();
-        // As the whole-world pass does per island; without it the summary
-        // reported 0/0 destinations.
-        CountDestinationsReached(selected);
-
-        StairStructures.SortCanonical();
-        RoadSpatialGrid.FinalizeRoadNetwork();
-        LogTerrainMemoCounters();
-        NetworkCutoff.UseNewNetwork();
-        m_roadsGenerated = true;
-        m_networkDirty = true;
-        ReleasePathfinders();
-        // Same as after global generation: without the metadata object the
-        // save path has nowhere to put the network and logs an error instead.
-        RoadNetworkPersistence.EnsureMetadataInstance();
-
-        TimeSpan elapsed = DateTime.Now - startTime;
-        summary =
-            $"Island {island.Id} ({island.ApproxArea / 1_000_000f:F1}km²): " +
-            $"{selected.Count} locations, {m_roadsGeneratedCount} roads, " +
-            $"{RoadSpatialGrid.Statistics.LengthText()} in {elapsed.TotalSeconds:F1}s; " +
-            $"{m_destinationsConnected}/{m_destinationsSelected} destinations connected, " +
-            $"{m_roadsWithNoRoute} attempt(s) found no route" +
-            (m_refusalReasons.IsEmpty ? "" : "; refused when built: " + string.Join("; ",
-                System.Linq.Enumerable.Select(System.Linq.Enumerable.OrderByDescending(m_refusalReasons, kv => kv.Value), kv => $"{kv.Value} {kv.Key}")));
-        // Also to the log: a console answer is lost when the command outlives
-        // the caller's timeout, and a check needs a line to wait for.
-        Log.LogInfo($"Island regenerated: {summary}");
-        return true;
-    }
+    /// <summary>Told when the network is reset (the world unloaded, or regenerated).</summary>
+    public static Action? OnReset;
 
     public static void Reset()
     {
-        bool cancelled = RoadLifecycleManager.InitialGenerationActive;
+        bool cancelled = RoadLifecycleManager.GenerationRunning;
         RoadLifecycleManager.CancelAndDrain();
         RoadLifecycleManager.AllowInitialRetry();
         if (!cancelled) ResetData();
@@ -3210,58 +5010,84 @@ public static partial class RoadNetworkGenerator
         m_threadPathfinders?.Dispose();
         m_threadPathfinders = new System.Threading.ThreadLocal<RoadPathfinder>(() => NewFinder(world, clearance), true);
         ResetGenerationCounters();
+        ResetDoors();
         RoadSiteProtection.Reset();
+        PlaceWaysIn.Reset();
     }
 
     /// <summary>The counters and per-place notes of a generation (logs, reports, retry budgets per place).</summary>
     private static void ResetGenerationCounters()
     {
+        CrossIslandReads.Reset();
         RoadTerrainSamples.ResetTotals();
         SearchStats.Reset();
         m_destinationsSelected = 0;
         m_destinationsConnected = 0;
+        m_destinationsNotPlaced = 0;
+        m_offLevel.Clear();
+        m_customPlaces.Clear();
+        m_standOffRadius.Clear();
+        m_reachedOffLevel = 0;
+        m_behindRidge = 0;
+        m_carriedToEdge = 0;
         m_roadsGeneratedCount = 0;
         m_roadsRefusedForGrade = 0;
         m_refusalReasons.Clear();
         m_lastFailure.Clear();
         ClearStairNotes();
         m_builtTo.Clear();
+        m_entryStairsFailed.Clear();
+        m_entryStairsTried.Clear();
+        EntryStairLayouts = 0;
         m_roadsWithNoRoute = 0;
         m_earthworkReroutes = 0;
+        m_ridgeReroutes = 0;
+        m_ridgeStairs = 0;
         m_pullReroutes = 0;
         m_offLandEnds = 0;
         RoadCrossingDetector.DeckLineWalkedIn = RoadCrossingDetector.DeckLineRefused = RoadCrossingDetector.DeckLineSpanDropped = 0;
         RoadPitches.ResetCounters();
+        RoadSpatialGrid.ResetPlaceLandings();
         m_corridorSnapped = 0;
+        m_reEndedOnApproach = 0;
+        m_reEndRefused = 0;
+        m_junctionFills = 0;
         RoadSpatialGrid.BendFallbacks.Clear();
         m_chainsShared = 0;
+        RoadRide.Reset();
         m_shallowFordsWalked = 0;
+        m_humpsLevelled = 0;
         RoadSpatialGrid.SwayKept = RoadSpatialGrid.SwayRefused = RoadSpatialGrid.SwayMoreEarth = RoadSpatialGrid.SwayKeptHeld = 0;
         RoadSpatialGrid.SlopeSwayPlans = 0; System.Array.Clear(RoadSpatialGrid.SlopeSwayMillimetres, 0, 3);
-        RoadPathfinder.SqueezeHits.Clear();
+        RoadPathfinder.SqueezeHits.Clear(); RoadPathfinder.ShoreFillCells.Clear();
         m_earthworkUnavoided = 0;
         RoadGrade.SteepestPlanned = 0f;
-        m_viaductsLaid = m_viaductFeetPut = m_viaductFeetUnmet = m_viaductsRefusedAtEnds = m_bridgeEndsUnmet = m_endsKeptAsTheyWere = 0;
+        m_viaductsLaid = m_viaductsRefusedAtEnds = m_crossingsUnmetSearchedRound = m_bridgeEndsUnmet = m_endEarthworks = m_endPads = m_endShared = m_endStands = m_endSteps = m_endFlat = m_endOneStep = m_endMoreSteps = 0;
     }
 
     internal static void ResetData()
     {
         ResetGenerationCounters();
+        ResetDoors();
+        PlacedSites.ForgetLanded();
+        OnReset?.Invoke();
         LocationLevelling.ResetPlacements?.Invoke();
         m_roadsGenerated = false;
         m_locationsReady = false;
         m_roadsLoadedFromZDO = false;
         m_networkDirty = false;
+        m_kitsChosen = false;
         ReleasePathfinders();
         RoadSiteProtection.Reset();
         m_roadStartPoints.Clear();
         m_roadCrossings.Clear();
+        lock (m_recordGate) m_coastalLandings.Clear();
         StairStructures.Reset();
+        PlaceWaysIn.Reset();
+        BuiltBridges.Reset();
         DvergrViaduct.ResetStanding();
         lock (m_laidDecks) m_laidDecks.Clear();
         RoadStairRuns.ResetCache();
-        m_underRoads.Clear();
-        m_lastResortServed.Clear();
         StructurePlans.Reset();
         VegetationClearing.Reset();
         RoadNetworkPersistence.Reset();
@@ -3385,7 +5211,7 @@ public static partial class RoadNetworkGenerator
             return;
         }
 
-        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadCrossings, StructurePlans.SpawnedZones);
+        RoadNetworkPersistence.SaveGlobalRoadData(m_roadStartPoints, m_roadCrossings, StructurePlans.SpawnedZones, GetCoastalLandings());
     }
 
     /// <summary>
@@ -3399,7 +5225,25 @@ public static partial class RoadNetworkGenerator
         if (IsGenerating) return;
         if (!RoadsAvailable)
             return;
-        RoadNetworkPersistence.SaveBridgeZones(StructurePlans.SpawnedZones);
+        // The crossings too once a kit was chosen: but not over a network a released build saved, which keeps its format.
+        bool crossings = m_kitsChosen && !RoadSpatialGrid.LoadedFromReleasedFormat;
+        RoadNetworkPersistence.SaveBridgeZones(StructurePlans.SpawnedZones, crossings ? m_roadCrossings : null);
+    }
+
+    /// <summary>Whether a crossing's kit was chosen this session (<see cref="ChooseKitsAsBuilt"/>): the crossings are saved
+    /// with the zones that have their pieces.</summary>
+    private static bool m_kitsChosen;
+
+    /// <summary>
+    /// The kits of the bridges these pieces belong to chosen as the server builds them (BridgeStructures.ChooseKits), on
+    /// the network's records, and saved at the next save: a bridge built keeps its kit, one not built yet takes its kit
+    /// from the kits installed when it is.
+    /// </summary>
+    internal static void ChooseKitsAsBuilt(IEnumerable<StructurePiece> pieces)
+    {
+        if (WorldGenerator.instance is not WorldGenerator world) return;
+        lock (m_recordGate)
+            if (BridgeStructures.ChooseKits(pieces, world, m_roadCrossings)) m_kitsChosen = true;
     }
 
     /// <summary>
@@ -3407,13 +5251,22 @@ public static partial class RoadNetworkGenerator
     /// Call this on world load before road generation would trigger.
     /// </summary>
     /// <returns>True if road data was found and loaded</returns>
+    /// <summary>The natural ground places placed before their roads are made ready on (<see cref="PlacedSites.Prepare"/>), at
+    /// a generation and at a load alike.</summary>
+    private static Func<float, float, float> NaturalGround(WorldGenerator world) => (x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world);
+
     public static bool TryLoadGlobalRoadData()
     {
         if (IsGenerating) return false;
         var bridgeZones = new HashSet<Vector2s>();
-        bool loaded = RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings, bridgeZones);
+        bool loaded = RoadNetworkPersistence.TryLoadGlobalRoadData(m_roadStartPoints, m_roadCrossings, bridgeZones, m_coastalLandings);
         if (loaded)
         {
+            // The places placed before the roads ready again, on the ground the generation made them ready on: a staircase
+            // whose first zone is built this session is dressed as it would have been in the session that generated it.
+            if (WorldGenerator.instance != null) PlacedSites.Prepare(NaturalGround(WorldGenerator.instance));
+            else if (PlacedSites.Count > 0)
+                Log.LogWarning($"[LOAD] {PlacedSites.Count} place(s) placed before their roads not made ready: no world generator yet; their staircases are dressed on the natural ground");
             // Before anything may write: which zones this network must leave alone.
             NetworkCutoff.UseLoadedNetwork(RoadSpatialGrid.RoadNetworkVersion, RoadNetworkPersistence.LoadZonesWithNetwork());
             // Zones whose pieces stand keep them, whatever layout made them.

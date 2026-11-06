@@ -217,4 +217,50 @@ public class NetworkRoutingTests
         Assert.True(finder.LastPathCost>0);
     }
 
+    [Fact]
+    public void AFailedJoinIsNotRunAgainUntilTheIslandNetworkChanges()
+    {
+        int runs = 0;
+        var joins = new RoadNetworkGenerator.FailedJoins(_ => { runs++; return false; });
+        var place = P("cave", 100);
+        Assert.False(joins.Join(place));
+        Assert.False(joins.Join(place));
+        Assert.Equal(1, runs);
+        // Another place is asked on its own.
+        Assert.False(joins.Join(P("tower", 200)));
+        Assert.Equal(2, runs);
+        // A write to the island's network forgets every failed join.
+        RoadNetworkGenerator.IslandNetworkChanged();
+        Assert.False(joins.Join(place));
+        Assert.Equal(3, runs);
+        Assert.False(joins.Join(place));
+        Assert.Equal(3, runs);
+    }
+
+    [Fact]
+    public void AJoinThatWonOrWroteBeforeFailingIsAskedAgain()
+    {
+        int runs = 0;
+        var won = new RoadNetworkGenerator.FailedJoins(_ => { runs++; return true; });
+        Assert.True(won.Join(P("cave", 100)));
+        Assert.True(won.Join(P("cave", 100)));
+        Assert.Equal(2, runs);
+        runs = 0;
+        var wrote = new RoadNetworkGenerator.FailedJoins(_ => { runs++; RoadNetworkGenerator.IslandNetworkChanged(); return false; });
+        Assert.False(wrote.Join(P("cave", 100)));
+        Assert.False(wrote.Join(P("cave", 100)));
+        Assert.Equal(2, runs);
+    }
+
+    [Fact]
+    public void ANetworkWriteMovesTheIslandNetworkVersion()
+    {
+        int before = RoadNetworkGenerator.IslandNetworkVersion;
+        var centre = new Vector2(91234f, -91234f);
+        PlacedSites.MarkLanded(centre);
+        Assert.NotEqual(before, RoadNetworkGenerator.IslandNetworkVersion);
+        before = RoadNetworkGenerator.IslandNetworkVersion;
+        StairStructures.MarkLaid(new[] { centre });
+        Assert.NotEqual(before, RoadNetworkGenerator.IslandNetworkVersion);
+    }
 }

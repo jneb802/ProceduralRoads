@@ -45,8 +45,13 @@ public static class BuriedPieces
         ["blackmarble_floor"] = (new Vector3(-1f, -0.5f, -1f), new Vector3(1f, 0.5f, 1f)),
         ["blackmarble_2x1x1"] = (new Vector3(-1f, -0.5f, -0.5f), new Vector3(1f, 0.5f, 0.5f)),
         ["blackmarble_1x1"] = (new Vector3(-0.5f, -0.5f, -0.5f), new Vector3(0.5f, 0.5f, 0.5f)),
+        // Rip: its convex collider 2 x 2 x 1, its top 1 m deep at local -x and its face sloping to the bottom at +x.
+        ["blackmarble_base_1"] = (new Vector3(-1f, -1f, -0.5f), new Vector3(1f, 1f, 0.5f)),
         ["blackmarble_column_1"] = (new Vector3(-0.5f, -0.501f, -0.5f), new Vector3(0.5f, 0.501f, 0.5f)),
         ["blackmarble_arch"] = (new Vector3(-1f, -1f, -0.5f), new Vector3(1f, 1f, 0.5f)),
+        ["blackmarble_out_1"] = (new Vector3(-1f, -1f, -0.5f), new Vector3(1f, 1f, 0.5f)),
+        // Its 2 x 2 top over a 1 m block in one quarter (the rip's snap points): the box round both.
+        ["blackmarble_outcorner"] = (new Vector3(-1f, -1f, -1f), new Vector3(1f, 1f, 1f)),
         ["wood_stair"] = (new Vector3(-1f, -0.073f, -1.024f), new Vector3(1f, 1.048f, 1.005f)),
         ["wood_floor"] = (new Vector3(-1.01f, -0.033f, -1.015f), new Vector3(0.99f, 0.097f, 0.985f)),
         ["wood_floor_1x1"] = (new Vector3(-0.51f, -0.033f, -0.515f), new Vector3(0.49f, 0.097f, 0.485f)),
@@ -55,6 +60,14 @@ public static class BuriedPieces
 
     /// <summary>Whether the piece's bounds are known (an unknown piece is never dropped).</summary>
     public static bool Known(string prefab) => s_bounds.ContainsKey(prefab);
+
+    /// <summary>A piece's bounds about its origin, unturned; false for a piece whose bounds are not known.</summary>
+    public static bool BoundsOf(string prefab, out Vector3 min, out Vector3 max)
+    {
+        bool known = s_bounds.TryGetValue(prefab, out var b);
+        min = b.min; max = b.max;
+        return known;
+    }
 
     /// <summary>
     /// Whether the piece, turned <paramref name="yawDegrees"/> about its origin at <paramref name="position"/>, lies
@@ -153,76 +166,6 @@ public static class BuriedPieces
             else if (s != sign) return false;
         }
         return true;
-    }
-
-    /// <summary>
-    /// The one column rule, for every column whatever ground it is read on (the layout's, its own cuts', the finished
-    /// ground the network leaves): a column is carried on down a pillar while its base, <paramref name="bottom"/>, stands
-    /// less than StairLayout.SupportBury under the lowest ground at its corners, <paramref name="lowestCorner"/> (the whole
-    /// bottom should clip into the ground), but never by a pillar that would lie wholly under
-    /// the ground (<see cref="Buried"/>), which the game breaks: there the base is in the ground under all of the next one's
-    /// grown footprint already. <paramref name="at"/>, <paramref name="yaw"/>: the column's middle and turn.
-    /// </summary>
-    public static bool ColumnGoesOn(float bottom, float lowestCorner, string prefab, float height, Vector2 at, float yaw, Func<int, int, float> vertex) =>
-        bottom > lowestCorner - StairLayout.SupportBury && !Buried(prefab, new Vector3(at.x, bottom - height / 2f, at.y), yaw, vertex);
-
-    /// <summary>The deepest <see cref="CarryColumns"/> carries one column on down: the most the terrain writer lowers ground
-    /// (<see cref="RoadConstants.TerrainDeltaMin"/>, 8 m), in whatever pillars the kit stacks. It was 4 pillars: 8 m of stone
-    /// but 4 m of black marble's 1 m columns, so a Mistlands column over a deeper road cut was left hanging and broke (the
-    /// whole column collapsed, on a staircase at -3850,-5020).</summary>
-    public const float MostCarriedDepth = -RoadConstants.TerrainDeltaMin;
-
-    /// <summary>
-    /// Each of the run's columns (its kit's support pieces stacked at one spot, not a cantilever's clipped into a face)
-    /// carried on down by <see cref="ColumnGoesOn"/> over <paramref name="vertex"/>'s ground: where the network's earthwork
-    /// (a road's cut beside a staircase's end, another staircase's cut) lowered the ground under a column after the layout
-    /// sized it, its base hung in the air, lost its support and broke (leaving stray
-    /// stones, at a staircase foot at 6497,-1497). Returns the pillars added.
-    /// </summary>
-    public static int CarryColumns(StairRun run, Func<int, int, float> vertex)
-    {
-        var bottoms = new Dictionary<(int, int), StructurePiece>();
-        foreach (StructurePiece p in run.Pieces)
-        {
-            if (p.Kind != StructurePieceKind.StairSupport || p.Cantilevered || ColumnHeight(p.Prefab) is not float) continue;
-            var key = (Mathf.RoundToInt(p.Position.x * 100f), Mathf.RoundToInt(p.Position.z * 100f));
-            if (!bottoms.TryGetValue(key, out StructurePiece? lowest) || p.Position.y < lowest.Position.y) bottoms[key] = p;
-        }
-        int added = 0;
-        foreach (StructurePiece bottom in bottoms.Values)
-        {
-            float height = ColumnHeight(bottom.Prefab)!.Value;
-            var at = new Vector2(bottom.Position.x, bottom.Position.z);
-            // A corner on ground not known (NaN) leaves the column as it is, whichever corner it is: Mathf.Min drops a NaN
-            // read before a number, so one read first was ignored and the column carried down by the corners known alone.
-            float lowest = float.PositiveInfinity;
-            for (int cx = -1; cx <= 1; cx += 2)
-                for (int cz = -1; cz <= 1; cz += 2)
-                {
-                    float corner = MeshHeight(at.x + cx * StairLayout.SupportHalfWidth, at.y + cz * StairLayout.SupportHalfWidth, vertex);
-                    lowest = float.IsNaN(corner) || float.IsNaN(lowest) ? float.NaN : Mathf.Min(lowest, corner);
-                }
-            if (float.IsNaN(lowest)) continue;
-            float base_ = bottom.Position.y - height / 2f;
-            for (int n = 0, most = Mathf.CeilToInt(MostCarriedDepth / height - 1e-3f); n < most && ColumnGoesOn(base_, lowest, bottom.Prefab, height, at, bottom.YawDegrees, vertex); n++, base_ -= height)
-            {
-                run.Pieces.Add(new StructurePiece
-                {
-                    Kind = StructurePieceKind.StairSupport, Prefab = bottom.Prefab,
-                    Position = new Vector3(at.x, base_ - height / 2f, at.y), YawDegrees = bottom.YawDegrees,
-                });
-                added++;
-            }
-        }
-        return added;
-    }
-
-    /// <summary>The height of a kit's column piece, null for any other piece.</summary>
-    private static float? ColumnHeight(string prefab)
-    {
-        foreach (StairKit kit in StairKit.All)
-            if (kit.Support == prefab) return kit.SupportHeight;
-        return null;
     }
 
     /// <summary>

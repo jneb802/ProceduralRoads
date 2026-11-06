@@ -45,6 +45,10 @@ public static class NetworkCutoff
     /// <summary>Whether this world has had a network in place this session.</summary>
     private static bool s_hadNetwork;
 
+    /// <summary>The zones generated when the network being generated began replacing another (<see cref="BeginNewNetwork"/>);
+    /// null when none is, or it replaces none.</summary>
+    private static HashSet<Vector2s>? s_generatedBefore;
+
     /// <summary>
     /// Set when the next new network is to include the explored land (ExistingWorldRoads.IncludeExplored): the explored
     /// zones players built in or dug, the only ones it leaves as they are. Null for every other network.
@@ -139,6 +143,7 @@ public static class NetworkCutoff
         s_generatedAtLoad = null;
         s_excluded = new HashSet<Vector2s>();
         s_hadNetwork = false;
+        s_generatedBefore = null;
         s_includeExploredKeeping = null;
         s_avoided = new HashSet<Vector2s>();
     }
@@ -178,6 +183,37 @@ public static class NetworkCutoff
         Log($"loaded network {networkVersion}: {s_excluded.Count} zone(s) generated before it are left as they are");
     }
 
+    /// <summary>What the cutoff is for the network in memory (<see cref="Keep"/>), to put back with it (<see cref="PutBack"/>).</summary>
+    internal sealed class State
+    {
+        internal object? World;
+        internal HashSet<Vector2s> Excluded = new();
+        internal bool HadNetwork;
+        internal HashSet<Vector2s>? IncludeExploredKeeping;
+    }
+
+    /// <summary>The cutoff as it stands: an operator's generation keeps it, to put back with the network it was to replace
+    /// if it publishes none. Read back from the world, that network would leave alone only the zones explored before this
+    /// session; it left alone those explored this session before it too.</summary>
+    internal static State Keep() => new()
+    {
+        World = Current ? s_world : null,
+        Excluded = Current ? new HashSet<Vector2s>(s_excluded) : new HashSet<Vector2s>(),
+        HadNetwork = Current && s_hadNetwork,
+        IncludeExploredKeeping = Current && s_includeExploredKeeping != null ? new HashSet<Vector2s>(s_includeExploredKeeping) : null,
+    };
+
+    /// <summary>Put back the cutoff <see cref="Keep"/> took, for the same world; nothing planned goes round any zone after.</summary>
+    internal static void PutBack(State state)
+    {
+        if (state.World == null || !ReferenceEquals(state.World, s_world) || !Current) return;
+        s_excluded = new HashSet<Vector2s>(state.Excluded);
+        s_hadNetwork = state.HadNetwork;
+        s_generatedBefore = null;
+        s_includeExploredKeeping = state.IncludeExploredKeeping == null ? null : new HashSet<Vector2s>(state.IncludeExploredKeeping);
+        s_avoided = new HashSet<Vector2s>();
+    }
+
     /// <summary>
     /// A network was generated in this session (at load, or by a command).
     /// Every zone an earlier session generated is excluded: the explored part
@@ -191,6 +227,7 @@ public static class NetworkCutoff
     {
         bool included = s_includeExploredKeeping != null && !s_hadNetwork;
         s_excluded = ExcludedForNewNetwork();
+        s_generatedBefore = null;
         s_hadNetwork = true;
         // Planned: what the search went round is now simply what the writers leave alone.
         s_includeExploredKeeping = null;
@@ -207,6 +244,11 @@ public static class NetworkCutoff
     /// </summary>
     public static void BeginNewNetwork()
     {
+        // A replacing network leaves alone what was generated before its generation began: not the zones its own
+        // generation places first (SitesFirstLoad), where no player has been, which are where its roads go onto
+        // those places' landings. While it runs the world holds still, so only that placing generates zones.
+        s_generatedBefore = Current && s_hadNetwork && ZoneSystem.instance != null
+            ? new HashSet<Vector2s>(ZoneSystem.instance.m_generatedZones) : null;
         s_excluded = ExcludedForNewNetwork();
         s_avoided = s_includeExploredKeeping != null && !s_hadNetwork ? new HashSet<Vector2s>(s_excluded) : new HashSet<Vector2s>();
     }
@@ -218,7 +260,7 @@ public static class NetworkCutoff
             return new HashSet<Vector2s>(s_includeExploredKeeping);
         var excluded = new HashSet<Vector2s>(GeneratedAtLoad);
         if (Current && s_hadNetwork && ZoneSystem.instance != null)
-            excluded.UnionWith(ZoneSystem.instance.m_generatedZones);
+            excluded.UnionWith(s_generatedBefore ?? ZoneSystem.instance.m_generatedZones);
         Adopt();
         return excluded;
     }
@@ -254,6 +296,7 @@ public static class NetworkCutoff
         if (world != null && !ReferenceEquals(world, s_world)) return;
         s_world = null;
         s_hadNetwork = false;
+        s_generatedBefore = null;
         s_generatedAtLoad = null;
         s_excluded = new HashSet<Vector2s>();
         s_includeExploredKeeping = null;
@@ -270,8 +313,15 @@ public static class NetworkCutoff
     /// that only touches at a corner, fades by how close the ground really is. With nothing
     /// excluded (a fresh world) this is exactly 1 everywhere.
     /// </summary>
-    public static float SeamWeight(Vector2 point) =>
-        Current && s_excluded.Count > 0 ? SeamWeight(point, s_excluded) : 1f;
+    public static float SeamWeight(Vector2 point) => SeamWeight(point, out _);
+
+    /// <summary><see cref="SeamWeight(Vector2)"/>, and the excluded zone it is measured to (the nearest), whose ground
+    /// the fade starts from (RoadTerrainModifier); meaningless where the weight is 1.</summary>
+    public static float SeamWeight(Vector2 point, out Vector2s kept)
+    {
+        kept = default;
+        return Current && s_excluded.Count > 0 ? SeamWeight(point, s_excluded, out kept) : 1f;
+    }
 
     /// <summary>
     /// Whether any point of this zone can be faded: an excluded zone is among its eight
@@ -291,8 +341,11 @@ public static class NetworkCutoff
     }
 
     /// <summary><see cref="SeamWeight(Vector2)"/> against a given excluded set (tests).</summary>
-    internal static float SeamWeight(Vector2 point, ICollection<Vector2s> excluded)
+    internal static float SeamWeight(Vector2 point, ICollection<Vector2s> excluded) => SeamWeight(point, excluded, out _);
+
+    private static float SeamWeight(Vector2 point, ICollection<Vector2s> excluded, out Vector2s kept)
     {
+        kept = default;
         if (excluded.Count == 0) return 1f;
         // The fade is shorter than a zone, so only the point's own zone and its eight neighbours can be near.
         Vector2s home = ZoneSystem.GetZone(new Vector3(point.x, 0f, point.y));
@@ -306,7 +359,7 @@ public static class NetworkCutoff
                 float outX = Mathf.Max(0f, Mathf.Abs(point.x - centre.x) - RoadConstants.HalfZoneSize);
                 float outZ = Mathf.Max(0f, Mathf.Abs(point.y - centre.z) - RoadConstants.HalfZoneSize);
                 float distance = Mathf.Sqrt(outX * outX + outZ * outZ);
-                if (distance < nearest) nearest = distance;
+                if (distance < nearest) { nearest = distance; kept = zone; }
             }
         return nearest >= SeamFadeDistance ? 1f : nearest / SeamFadeDistance;
     }

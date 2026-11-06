@@ -86,8 +86,7 @@ public class StairDescentTests
         Assert.Equal(4f, step.Position.y, 3);
         Assert.True(Vector2.Distance(new Vector2(step.Position.x, step.Position.z), new Vector2(0f, 0f) + StairLayout.Forward(90f) * 1f) < 0.01f);
         Assert.Equal(1, plan.Stairs);
-        StairLayout.RemoveDescent(plan, added);
-        Assert.Empty(plan.Pieces);
+        Assert.Equal(added.pieces, plan.Pieces.Count);
     }
 
     [Fact]
@@ -95,10 +94,28 @@ public class StairDescentTests
     {
         StairPlan plan = TopAt(5f);
         Assert.Equal(0, StairLayout.AddDescent(plan, (x, z) => 5f - StairLayout.StepUp + 0.01f, 2f).pieces);
-        // Two metres over: two rows at most.
+        // Over it by up to a ledge (StairRailing.LedgeDrop): one row, a top's single reversed stair; past a ledge none (the
+        // end rule steps back: a stair down would not reach the ground).
         plan = TopAt(5f);
-        StairLayout.AddDescent(plan, (x, z) => 3f, 2f);
-        Assert.Equal(2, plan.Stairs);
+        StairLayout.AddDescent(plan, (x, z) => 5f - (StairLayout.StepUp + StairRailing.LedgeDrop) / 2f, 2f);
+        Assert.Equal(1, plan.Stairs);
+        plan = TopAt(5f);
+        Assert.Equal(0, StairLayout.AddDescent(plan, (x, z) => 5f - StairRailing.LedgeDrop - StairLayout.PieceRise, 2f).pieces);
+    }
+
+    [Fact]
+    public void NoStairIsAddedPastAnEndWhereNothingWithinReachWouldHoldItUp()
+    {
+        // 20 m over flat ground with no slope within the corbels' reach: the kit could not hold a stair there (StairSupport
+        // refuses it, as the search refuses its own pieces), so none is added down from the top.
+        StairPlan plan = TopAt(20f);
+        Assert.Equal(0, StairLayout.AddDescent(plan, (x, z) => 0f, 2f).pieces);
+        Assert.Empty(plan.Pieces);
+        // Nor on down from a foot to a road below it.
+        plan = new StairPlan { Kit = StairKit.Stone.Name, Reached = true, StartHeading = 0f, Foot = new Vector3(0f, 20f, 0f) };
+        Assert.Null(StairLayout.LowerFootTo(plan, (x, z) => 0f, 2f, 17f));
+        Assert.Empty(plan.Pieces);
+        Assert.Equal(new Vector3(0f, 20f, 0f), plan.Foot);
     }
 }
 
@@ -110,31 +127,30 @@ public class LedgeFinishTests
         var plan = new StairPlan { Kit = StairKit.Stone.Name, LastRowPieces = 0, LastRowClearances = 0, LastRowPieceCount = 1, LastRowClearanceCount = 0,
             LastRowKind = StairPieceKind.Landing, LastRowStart = new Vector2(0f, 0f), LastRowHeading = 90f, LastRowHeight = 10f, Landings = 1,
             End = new Vector3(2f, 10f, 0f), EndHeading = 90f };
-        plan.Pieces.Add(new StairPiece { Kind = StairPieceKind.Landing, Prefab = StairKit.Stone.Floor, Position = new Vector3(1f, 10f, 0f) });
+        plan.Pieces.Add(new StairPiece { Kind = StairPieceKind.Landing, Prefab = StairKit.Stone.Floor, Position = new Vector3(1f, 9.5f, 0f) });
         return plan;
     }
 
-    /// <summary>Over a lip 1 m under its top, a staircase keeps its 2x2 landing and steps down off it; with no room
-    /// past the landing, the landing itself becomes the step down, back to back (a 2x2 landing between them
-    /// looks better but is not required).</summary>
+    /// <summary>Over a lip a ledge under its top floor (StairRailing.LedgeDrop), read at the floor's own far corners (the
+    /// end rule: up to a ledge, a stair down), the floor itself becomes the step down, back to back, within its own 2 m,
+    /// with room past it or not (a 2x2 landing between them looks better but is not required); within a step, it stays.</summary>
     [Fact]
-    public void OverALedgeTheTopKeepsItsLandingThenStepsDownAndBackToBackOnlyWithoutRoom()
+    public void OverALedgeTheTopFloorBecomesTheStepDown()
     {
         StairPlan room = TopFloor();
-        Assert.Equal(RoadStairRuns.LedgeFinish.LandingThenDown, RoadStairRuns.FinishOverLedge(room, (x, z) => 9f, 2f, _ => true));
-        Assert.Contains(room.Pieces, p => p.Kind == StairPieceKind.Landing);
-        Assert.Contains(room.Pieces, p => p.Kind == StairPieceKind.Stair && p.Position.x > 2f);
+        Assert.Equal(StairLayout.TopFinish.BackToBack, RoadStairRuns.FinishOverLedge(room, (x, z) => 10f - (StairLayout.StepUp + StairRailing.LedgeDrop) / 2f, 2f, _ => true));
+        Assert.DoesNotContain(room.Pieces, p => p.Kind == StairPieceKind.Stair && p.Position.x > 2f);
 
         // Nothing may stand past the landing's front edge: back to back, within the landing's own 2 m.
         StairPlan tight = TopFloor();
-        Assert.Equal(RoadStairRuns.LedgeFinish.BackToBack,
-            RoadStairRuns.FinishOverLedge(tight, (x, z) => 9.2f, 2f, p => p.Pieces.All(pc => pc.Position.x <= 2.01f)));
+        Assert.Equal(StairLayout.TopFinish.BackToBack,
+            RoadStairRuns.FinishOverLedge(tight, (x, z) => 10f - (StairLayout.StepUp + StairRailing.LedgeDrop) / 2f, 2f, p => p.Pieces.All(pc => pc.Position.x <= 2.01f)));
         Assert.DoesNotContain(tight.Pieces, p => p.Kind == StairPieceKind.Landing);
         Assert.Single(tight.Pieces, p => p.Kind == StairPieceKind.Stair);
 
-        // Level with the lip: left as it is.
+        // Level with the lip, within a step: left as it is.
         StairPlan level = TopFloor();
-        Assert.Equal(RoadStairRuns.LedgeFinish.None, RoadStairRuns.FinishOverLedge(level, (x, z) => 9.9f, 2f, _ => true));
+        Assert.Equal(StairLayout.TopFinish.None, RoadStairRuns.FinishOverLedge(level, (x, z) => 10f - StairLayout.StepUp / 2f, 2f, _ => true));
         Assert.Single(level.Pieces);
     }
 }
@@ -148,8 +164,8 @@ public class SiteApproachToppingFloorTests
         // its high end at the floor's back edge, nothing laid beyond the floor's own 2 m.
         var plan = new StairPlan { Kit = StairKit.Stone.Name, LastRowPieces = 0, LastRowClearances = 0, LastRowPieceCount = 1, LastRowClearanceCount = 0,
             LastRowKind = StairPieceKind.Landing, LastRowStart = new Vector2(0f, 0f), LastRowHeading = 90f, LastRowHeight = 10f, Landings = 1 };
-        plan.Pieces.Add(new StairPiece { Kind = StairPieceKind.Landing, Prefab = StairKit.Stone.Floor, Position = new Vector3(1f, 10f, 0f) });
-        var column = new StairPiece { Kind = StairPieceKind.Support, Prefab = StairKit.Stone.Support, Position = new Vector3(-5f, 3f, 0f) };
+        plan.Pieces.Add(new StairPiece { Kind = StairPieceKind.Landing, Prefab = StairKit.Stone.Floor, Position = new Vector3(1f, 9.5f, 0f) });
+        var column = new StairPiece { Kind = StairPieceKind.Support, Prefab = "stone_pillar", Position = new Vector3(-5f, 3f, 0f) };
         plan.Pieces.Add(column);   // sunk later for an earlier piece: stays
         Assert.True(StairLayout.StepDownTop(plan, (x, z) => 9.2f, 2f));
         Assert.Contains(column, plan.Pieces);
@@ -158,10 +174,11 @@ public class SiteApproachToppingFloorTests
         Assert.Equal(9f, step.Position.y, 3);
         Assert.InRange(step.Position.x, 0.9f, 1.1f);
         Assert.True(Vector3.Distance(new Vector3(2f, 9f, 0f), plan.End) < 0.001f, $"end {plan.End}");
-        // A floor the player steps onto is left alone, and so is a staircase ending on a stair.
+        // A floor the player steps onto (the ground within a step, StairLayout.StepUp, under it) is left alone, and so is a
+        // staircase ending on a stair.
         plan = new StairPlan { Kit = StairKit.Stone.Name, LastRowPieces = 0, LastRowPieceCount = 0, LastRowClearances = 0,
             LastRowKind = StairPieceKind.Landing, LastRowHeading = 90f, LastRowHeight = 10f };
-        Assert.False(StairLayout.StepDownTop(plan, (x, z) => 9.8f, 2f));
+        Assert.False(StairLayout.StepDownTop(plan, (x, z) => 10f - StairLayout.StepUp / 2f, 2f));
         plan.LastRowKind = StairPieceKind.Stair;
         Assert.False(StairLayout.StepDownTop(plan, (x, z) => 5f, 2f));
     }
@@ -182,9 +199,11 @@ public class SiteApproachToppingFloorTests
     /// <summary>A crest (the cantilevered staircase by the mountain cave at 1920,704): its top edge at
     /// 170.08 facing 315, the plateau 0.8 m higher just past it. One more step up and the same step turned round,
     /// back to back, down onto the plateau: hand-laid stone_stairs 54255 (1931.346, 170.077, 702.033) yaw 135 and 54264
-    /// (1929.932, 170.077, 703.447) yaw 315. Without the rule, the top stays 0.8 m under the lip.</summary>
+    /// (1929.932, 170.077, 703.447) yaw 315. Without the rule, the top stays 0.8 m under the lip. By the end rule (5 Nov) the
+    /// top is short there and climbs the hand-laid up step; the plateau a floor's size on from it within a step of it takes a
+    /// floor, else the hand-laid down step (the crest).</summary>
     [Fact]
-    public void UnderALipByLessThanARiseTheTopCrestsBackToBack()
+    public void UnderALipByLessThanARiseTheTopClimbsTheHandLaidStep()
     {
         Vector2 edge = new(1932.053f, 701.326f), dir = StairLayout.Forward(315f);
         float Ground(float x, float z)
@@ -195,22 +214,28 @@ public class SiteApproachToppingFloorTests
         StairPlan Top() => new() { Kit = StairKit.Stone.Name, Reached = true, End = new Vector3(edge.x, 170.077f, edge.y), EndHeading = 315f };
 
         StairPlan plan = Top();
-        Assert.Equal(RoadStairRuns.LedgeFinish.Crest, RoadStairRuns.FinishOverLedge(plan, Ground, 2f, _ => true));
+        bool floor = Mathf.Abs(170.077f + StairLayout.PieceRise - 170.9f) <= StairLayout.StepUp;
+        Assert.Equal(floor ? StairLayout.TopFinish.TopFloor : StairLayout.TopFinish.Crest, RoadStairRuns.FinishOverLedge(plan, Ground, 2f, _ => true));
         var stairs = plan.Pieces.Where(p => p.Kind == StairPieceKind.Stair).ToList();
-        Assert.Equal(2, stairs.Count);
+        Assert.Equal(floor ? 1 : 2, stairs.Count);
         Assert.True(Vector3.Distance(new Vector3(1931.346f, 170.077f, 702.033f), stairs[0].Position) < 0.01f, $"up step at {stairs[0].Position}");
         Assert.Equal(135f, stairs[0].YawDegrees, 2);
-        Assert.True(Vector3.Distance(new Vector3(1929.932f, 170.077f, 703.447f), stairs[1].Position) < 0.01f, $"down step at {stairs[1].Position}");
-        Assert.Equal(315f, stairs[1].YawDegrees, 2);
+        if (!floor)
+        {
+            Assert.True(Vector3.Distance(new Vector3(1929.932f, 170.077f, 703.447f), stairs[1].Position) < 0.01f, $"down step at {stairs[1].Position}");
+            Assert.Equal(315f, stairs[1].YawDegrees, 2);
+        }
 
         // Over a lip more than a rise and a step-up high (and no climbing on), or on level ground, no crest.
-        Assert.NotEqual(RoadStairRuns.LedgeFinish.Crest, RoadStairRuns.FinishOverLedge(Top(), (x, z) => 171.5f, 2f, _ => true));
-        Assert.NotEqual(RoadStairRuns.LedgeFinish.Crest, RoadStairRuns.FinishOverLedge(Top(), (x, z) => 170.2f, 2f, _ => true));
+        Assert.NotEqual(StairLayout.TopFinish.Crest, RoadStairRuns.FinishOverLedge(Top(), (x, z) => 171.5f, 2f, _ => true));
+        Assert.NotEqual(StairLayout.TopFinish.Crest, RoadStairRuns.FinishOverLedge(Top(), (x, z) => 170.2f, 2f, _ => true));
     }
 
     /// <summary>A top (the mountain cave entry): its top edge at 172.7 facing +x, the ground past
     /// it rising to the shoulder, 1.1 m over the top 3-4 m on, which the top does not fully make. A crest's ridge, a
-    /// rise over the top, meets it (a lip of a rise and a step-up); before, a lip over a rise was left.</summary>
+    /// rise over the top, meets it (a lip of a rise and a step-up); before, a lip over a rise was left. By the end rule
+    /// (5 Nov) the top is short, climbs one stair, and the shoulder a floor's size on from it is within a step of it: a
+    /// floor (0.11 m under it).</summary>
     [Fact]
     public void ACrestMeetsAShoulderARiseAndAStepUpOverTheTop()
     {
@@ -222,7 +247,10 @@ public class SiteApproachToppingFloorTests
             return hs[hs.Length - 1];
         }
         StairPlan Top() => new() { Kit = StairKit.Stone.Name, Reached = true, End = new Vector3(-9292.7f, 172.7f, 706.8f), EndHeading = 90f };
-        Assert.Equal(RoadStairRuns.LedgeFinish.Crest, RoadStairRuns.FinishOverLedge(Top(), Ground, 2f, _ => true));
+        Assert.Equal(StairEnds.Case.Short, StairLayout.TopCase(Top(), Ground, 2f));
+        StairPlan plan = Top();
+        Assert.Equal(StairLayout.TopFinish.TopFloor, RoadStairRuns.FinishOverLedge(plan, Ground, 2f, _ => true));
+        Assert.Single(plan.Pieces, p => p.Kind == StairPieceKind.Stair);
     }
 
     /// <summary>A climb to a shelf whose ground goes on rising past the aim (a knoll, 1 m a metre for 4 m, then

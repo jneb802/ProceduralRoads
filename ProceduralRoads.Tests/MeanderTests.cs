@@ -315,4 +315,64 @@ public class MeanderTests
         }
         finally { RoadSpatialGrid.Clear(); }
     }
+    private sealed class ForestWorld : SyntheticWorld
+    {
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.BlackForest;
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void APieceMeetingAStructuresEndSwaysAwayFromItsHeldFoot(bool atEnd)
+    {
+        // A Black Forest piece meeting a structure's end, its foot and apron held (RoadSpatialGrid.HeldPoints), at the
+        // piece's end or mid-way: the road keeps every held point exactly, and sways further than the hold and its fade
+        // from them. Unswayed, the whole piece ran dead straight.
+        var road = Straight(-300f, 300f);
+        var feet = atEnd
+            ? new System.Collections.Generic.List<UnityEngine.Vector2> { new UnityEngine.Vector2(300f, 0f), new UnityEngine.Vector2(284f, 0f) }
+            : new System.Collections.Generic.List<UnityEngine.Vector2> { new UnityEngine.Vector2(-100f, 0f), new UnityEngine.Vector2(-92f, 0f) };
+        foreach (var f in feet) Assert.Contains(f, road);
+        var world = new ForestWorld { HasRiver = false, HasMountain = false };
+        using var scope = new Valheim.Testing.Doubles.ValheimWorldScope().WithWorld(world);
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.HeldPoints = feet;
+        try
+        {
+            PlainRoads.WithModDefaults(() =>
+            {
+                var plan = RoadSpatialGrid.PlanRoadPath(road, 4f, world, terrainHeight: _ => 60f);
+                Assert.NotNull(plan);
+                foreach (var f in feet)
+                {
+                    float onFoot = float.MaxValue;
+                    foreach (var p in plan!.Points) onFoot = UnityEngine.Mathf.Min(onFoot, (p - f).magnitude);
+                    Assert.True(onFoot < 0.5f, $"the road passes {onFoot:F2} m from the held point {f}");
+                }
+                float near = 0f, away = 0f;
+                foreach (var p in plan!.Points)
+                {
+                    float dx = float.MaxValue;
+                    foreach (var f in feet) dx = UnityEngine.Mathf.Min(dx, UnityEngine.Mathf.Abs(p.x - f.x));
+                    if (dx < RoadWiggle.HoldRadius - RoadWiggle.Spacing) near = UnityEngine.Mathf.Max(near, UnityEngine.Mathf.Abs(p.y));
+                    else if (dx > RoadWiggle.HoldRadius + RoadWiggle.ShareFade + RoadWiggle.Spacing) away = UnityEngine.Mathf.Max(away, UnityEngine.Mathf.Abs(p.y));
+                }
+                Assert.True(near < 0.5f, $"round the held points the road is {near:F2} m off its plain line");
+                Assert.True(away > 3f, $"away from the held points the road stayed within {away:F2} m of its plain line");
+            });
+        }
+        finally { RoadSpatialGrid.HeldPoints = null; RoadSpatialGrid.Clear(); }
+    }
+
+    [Fact]
+    public void ResamplingKeepsTheKeptWaypoints()
+    {
+        var path = Straight(0f, 200f, 10f);
+        var keep = new System.Collections.Generic.List<UnityEngine.Vector2> { new UnityEngine.Vector2(50f, 0f), new UnityEngine.Vector2(130f, 0f) };
+        var even = RoadWiggle.ResampleKeeping(path, 12f, keep);
+        foreach (var k in keep) Assert.Contains(k, even);
+        Assert.Equal(path[0], even[0]);
+        Assert.Equal(path[path.Count - 1], even[even.Count - 1]);
+        for (int i = 1; i < even.Count; i++) Assert.InRange(even[i].x - even[i - 1].x, 2.9f, 1.25f * 12f + 0.01f);
+    }
 }

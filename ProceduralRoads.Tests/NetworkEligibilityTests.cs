@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -48,7 +49,8 @@ public class NetworkEligibilityTests
         using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.NetworkOptions);
         try
         {
-            scope.WithWorld(new AshWorld());
+            var world = new AshWorld();
+            scope.WithWorld(world);
             RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions();
             RoadNetworkGenerator.RegisterLocation("ApiAshFixture");
             // The API is how a content mod opts in; there is no prefix rule.
@@ -57,10 +59,10 @@ public class NetworkEligibilityTests
                 CellSize=128, Cells=new() { new Vector2Int(0,0) } };
             var places = new List<(string,Vector3,float)> {
                 ("ApiAshFixture",Vector3.zero,1), ("MWL_Test",Vector3.zero,1), ("GoblinKing",Vector3.zero,1) };
-            var found = (List<(string,Vector3,float)>)Call("GetLocationsOnIsland", island, places);
-            Assert.Empty(found);
+            int Found() => places.Count(p => (bool)Call("IsIslandDestination", island, p, world, RoadNetworkGenerator.NetworkOptions));
+            Assert.Equal(0, Found());
             RoadNetworkGenerator.NetworkOptions.ExcludedBiomes = 0;
-            Assert.Equal(3, ((List<(string,Vector3,float)>)Call("GetLocationsOnIsland",island,places)).Count);
+            Assert.Equal(3, Found());
         }
         finally { RoadNetworkGenerator.UnregisterLocation("ApiAshFixture"); RoadNetworkGenerator.UnregisterLocation("MWL_Test"); }
     }

@@ -78,6 +78,57 @@ public static class RoadPitches
         return result;
     }
 
+    /// <summary>
+    /// A road already planned ending on the level landing a join ends on (<see cref="JunctionLanding"/>) at its start or its
+    /// end, its last metres limited again (RoadGrade.Limit) with both its ends held: each edge outside the landing keeps the
+    /// grade it was planned at where steeper than <paramref name="cap"/> (a pitch stays a pitch), the landing's edges at
+    /// <see cref="JunctionLandingGrade"/>. <paramref name="heights"/> is rewritten only where that fits. Where it does not, the
+    /// road is left as it was if it keeps within the cap into that end (<see cref="PitchedInto"/>), as a road planned to a
+    /// staircase's foot is (RoadSpatialGrid.PlanRoadPathCore); false where a pitch runs into it. For a staircase laid from a
+    /// road's end once the road was planned (RoadNetworkGenerator.SiteApproaches).
+    /// </summary>
+    public static bool LandEnd(IReadOnlyList<Vector2> points, IList<float> heights, bool atStart, float cap)
+    {
+        int n = Mathf.Min(points.Count, heights.Count);
+        if (JunctionLanding <= 0f || n < 2 || !RoadGrade.Capped(cap)) return true;
+        var edges = new float[n];
+        for (int i = 1; i < n; i++)
+        {
+            float run = Vector2.Distance(points[i - 1], points[i]);
+            edges[i] = run > 1e-4f ? Mathf.Max(cap, Mathf.Abs(heights[i] - heights[i - 1]) / run) : cap;
+        }
+        edges = ApplyJunctionLanding(points, edges, cap, atStart, !atStart, JunctionLanding);
+        var limited = new List<float>(n);
+        for (int i = 0; i < n; i++) limited.Add(heights[i]);
+        if (!RoadGrade.Limit(points, limited, LimitCap(cap, edges), edges)) return !PitchedInto(points, limited, atStart, !atStart, cap);
+        for (int i = 0; i < n; i++) heights[i] = limited[i];
+        return true;
+    }
+
+    /// <summary>
+    /// Whether a road climbs or falls past <paramref name="cap"/> anywhere within a level landing's length
+    /// (<see cref="JunctionLanding"/>) of its start or its end (<paramref name="atStart"/>, <paramref name="atEnd"/>): a pitch
+    /// run into where a staircase starts. Read edge by edge: a road within the cap on every edge there is within it over the
+    /// landing's length too, as the end audit reads it (StairEnds.RoadGradeOff). The one rule for a road whose landing at a
+    /// staircase's foot does not fit: kept at its own grade where this is false, else refused.
+    /// </summary>
+    public static bool PitchedInto(IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, bool atStart, bool atEnd, float cap)
+    {
+        int n = Mathf.Min(points.Count, heights.Count);
+        if (n < 2 || !RoadGrade.Capped(cap)) return false;
+        float total = 0f;
+        for (int i = 1; i < n; i++) total += Vector2.Distance(points[i - 1], points[i]);
+        float along = 0f;
+        for (int i = 1; i < n; i++)
+        {
+            float run = Vector2.Distance(points[i - 1], points[i]);
+            bool near = atStart && along < JunctionLanding || atEnd && total - (along + run) < JunctionLanding;
+            along += run;
+            if (near && run > 1e-4f && Mathf.Abs(heights[i] - heights[i - 1]) / run > cap + 1e-3f) return true;
+        }
+        return false;
+    }
+
     /// <summary>The cap to hand the grade limiter with these edge grades: the
     /// pitch grade when a pitch raised any edge above the road's cap.</summary>
     public static float LimitCap(float cap, float[]? edgeGrades)
@@ -87,6 +138,11 @@ public static class RoadPitches
         foreach (var g in edgeGrades) top = Mathf.Max(top, g);
         return top;
     }
+
+    /// <summary>How far along its range a rest's spacing falls at <paramref name="at"/>, in [0, 1]: smooth world-position
+    /// noise, so neighbouring rests vary and the same place always gets the same; road rests and staircase rests
+    /// (StairLayout) share it.</summary>
+    internal static float SpacingNoise(Vector2 at) => RoadEarthworkNoise.Perlin01(at.x * 0.037f + 11.1f, at.y * 0.037f - 7.3f);
 
     /// <summary>Per-edge grade limits with pitches and eases placed, or null
     /// when no climb takes an ease (the caller's limits stand).</summary>
@@ -130,7 +186,7 @@ public static class RoadPitches
             while (true)
             {
                 while (nextFixed < fixedEases.Count && fixedEases[nextFixed].to <= at) nextFixed++;
-                float n1 = RoadEarthworkNoise.Perlin01(points[FindIndex(s, at, a, b)].x * 0.037f + 11.1f, points[FindIndex(s, at, a, b)].y * 0.037f - 7.3f);
+                float n1 = SpacingNoise(points[FindIndex(s, at, a, b)]);
                 float every = Mathf.Lerp(eMin, eMax, n1);
                 float from = at + every;
                 float n2 = RoadEarthworkNoise.Perlin01(points[FindIndex(s, from, a, b)].x * 0.051f - 3.7f, points[FindIndex(s, from, a, b)].y * 0.051f + 19.9f);

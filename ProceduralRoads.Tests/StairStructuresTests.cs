@@ -16,9 +16,16 @@ namespace ProceduralRoads.Tests;
 public class StairStructuresTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
+
+    /// <summary>The flight's own ground (<see cref="Ground"/>), so its kit lays its supports over the dip on it.</summary>
+    private sealed class FlightWorld : SyntheticWorld
+    {
+        public override float GetHeight(float x, float z) => Ground(x, z);
+    }
+
     public StairStructuresTests()
     {
-        _scope.WithWorld(new SyntheticWorld());
+        _scope.WithWorld(new FlightWorld());
         StairStructures.Reset();
         StructurePlans.Reset();
     }
@@ -30,9 +37,12 @@ public class StairStructuresTests : IDisposable
         _scope.Dispose();
     }
 
+    /// <summary>A slope a flight climbs, with a 3 m dip it crosses.</summary>
+    private static float Ground(float x, float z) => 0.5f * z - (z > 10f && z < 16f ? 3f : 0f);
+
     private static StairRun Flight()
     {
-        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 40), (x, z) => 0.5f * z - (z > 10f && z < 16f ? 3f : 0f));
+        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 40), Ground);
         Assert.True(plan.Reached, plan.Reason);
         return StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), 2f, plan);
     }
@@ -65,11 +75,18 @@ public class StairStructuresTests : IDisposable
         StairRun run = Flight();
         StairStructures.Add(run);
 
-        Assert.Equal(run.Pieces.Count, StructurePlans.TotalPlannedPieces);
+        // The kit's pieces laid over the layout (StairKit.Dress): each walking piece as it is, and the supports it lays
+        // under them (StairSupport); the layout itself carries none.
+        List<StructurePiece> laid = StairStructures.PiecesOf(run, WorldGenerator.instance!);
+        Assert.Equal(laid.Count, StructurePlans.TotalPlannedPieces);
+        foreach (StructurePiece piece in laid)
+            Assert.Contains(StructurePlans.PlanFor(ZoneSystem.GetZone(piece.Position))!,
+                q => q.Prefab == piece.Prefab && q.Position.Equals(piece.Position) && q.YawDegrees == piece.YawDegrees);
         foreach (StructurePiece piece in run.Pieces)
-            Assert.Contains(piece, StructurePlans.PlanFor(ZoneSystem.GetZone(piece.Position))!);
-        Assert.Contains(run.Pieces, p => p.Kind == StructurePieceKind.StairStep && p.Prefab == StairKit.Stone.Stair);
-        Assert.Contains(run.Pieces, p => p.Kind == StructurePieceKind.StairSupport && p.Prefab == StairKit.Stone.Support);
+            Assert.Contains(laid, q => q.Prefab == piece.Prefab && q.Position.Equals(piece.Position) && q.YawDegrees == piece.YawDegrees);
+        Assert.Contains(laid, p => p.Kind == StructurePieceKind.StairStep && p.Prefab == StairKit.Stone.Stair);
+        Assert.DoesNotContain(run.Pieces, p => p.Kind == StructurePieceKind.StairSupport);
+        Assert.Contains(laid, p => p.Kind == StructurePieceKind.StairSupport && p.Prefab.StartsWith("stone_wall_"));
     }
 
     [Fact]

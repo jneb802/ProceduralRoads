@@ -16,6 +16,37 @@ public static class RoadSiteApproach
 {
     public const float Reach = 64f;
 
+    /// <summary>An arrival this close to the site's height is level with it: the one level a road arrives at a place on
+    /// (<see cref="RoadNetworkGenerator.ArrivalLevel"/>).</summary>
+    private const float Level = RoadNetworkGenerator.ArrivalLevel;
+
+    /// <summary>The point <paramref name="t"/> (0 to 1) of the way from <paramref name="anchor"/> to
+    /// <paramref name="end"/> round the site's outside: straight to the tangent of a circle about
+    /// <paramref name="centre"/> 2 m outside <paramref name="end"/>, then along that circle.</summary>
+    private static Vector2 ArcAroundSite(Vector2 anchor, Vector2 end, Vector2 centre, float t)
+    {
+        // Follow the site's outside instead of a chord through it when its
+        // accessible elevation is on the far side.
+        Vector2 from = anchor - centre, to = end - centre;
+        float a = (float)Math.Atan2(from.y, from.x);
+        float delta = (float)Math.Atan2(from.x * to.y - from.y * to.x,
+            from.x * to.x + from.y * to.y);
+        float r = to.magnitude + 2f;
+        float tangentAngle = from.magnitude > r
+            ? (float)Math.Acos(r / from.magnitude) : 0f;
+        float sign = delta < 0f ? -1f : 1f;
+        float straight = (float)Math.Sqrt(Math.Max(0f, from.sqrMagnitude - r*r));
+        float arc = Mathf.Max(0f, Mathf.Abs(delta) - tangentAngle) * r;
+        Vector2 finish = centre + to.normalized * r;
+        if (arc <= 0f) return anchor * (1f-t) + finish*t;
+        float ta = a + sign*tangentAngle;
+        Vector2 tangent = centre + new Vector2(Mathf.Cos(ta),Mathf.Sin(ta))*r;
+        float distance = t*(straight+arc);
+        if (distance < straight) return anchor + (tangent-anchor)*(distance/straight);
+        float theta = ta + sign*(distance-straight)/r;
+        return centre + new Vector2(Mathf.Cos(theta),Mathf.Sin(theta))*r;
+    }
+
     public static List<Vector2> Improve(List<Vector2> path, Vector2 centre, float radius,
         float width, WorldGenerator world, bool atStart,
         Func<Vector2, float?> target, Func<Vector2, float> ground, float? desiredHeight = null)
@@ -65,7 +96,7 @@ public static class RoadSiteApproach
                 if (requireClear && RoadSiteProtection.BlocksSegment(previous, point, RoadSiteProtection.Clearance(width), null, null))
                     return Reject("spline enters protected clearance");
                 world.GetRiverWeight(point.x, point.y, out float river, out _);
-                if (river > RoadConstants.RiverImpassableThreshold || Ground(point) < RoadConstants.ShallowWaterHeight)
+                if (!RoadWater.BuiltDry(Ground(point), river))
                     return Reject("water or river");
                 Vector2 direction = plan.Points[Math.Min(i + 1, plan.Points.Count - 1)]
                     - plan.Points[Math.Max(i - 1, 0)];
@@ -86,7 +117,7 @@ public static class RoadSiteApproach
         // prevent searching for a valid replacement; clearance gates candidates.
         float oldScore = Score(oldTail, out float oldWorst, false);
         float oldMismatch = desiredHeight.HasValue ? Mathf.Abs(Ground(oldEnd) - desiredHeight.Value) : 0f;
-        if (float.IsInfinity(oldScore) || (oldWorst < 2f && oldMismatch <= 1.5f)) return path;
+        if (float.IsInfinity(oldScore) || (oldWorst < 2f && oldMismatch <= Level)) return path;
         float bestScore = oldScore;
         List<Vector2>? best = null;
         Vector2 radial = oldEnd - centre;
@@ -115,9 +146,9 @@ public static class RoadSiteApproach
                 if (length > oldLength + Mathf.PI * radius) continue;
                 // This was already an acceptance rule. Apply it before
                 // smoothing, grading and sampling an unusable trial profile.
-                if (desiredHeight.HasValue && Mathf.Abs(Ground(candidate[candidate.Count - 1]) - desiredHeight.Value) > 1.5f) continue;
+                if (desiredHeight.HasValue && Mathf.Abs(Ground(candidate[candidate.Count - 1]) - desiredHeight.Value) > Level) continue;
                 float score = Score(candidate, out float worst);
-                float limit = oldMismatch > 1.5f ? Mathf.Max(2f, oldWorst + oldMismatch * 0.5f) : oldWorst - 0.5f;
+                float limit = oldMismatch > Level ? Mathf.Max(2f, oldWorst + oldMismatch * 0.5f) : oldWorst - 0.5f;
                 if (worst > limit || score >= bestScore || score > oldScore * 0.8f) continue;
                 bestScore = score;
                 best = candidate;
@@ -128,11 +159,11 @@ public static class RoadSiteApproach
         // One bounded search serves all possible arrival directions; it never
         // changes the main network search budget or exempts the destination.
         // An arrival no further out than the network counts a place reached from:
-        // AlreadyServedByNetwork takes a road within one path cell past this keep-out
+        // the reached test takes a road within ReachPastEdge past this keep-out
         // edge. Arrivals up to 9 m past the margin counted two Crypt4s unreached that
         // were built to (42.7 and 43.6 m out against 42 m).
-        float farthest = radius + RoadPathfinder.CellSize;
-        for (int margin = 1; best == null && desiredHeight.HasValue && oldMismatch > 1.5f && radius + margin < farthest; margin += 4)
+        float farthest = radius + RoadNetworkGenerator.ReachPastEdge;
+        for (int margin = 1; best == null && desiredHeight.HasValue && oldMismatch > Level && radius + margin < farthest; margin += 4)
         {
             const float step = 4f;
             var directions = new[] { new Vector2i(1,0), new Vector2i(-1,0), new Vector2i(0,1), new Vector2i(0,-1),
@@ -156,7 +187,7 @@ public static class RoadSiteApproach
                 Vector2 here=Point(key); float height=Ground(here);
                 float distanceToSite=Vector2.Distance(here,centre);
                 if (parents.ContainsKey(key) && distanceToSite >= radius+margin && distanceToSite <= Mathf.Min(radius+margin+9f,farthest) &&
-                    Mathf.Abs(height-desiredHeight.Value) <= 1.5f)
+                    Mathf.Abs(height-desiredHeight.Value) <= Level)
                 {
                     goals++;
                     var candidate=new List<Vector2> { here };
@@ -180,11 +211,11 @@ public static class RoadSiteApproach
                         RoadSiteProtection.BlocksSegment(here,there,RoadSiteProtection.Clearance(width)+margin,null,null)) continue;
                     float nextHeight=Ground(there), middleHeight=Ground((here+there)*0.5f);
                     if (float.IsNaN(nextHeight) || float.IsInfinity(nextHeight) ||
-                        float.IsNaN(middleHeight) || float.IsInfinity(middleHeight) || nextHeight < RoadConstants.ShallowWaterHeight) continue;
+                        float.IsNaN(middleHeight) || float.IsInfinity(middleHeight) || !RoadWater.BuiltDry(nextHeight)) continue;
                     float slope=Mathf.Max(Mathf.Abs(nextHeight-middleHeight),Mathf.Abs(middleHeight-height))*2f/delta.magnitude;
                     if (slope > maxGrade) continue;
                     world.GetRiverWeight(there.x,there.y,out float river,out _);
-                    if (river > RoadConstants.RiverImpassableThreshold) continue;
+                    if (RoadWater.River(river)) continue;
                     float cost=current.cost+delta.magnitude*(1f+slope*4f);
                     if (costs.TryGetValue(next,out float previous) && previous <= cost) continue;
                     costs[next]=cost; parents[next]=key; frontier.Add((cost,next.x,next.y));
@@ -200,32 +231,5 @@ public static class RoadSiteApproach
         result.AddRange(best);
         if (atStart) result.Reverse();
         return result;
-    }
-
-    /// <summary>The point <paramref name="t"/> (0 to 1) of the way from <paramref name="anchor"/> to
-    /// <paramref name="end"/> round the site's outside: straight to the tangent of a circle about
-    /// <paramref name="centre"/> 2 m outside <paramref name="end"/>, then along that circle.</summary>
-    private static Vector2 ArcAroundSite(Vector2 anchor, Vector2 end, Vector2 centre, float t)
-    {
-        // Follow the site's outside instead of a chord through it when its
-        // accessible elevation is on the far side.
-        Vector2 from = anchor - centre, to = end - centre;
-        float a = (float)Math.Atan2(from.y, from.x);
-        float delta = (float)Math.Atan2(from.x * to.y - from.y * to.x,
-            from.x * to.x + from.y * to.y);
-        float r = to.magnitude + 2f;
-        float tangentAngle = from.magnitude > r
-            ? (float)Math.Acos(r / from.magnitude) : 0f;
-        float sign = delta < 0f ? -1f : 1f;
-        float straight = (float)Math.Sqrt(Math.Max(0f, from.sqrMagnitude - r*r));
-        float arc = Mathf.Max(0f, Mathf.Abs(delta) - tangentAngle) * r;
-        Vector2 finish = centre + to.normalized * r;
-        if (arc <= 0f) return anchor * (1f-t) + finish*t;
-        float ta = a + sign*tangentAngle;
-        Vector2 tangent = centre + new Vector2(Mathf.Cos(ta),Mathf.Sin(ta))*r;
-        float distance = t*(straight+arc);
-        if (distance < straight) return anchor + (tangent-anchor)*(distance/straight);
-        float theta = ta + sign*(distance-straight)/r;
-        return centre + new Vector2(Mathf.Cos(theta),Mathf.Sin(theta))*r;
     }
 }

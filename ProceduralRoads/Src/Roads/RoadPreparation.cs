@@ -12,11 +12,13 @@ internal sealed class RoadPreparation : IDisposable
     private readonly Func<double> clock;
     private readonly double started;
     private double segmentStart, stageStarted;
-    private bool advancing, disposed;
+    private bool advancing, disposed, sliceEnded;
     private int batch;
     private StageMeasure? measure;
     private readonly List<StageMeasure> measures = new();
     internal RoadNetworkGenerator.GenerationWork? Result;
+    /// <summary>Why the preparation ended with no work (no island at the point asked, a peer that holds no network...).</summary>
+    internal string? Refusal { get; private set; }
     internal CancellationToken Cancellation;
     internal string Stage { get; private set; } = "";
     internal string Unit { get; private set; } = "";
@@ -55,6 +57,15 @@ internal sealed class RoadPreparation : IDisposable
         Stage=name; Unit=unit; Total=total; Completed=0; batch=0; stageStarted=now;
         measure=new StageMeasure {Name=timingGroup ?? name}; measures.Add(measure);
     }
+    /// <summary>The preparation ends here with no work, and says why (logged, and told to whoever asked).</summary>
+    internal void Refuse(string why)
+    {
+        Refusal=why;
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(why);
+    }
+    /// <summary>End this slice after the current step, whatever is left of its budget: work that waits on
+    /// the game's frames (a zone placed before its roads) gets one try a frame. A drain ignores it.</summary>
+    internal void EndSlice() => sliceEnded = true;
     // Called for every operation, but a clock is read only at a bounded iterator checkpoint.
     internal void CompleteUnit() => Completed++;
     internal bool Checkpoint(int count=1)
@@ -76,8 +87,10 @@ internal sealed class RoadPreparation : IDisposable
             {
                 Cancellation.ThrowIfCancellationRequested();
                 string prior=Stage;
+                sliceEnded=false;
                 if(!steps!.MoveNext()) { Finished=true; break; }
                 checkpoints++;
+                if(!drain && sliceEnded) { sliceEnded=false; break; }
                 // A phase boundary also gives its text a chance to render before the phase does work.
                 if(!drain && prior!=Stage) break;
 #if ROADS_TESTS

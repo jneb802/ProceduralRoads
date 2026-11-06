@@ -21,7 +21,7 @@ namespace ProceduralRoads;
 public static class ConsoleCommands
 {
     /// <summary>PROCEDURALROADS_DEV_COMMANDS: register the developer commands (<see cref="RegisterDevCommands"/>,
-    /// <see cref="StairCommands"/>, <see cref="ViaductCommands"/>). Off by default.</summary>
+    /// <see cref="StairCommands"/>, <see cref="SiteCommands"/>, <see cref="ViaductCommands"/>). Off by default.</summary>
     internal static readonly bool DevCommands = DebugSwitches.Flag("DEV_COMMANDS", false);
 
     private static bool s_commandsRegistered = false;
@@ -53,11 +53,12 @@ public static class ConsoleCommands
         {
             RegisterDevCommands();
             StairCommands.Register();
+            SiteCommands.Register();
             ViaductCommands.Register();
         }
         new Terminal.ConsoleCommand(
             "road_regen_island",
-            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Seconds instead of a whole-world generation when iterating on one site.",
+            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Its places are placed first, then its roads built, with the world held still; much faster than a whole-world generation when iterating on one site.",
             (args) => { if (!GenerationBusy(args)) RegenerateIslandHere(args); },
             isCheat: true,
             isNetwork: false,
@@ -273,7 +274,7 @@ public static class ConsoleCommands
 
         new Terminal.ConsoleCommand(
             "road_bridges",
-            "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are.",
+            "Bridges prototype: how many bridge pieces are planned and spawned, or road_bridges respawn to destroy every spawned bridge piece and spawn the current plans again -- into the zones this peer has loaded, and, on a server, into every planned zone the world has already generated. Zones not generated yet get theirs when they are. road_bridges respawn older does so only for the crossing sites an older bridge layout built, solving them again in this build's layout.",
             (args) => { if (!GenerationBusy(args)) BridgesCommand(args); },
             isCheat: true,
             isNetwork: false,
@@ -628,7 +629,7 @@ public static class ConsoleCommands
     }
 
     /// <summary>
-    /// Generate roads for an existing world that was created before the mod was installed.
+    /// Generate roads for an existing world that was created before the mod was installed, or regenerate them.
     /// </summary>
     private static void GenerateRoadsCommand(Terminal.ConsoleEventArgs args)
     {
@@ -645,62 +646,14 @@ public static class ConsoleCommands
             return;
         }
 
-        // Check if roads already exist
-        bool alreadyGenerated = RoadNetworkGenerator.RoadsGenerated;
-        if (alreadyGenerated)
-        {
-            args.Context.AddString("Roads already generated. Forcing regeneration...");
-        }
-        else
-        {
-            args.Context.AddString("Generating roads for existing world...");
-        }
-
+        args.Context.AddString(RoadNetworkGenerator.RoadsGenerated ? "Roads already generated. Forcing regeneration..." : "Generating roads for existing world...");
         Log.LogInfo("Manual road generation triggered via console command");
-
-        // Generate roads (force=true to regenerate if needed). A failed preparation now throws
-        // out of the synchronous run; say so here rather than in an unhandled console error.
-        try { RoadNetworkGenerator.GenerateRoads(force: true); }
-        catch (System.Exception error)
-        {
-            Log.LogError($"Manual road generation failed: {error}");
-            args.Context.AddString($"Road generation failed: {error.GetBaseException().Message}");
-            return;
-        }
-
-        if (!RoadNetworkGenerator.RoadsGenerated)
-        {
-            args.Context.AddString("Road generation failed. Check the log for details.");
-            return;
-        }
-
-        args.Context.AddString($"Road generation complete!");
-        args.Context.AddString($"  Stored road-point records: {RoadSpatialGrid.StoredPointRecords}");
-        args.Context.AddString($"  Committed planned-path length: {RoadSpatialGrid.Statistics.LengthText()}");
-        args.Context.AddString($"  Grid cells with roads: {RoadSpatialGrid.GridCellsWithRoads}");
-
-        // Apply roads to currently loaded zones
-        args.Context.AddString("Queuing terrain for loaded zones...");
-        int zonesWithRoads = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out var admitted);
-        ReportAdmitted(args, admitted);
-        args.Context.AddString($"Queued road terrain for {zonesWithRoads} visible zones.");
-        ReportBridgeRespawn(args, StructurePlacement.RespawnFromPlans());
-    }
-
-    private static void ReportAdmitted(Terminal.ConsoleEventArgs args, List<Vector2s> admitted)
-    {
-        if (admitted.Count > 0)
-            args.Context.AddString(NetworkCutoff.AdmissionWarning("this command builds roads in", admitted));
-    }
-
-    /// <summary>Bridge pieces of the old network sit at the old crossings:
-    /// after a successful rebuild they go, and the new plans go in.</summary>
-    private static void ReportBridgeRespawn(Terminal.ConsoleEventArgs args, (int destroyed, int zones) result)
-    {
-        if (result.destroyed > 0)
-            args.Context.AddString($"Removed {result.destroyed} bridge pieces of the previous network.");
-        if (result.zones > 0)
-            args.Context.AddString($"Spawned bridges into {result.zones} zone(s).");
+        // As at load: places placed before their roads, over frames, then the roads built by workers. This command
+        // returns at once; the panel and road_progress show how it goes, and the console hears how it ended.
+        if (RoadLifecycleManager.BeginForOperator(null, args.Context.AddString) is string refused)
+            args.Context.AddString(refused);
+        else
+            args.Context.AddString(RoadGeneration_Patch.HeldWhileBuilding);
     }
 
     /// <summary>road_crossings [count] lists the river crossings nearest the player.</summary>
@@ -739,7 +692,8 @@ public static class ConsoleCommands
 
     /// <summary>road_bridges reports the plans; road_bridges respawn destroys every
     /// spawned bridge piece and spawns the current plans again into the loaded
-    /// zones (fixture iteration).</summary>
+    /// zones (fixture iteration); road_bridges respawn older, only the sites an
+    /// older layout built.</summary>
     private static void BridgesCommand(Terminal.ConsoleEventArgs args)
     {
         if (!RoadNetworkGenerator.RoadsAvailable)
@@ -750,8 +704,11 @@ public static class ConsoleCommands
 
         if (args.Length > 1 && args[1] == "respawn")
         {
-            (int destroyed, int zones) = StructurePlacement.RespawnFromPlans();
-            args.Context.AddString($"Destroyed {destroyed} bridge pieces; spawned the current plans into {zones} zone(s). Zones the world has not generated yet get theirs when it does.");
+            bool older = args.Length > 2 && args[2] == "older";
+            int stale = older ? BuiltBridges.OlderLayout().Count : 0;
+            (int destroyed, int zones) = StructurePlacement.RespawnFromPlans(older);
+            args.Context.AddString((older ? $"{stale} site(s) built by a layout older than {BridgeLayout.LayoutVersion}: " : "") +
+                $"Destroyed {destroyed} bridge pieces; spawned the current plans into {zones} zone(s). Zones the world has not generated yet get theirs when it does.");
             return;
         }
 
@@ -810,20 +767,27 @@ public static class ConsoleCommands
         int seed = WorldGenerator.instance.GetSeed();
         if (site.Kind == CrossingKind.Bridge && BridgeStructures.KitFor(site, WorldGenerator.instance) == BridgeStructures.Kit.DvergrViaduct)
         {
-            // The wooden kit's repair diagnostic does not describe a viaduct.
+            // The railed kits' repair diagnostic does not describe a viaduct.
             args.Context.AddString("The nearest crossing is a Dvergr viaduct: " + DvergrViaduct.Describe(site, WorldGenerator.instance) +
                 $"; {DvergrViaduct.Solve(site, WorldGenerator.instance, seed).Count} of {DvergrViaduct.SolveComplete(site, WorldGenerator.instance, seed).Count} pieces stand.");
             return;
         }
         if (BridgeStructures.KitFor(site, WorldGenerator.instance) == BridgeStructures.Kit.DvergrWood)
         {
-            // The wooden kit's repair diagnostic describes its own plates and poles, not the Dvergr pier's planks and piles.
+            // The railed kits' repair diagnostic describes their own plates and poles, not the Dvergr pier's planks and piles.
             args.Context.AddString("The nearest crossing is a Dvergr wood bridge: " + DvergrWoodBridge.Describe(site, WorldGenerator.instance) +
                 $"; {DvergrWoodBridge.Solve(site, WorldGenerator.instance, seed).Count} of {DvergrWoodBridge.SolveComplete(site, WorldGenerator.instance, seed).Count} pieces stand.");
             return;
         }
-        List<StructurePiece> complete = BridgeLayout.SolveComplete(site, WorldGenerator.instance, seed);
-        List<StructurePiece> shipped = BridgeLayout.Solve(site, WorldGenerator.instance, seed);
+        BridgeStructures.Kit? kit = BridgeStructures.KitFor(site, WorldGenerator.instance);
+        BridgeLayout.RailedKit? railed = BridgeStructures.RailedKitOf(kit);
+        if (railed == null && kit != BridgeStructures.Kit.Stone)
+        {
+            args.Context.AddString($"The nearest crossing is a {site.Kind}{(site.Style != FordStyle.None ? " " + site.Style : "")} laid as road: no pieces to repair.");
+            return;
+        }
+        List<StructurePiece> complete = BridgeStructures.SolveComplete(site, WorldGenerator.instance, seed);
+        List<StructurePiece> shipped = BridgeStructures.PiecesOf(site, WorldGenerator.instance, seed);
 
         (float dropFrom, float dropTo) = BridgeLayout.BankDrop(site, WorldGenerator.instance);
         (bool nearLands, bool farLands) = BridgeLayout.StairRunsLand(site, WorldGenerator.instance);
@@ -853,7 +817,8 @@ public static class ConsoleCommands
                 continue;
             // Two reasons a piece is missing, reported apart: the navigation
             // gap is left open on purpose for boats, the rest is ruin.
-            bool inGap = BridgeLayout.InNavigationGap(site, site.Along(new Vector2(piece.Position.x, piece.Position.z)));
+            // The stone kit's complete plan leaves its river opening open too (BridgeLayout.StoneNavigationBays).
+            bool inGap = railed != null && BridgeLayout.InRailedNavigationGap(site, WorldGenerator.instance, railed, site.Along(new Vector2(piece.Position.x, piece.Position.z)));
             if (inGap) gap++; else ruined++;
             lines.Add(string.Format(CultureInfo.InvariantCulture,
                 "REPAIR {0} {1} {2:F3} {3:F3} {4:F3} yaw={5:F2} pitch={6:F2} why={7}",
@@ -885,17 +850,11 @@ public static class ConsoleCommands
         }
 
         args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})...");
-        if (!RoadNetworkGenerator.RegenerateIslandAt(pos, out string summary))
-        {
-            args.Context.AddString($"Failed: {summary}");
-            return;
-        }
-
-        int zones = RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out var admitted);
-        ReportAdmitted(args, admitted);
-        args.Context.AddString(summary);
-        args.Context.AddString($"Queued terrain for {zones} loaded zone(s).");
-        ReportBridgeRespawn(args, StructurePlacement.RespawnFromPlans());
+        // The same generation road_generate runs, for one island: its places placed before their roads, over frames.
+        if (RoadLifecycleManager.BeginForOperator(pos, args.Context.AddString) is string refused)
+            args.Context.AddString(refused);
+        else
+            args.Context.AddString(RoadGeneration_Patch.HeldWhileBuilding);
     }
 
 

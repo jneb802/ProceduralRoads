@@ -37,6 +37,10 @@ public static partial class RoadLifecycleManager
         ChoicePending = false;
         m_includedNote = null;
         RoadNetworkGenerator.Reset();
+        // This world's placed places and the map icons they hide: another world's are not its. Kept through
+        // a regeneration: the places stay placed, and nothing places them again to hide them.
+        PlacedSites.Reset();
+        HiddenSiteIcons.Reset();
         NetworkCutoff.Forget(zoneSystem);
         RoadClearAreaManager.ClearCache();
         RoadTerrainModifier.ResetForWorld();
@@ -143,14 +147,16 @@ public static partial class RoadLifecycleManager
                 "(Roads.ExistingWorldFirstLoadRoads answers it without asking)");
             return;
         }
-        Carry(decision, afterSpawn);
+        Carry(decision);
     }
 
     /// <summary>Whether the loading screen is asking what an explored world's first road network does (ExistingWorldFirstLoad).</summary>
     public static bool ChoicePending { get; private set; }
 
-    /// <summary>Whether the host waits on its loading screen: for the first network, or for the answer about it.</summary>
-    internal static bool HoldsLoadingScreen => InitialGenerationActive || ChoicePending;
+    /// <summary>Whether the world is held (respawn, the server's zone streaming; in the world, the host's player): while a
+    /// generation runs (at load, or in the world: the spawn fallback, road_generate, road_regen_island), or while the host
+    /// is asked about an explored world's first network.</summary>
+    internal static bool HoldsTheWorld => GenerationRunning || ChoicePending;
 
     /// <summary>What the players are told once a network over the explored land is built (ExistingWorldFirstLoad.KeptNote).</summary>
     private static string? m_includedNote;
@@ -166,7 +172,7 @@ public static partial class RoadLifecycleManager
             ExistingWorldRoads.Skip => ExistingWorldFirstLoad.Decision.Skip,
             ExistingWorldRoads.IncludeExplored => ExistingWorldFirstLoad.Decision.IncludeExplored,
             _ => ExistingWorldFirstLoad.Decision.NewZonesOnly,
-        }, afterSpawn: false);
+        });
         return true;
     }
 
@@ -187,7 +193,7 @@ public static partial class RoadLifecycleManager
     }
 
     /// <summary>Do what the first load decided.</summary>
-    private static void Carry(ExistingWorldFirstLoad.Decision decision, bool afterSpawn)
+    private static void Carry(ExistingWorldFirstLoad.Decision decision)
     {
         var log = ProceduralRoadsPlugin.ProceduralRoadsLogger;
         switch (decision)
@@ -218,13 +224,12 @@ public static partial class RoadLifecycleManager
                 log.LogInfo($"Existing world: roads are built only in land explored from now on; the {NetworkCutoff.ExploredAtLoadCount} explored zone(s) stay as they are.");
                 break;
         }
-        // Behind the loading screen: BeginInitialGeneration builds the network over many frames
-        // (it honours the PROCEDURALROADS_GENERATE_ROADS_ON_LOAD switch, and Tick applies road
-        // terrain to the zones spawned before the network existed). With the player already in
-        // the world (the spawn fallback) it would hold zone streaming off around a live player
-        // for minutes, so that path builds synchronously as before, through GenerateRoadsOnLoad.
-        if (afterSpawn) { GenerateAfterSpawn(); TellIncluded(); }
-        else BeginInitialGeneration();
+        // BeginInitialGeneration builds the network over many frames, its places placed first (it honours the
+        // PROCEDURALROADS_GENERATE_ROADS_ON_LOAD switch, and Tick applies road terrain to the zones spawned before the
+        // network existed): behind the loading screen, or with the player already in the world (the spawn fallback)
+        // under the same panel, the world held still as road_generate holds it. Placing waits for frames, so no
+        // generation in the game is synchronous.
+        BeginInitialGeneration();
     }
 
     /// <summary>Once a network over the explored land is built: tell the players which zones it went round.</summary>
@@ -234,31 +239,6 @@ public static partial class RoadLifecycleManager
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(m_includedNote);
         ExistingWorldFirstLoad.Tell?.Invoke(m_includedNote);
         m_includedNote = null;
-    }
-
-    /// <summary>The spawn fallback's generation: synchronous, once per world as the loading-screen
-    /// one is (a failed attempt is not retried), host only, and never thrown into the spawn hook.</summary>
-    private static void GenerateAfterSpawn()
-    {
-        if (m_initialAttempted || !HoldsTheNetwork) return;
-        m_initialAttempted = true;
-        try { RoadNetworkGenerator.GenerateRoadsOnLoad(); }
-        catch (System.Exception error)
-        {
-            // GenerateRoadsOnLoad completes the network (RoadsGenerated), then applies it to the loaded zones. A
-            // failure after completion can follow terrain already written and bridge pieces already spawned: the
-            // network stays, so those effects keep its identity and are saved with it. Either way nothing is retried.
-            if (RoadNetworkGenerator.RoadsGenerated)
-            {
-                // The synchronous generation reported "Complete" before the step that failed.
-                ReportApplicationFailed(error);
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogError(
-                    "Road network generated after spawn was completed and kept, but a later step failed " +
-                    $"(the loaded zones may lack some or all of its terrain and bridges); network retained: {error}");
-            }
-            else
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogError($"Road generation after spawn failed; no network was published: {error}");
-        }
     }
 
     /// <summary>

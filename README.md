@@ -6,7 +6,7 @@ A Valheim mod that generates procedural roads connecting locations across your w
 
 - Connects a seeded mix of dungeons, settlements, ruins, bosses and quest sites across selected islands
 - Terrain-aware routing that holds a maximum grade and protects the terrain of locations
-- River fords and ruined wooden bridges; Dvergr viaducts and bridges in the Mistlands
+- River fords and ruined wooden and stone bridges; Dvergr viaducts and bridges in the Mistlands
 - Staircases where the ground is too steep for a road
 - Bridges and staircases are built from vanilla pieces, so players can repair them
 - Server-side: players without the mod see and walk the same roads
@@ -46,12 +46,14 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 | ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
 | ExistingWorldFirstLoadRoads | Ask | First load of a world explored before it had roads: Ask, IncludeExplored, NewZonesOnly or Skip |
+| AttemptRoadsToHildirQuestSites | false | Roads to Hildir's cave, crypt and tower |
+| Weathered (section Structures) | Bridges, Stairs | Structures laid as an old ruin a player can repair (some pieces missing, every piece worn); one not listed is laid whole and at full health |
 
-Settings apply when a network is generated, not to a saved one. Not every selected destination gets a road: some cannot be reached within the grade and site rules.
+Settings apply when a network is generated, not to a saved one, except Weathered: it is read when a structure's first zone is built, so it applies to the structures of a saved network not built yet. Not every selected destination gets a road: some cannot be reached within the grade and site rules.
 
 ### Custom Locations via Config
 
-Use the `CustomLocations` setting to add locations from other mods (e.g., Expand World Data):
+Use the `CustomLocations` setting to add locations from other mods (e.g., Expand World Data). They are not found on their own: list each by its location name.
 
 ```
 CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp

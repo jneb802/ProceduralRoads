@@ -22,13 +22,14 @@ public static partial class RoadStairRuns
     /// crest (at 6468.3,-1522.5 the top is better a bit out, doing the double stair ridge to land on the
     /// surface). Where the ground past the top is level with it or under it, the road's earthwork meets it as before.
     /// Only where the road carries on within 60 degrees of the top's heading, and once per plan (a plan is shared
-    /// between the roads that walk it). <paramref name="next"/>: the path index the road carries on from.
+    /// between the roads that walk it). Not at a top the road was carried on to (<see cref="StairPlan.TopFloorsTrimmed"/>): the
+    /// road there was judged starting where it is. <paramref name="next"/>: the path index the road carries on from.
     /// </summary>
     internal static bool TopOntoSurface(StairPlan plan, List<Vector2> path, int next, Func<float, float, float> ground, out Vector2 past, out float pastHeight,
         Func<StairPlan, int, bool>? fits = null)
     {
         past = default; pastHeight = 0f;
-        if (!plan.Reached || next < 0 || next >= path.Count) return false;
+        if (!plan.Reached || plan.TopFloorsTrimmed > 0 || next < 0 || next >= path.Count) return false;
         lock (plan)
         {
             if (plan.TopCrested is Vector3 done) { past = new Vector2(done.x, done.z); pastHeight = done.y; return true; }
@@ -41,8 +42,8 @@ public static partial class RoadStairRuns
             Vector3 end = plan.End;
             int stairs = plan.Stairs;
             float rise = plan.Rise, walked = plan.WalkedLength;
-            // Climbed on, then out to where the surface is within the floor's band: a floor level with the top onto it, the
-            // road on from its far edge at its height; higher, the crest. Its top row is not a floor to keep the floor off.
+            // Finished by the end rule (StairLayout.FinishTop): climbed on, then a floor level with the top onto the ground, the
+            // road on from its far edge at its height; else the crest's stair down. Its top row is not a floor to keep the floor off.
             plan.LastRowPieces = -1;
             // What it adds past the top passes the staircase's own checks (<paramref name="fits"/>, given the plan and the index
             // of the first piece added: Lay's TopFits), or that finish is not laid and the next is tried; none fitting, the top
@@ -66,9 +67,14 @@ public static partial class RoadStairRuns
                 plan.End = end; plan.Stairs = stairs; plan.Rise = rise; plan.WalkedLength = walked;
                 return false;
             }
-            Vector2 crestTop = new Vector2(plan.End.x, plan.End.z);
-            past = crestTop + StairLayout.Forward(plan.EndHeading) * (2f * StairLayout.PieceRun);
-            pastHeight = ground(past.x, past.y);
+            // The crest's stair down off the stairs climbed on: the road on from its low end, at its walking height there, as
+            // off a top floor (its slope meets the ground a rise over its low edge at most, StairEnds.MeetsLowEdge; a road
+            // starting on that ground stood up to a rise over the stair's end, and its start pad, level with the end, was not
+            // laid: 0.6 m in planning, 1.3 m on the finished ground at 904.1,5220.2).
+            StairLayout.TerminalExit? down = StairLayout.Terminal(plan);
+            past = down != null ? new Vector2(down.Edge.x, down.Edge.z)
+                : new Vector2(plan.End.x, plan.End.z) + StairLayout.Forward(plan.EndHeading) * StairLayout.PieceRun;
+            pastHeight = down != null ? down.Edge.y : ground(past.x, past.y);
             plan.TopCrested = new Vector3(past.x, pastHeight, past.y);
             System.Threading.Interlocked.Increment(ref RoadTopsCrested);
             return true;
@@ -86,11 +92,13 @@ public static partial class RoadStairRuns
     {
         var extra = new StairPlan { Kit = plan.Kit, Reached = true };
         for (int i = added; i < plan.Pieces.Count; i++) extra.Pieces.Add(plan.Pieces[i]);
-        // The stretch and the road past its top as far as the additions reach (the road starts again past them).
+        // The stretch and the road past its top as far as the additions reach (the road starts again past them), and as far
+        // again as a piece may stand off the road and still be on it: the road starting again at the last piece's far edge is
+        // the one it meets, not one it lands on (a top climbed on two stairs and floored, its floor against the next stretch).
         int top = plan.Reversed ? from : to, step = plan.Reversed ? -1 : 1;
         float reach = 0f;
         foreach (StairPiece piece in extra.Pieces)
-            reach = Mathf.Max(reach, Vector2.Distance(new Vector2(piece.Position.x, piece.Position.z), path[top]) + StairLayout.PieceRun / 2f);
+            reach = Mathf.Max(reach, Vector2.Distance(new Vector2(piece.Position.x, piece.Position.z), path[top]) + StairLayout.PieceRun / 2f + OnRoad);
         int end = top + step;
         while (end + step >= 0 && end + step < path.Count && Vector2.Distance(path[end], path[top]) < reach) end += step;
         end = Mathf.Clamp(end, 0, path.Count - 1);
@@ -113,8 +121,6 @@ public static partial class RoadStairRuns
     /// <summary>Staircase tops finished with a floor out onto the ground this generation (<see cref="StairLayout.AddTopFloor"/>).</summary>
     public static int TopFloors;
 
-    /// <summary>The way the road comes to the foot of the staircase over path[from..to]: its heading over its last
-    /// stretch into the lower end (as BesideItsRoad reads it), or null where no road comes to that end.</summary>
     /// <summary>The way the road leaves the top of the staircase over path[from..to]: its heading over its first stretch
     /// on from the higher end, or null where no road leaves that end.</summary>
     internal static float? TopFacing(List<Vector2> path, int from, int to, Func<float, float, float> ground)
@@ -141,15 +147,16 @@ public static partial class RoadStairRuns
         // The side it comes in from: the foot's side of the road leaving the top.
         Vector2 right = StairLayout.Right(leave);
         int first = Vector2.Dot(foot - top, right) >= 0f ? 1 : -1;
-        float offset = BesideOffset(0f);
+        // Its edge on the road's edge, carried on along the road.
+        float offset = RoadNetworkGenerator.RoadWidth / 2f + Width / 2f;
         foreach (int side in new[] { first, -first })
         {
             Vector2 beside = top + right * (side * offset);
             var line = new List<Vector2>(corridor);
             line[reversed ? 0 : line.Count - 1] = beside;
             StairPlan again = reversed
-                ? Plan(beside, b, kit, ground, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing)
-                : Plan(a, beside, kit, ground, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing);
+                ? Plan(beside, b, kit, ground, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing, ring: FootRingOf(path, from, to, beside, b, ground))
+                : Plan(a, beside, kit, ground, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing, ring: FootRingOf(path, from, to, a, beside, ground));
             if (Usable(again, path, from, to, world, spans, null)) { System.Threading.Interlocked.Increment(ref TopsBeside); return again; }
         }
         return null;

@@ -165,8 +165,12 @@ public class SiteApproachTests
         Assert.Equal(68f,LocationLevelling.ApproachHeight(60f,new[] {new LevelOp(2,0,8,8,false)}));
         var world=new Flat(); using var scope=new ValheimWorldScope().WithWorld(world);
         using var overrides = StaticOverride.Keep(() => LocationLevelling.Source);
-        LocationLevelling.Source=_=>new[] {new LevelOp(2,0,0.8f,8,false)};
+        // Ground level with the raised platform (RoadNetworkGenerator.ArrivalLevel) is arrived on as it is; a platform 0.8 m
+        // over it is not level with it (1.5 m counted before the end-level rule): no target.
+        LocationLevelling.Source=_=>new[] {new LevelOp(2,0,0.4f,8,false)};
         Assert.Equal(60f,RoadNetworkGenerator.ApproachGround(new Vector2(20,0),new Vector2(),16));
+        LocationLevelling.Source=_=>new[] {new LevelOp(2,0,0.8f,8,false)};
+        Assert.Null(RoadNetworkGenerator.ApproachGround(new Vector2(20,0),new Vector2(),16));
     }
 
     [Fact]

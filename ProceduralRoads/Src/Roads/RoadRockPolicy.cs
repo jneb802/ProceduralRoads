@@ -83,6 +83,18 @@ public static class RoadRockPolicy
     /// <summary>Keep a rock that blocks under half the road's width at its
     /// worst point, when rocks are removed whole.</summary>
     public static bool KeepPartial(int blockedSlots, int slots) => blockedSlots * 2 < slots;
+
+    /// <summary>How many narrow capsules across the road the partial-rock rule counts what blocks (<see cref="KeepPartial"/>).</summary>
+    public const int Slots = 5;
+
+    /// <summary>Slot <paramref name="k"/> of <paramref name="slots"/> narrow capsules across a road <paramref name="width"/>
+    /// wide, which <see cref="KeepPartial"/> counts what blocks: its centre's offset across the road from the centre line,
+    /// and its radius (the road's width shared out between them).</summary>
+    public static (float offset, float radius) Slot(int k, int slots, float width)
+    {
+        float half = width * 0.5f;
+        return ((-1f + (2f * k + 1f) / slots) * half, half / slots);
+    }
     /// <summary>A rock smaller than this (bounds diagonal, m) is never carved: one in the road's
     /// clearance is removed whole: a small rock is kept or cleared, never cut (keeping it was
     /// measured to leave the centre of the lane blocked at four of 28 sites).</summary>

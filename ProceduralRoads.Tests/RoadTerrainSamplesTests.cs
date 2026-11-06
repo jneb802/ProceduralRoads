@@ -250,4 +250,18 @@ public class RoadTerrainSamplesTests
         Assert.Equal(2, samples.Misses);
         Assert.Equal(0, samples.Hits);
     }
+
+    /// <summary>Off any place's footprint the ground a water test judges is the natural ground the memo already holds: the
+    /// same value, and no second read of the world for it.</summary>
+    [Fact]
+    public void TheGroundOffAFootprintIsTheHeldNaturalGround()
+    {
+        var world = new CountingWorld(); var samples = new RoadTerrainSamples(world); var p = new Vector2i(5, 9);
+        float height = samples.Height(p);
+        int heights = world.Heights, biomes = world.Biomes;
+        Assert.Equal(height, samples.Ground(p));
+        Assert.Equal(heights, world.Heights);
+        Assert.Equal(biomes, world.Biomes);
+        Assert.Equal(height, samples.Ground(p));
+    }
 }

@@ -20,8 +20,8 @@ public class RoadEndReportTests : System.IDisposable
         {
             ("StartTemple", 0f, 0f, 25f),
             ("Eikthyrnir", 260f, 40f, 10f),
-            ("Crypt4", -220f, 150f, 18f),
-            ("Crypt4", 120f, -260f, 18f),
+            ("WoodVillage1", -220f, 150f, 18f),
+            ("WoodVillage1", 120f, -260f, 18f),
         })
         {
             TestLocations.Add(zones, new ZoneSystem.LocationInstance

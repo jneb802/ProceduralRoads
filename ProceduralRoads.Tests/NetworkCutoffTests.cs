@@ -100,6 +100,24 @@ public sealed class NetworkCutoffTests : IDisposable
         Assert.False(NetworkCutoff.Excludes(D));
     }
 
+    /// <summary>A replacing network leaves alone the zones generated before its generation began, not the zones its own
+    /// generation placed first (SitesFirstLoad: the places it will visit, placed before their roads while the world holds
+    /// still): no player has been there, and they are where its roads go onto those places' landings.</summary>
+    [Fact]
+    public void AReplacingNetworkWritesTheZonesItsOwnGenerationPlaced()
+    {
+        NetworkCutoff.SnapshotWorld(new[] { A });
+        ZoneSystem.instance!.Generated.Add(A);
+        NetworkCutoff.UseNewNetwork();
+        ZoneSystem.instance.Generated.Add(B);   // generated with the first network, players about
+        NetworkCutoff.BeginNewNetwork();        // a command replaces it
+        ZoneSystem.instance.Generated.Add(C);   // placed first by that command's generation
+        NetworkCutoff.UseNewNetwork();
+        Assert.True(NetworkCutoff.Excludes(A));
+        Assert.True(NetworkCutoff.Excludes(B));
+        Assert.False(NetworkCutoff.Excludes(C), "a zone the generation placed itself was left as it is");
+    }
+
     [Fact]
     public void ALateTeardownOfAnotherWorldKeepsThisOnesCutoffAndNoRecordIsWrittenForAStrangeWorld()
     {

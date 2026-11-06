@@ -106,7 +106,8 @@ public static class RoadPathPull
     private static bool Admissible(List<Vector2> path, int i, int j, float width,
         Func<Vector2, float> ground, Func<Vector2, bool> wet, float gradeLimit)
     {
-        if (RoadSiteProtection.BlocksSegment(path[i], path[j], RoadSiteProtection.Clearance(width), null, null)) return false;
+        // The one site clearance of the road as it will be built: what the final check would refuse is not pulled.
+        if (RoadSiteProtection.BlocksRoad(path[i], path[j], width, path[0], path[path.Count - 1])) return false;
         if (NetworkCutoff.AvoidsSegment(path[i], path[j], path[0], path[path.Count - 1])) return false;
         if (Tolerance > 0f && !WithinTolerance(path, i, j, Tolerance)) return false;
         var line = Profile(new[] { path[i], path[j] }, ground, wet);

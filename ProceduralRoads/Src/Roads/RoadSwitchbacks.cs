@@ -152,7 +152,8 @@ public static class RoadSwitchbacks
 
     public static bool Shape(List<Vector2> input, float width,
         out List<Vector2>? shaped, out List<bool>? landing, Func<Vector2, float>? heightAt = null, bool? stair = null, float? bend = null, bool? tight = null,
-        Func<Vector2, bool>? held = null, Func<Vector2, bool>? onRoad = null, float? minRadius = null)
+        Func<Vector2, bool>? held = null, Func<Vector2, bool>? onRoad = null, float? minRadius = null,
+        (bool start, bool end) stairStarts = default)
     {
         bool stairs = stair ?? StairTurns;
         float bendRadius = bend ?? (SuppressBends ? 0f : LeastBends && BendRadius > 0f ? Mathf.Min(BendRadius, MinBendRadius) : BendRadius);
@@ -232,6 +233,12 @@ public static class RoadSwitchbacks
                 float sum=0; for(int k=a;k<=b;k++) sum+=angle[k];
                 float lateral=Vector2.Distance(p[a],p[b]);
                 if(Math.Abs(sum)<Math.PI*150f/180f || Math.Abs(sum)>Math.PI*210f/180f || lateral<TightSpacing+0.5f) continue;
+                // Nor where its taper cannot fit before the road's end where a staircase starts (RoadSpatialGrid.StairStarts):
+                // the road meets a staircase's foot at its full width, on its level landing (RoadPitches.JunctionLanding). A
+                // tight turn 15 m before an approach's foot ran its narrowed leg right into the foot. The ordinary turn there.
+                float ToEnd(int from, int to) { float l=0f; for(int k=Math.Min(from,to);k<Math.Max(from,to);k++) l+=Vector2.Distance(p[k],p[k+1]); return l; }
+                if(stairStarts.start && ToEnd(0,a)<TightTaper+RoadPitches.JunctionLanding
+                   || stairStarts.end && ToEnd(b,n-1)<TightTaper+RoadPitches.JunctionLanding) continue;
                 var dIn=(p[a]-p[a-1]).normalized; var dOut=(p[b+1]-p[b]).normalized;
                 float inRoom=Vector2.Distance(p[a-1],p[a])-(a-1>0?trim[a-1]:0f)-0.25f;
                 float outRoom=Vector2.Distance(p[b],p[b+1])-(b+1<n-1?trim[b+1]:0f)-0.25f;

@@ -28,6 +28,7 @@ public class DefaultRoadsTests
         Assert.Equal(6f, d["road snap"]);
         Assert.Equal(14f, d["corridor snap"]);
         Assert.Equal(8f, d["earthwork cap"]);
+        Assert.Equal(0.5f, d["viaduct raise"]);
         foreach (var on in new[] { "quadratic variance", "stair turns", "switchback fallback", "tight switchbacks",
                                    "follow ground", "junction match", "curve checks", "pitches", "pull",
                                    "bridge ends to water" })

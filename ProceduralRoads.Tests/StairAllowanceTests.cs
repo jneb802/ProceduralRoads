@@ -25,11 +25,16 @@ public class StairAllowanceTests : IDisposable
         RoadStairRuns.ResetCache();
     }
 
-    private static StairPlan Plan(Vector2 a, Vector2 b, Func<float, float, float> ground, float? arriving, bool retried = false) =>
-        (StairPlan)typeof(RoadStairRuns).GetMethod("Plan", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, new object?[]
-        {
-            a, b, StairKit.Stone, ground, arriving, null, null, StairCover.RoadStaircase, RoadStairRuns.TopLandings, null, null, retried, true, null, null,
-        })!;
+    /// <summary>RoadStairRuns.Plan by reflection, its leading arguments given and every later optional one left at its default
+    /// (Type.Missing), so a new optional parameter does not break the call.</summary>
+    private static StairPlan Plan(Vector2 a, Vector2 b, Func<float, float, float> ground, float? arriving, bool retried = false)
+    {
+        MethodInfo plan = typeof(RoadStairRuns).GetMethod("Plan", BindingFlags.NonPublic | BindingFlags.Static)!;
+        object?[] given = { a, b, StairKit.Stone, ground, arriving, null, null, StairCover.RoadStaircase, RoadStairRuns.TopLandings, null, null, retried, true };
+        var args = new object?[plan.GetParameters().Length];
+        for (int i = 0; i < args.Length; i++) args[i] = i < given.Length ? given[i] : Type.Missing;
+        return (StairPlan)plan.Invoke(null, args)!;
+    }
 
     /// <summary>A stretch longer than any staircase laid is refused at once, not searched (the 19 tried over
     /// 150 m offline all failed, to 878 m, spending 50 s).</summary>

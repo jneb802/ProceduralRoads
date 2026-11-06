@@ -17,14 +17,16 @@ public class StairTopFitsTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
-    /// <summary>Flats at 40 west of x = 0, a face of 1.2 to 64 at x = 20, then ground rising 0.3 east of it (the lip past
-    /// a top laid to the face's edge stands over it). Sea past 200 m.</summary>
+    /// <summary>Flats at 40 west of x = 0, a face of 1.2 to 64 at x = 20, then ground rising 0.25 east of it (0.4 before the
+    /// end rule of 5 Nov: a top climbs on while the ground a floor off it would stand on stands more than a step over it, and
+    /// a stair gains only 0.2 on it there, more than the most it climbs) (the lip past a top laid to the face's edge stands over
+    /// it). Sea past 200 m.</summary>
     private sealed class LipWorld : WorldGenerator
     {
         public override float GetHeight(float wx, float wy)
         {
             if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
-            return wx < 20f ? 40f + Mathf.Clamp(wx * 1.2f, 0f, 24f) : 64f + Mathf.Min(6f, (wx - 20f) * 0.3f);
+            return wx < 20f ? 40f + Mathf.Clamp(wx * 1.2f, 0f, 24f) : 64f + Mathf.Min(6f, (wx - 20f) * 0.25f);
         }
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
         public override int GetSeed() => 77;
@@ -63,6 +65,8 @@ public class StairTopFitsTests : IDisposable
         List<RoadStairSpan>? alone = RoadStairRuns.Lay(path, steps, new List<RoadCrossing>(), world);
         Assert.NotNull(alone);
         RoadStairSpan span = Assert.Single(alone!);
+        // Carried on (TopOntoSurface), not only its own top floor.
+        Assert.NotNull(span.Plan.TopCrested);
         float lastPathX = path[span.ToIndex].x;
         var past = span.Plan.Pieces.Where(p => p.Kind != StairPieceKind.Support && p.Position.x > lastPathX - 1f).ToList();
         Assert.True(past.Count > 0, $"no piece carried on past the top at x {lastPathX}: top {span.Plan.End}, road from {span.ToPoint}");

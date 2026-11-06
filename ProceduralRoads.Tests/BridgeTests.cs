@@ -123,12 +123,15 @@ public class BridgeTests
         return (c, w);
     }
 
+    /// <summary>The wide river's crossing, in the railed kit the two-kit draw gives it: its deep channel reads as ocean, where
+    /// the stone kit may be drawn too, and the tests here are the wooden kits' (the stone kit's are StoneBridgeTests').</summary>
     private static (RoadCrossing crossing, WideRiverWorld world) WideCrossing(float eastRise = 0f)
     {
         var world = new WideRiverWorld { EastRise = eastRise };
         var path = Pathfinder(world, true).FindPath(new Vector2(-160f, 0f), new Vector2(160f, 0f));
         Assert.NotNull(path);
         var crossing = Assert.Single(RoadCrossingDetector.Detect(path!, world, true));
+        crossing.Kit = BridgeLayout.PickKit(crossing, world.GetSeed(), new[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced });
         return (crossing, world);
     }
 
@@ -381,8 +384,8 @@ public class BridgeTests
     public void ThePlanIsDeterministic()
     {
         var (crossing, world) = WideCrossing();
-        var a = BridgeLayout.Solve(crossing, world, 12345);
-        var b = BridgeLayout.Solve(crossing, world, 12345);
+        var a = BridgeStructures.Solve(crossing, world, 12345);
+        var b = BridgeStructures.Solve(crossing, world, 12345);
         Assert.NotEmpty(a);
         Assert.Equal(a.Count, b.Count);
         for (int i = 0; i < a.Count; i++)
@@ -391,7 +394,7 @@ public class BridgeTests
             Assert.Equal(a[i].Position, b[i].Position);
             Assert.Equal(a[i].HealthFraction, b[i].HealthFraction);
         }
-        var c = BridgeLayout.Solve(crossing, world, 99999);
+        var c = BridgeStructures.Solve(crossing, world, 99999);
         Assert.True(c.Count != a.Count || c.Where((p, i) => Vector3.Distance(p.Position, a[i].Position) > 0f || p.HealthFraction != a[i].HealthFraction).Any(),
             "Different seeds should ruin the bridge differently");
     }
@@ -413,7 +416,7 @@ public class BridgeTests
             float bay = alongs[i + 1] - alongs[i];
             Assert.True(bay >= BridgeLayout.DeckSpan * 0.5f,
                 $"width {width}: bay {i} is {bay:F3} m, so two stations stand inside each other " +
-                $"and EmitDeck lays a {BridgeLayout.DeckSpan} m plate across it");
+                $"and a {BridgeLayout.DeckSpan} m plate is laid across it");
             Assert.True(bay <= BridgeLayout.DeckSpan + 0.001f,
                 $"width {width}: bay {i} is {bay:F3} m, longer than a deck plate, so the deck has a hole");
         }
@@ -447,7 +450,7 @@ public class BridgeTests
     {
         // The same defect seen in game, measured the way the two-client census
         // measured it: two beams at one place. 80.05 m is the width that put
-        // four posts and two crossbeams inside each other on the bank.
+        // two stations' pieces inside each other on the bank.
         var world = new WideRiverWorld();
         foreach (float width in new[] { 80f, 80.05f, 80.6f, 79.3f })
         {
@@ -455,14 +458,16 @@ public class BridgeTests
             var crossing = RoadCrossing.Between(
                 new Vector2(-half, 0f), new Vector2(half, 0f), 26f, new Vector2(0f, 0f), 60f,
                 CrossingKind.Bridge);
-            var beams = BridgeLayout.Solve(crossing, world, 4242)
-                .Where(p => p.Kind == StructurePieceKind.Beam)
+            // The stringers on one edge of the deck, end to end.
+            var beams = BridgeStructures.SolveComplete(crossing, world, 4242)
+                .Where(p => p.Prefab == BridgeLayout.BeamPrefab && Mathf.Abs(p.Position.y - BridgeLayout.DeckHeight(crossing, world)) < 0.01f && p.Position.z > 0f)
                 .OrderBy(p => p.Position.x).ToList();
+            Assert.NotEmpty(beams);
             for (int i = 0; i + 1 < beams.Count; i++)
             {
                 float gap = Vector3.Distance(beams[i].Position, beams[i + 1].Position);
                 Assert.True(gap >= BridgeLayout.DeckSpan * 0.5f,
-                    $"width {width}: two crossbeams {gap:F3} m apart at x={beams[i].Position.x:F2}");
+                    $"width {width}: two stringers {gap:F3} m apart at x={beams[i].Position.x:F2}");
             }
         }
     }
@@ -472,18 +477,19 @@ public class BridgeTests
     {
         var (crossing, world) = WideCrossing();
         Assert.True(crossing.FairwayWidth >= 60f, "The whole 4 m deep bed is sailable");
-        var plan = BridgeLayout.Solve(crossing, world, 42);
+        var plan = BridgeStructures.Solve(crossing, world, 42);
         Assert.NotEmpty(plan);
 
-        float fairwayMid = crossing.Along(crossing.FairwayCenter);
-        float gapHalf = BridgeLayout.FairwayGap(crossing) * 0.5f;
-        Assert.True(gapHalf >= BridgeLayout.FairwayGapWidth * 0.5f);
+        BridgeLayout.ShipWay? way = BridgeLayout.NavigationGap(crossing, world);
+        Assert.True(way.HasValue, "The crossing is over a river");
+        float? river = way!.Value.Centre;
+        float gapHalf = way.Value.DeckWidth * 0.5f;
         foreach (var piece in plan)
         {
             float along = crossing.Along(new Vector2(piece.Position.x, piece.Position.z));
             float reach = piece.Kind == StructurePieceKind.Deck ? BridgeLayout.DeckSpan * 0.5f : 0f;
-            Assert.True(Mathf.Abs(along - fairwayMid) - reach >= gapHalf - 0.01f,
-                $"{piece.Kind} at along={along:F1} inside the {BridgeLayout.FairwayGap(crossing):F0} m navigation gap around {fairwayMid:F1}");
+            Assert.True(Mathf.Abs(along - river!.Value) - reach >= gapHalf - 0.01f,
+                $"{piece.Kind} at along={along:F1} inside the {way.Value.DeckWidth:F1} m navigation gap around {river.Value:F1}");
         }
 
         // Piers march in from BOTH banks: a ruined bridge, not two abutments.
@@ -498,10 +504,13 @@ public class BridgeTests
     public void TheDeckStaysAboveTheWaterAndIsLevelAtTheHigherBank()
     {
         var (crossing, world) = WideCrossing(eastRise: 1.5f);
-        var plan = BridgeLayout.Solve(crossing, world, 7);
+        var plan = BridgeStructures.Solve(crossing, world, 7);
         (float fromH, float toH) = BridgeLayout.DeckEndHeights(crossing, world);
-        Assert.InRange(fromH, world.GetHeight(crossing.FromBank.x, crossing.FromBank.y) - 0.01f, world.GetHeight(crossing.FromBank.x, crossing.FromBank.y) + 0.01f);
-        Assert.InRange(toH, world.GetHeight(crossing.ToBank.x, crossing.ToBank.y) - 0.01f, world.GetHeight(crossing.ToBank.x, crossing.ToBank.y) + 0.01f);
+        // Each end at its bank's ground, no lower than a step over the road's floor (BridgeLayout.MinDeck).
+        float min = BridgeLayout.MinDeck(crossing.WaterLevel);
+        float fromG = Mathf.Max(world.GetHeight(crossing.FromBank.x, crossing.FromBank.y), min), toG = Mathf.Max(world.GetHeight(crossing.ToBank.x, crossing.ToBank.y), min);
+        Assert.InRange(fromH, fromG - 0.01f, fromG + 0.01f);
+        Assert.InRange(toH, toG - 0.01f, toG + 0.01f);
 
         // The deck is LEVEL, at the higher bank: a pitched wood_floor is one
         // the vanilla hammer cannot place, so it cannot be repaired. The drop
@@ -524,9 +533,10 @@ public class BridgeTests
         Vector2 deckEnd = crossing.FromBank + crossing.Direction * BridgeLayout.BuiltLength(crossing.Width);
         foreach ((Vector2 end, float deckH) in new[] { (crossing.FromBank, deckLevel), (deckEnd, deckLevel) })
         {
-            // Two lanes: each end station carries a beam per lane, LaneOffset
-            // either side of the crossing line, and the stair comes two abreast.
-            Assert.Equal(2, plan.Count(p => p.Kind == StructurePieceKind.Beam && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), end) < BridgeLayout.LaneOffset + 0.1f));
+            // Each end station carries the deck's two stringers, one on each edge, and the stair comes two abreast.
+            Vector2 across = new(-crossing.Direction.y, crossing.Direction.x);
+            Assert.Equal(2, plan.Count(p => p.Prefab == BridgeLayout.BeamPrefab && Mathf.Abs(p.Position.y - deckH) < 0.01f
+                && BridgeLayout.SnapPoints(p).Any(q => new[] { -1f, 1f }.Any(e => Vector2.Distance(new Vector2(q.x, q.z), end + across * (e * BridgeLayout.DeckHalfWidth)) < 0.01f))));
             // The whole run on this side of the end: the stair marches outward
             // until a step's foot is in the dirt, and on a bank whose ground
             // near the end differs from the plateau that can be several steps.
@@ -556,7 +566,7 @@ public class BridgeTests
         // miss astronomically unlikely without lowering the bar.
         bool anyDebris = false;
         for (int seed = 1; seed <= 100 && !anyDebris; seed++)
-            foreach (var d in BridgeLayout.Solve(crossing, world, seed).Where(p => p.Kind == StructurePieceKind.Debris))
+            foreach (var d in BridgeStructures.Solve(crossing, world, seed).Where(p => p.Kind == StructurePieceKind.Debris))
             {
                 anyDebris = true;
                 Assert.True(d.PitchDegrees > 30f, "Debris should be toppled");
@@ -575,7 +585,7 @@ public class BridgeTests
         var (crossing, world) = WideCrossing(eastRise);
         for (int seed = 1; seed <= 25; seed++)
         {
-            var plan = BridgeLayout.Solve(crossing, world, seed);
+            var plan = BridgeStructures.Solve(crossing, world, seed);
             var floaters = Floaters(plan, world);
             Assert.True(floaters.Count == 0, $"rise {eastRise} seed {seed}: {floaters.Count} of {plan.Count} pieces float: " +
                 string.Join("; ", floaters.Take(4).Select(i => $"{plan[i].Kind} at ({plan[i].Position.x:F1},{plan[i].Position.y:F1},{plan[i].Position.z:F1})")));
@@ -612,25 +622,20 @@ public class BridgeTests
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-160f, 0f), 0f, new Vector2(160f, 0f), 0f, 4f, "first"));
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-160f, 40f), 0f, new Vector2(160f, 40f), 0f, 4f, "second"));
 
+            // The second road crosses on the first's bridge: one crossing, the first road's (RoadRide: a road riding another
+            // builds no crossing of its own there), and none of its own anywhere else; the bridge's banks carry road.
             var crossings = RoadNetworkGenerator.GetRoadCrossings();
-            Assert.Equal(2, crossings.Count);
+            Assert.Single(crossings);
             Assert.True(Mathf.Abs(aloneJump.a.y - crossings[0].FromBank.y) > RoadCrossing.SharedBankRadius,
                 $"the lone second road already crossed where the first does (y={aloneJump.a.y:F0})");
-            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[1], 0.001f),
-                $"second road crossed at {crossings[1].FromBank}-{crossings[1].ToBank}, the first at {crossings[0].FromBank}-{crossings[0].ToBank}");
-            Assert.Single(BridgeLayout.DistinctSites(crossings));
-            // And the second road is painted up to the shared banks.
             foreach (Vector2 bank in new[] { crossings[0].FromBank, crossings[0].ToBank })
-                Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(bank.x, 0f, bank.y), 3f).Count >= 2, $"second road does not reach the shared bank {bank}");
+                Assert.NotEmpty(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(bank.x, 0f, bank.y), 3f));
 
-            // Sharing saves half the bridge price: a third road from twice as far
-            // away still comes to the first bridge rather than pay for its own.
-            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-160f, 80f), 0f, new Vector2(160f, 80f), 0f, 4f, "third"));
-            Assert.Equal(3, crossings.Count);
-            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[2], 0.001f),
-                $"third road crossed at {crossings[2].FromBank}-{crossings[2].ToBank} instead of the shared bridge");
-            Assert.Single(BridgeLayout.DistinctSites(crossings));
-            Assert.Equal(BridgeLayout.Solve(crossings[0], world, 0).Count, StructurePlans.TotalPlannedPieces);
+            // Sharing saves half the bridge price: a third road from twice as
+            // far away still comes to the first bridge rather than pay for its own.
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-160f, 80f), 0f, new Vector2(160f, 80f), 0f, 4f, "third"), RoadSpatialGrid.LastRefusal);
+            Assert.Single(crossings);
+            Assert.Equal(BridgeStructures.Solve(crossings[0], world, 0).Count, StructurePlans.TotalPlannedPieces);
         }
         finally { TearDownGeneration(); }
     }
@@ -775,7 +780,7 @@ public class BridgeTests
         Assert.Equal(CrossingKind.Bridge, crossing.Kind);
         // With fords on it is still a bridge: the jump is longer than a ford.
         Assert.Equal(CrossingKind.Bridge, Assert.Single(RoadCrossingDetector.Detect(path!, world, bridges: true, fords: true)).Kind);
-        Assert.NotEmpty(BridgeLayout.Solve(crossing, world, 1));
+        Assert.NotEmpty(BridgeStructures.Solve(crossing, world, 1));
     }
 
     [Fact]
@@ -842,7 +847,7 @@ public class BridgeTests
         {
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
             var crossing = Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
-            var plan = BridgeLayout.Solve(crossing, world, world.GetSeed());
+            var plan = BridgeStructures.Solve(crossing, world, world.GetSeed());
             Assert.NotEmpty(plan);
             Assert.Equal(plan.Count, StructurePlans.TotalPlannedPieces);
             Assert.True(StructurePlans.PlannedZoneCount >= 1);
@@ -1102,7 +1107,7 @@ public class BridgeTests
     {
         var (crossing, world) = WideCrossing();
         var path = Pathfinder(world, true).FindPath(new Vector2(-160f, 0f), new Vector2(160f, 0f))!;
-        var plan = BridgeLayout.Solve(crossing, world, 42);
+        var plan = BridgeStructures.Solve(crossing, world, 42);
         var paths = new List<(List<Vector2>, byte, byte, byte)> { (path, 220, 40, 40) };
         var markers = new List<(Vector2, byte, byte, byte)>();
         foreach (var piece in plan)
@@ -1258,10 +1263,12 @@ public class BridgeTests
 
             // The same seed StructurePlans uses, or the two ruins differ and so
             // do the counts compared below.
-            var plan = BridgeLayout.Solve(crossing, world, world.GetSeed());
+            var plan = BridgeStructures.Solve(crossing, world, world.GetSeed());
             Assert.Contains(plan, p => p.Kind == StructurePieceKind.Deck);
             Assert.All(plan.Where(p => p.Kind == StructurePieceKind.Deck), d => Assert.True(d.Position.y >= 33f + RoadConstants.FordSpanDeckRise - 0.01f));
-            // two abreast at each end: four top steps meet the deck
+            // Two abreast at an end with stairs: two top steps meet the deck there. A span is low (StructureEnds.Low): both
+            // ends are met by their step.
+            Assert.Equal((false, false), MetEnds.Level(crossing, world));
             Assert.Equal(4, plan.Count(p => p.Kind == StructurePieceKind.Stair && Mathf.Abs(p.Position.y + 1f - 34f) < 0.05f));
             Assert.Empty(Floaters(plan, world));
             Assert.Equal(plan.Count, StructurePlans.TotalPlannedPieces);
@@ -1319,7 +1326,7 @@ public class BridgeTests
             Assert.NotNull(path);
             var crossing = Assert.Single(RoadCrossingDetector.Detect(path!, world, true));
             Assert.Equal(CrossingKind.Bridge, crossing.Kind);
-            Assert.NotEmpty(BridgeLayout.Solve(crossing, world, 1));
+            Assert.NotEmpty(BridgeStructures.Solve(crossing, world, 1));
         }
 
         // A shallow jump is a ford, and a ford builds nothing by design.
@@ -1383,7 +1390,7 @@ public class BridgeTests
             $"the crossing resumes at path[{crossing.ToIndex}], which is not on the top");
         Assert.InRange(crossing.Width, 54f, 62f);
 
-        var plan = BridgeLayout.Solve(crossing, world, 3);
+        var plan = BridgeStructures.Solve(crossing, world, 3);
         (float fromH, float toH) = BridgeLayout.DeckEndHeights(crossing, world);
         Assert.InRange(fromH, 35.9f, 36.1f);
         Assert.InRange(toH, 35.9f, 36.1f);

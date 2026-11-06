@@ -7,10 +7,14 @@ namespace ProceduralRoads;
 /// Fixed-size terrain memo, held for the life of one pathfinder rather than
 /// one search. Collisions replace a sample, never approximate it.
 ///
-/// Only immutable world-generator facts belong here. Road sharing, crossing
-/// decisions and configurable move costs do NOT: they change as roads are
-/// committed, and a memo that outlives a search must not hold anything that
-/// can go out of date within one.
+/// Only facts that cannot change within a generation belong here: the world
+/// generator's, and the ground as it will be (<see cref="Ground"/>), which
+/// differs from the natural ground only inside the footprints of the places
+/// placed before their roads, made ready before the islands are generated
+/// (<see cref="PlacedSites.Prepare"/>).
+/// Road sharing, crossing decisions and configurable move costs do NOT: they
+/// change as roads are committed, and a memo that outlives a search must not
+/// hold anything that can go out of date within one.
 ///
 /// The facts it does hold are true for as long as the generator it was built
 /// for is the generator being asked, and a pathfinder is built at the start of
@@ -18,14 +22,14 @@ namespace ProceduralRoads;
 /// </summary>
 internal sealed class RoadTerrainSamples
 {
-    // 1.75 MiB of value data per pathfinder, independent of explored area;
+    // About 2 MiB of value data per pathfinder, independent of explored area;
     // chosen by measurement.
     internal const int Capacity = 65536;
     private struct Sample
     {
         public Vector2i Position;
         public byte Flags;
-        public float Height, River, Variance;
+        public float Height, River, Variance, Ground;
         public Heightmap.Biome Biome;
     }
     private readonly Sample[] samples = new Sample[Capacity];
@@ -130,6 +134,25 @@ internal sealed class RoadTerrainSamples
         }
         else Hits++;
         return sample.River;
+    }
+    /// <summary>The ground a water test judges at <paramref name="position"/> (<see cref="RoadWater.Ground(Vector2, float)"/>): the
+    /// ground as it will be (in a place's footprint the ground it levels), else the natural ground the search prices its grades
+    /// on (<see cref="Height"/>, read once for both).</summary>
+    public float Ground(Vector2i position)
+    {
+        ref Sample sample = ref At(position);
+        if ((sample.Flags & 16) == 0)
+        {
+            float natural = Height(position);
+            sample = ref At(position);
+            Misses++;
+            long began = Now;
+            sample.Ground = RoadWater.Ground(World(position), natural);
+            TerrainTicks += Now - began;
+            sample.Flags |= 16;
+        }
+        else Hits++;
+        return sample.Ground;
     }
     public Heightmap.Biome Biome(Vector2i position)
     {

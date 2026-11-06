@@ -50,13 +50,15 @@ public sealed class SeamFadeTests : IDisposable
         return points;
     }
 
-    private TerrainComp Write(Vector2s zone)
+    private TerrainComp Write(Vector2s zone, params RoadSpatialGrid.RoadPoint[] more)
     {
         Heightmap hm = _world.RegisterHeightmap(zone, Width);
         TerrainComp tc = hm.m_terrainComp!;
         for (int i = 0; i < tc.m_paintMask.Length; i++)
             tc.m_paintMask[i] = new Color(0f, 0f, 0f, 0.25f);
-        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, Road(), hm, tc);
+        List<RoadSpatialGrid.RoadPoint> points = Road();
+        points.AddRange(more);
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
         return tc;
     }
 
@@ -198,6 +200,169 @@ public sealed class SeamFadeTests : IDisposable
         NetworkCutoff.Forget();
         ExcludeOnANewNetwork(Explored);
         Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);
+    }
+
+    /// <summary>
+    /// The kept zone holds an earlier network's cut along the border they share (x = 32), and its paint: the zone written
+    /// now starts its fade from that ground, so the two hold the same heights and paint on every shared vertex, whether
+    /// the kept zone's compiler is live or only saved. Started from the generator's ground, the border stood 1.86 m
+    /// above the kept zone's, a step that opened a hole at the seam.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheFadeStartsFromTheGroundAKeptZoneHoldsAtTheBorder(bool keptLive)
+    {
+        _world.WithZdos();
+        const float Cut = -1.86f;
+        Heightmap kept = _world.RegisterHeightmap(Explored, Width);
+        TerrainComp keptTc = kept.m_terrainComp!;
+        for (int i = 0; i < keptTc.m_paintMask.Length; i++)
+            keptTc.m_paintMask[i] = new Color(0f, 0f, 0f, 0.25f);
+        for (int z = -12; z <= 12; z++)
+        {
+            int i = (z + Width / 2) * (Width + 1);   // the kept zone's west edge, x = 32
+            keptTc.m_levelDelta[i] = Cut;
+            keptTc.m_modifiedHeight[i] = true;
+            if (Mathf.Abs(z) <= 2) { keptTc.m_paintMask[i] = Heightmap.m_paintMaskPaved; keptTc.m_modifiedPaint[i] = true; }
+        }
+        keptTc.Save();
+        kept.RebuildTerrain();
+        if (!keptLive) Heightmap.s_heightmaps.Remove(kept);
+
+        ExcludeOnANewNetwork(Explored);
+        TerrainComp written = Write(Writable);
+        written.m_hmap.RebuildTerrain();
+        if (!keptLive) Heightmap.s_heightmaps.Add(kept);
+        TerrainAssert.SeamAgrees(written.m_hmap, kept);
+        Assert.Equal(Cut, written.m_levelDelta[Index(32, 10)], 4);
+
+        // Writing again gives the same ground: the fade is written from the kept ground, not from what this zone holds.
+        object[] first = Terrain(written);
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(Writable, Road(), written.m_hmap, written);
+        Assert.Equal(first[0], Terrain(written)[0]);   // level deltas
+        Assert.Equal(first[1], Terrain(written)[1]);   // smooth deltas
+        Assert.Equal(first[2], Terrain(written)[2]);   // modified flags
+    }
+
+    /// <summary>
+    /// A place's footprint in the fade, no road onto its landing: its ground is left as it is, as anywhere in a footprint,
+    /// though the kept zone holds a cut beside it. Only on the shared border is it written, where the two zones must agree.
+    /// </summary>
+    [Fact]
+    public void AFootprintInTheFadeKeepsItsGroundButOnTheBorder()
+    {
+        _world.WithZdos();
+        const float Cut = -1.86f;
+        Heightmap kept = _world.RegisterHeightmap(Explored, Width);
+        TerrainComp keptTc = kept.m_terrainComp!;
+        for (int z = -30; z <= 30; z++)
+        {
+            int i = (z + Width / 2) * (Width + 1);   // the kept zone's west edge, x = 32
+            keptTc.m_levelDelta[i] = Cut;
+            keptTc.m_modifiedHeight[i] = true;
+        }
+        keptTc.Save();
+        kept.RebuildTerrain();
+        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(30f, 20f), 4f) });
+        try
+        {
+            ExcludeOnANewNetwork(Explored);
+            TerrainComp written = Write(Writable);
+            Assert.False(written.m_modifiedHeight[Index(28, 20)], "a footprint vertex in the fade");
+            Assert.Equal(0f, written.m_levelDelta[Index(28, 20)]);
+            Assert.Equal(Cut, written.m_levelDelta[Index(32, 20)], 4);
+            // Outside the footprint the fade runs from the kept cut as before.
+            Assert.True(written.m_modifiedHeight[Index(28, 10)]);
+        }
+        finally { RoadSiteProtection.Reset(); }
+    }
+
+    /// <summary>
+    /// The same footprint in the fade, with a road onto another place's landing in the zone: away from that road its ground
+    /// is still left as it is. Only the road onto the landing and the shared border write inside a footprint; before, the
+    /// fade moved the footprint's ground under its pieces wherever the zone held any road onto a landing.
+    /// </summary>
+    [Fact]
+    public void AFootprintInTheFadeKeepsItsGroundBesideARoadOntoAnotherLanding()
+    {
+        _world.WithZdos();
+        const float Cut = -1.86f;
+        Heightmap kept = _world.RegisterHeightmap(Explored, Width);
+        TerrainComp keptTc = kept.m_terrainComp!;
+        for (int z = -30; z <= 30; z++)
+        {
+            int i = (z + Width / 2) * (Width + 1);   // the kept zone's west edge, x = 32
+            keptTc.m_levelDelta[i] = Cut;
+            keptTc.m_modifiedHeight[i] = true;
+        }
+        keptTc.Save();
+        kept.RebuildTerrain();
+        var landing = new Vector2(-20f, 20f);
+        RoadSiteProtection.Set(new[]
+        {
+            new RoadSiteProtection.Footprint(new Vector2(30f, 20f), 4f), new RoadSiteProtection.Footprint(landing, 4f),
+        });
+        try
+        {
+            ExcludeOnANewNetwork(Explored);
+            float natural = BiomeBlendedHeight.GetBlendedHeight(landing.x, landing.y, WorldGenerator.instance!);
+            TerrainComp written = Write(Writable, new RoadSpatialGrid.RoadPoint(landing, RoadWidth, natural + Lift, intoSite: true));
+            Assert.True(written.m_modifiedHeight[Index(-20, 20)], "the road onto the other landing writes its footprint");
+            Assert.False(written.m_modifiedHeight[Index(28, 20)], "a footprint vertex in the fade, away from the road onto a landing");
+            Assert.Equal(0f, written.m_levelDelta[Index(28, 20)]);
+            Assert.Equal(Cut, written.m_levelDelta[Index(32, 20)], 4);
+            Assert.True(written.m_modifiedHeight[Index(28, 10)]);
+        }
+        finally { RoadSiteProtection.Reset(); }
+    }
+
+    /// <summary>
+    /// Paint in the fade is held to the ground the fade writes. Halfway through it, next to a kept zone holding a 3 m cut along
+    /// the road, the road's surface is the cut walked half out: painted, where the paint read half the road's own lift as its
+    /// surface, 1.5 m over the ground, and skipped the whole fade. Next to a 3 m fill held under the road's middle only, the
+    /// road's middle stands 1.5 m over the ground a metre off it: that ground is a face and is not painted, where the paint
+    /// read its surface 1.5 m under the fill and painted it.
+    /// </summary>
+    [Theory]
+    [InlineData(-3f)]
+    [InlineData(3f)]
+    public void PaintInTheFadeFollowsTheGroundItWrites(float held)
+    {
+        _world.WithZdos();
+        Heightmap kept = _world.RegisterHeightmap(Explored, Width);
+        TerrainComp keptTc = kept.m_terrainComp!;
+        int rows = held < 0f ? 12 : 0;
+        for (int z = -rows; z <= rows; z++)
+        {
+            int i = (z + Width / 2) * (Width + 1);   // the kept zone's west edge, x = 32
+            keptTc.m_levelDelta[i] = held;
+            keptTc.m_modifiedHeight[i] = true;
+        }
+        keptTc.Save();
+        kept.RebuildTerrain();
+        float face = RoadTerrainModifier.PaintFace;
+        RoadTerrainModifier.PaintFace = 0f;   // the paint's own height test alone
+        try
+        {
+            int mid = Index(32 - (int)(NetworkCutoff.SeamFadeDistance / 2f), 0);
+            int beside = Index(32 - (int)(NetworkCutoff.SeamFadeDistance / 2f), 1);
+            float road = Write(Writable).m_levelDelta[mid];
+            Assert.True(road > 0.3f, $"the road lifts the ground here ({road:F2} m)");
+            ExcludeOnANewNetwork(Explored);
+            TerrainComp written = Write(Writable);
+            // The ground written: the kept change walked half out to the road's.
+            Assert.Equal(held + 0.5f * (road - held), written.m_levelDelta[mid], 3);
+            Assert.True(written.m_modifiedPaint[mid] && Paint(written.m_paintMask[mid]) > 0f, "the road's middle mid-fade is painted");
+            if (held < 0f)
+                Assert.True(written.m_modifiedPaint[beside] && Paint(written.m_paintMask[beside]) > 0f, "beside the middle, on the cut walked out");
+            else
+            {
+                Assert.True(written.m_levelDelta[mid] - written.m_levelDelta[beside] > RoadTerrainModifier.PaintBelow, "a face beside the held fill");
+                Assert.False(written.m_modifiedPaint[beside], "the face under the held fill is painted");
+            }
+        }
+        finally { RoadTerrainModifier.PaintFace = face; }
     }
 
     [Fact]

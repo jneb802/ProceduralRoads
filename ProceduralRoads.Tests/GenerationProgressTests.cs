@@ -71,7 +71,7 @@ public sealed class GenerationProgressTests : IDisposable
         RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions();
         RoadNetworkGenerator.IslandRoadPercentage = 100;
         RoadParallel.Configured = 2;
-        foreach (var place in new[] { ("StartTemple", -1800f, 0f), ("Crypt4", -1600f, 150f), ("Eikthyrnir", 1750f, 0f), ("Crypt4", 1950f, 150f) })
+        foreach (var place in new[] { ("StartTemple", -1800f, 0f), ("WoodVillage1", -1600f, 150f), ("Eikthyrnir", 1750f, 0f), ("WoodVillage1", 1950f, 150f) })
             TestLocations.Add(ZoneSystem.instance!, new ZoneSystem.LocationInstance
             { m_position = new Vector3(place.Item2, 45, place.Item3), m_location = new ZoneSystem.ZoneLocation
                 { m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(place.Item1), m_exteriorRadius = 12 } });
@@ -133,7 +133,7 @@ public sealed class GenerationProgressTests : IDisposable
         RoadLifecycleManager.OnPrepareSave(); Assert.Empty(ZDOMan.instance!.Zdos);
         Assert.Throws<InvalidOperationException>(()=>RoadNetworkGenerator.GenerateRoads());
         int menus=0; RoadLifecycleManager.ReturnToMenuForTests=()=>menus++;
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(before.RunId));
+        Assert.True(RoadLifecycleManager.RequestCancel(before.RunId));
         Assert.Equal("Stopping generation…",RoadLifecycleManager.Progress.Text);
         Assert.Empty(RoadLifecycleManager.Progress.PreparationStage);
         int reads=world.MainReads;
@@ -163,7 +163,7 @@ public sealed class GenerationProgressTests : IDisposable
         RoadPreparation.CheckpointsPerTickForTests=1;
         RoadLifecycleManager.Tick(); Assert.Equal(1,entered);
         if(replaceWorld) scope.WithWorld(new Islands());
-        else Assert.True(RoadLifecycleManager.RequestCancelToMenu(RoadLifecycleManager.Progress.RunId));
+        else Assert.True(RoadLifecycleManager.RequestCancel(RoadLifecycleManager.Progress.RunId));
         RoadLifecycleManager.Tick(); Assert.Equal(1,disposed);
         Assert.False(RoadNetworkGenerator.RoadsAvailable); Assert.Equal(0,RoadSpatialGrid.TotalRoadPoints);
         for(int i=0;i<3;i++) RoadLifecycleManager.Tick(); Assert.Equal(1,entered); Assert.Equal(1,disposed);
@@ -184,12 +184,12 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.Equal(0,RoadSpatialGrid.TotalRoadPoints); Assert.Empty(RoadLifecycleManager.Progress.PreparationStage);
     }
     [Fact]
-    public void SynchronousPrimingFaultUsesSameCoreAndCleansUpBeforeRethrowing()
+    public void PrimingFaultCleansUpAndIsReportedToTheCaller()
     {
         int disposed=0;
         IEnumerable<bool> Prime(RoadPreparation preparation)
         {
-            try { preparation.BeginStage("Synchronous fault"); yield return true; throw new InvalidOperationException("controlled synchronous preparation fault"); }
+            try { preparation.BeginStage("Priming fault"); yield return true; throw new InvalidOperationException("controlled preparation fault"); }
             finally { disposed++; }
         }
         LocationLevelling.PrimeIncremental=Prime;
@@ -212,7 +212,7 @@ public sealed class GenerationProgressTests : IDisposable
         Begin();
         Assert.True(SpinWait.SpinUntil(()=> { RoadLifecycleManager.Tick(); return RoadLifecycleManager.Progress.PreparationStage=="Throwing cleanup"; },10000));
         if(replaceWorld) scope.WithWorld(new Islands());
-        else Assert.True(RoadLifecycleManager.RequestCancelToMenu(RoadLifecycleManager.Progress.RunId));
+        else Assert.True(RoadLifecycleManager.RequestCancel(RoadLifecycleManager.Progress.RunId));
         RoadLifecycleManager.Tick();
         Assert.Equal(1,disposed); Assert.False(LocationLevelling.Sealed);
         Assert.False(RoadNetworkGenerator.RoadsAvailable); Assert.Equal(0,RoadSpatialGrid.TotalRoadPoints);
@@ -249,11 +249,11 @@ public sealed class GenerationProgressTests : IDisposable
     }
     [Theory]
     [InlineData(false)] [InlineData(true)]
-    public void PrimaryPreparationFaultIsPreservedWhenCustomIteratorDisposalAlsoThrows(bool synchronous)
+    public void PrimaryPreparationFaultIsPreservedWhenCustomIteratorDisposalAlsoThrows(bool throughTheTestEntry)
     {
         var prime=new FaultingPrime();
         LocationLevelling.PrimeIncremental=_=>prime;
-        if(synchronous)
+        if(throughTheTestEntry)
         {
             var error=Assert.Throws<InvalidOperationException>(()=>RoadNetworkGenerator.GenerateRoads());
             Assert.Equal("primary preparation failure",error.Message);
@@ -295,9 +295,9 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.True(RoadSpatialGrid.SnapshotTotalKilometres()>0);
         int menu=0; RoadLifecycleManager.ReturnToMenuForTests=()=>menu++;
         long run=RoadLifecycleManager.Progress.RunId;
-        Assert.False(RoadLifecycleManager.RequestCancelToMenu(run-1));
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(run));
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(run));
+        Assert.False(RoadLifecycleManager.RequestCancel(run-1));
+        Assert.True(RoadLifecycleManager.RequestCancel(run));
+        Assert.True(RoadLifecycleManager.RequestCancel(run));
         Assert.Equal("Stopping",RoadLifecycleManager.Progress.Phase);
         Assert.True(RoadLifecycleManager.Progress.TotalKilometres>0);
         try
@@ -305,7 +305,7 @@ public sealed class GenerationProgressTests : IDisposable
             var tick=Task.Run(RoadLifecycleManager.Tick);
             Assert.True(await Task.WhenAny(tick,Task.Delay(1000))==tick,"cancellation Tick blocked on live work");
             await tick;
-            Assert.True(RoadLifecycleManager.InitialGenerationActive);
+            Assert.True(RoadLifecycleManager.GenerationRunning);
             Assert.Equal(0,menu); Assert.True(world.ActiveReads>0); Assert.True(LocationLevelling.Sealed);
             RoadLifecycleManager.OnPrepareSave(); Assert.Empty(ZDOMan.instance!.Zdos);
         }
@@ -352,7 +352,7 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.True(SpinWait.SpinUntil(()=>worker.IsCompleted,5000));
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
         int menus=0; RoadLifecycleManager.ReturnToMenuForTests=()=>menus++;
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(RoadLifecycleManager.Progress.RunId));
+        Assert.True(RoadLifecycleManager.RequestCancel(RoadLifecycleManager.Progress.RunId));
         RoadLifecycleManager.Tick();
         Assert.Equal(1,menus); Assert.False(RoadNetworkGenerator.RoadsAvailable); Assert.Empty(ZDOMan.instance!.Zdos);
         Assert.Equal(0,RoadSpatialGrid.TotalRoadPoints);
@@ -362,12 +362,12 @@ public sealed class GenerationProgressTests : IDisposable
     {
         Begin(); long run=RoadLifecycleManager.Progress.RunId;
         int menus=0; RoadLifecycleManager.ReturnToMenuForTests=()=> { menus++; throw new InvalidOperationException("controlled menu failure"); };
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(run)); RoadLifecycleManager.Tick();
+        Assert.True(RoadLifecycleManager.RequestCancel(run)); RoadLifecycleManager.Tick();
         Assert.Equal("MenuFailed",RoadLifecycleManager.Progress.Phase);
-        Assert.Equal(1,menus); Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.Equal(1,menus); Assert.True(RoadLifecycleManager.GenerationRunning);
         for(int i=0;i<5;i++) RoadLifecycleManager.Tick(); Assert.Equal(1,menus);
         RoadLifecycleManager.ReturnToMenuForTests=()=>menus++;
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(run)); Assert.Equal(1,menus);
+        Assert.True(RoadLifecycleManager.RequestCancel(run)); Assert.Equal(1,menus);
         RoadLifecycleManager.MenuTransitionBlockedForTests=()=>true;
         Assert.False(RoadLifecycleManager.RetryReturnToMenu(run)); Assert.Equal(1,menus);
         RoadLifecycleManager.MenuTransitionBlockedForTests=()=>false;
@@ -381,8 +381,8 @@ public sealed class GenerationProgressTests : IDisposable
         RoadLifecycleManager.ReturnToMenuForTests=()=>menus++;
         RoadLifecycleManager.MenuTransitionBlockedForTests=()=>true;
         long run=RoadLifecycleManager.Progress.RunId;
-        Assert.True(RoadLifecycleManager.RequestCancelToMenu(run)); RoadLifecycleManager.Tick();
-        Assert.Equal(0,menus); Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.True(RoadLifecycleManager.RequestCancel(run)); RoadLifecycleManager.Tick();
+        Assert.Equal(0,menus); Assert.True(RoadLifecycleManager.GenerationRunning);
         Assert.Equal("MenuFailed",RoadLifecycleManager.Progress.Phase);
         Assert.False(RoadLifecycleManager.RetryReturnToMenu(run));
         RoadLifecycleManager.MenuTransitionBlockedForTests=()=>false;
@@ -393,7 +393,7 @@ public sealed class GenerationProgressTests : IDisposable
     public void CompletedNetworkCannotBeCancelledToMenu()
     {
         Begin(); Finish();
-        Assert.False(RoadLifecycleManager.RequestCancelToMenu(RoadLifecycleManager.Progress.RunId));
+        Assert.False(RoadLifecycleManager.RequestCancel(RoadLifecycleManager.Progress.RunId));
         Assert.True(RoadNetworkGenerator.RoadsAvailable);
     }
     [Fact]
@@ -450,15 +450,15 @@ public sealed class GenerationProgressTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void IntegratedSynchronousGenerationFlushesRegistrationsEvenWhenPreparationFails(bool fail)
+    public void GenerationFlushesQueuedRegistrationsEvenWhenPreparationFails(bool fail)
     {
-        const string name="QueuedSynchronousIntegration";
+        const string name="QueuedDuringGeneration";
         var oldPrime=LocationLevelling.Prime;
         LocationLevelling.Prime=()=>
         {
             RoadNetworkGenerator.RegisterLocation(name);
             Assert.DoesNotContain(name,RoadNetworkGenerator.GetRegisteredLocations());
-            if(fail) throw new InvalidOperationException("controlled synchronous preparation failure");
+            if(fail) throw new InvalidOperationException("controlled preparation failure");
         };
         try
         {
@@ -472,7 +472,7 @@ public sealed class GenerationProgressTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void IntegratedSpawnFallbackIsSynchronousOnceAndNeverThrows(bool fail)
+    public void IntegratedSpawnFallbackRunsOnceOverFramesAndNeverThrows(bool fail)
     {
         int primes=0; var oldPrime=LocationLevelling.Prime;
         LocationLevelling.Prime=()=> { primes++; if(fail) throw new InvalidOperationException("controlled spawn preparation failure"); };
@@ -480,6 +480,9 @@ public sealed class GenerationProgressTests : IDisposable
         {
             ZoneSystem.instance!.LocationsGenerated=true;
             RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
+            // The owned generation, as at load: its places are placed first over frames, which no synchronous call gives.
+            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Finish();
             Assert.Equal(1,primes); Assert.False(RoadLifecycleManager.IsGenerating);
             Assert.Equal(!fail,RoadNetworkGenerator.RoadsAvailable);
             int reads=world.MainReads;
@@ -519,6 +522,7 @@ public sealed class GenerationProgressTests : IDisposable
         broken.m_terrainComp!.m_nview=null!;
         ZoneSystem.instance!.LocationsGenerated=true;
         RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
+        Finish();
         Assert.False(RoadLifecycleManager.IsGenerating);
         Assert.True(RoadNetworkGenerator.RoadsAvailable);
         Assert.True(RoadSpatialGrid.Statistics.StoredPointRecords>0);
@@ -615,15 +619,21 @@ public sealed class GenerationProgressTests : IDisposable
     {
         using var input = new BinaryReader(new MemoryStream(bytes));
         int envelope=input.ReadInt32();
-        Assert.Equal(4,envelope); Assert.Equal(2,input.ReadInt32());
+        Assert.Equal(4,envelope);
+        // A road-only network saves format 2; one with a road carried on into a place (a place's edge, RoadNetworkGenerator
+        // CarryOnToEdges) format 5, its into-site flag per point (RoadSpatialGrid.SerializeAllRoadPoints).
+        int format = input.ReadInt32();
+        Assert.Contains(format, new[] { 2, 5 });
+        int size = format == 5 ? 23 : 17;
         int cells = input.ReadInt32();
         var records = new List<string>();
         for (int c = 0; c < cells; c++)
         {
             int x = input.ReadInt32(), z = input.ReadInt32(), points = input.ReadInt32();
             for (int p = 0; p < points; p++)
-                records.Add(x + ":" + z + ":" + Convert.ToBase64String(input.ReadBytes(17)));
+                records.Add(x + ":" + z + ":" + Convert.ToBase64String(input.ReadBytes(size)));
         }
+        if (format >= 3) { int parents = input.ReadInt32(); for (int i = 0; i < parents; i++) input.ReadInt32(); }
         Assert.Equal(1,input.ReadByte()); input.ReadSingle(); // Separate statistics tests assert exact length persistence.
         Assert.Equal(input.BaseStream.Length, input.BaseStream.Position);
         return records.OrderBy(r => r, StringComparer.Ordinal).ToArray();
@@ -665,11 +675,12 @@ public sealed class GenerationProgressTests : IDisposable
         RoadLifecycleManager.OnPrepareSave();
         Assert.Equal(version, RoadSpatialGrid.RoadNetworkVersion);
     }
-    /// <summary>The spawn fallback (no world-load hook): synchronous generation when the host's player spawns.</summary>
+    /// <summary>The spawn fallback (no world-load hook): the owned generation when the host's player spawns, run to its end.</summary>
     private static void SpawnWithoutWorldLoad()
     {
         ZoneSystem.instance!.LocationsGenerated = true;
         RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
+        if (RoadLifecycleManager.IsGenerating) Finish();
     }
     [Fact]
     public void SpawnFallbackFailingBeforePublicationSaysNoNetworkWasPublished()
@@ -678,7 +689,7 @@ public sealed class GenerationProgressTests : IDisposable
         LocationLevelling.PrimeIncremental=_=>{ attempts++; return new FaultingPrime(); };
         var log = scope.CaptureLog();
         SpawnWithoutWorldLoad();
-        Assert.Contains(log, l => l.Contains("Road generation after spawn failed; no network was published"));
+        Assert.Contains(log, l => l.Contains("Road generation failed; no network was published"));
         Assert.Equal("Failed", RoadLifecycleManager.Progress.Phase);
         Assert.DoesNotContain(log, l => l.Contains("network retained"));
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
@@ -723,7 +734,7 @@ public sealed class GenerationProgressTests : IDisposable
         var middle = RoadLifecycleManager.Progress;
         Assert.Equal(0, initial.Completed);
         Assert.Equal(2, middle.Total);
-        Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.True(RoadLifecycleManager.GenerationRunning);
         for (int frame = 0; frame < 10; frame++) RoadLifecycleManager.Tick();
         Assert.Equal(1, RoadLifecycleManager.Progress.Completed);
         world.Release.Set(); Finish();
@@ -795,7 +806,7 @@ public sealed class GenerationProgressTests : IDisposable
         else if(terminal=="stop")
         {
             // Cancel and return to menu: workers still stopping, the run not over, yet nothing will be built.
-            Assert.True(RoadLifecycleManager.RequestCancelToMenu(RoadLifecycleManager.Progress.RunId));
+            Assert.True(RoadLifecycleManager.RequestCancel(RoadLifecycleManager.Progress.RunId));
             Assert.True(RoadLifecycleManager.IsGenerating); Assert.Equal("Stopping",RoadLifecycleManager.Progress.Phase);
         }
         else { RoadLifecycleManager.CancelAndDrain(); Assert.Equal("Cancelled",RoadLifecycleManager.Progress.Phase); }

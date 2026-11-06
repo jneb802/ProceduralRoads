@@ -8,18 +8,18 @@ namespace ProceduralRoads;
 /// <summary>
 /// Console commands for looking at the network's staircases in a world: road_stairs_scan (highest and lowest ground
 /// round a point, the natural ground the game renders) and road_stairs_list (the staircases, tallest first). Registered only with
-/// PROCEDURALROADS_DEV_COMMANDS on; off by default. Read-only.
+/// PROCEDURALROADS_DEV_COMMANDS on (<see cref="ConsoleCommands.DevCommands"/>); off by default. Read-only.
 /// </summary>
 public static class StairCommands
 {
-    /// <summary>PROCEDURALROADS_DEV_COMMANDS: register the staircase commands. Off by default.</summary>
-    internal static readonly bool Enabled = DebugSwitches.Flag("DEV_COMMANDS", false);
-
     public static void Register()
     {
         new Terminal.ConsoleCommand("road_stairs_list",
             "The network's staircases, tallest first: road_stairs_list [count, default 20] [kit stone|wood|blackmarble]. Each row: its foot (lowest step) and top, its kit, how far it climbs, how many pieces it has and the share of its walked pieces in each biome.",
             List, isCheat: true);
+        new Terminal.ConsoleCommand("road_stairs_ends",
+            "Every staircase end of the built network in one call (StairEnds): road_stairs_ends [all]. Each end not walkable (all: every end) as a line, then the counts. Ground: the terrain where its zone is loaded (live), else the finished ground the mod predicts (finished).",
+            args => { foreach (string line in Ends(args.Length > 1 && args[1] == "all").Split('\n')) args.Context.AddString(line); }, isCheat: true);
         new Terminal.ConsoleCommand("road_stairs_scan",
             "Highest and lowest ground round a point, the natural ground the game renders (works where nothing is loaded): road_stairs_scan <x> <z> <radius> [step, default 16].",
             Scan, isCheat: true);
@@ -70,6 +70,47 @@ public static class StairCommands
         rows.Sort((a, b) => b.rise.CompareTo(a.rise));
         for (int i = 0; i < rows.Count && i < count; i++) args.Context.AddString(rows[i].line);
         args.Context.AddString($"OK: STAIRS_LIST {Math.Min(count, rows.Count)} of {rows.Count} staircase(s)");
+    }
+
+    /// <summary>
+    /// Every end of the built network's staircases (StairStructures.Runs) read by the one end reader (StairEnds), as one
+    /// string, for road_stairs_ends and a cli_call: a line per end not walkable (with <paramref name="all"/>, every end), then
+    /// "OK: STAIR_ENDS n ok, m miss, k gap, t twin(s) (live a, finished b)", the twins the network's places with two ways in
+    /// arriving the same way (PlaceWaysIn.Twins), each listed. Read on the terrain where the end's zone is loaded
+    /// (ZoneSystem.GetGroundHeight, live), else on the finished ground its walls stand down to (StairEnds.GroundOf), and
+    /// marked which. Read-only; no zone is loaded for it.
+    /// </summary>
+    public static string Ends(bool all = false)
+    {
+        WorldGenerator? world = WorldGenerator.instance;
+        if (world == null) return "ERROR: The world is not ready.";
+        var sb = new System.Text.StringBuilder();
+        int ok = 0, miss = 0, gap = 0, live = 0, finished = 0;
+        foreach (StairRun run in StairStructures.Runs)
+        {
+            Func<float, float, float> predicted = StairEnds.GroundOf(run, world);
+            bool anyLive = false, anyPredicted = false;
+            float Terrain(float x, float z)
+            {
+                if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(new Vector3(x, 0f, z), out float h)) { anyLive = true; return h; }
+                anyPredicted = true;
+                return predicted(x, z);
+            }
+            // A road's surface where one is, as the finished ground reads it (StairEnds.WithRoads).
+            Func<float, float, float> ground = StairEnds.WithRoads(Terrain);
+            foreach (StairEnds.End end in StairEnds.Read(run, ground, StairStructures.MetAtEnds(run)))
+            {
+                if (end.Verdict == StairEnds.Verdict.Ok) ok++; else if (end.Verdict == StairEnds.Verdict.Miss) miss++; else gap++;
+                if (all || end.Verdict != StairEnds.Verdict.Ok)
+                    sb.Append(StairEnds.Line(end)).Append(anyPredicted ? (anyLive ? " [live+finished]" : " [finished]") : " [live]").Append('\n');
+            }
+            if (anyLive) live++; else finished++;
+        }
+        // Beside the ends, the network's twin ways into places (PlaceWaysIn.Twins): a line for each.
+        var twins = PlaceWaysIn.Twins();
+        foreach (var twin in twins) sb.Append(twin.line).Append('\n');
+        sb.Append(FormattableString.Invariant($"OK: STAIR_ENDS {ok} ok, {miss} miss, {gap} gap, {twins.Count} twin(s) (staircases read live {live}, finished {finished})"));
+        return sb.ToString();
     }
 
     private static void Scan(Terminal.ConsoleEventArgs args)

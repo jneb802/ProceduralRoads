@@ -55,4 +55,29 @@ public class StairCollateralTests : IDisposable
         Assert.Contains(StairStructures.Runs, r => r.Pieces.Any(p => p.Position.x > 0f && p.Position.x < 12f));
         Assert.DoesNotContain(StairStructures.Runs, r => r.Pieces.Any(p => p.Position.x > 62f));
     }
+
+    /// <summary>A long slope of 0.5 a road climbs in switchbacks, flats either side. Sea past 200 m.</summary>
+    private sealed class SlopeWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy) =>
+            Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f ? 0f : 40f + Mathf.Clamp(wx * 0.5f, 0f, 24f);
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
+        public override int GetSeed() => 77;
+    }
+
+    /// <summary>Where no stretch can get its staircase, the road, after closing them in turn, is searched once as a plain
+    /// road before it is refused (a last-resort plain road): a routing fallback, within the grade cap.</summary>
+    [Fact]
+    public void ARoadWhoseStaircasesNeverLayIsSearchedOnceAsAPlainRoad()
+    {
+        var world = new SlopeWorld();
+        _scope.WithWorld(world);
+        typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!
+            .SetValue(null, new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f, StairCostFixed = 0f, StairCostPerMeterClimbed = 0f });
+        // Stairs cost the search nothing, so it buys them across the whole slope; none is ever laid.
+        RoadStairRuns.MaxStairSpan = 1f;
+
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-60f, 0f), 0f, new Vector2(100f, 0f), 0f, 4f, "slope"), "not built");
+        Assert.Empty(StairStructures.Runs);
+    }
 }

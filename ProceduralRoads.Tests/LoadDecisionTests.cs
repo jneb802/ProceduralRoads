@@ -218,7 +218,7 @@ public class LoadDecisionTests : System.IDisposable
         zones.LocationsGenerated = true;
         WorldDataArrives();
 
-        Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.True(RoadLifecycleManager.GenerationRunning);
         Assert.True(System.Threading.SpinWait.SpinUntil(() =>
         { RoadLifecycleManager.Tick(); return !RoadLifecycleManager.IsGenerating; }, 10000));
         Assert.True(RoadNetworkGenerator.RoadsGenerated, "a world with no saved roads did not get any");
@@ -233,7 +233,7 @@ public class LoadDecisionTests : System.IDisposable
         RoadLifecycleManager.OnWorldDataLoaded();
         RoadLifecycleManager.OnZoneSystemStart(zones);
         zones.LocationsGenerated = true;
-        Assert.True(RoadLifecycleManager.InitialGenerationActive);
+        Assert.True(RoadLifecycleManager.GenerationRunning);
         Assert.False(RoadNetworkGenerator.RoadsAvailable);
         Assert.True(System.Threading.SpinWait.SpinUntil(() =>
         { RoadLifecycleManager.Tick(); return !RoadLifecycleManager.IsGenerating; }, 10000));
@@ -259,7 +259,7 @@ public class LoadDecisionTests : System.IDisposable
         }
         else
         {
-            Assert.True(RoadLifecycleManager.InitialGenerationActive);
+            Assert.True(RoadLifecycleManager.GenerationRunning);
             Assert.True(System.Threading.SpinWait.SpinUntil(() =>
             { RoadLifecycleManager.Tick(); return !RoadLifecycleManager.IsGenerating; }, 10000));
             Assert.True(RoadNetworkGenerator.RoadsGenerated);

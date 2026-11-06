@@ -29,12 +29,15 @@
     <ItemGroup>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPreparation.cs" Link="ModSrc/RoadPreparation.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.cs" Link="ModSrc/StairLayout.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairEnds.cs" Link="ModSrc/StairEnds.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Switchbacks.cs" Link="ModSrc/StairLayout.Switchbacks.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Cuts.cs" Link="ModSrc/StairLayout.Cuts.cs"/>
-        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Columns.cs" Link="ModSrc/StairLayout.Columns.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairChain.cs" Link="ModSrc/StairChain.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructureEnds.cs" Link="ModSrc/StructureEnds.cs"/>
-        <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Cantilevers.cs" Link="ModSrc/StairLayout.Cantilevers.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairSupport.cs" Link="ModSrc/StairSupport.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairRailing.cs" Link="ModSrc/StairRailing.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StairWear.cs" Link="ModSrc/StairWear.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructureWear.cs" Link="ModSrc/StructureWear.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Feet.cs" Link="ModSrc/StairLayout.Feet.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Tops.cs" Link="ModSrc/StairLayout.Tops.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Chains.cs" Link="ModSrc/StairLayout.Chains.cs"/>
@@ -44,12 +47,23 @@
         <Compile Include="../ProceduralRoads/Src/Roads/StairKit.cs" Link="ModSrc/StairKit.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.cs" Link="ModSrc/RoadStairRuns.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Feet.cs" Link="ModSrc/RoadStairRuns.Feet.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.EndFloors.cs" Link="ModSrc/RoadStairRuns.EndFloors.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Tops.cs" Link="ModSrc/RoadStairRuns.Tops.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Chains.cs" Link="ModSrc/RoadStairRuns.Chains.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Approaches.cs" Link="ModSrc/RoadStairRuns.Approaches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.PlacedSites.cs" Link="ModSrc/RoadStairRuns.PlacedSites.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadStairRuns.Landings.cs" Link="ModSrc/RoadStairRuns.Landings.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/PlacedSiteShape.cs" Link="ModSrc/PlacedSiteShape.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/PlacedSiteGround.cs" Link="ModSrc/PlacedSiteGround.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/PlacedSites.cs" Link="ModSrc/PlacedSites.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/HiddenSiteIcons.cs" Link="ModSrc/HiddenSiteIcons.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadSiteEntry.cs" Link="ModSrc/RoadSiteEntry.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadBeside.cs" Link="ModSrc/RoadBeside.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/CrossIslandReads.cs" Link="ModSrc/CrossIslandReads.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadRide.cs" Link="ModSrc/RoadRide.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/PlaceWaysIn.cs" Link="ModSrc/PlaceWaysIn.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadRidges.cs" Link="ModSrc/RoadRidges.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadJunctionFillet.cs" Link="ModSrc/RoadJunctionFillet.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ManualRoadDraft.cs" Link="ModSrc/ManualRoadDraft.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.Appends.cs" Link="ModSrc/RoadSpatialGrid.Appends.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadGridComparer.cs" Link="ModSrc/RoadGridComparer.cs"/>
@@ -57,6 +71,8 @@
         <Compile Include="../ProceduralRoads/Src/Roads/ApproachTerrainSamples.cs" Link="ModSrc/ApproachTerrainSamples.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSwitchbacks.cs" Link="ModSrc/RoadSwitchbacks.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSiteProtection.cs" Link="ModSrc/RoadSiteProtection.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadShoreFill.cs" Link="ModSrc/RoadShoreFill.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadWater.cs" Link="ModSrc/RoadWater.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPathPull.cs" Link="ModSrc/RoadPathPull.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadWiggle.cs" Link="ModSrc/RoadWiggle.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPitches.cs" Link="ModSrc/RoadPitches.cs"/>
@@ -70,7 +86,9 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadConnectionPlanner.cs" Link="ModSrc/RoadConnectionPlanner.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadParallel.cs" Link="ModSrc/RoadParallel.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkRouting.cs" Link="ModSrc/RoadNetworkRouting.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadDoors.cs" Link="ModSrc/RoadDoors.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadEndpoint.cs" Link="ModSrc/RoadEndpoint.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadEndRing.cs" Link="ModSrc/RoadEndRing.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkOptions.cs" Link="ModSrc/RoadNetworkOptions.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkSelection.cs" Link="ModSrc/RoadNetworkSelection.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadConstants.cs" Link="ModSrc/RoadConstants.cs"/>
@@ -87,20 +105,27 @@
         <Compile Include="../ProceduralRoads/Src/Utils/BiomeBlendedHeight.cs" Link="ModSrc/BiomeBlendedHeight.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadCrossing.cs" Link="ModSrc/RoadCrossing.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/BridgeLayout.cs" Link="ModSrc/BridgeLayout.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeLayout.RailedKits.cs" Link="ModSrc/BridgeLayout.RailedKits.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BridgeLayout.StoneKit.cs" Link="ModSrc/BridgeLayout.StoneKit.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/Ships.cs" Link="ModSrc/Ships.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/DvergrViaduct.cs" Link="ModSrc/DvergrViaduct.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/DvergrWoodBridge.cs" Link="ModSrc/DvergrWoodBridge.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructurePiece.cs" Link="ModSrc/StructurePiece.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructureSource.cs" Link="ModSrc/StructureSource.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/BridgeStructures.cs" Link="ModSrc/BridgeStructures.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/BuiltBridges.cs" Link="ModSrc/BuiltBridges.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairStructures.cs" Link="ModSrc/StairStructures.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/BuriedPieces.cs" Link="ModSrc/BuriedPieces.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructureGround.cs" Link="ModSrc/StructureGround.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/BridgeSupport.cs" Link="ModSrc/BridgeSupport.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/SupportGraph.cs" Link="ModSrc/SupportGraph.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ViaductSupport.cs" Link="ModSrc/ViaductSupport.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructurePlans.cs" Link="ModSrc/StructurePlans.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StructurePlacement.cs" Link="ModSrc/StructurePlacement.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/RoadIslandDetector.cs" Link="ModSrc/RoadIslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/FixedLocationYaw.cs" Link="ModSrc/FixedLocationYaw.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakePlanner.cs" Link="ModSrc/ServerBakePlanner.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/GhostRepairLedger.cs" Link="ModSrc/GhostRepairLedger.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeFaults.cs" Link="ModSrc/ServerBakeFaults.cs"/>

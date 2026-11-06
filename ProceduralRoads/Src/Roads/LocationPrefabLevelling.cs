@@ -25,14 +25,36 @@ public static class LocationPrefabLevelling
 
     private static readonly Dictionary<string, float> m_terrainRadius = new();
 
+    /// <summary>Where each location prefab's networked objects stand, from its root, by prefab
+    /// name: read as its parts are replayed (<see cref="PlacedOps"/>).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Vector3[]> s_parts = new();
+
+    /// <summary>How far an object may stand from one of its location's part spots and be that part.</summary>
+    public const float PartTolerance = 0.5f;
+
+    /// <summary>
+    /// Whether the object at <paramref name="at"/> is one of the networked parts of the location
+    /// <paramref name="prefabName"/> placed at <paramref name="root"/> turned by <paramref name="rotation"/>:
+    /// the game spawns each at root + rotation x its offset in the prefab (ZoneSystem.SpawnLocation).
+    /// Null while that prefab's parts are unknown (not yet replayed this session). A
+    /// rock2_mountain in a frost cave's footprint that stays put while the cave turns between
+    /// runs is not the cave's.
+    /// </summary>
+    public static bool? IsPart(string prefabName, Vector3 root, Quaternion rotation, Vector3 at)
+    {
+        if (!s_parts.TryGetValue(prefabName, out Vector3[]? parts)) return null;
+        foreach (Vector3 local in parts)
+            if ((root + rotation * local - at).sqrMagnitude <= PartTolerance * PartTolerance) return true;
+        return false;
+    }
+
     /// <summary>Wire this up as LocationLevelling's source. Called from the plugin.</summary>
     public static void Install()
     {
         LocationLevelling.Source = OpsAt;
         LocationLevelling.PlacementHeightSource = PlacementHeightAt;
-        // The SAME guarded door as Reset() uses. This was a lambda that
-        // cleared the dictionary directly, so guarding Reset() left the
-        // callback free to empty it under the island workers.
+        LocationLevelling.FacesDownhillSource = FacesDownhillAt;
+        // The same guarded door as Reset() uses.
         LocationLevelling.ResetPlacements = LocationPlacementHeights.Clear;
         LocationPlacementHeights.Source = SavedPlacements;
         LocationLevelling.Prime = PrimeSynchronously;
@@ -54,6 +76,37 @@ public static class LocationPrefabLevelling
     }
 
     private static IEnumerable<bool> PrimeSteps(RoadPreparation preparation)
+    {
+        foreach(var step in FootprintSteps(preparation)) yield return step;
+        if(!LocationPlacementHeights.HasBeenRead && ZDOMan.instance!=null)
+        {
+            var objects=ZDOMan.instance.m_objectsByID.Values.ToArray();
+            preparation.BeginStage("Reading saved location placements",objects.Length,"saved objects"); yield return true;
+            var placements=new List<(Vector2 centre,float height)>();
+            foreach(var zdo in objects)
+            {
+                if(TryPlacement(zdo,out var placement)) placements.Add(placement);
+                if(preparation.Checkpoint()) yield return true;
+            }
+            preparation.BeginStage("Indexing saved location placements",placements.Count,"placements"); yield return true;
+            foreach(var step in LocationPlacementHeights.SetSteps(placements,preparation)) yield return step;
+        }
+    }
+
+    /// <summary>
+    /// The site footprint index built over frames, as the first part of <see cref="PrimeSteps"/>, where it is not built
+    /// yet and the built-in sources are installed (<see cref="LocationLevelling.CanPrimeIncrementally"/>); nothing
+    /// otherwise. The places placed before their roads (SitesFirstLoad) build it before they are read: reading the first
+    /// asked the index (its keep-out edge), which then read every location prefab of the world in that one frame, 54 s
+    /// with a mod's 181 prefabs.
+    /// </summary>
+    internal static IEnumerable<bool> PrimeFootprintSteps(RoadPreparation preparation)
+    {
+        if(LocationLevelling.CanPrimeIncrementally?.Invoke()!=true) yield break;
+        foreach(var step in FootprintSteps(preparation)) yield return step;
+    }
+
+    private static IEnumerable<bool> FootprintSteps(RoadPreparation preparation)
     {
         // Copy live collections before retaining an iterator across Unity frames.
         var locations=RoadSiteProtection.InstalledButUnprepared ? ZoneSystem.instance?.GetLocationList()?.ToArray() : null;
@@ -84,19 +137,6 @@ public static class LocationPrefabLevelling
             preparation.BeginStage("Indexing location footprints",footprints.Count,"footprints"); yield return true;
             foreach(var step in RoadSiteProtection.SetSteps(footprints,preparation)) yield return step;
         }
-        if(!LocationPlacementHeights.HasBeenRead && ZDOMan.instance!=null)
-        {
-            var objects=ZDOMan.instance.m_objectsByID.Values.ToArray();
-            preparation.BeginStage("Reading saved location placements",objects.Length,"saved objects"); yield return true;
-            var placements=new List<(Vector2 centre,float height)>();
-            foreach(var zdo in objects)
-            {
-                if(TryPlacement(zdo,out var placement)) placements.Add(placement);
-                if(preparation.Checkpoint()) yield return true;
-            }
-            preparation.BeginStage("Indexing saved location placements",placements.Count,"placements"); yield return true;
-            foreach(var step in LocationPlacementHeights.SetSteps(placements,preparation)) yield return step;
-        }
     }
 
     private static IEnumerable<RoadSiteProtection.Footprint>? Footprints()
@@ -111,6 +151,35 @@ public static class LocationPrefabLevelling
             result.Add(FootprintAt(inst));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Every location prefab of the loaded world with what it does to the ground,
+    /// as CSV: one row per levelling operation (a prefab that levels nothing has
+    /// one row with no operation), for offline tools.
+    /// Main thread, outside generation.
+    /// </summary>
+    public static string DescribeCsv()
+    {
+        var sb = new System.Text.StringBuilder("prefab,terrainRadius,offsetX,offsetZ,height,radius,square,smoothRadius,smoothPower,exteriorRadius,slopeRotation,randomRotation,unique,iconPlaced,iconAlways\n");
+        if (ZoneSystem.instance == null) return sb.ToString();
+        var seen = new HashSet<string>();
+        foreach (var inst in ZoneSystem.instance.GetLocationList())
+        {
+            string name = inst.m_location.m_prefab.Name;
+            if (!seen.Add(name)) continue;
+            IReadOnlyList<LevelOp> ops = ForPrefab(inst.m_location);
+            m_terrainRadius.TryGetValue(name, out float terrainRadius);
+            string head = FormattableString.Invariant($"{name},{terrainRadius:F3}");
+            string tail = FormattableString.Invariant(
+                $",{inst.m_location.m_exteriorRadius:F3},{(inst.m_location.m_slopeRotation ? 1 : 0)},{(inst.m_location.m_randomRotation ? 1 : 0)}") +
+                FormattableString.Invariant($",{(inst.m_location.m_unique ? 1 : 0)},{(inst.m_location.m_iconPlaced ? 1 : 0)},{(inst.m_location.m_iconAlways ? 1 : 0)}\n");
+            if (ops.Count == 0) sb.Append(head).Append(",,,,,,,").Append(tail);
+            foreach (LevelOp op in ops)
+                sb.Append(head).Append(FormattableString.Invariant(
+                    $",{op.OffsetX:F3},{op.OffsetZ:F3},{op.Height:F3},{op.Radius:F3},{(op.Square ? 1 : 0)},{op.SmoothRadius:F3},{op.SmoothPower:F3}")).Append(tail);
+        }
+        return sb.ToString();
     }
 
     public static void Reset()
@@ -140,9 +209,12 @@ public static class LocationPrefabLevelling
 
     private static RoadSiteProtection.Footprint FootprintAt(ZoneSystem.LocationInstance location)
     {
-        m_terrainRadius.TryGetValue(location.m_location.m_prefab.Name,out float terrainRadius);
+        string name=location.m_location.m_prefab.Name;
+        m_terrainRadius.TryGetValue(name,out float terrainRadius);
+        m_byPrefab.TryGetValue(name,out IReadOnlyList<LevelOp>? ops);
+        float exterior=location.m_location.m_exteriorRadius, whole=Mathf.Max(exterior,terrainRadius);
         return new RoadSiteProtection.Footprint(new Vector2(location.m_position.x,location.m_position.z),
-            Mathf.Max(location.m_location.m_exteriorRadius,terrainRadius));
+            whole,LocationLevelling.ArrivalReach(ops,exterior,whole));
     }
     private static readonly int LocationProxyHash="LocationProxy".GetStableHashCode();
     private static bool TryPlacement(ZDO zdo,out (Vector2 centre,float height) placement)
@@ -156,19 +228,133 @@ public static class LocationPrefabLevelling
 
     private static float? PlacementHeightAt(Vector2 centre) => LocationPlacementHeights.At(centre);
 
-    private static IReadOnlyList<LevelOp>? OpsAt(Vector2 centre)
+    private static IReadOnlyList<LevelOp>? OpsAt(Vector2 centre) =>
+        LocationAt(centre, out ZoneSystem.LocationInstance inst) ? ForPrefab(inst.m_location) : null;
+
+    /// <summary>
+    /// The location standing within half a metre of <paramref name="centre"/> each way, the one reader of the world's
+    /// locations by centre (its levelling, <see cref="OpsAt"/>; its turn, <see cref="FacesDownhillAt"/>; its placed parts,
+    /// <see cref="PlacedOps"/>): a zone holds at most one location, so it is the one in the zone under that square's corners
+    /// (one zone but where the square straddles a zone's edge). A lookup in the zone table, as PlacedSites.FindNotPlaced and
+    /// RoadNetworkGenerator.PrefabAt read it; never a walk of the whole list, which island workers ask of every road
+    /// point in a place's reach (the reached test, through RoadNetworkGenerator.ArrivalHeight).
+    /// </summary>
+    private static bool LocationAt(Vector2 centre, out ZoneSystem.LocationInstance location)
+    {
+        location = default;
+        if (ZoneSystem.instance == null || ZoneSystem.instance.m_locationInstances == null) return false;
+        Vector2s first = default;
+        for (int corner = 0; corner < 4; corner++)
+        {
+            Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x + ((corner & 1) == 0 ? -0.5f : 0.5f), 0f,
+                centre.y + ((corner & 2) == 0 ? -0.5f : 0.5f)));
+            if (corner > 0 && zone.Equals(first)) continue;
+            if (corner == 0) first = zone;
+            if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance inst)
+                && Mathf.Abs(inst.m_position.x - centre.x) <= 0.5f && Mathf.Abs(inst.m_position.z - centre.y) <= 0.5f)
+            {
+                location = inst;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The terrain modifiers a placed location really has. A location's parts are
+    /// switched on or off at random as it is placed (RandomSpawn, RandomObject), so the
+    /// prefab lists more than any one placement keeps: a frost cave's lists 10, the
+    /// two placed ones had 7 and 8, and rebuilt from all 10 the ground in front of one
+    /// was 8.9 m off. The draw is the game's own, replayed: ZoneSystem.SpawnLocation
+    /// seeds Random with the placement's seed (saved on its LocationProxy), then randomizes
+    /// each enabled RandomSpawn and then each RandomObject at its placed position, in that
+    /// order; the location then appears with the modifiers left active. Main thread only;
+    /// the prefab (its transform and every object's active flag), Random's state and the
+    /// location's cached biome are all put back.
+    /// Null when the prefab cannot be read.
+    /// </summary>
+    public static IReadOnlyList<LevelOp>? PlacedOps(Vector2 centre, int seed, Vector3 pos, Quaternion rot)
     {
         if (ZoneSystem.instance == null) return null;
-        var list = ZoneSystem.instance.GetLocationList();
-        if (list == null) return null;
-        foreach (ZoneSystem.LocationInstance inst in list)
+        if (!LocationAt(centre, out ZoneSystem.LocationInstance placedAt)) return null;
+        ZoneSystem.ZoneLocation location = placedAt.m_location;
+        var ops = new List<LevelOp>();
+        try
         {
-            if (Mathf.Abs(inst.m_position.x - centre.x) > 0.5f ||
-                Mathf.Abs(inst.m_position.z - centre.y) > 0.5f)
-                continue;
-            return ForPrefab(inst.m_location);
+            var reference = location.m_prefab;
+            var loader = AssetBundleLoader.Instance;
+            int index = loader.m_assetIDToLoaderIndex[reference.m_assetID];
+            bool read = TemporaryAssetRead.Read(
+                () => loader.m_assetLoaders[index].ReferenceCount,
+                () => reference.Load(),
+                () => reference.Release(),
+                () =>
+            {
+                GameObject asset = reference.Asset;
+                if (asset == null) return false;
+                Location component = asset.GetComponent<Location>();
+                ZNetView[] views = Utils.GetEnabledComponentsInChildren<ZNetView>(asset);
+                RandomSpawn[] spawns = Utils.GetEnabledComponentsInChildren<RandomSpawn>(asset);
+                RandomObject[] objects = Utils.GetEnabledComponentsInChildren<RandomObject>(asset);
+                // Every object's own active flag, to put back exactly: switching a part off also
+                // switches off the networked objects under it, and Reset does not switch them back
+                // on (the game does, from its own list). Left off, the next draw on this prefab --
+                // ours or the game's own -- saw different parts.
+                Transform[] all = asset.GetComponentsInChildren<Transform>(true);
+                var active = new bool[all.Length];
+                for (int i = 0; i < all.Length; i++) active[i] = all[i].gameObject.activeSelf;
+                foreach (RandomSpawn spawn in spawns) spawn.Prepare();
+                Vector3 position = asset.transform.position;
+                Quaternion rotation = asset.transform.rotation;
+                UnityEngine.Random.State state = UnityEngine.Random.state;
+                Heightmap.Biome biome = component != null ? component.m_biome : Heightmap.Biome.None;
+                asset.transform.position = Vector3.zero;
+                asset.transform.rotation = Quaternion.identity;
+                try
+                {
+                    var parts = new Vector3[views.Length];
+                    for (int i = 0; i < views.Length; i++) parts[i] = views[i].gameObject.transform.position;
+                    s_parts[location.m_prefab.Name] = parts;
+                    UnityEngine.Random.InitState(seed);
+                    foreach (RandomSpawn spawn in spawns) spawn.Randomize(pos + rot * spawn.gameObject.transform.position, component);
+                    foreach (RandomObject obj in objects) obj.Randomize(pos + rot * obj.gameObject.transform.position, component);
+                    foreach (TerrainModifier modifier in asset.GetComponentsInChildren<TerrainModifier>(false))
+                    {
+                        if (!modifier.enabled || (!modifier.m_level && !modifier.m_smooth)) continue;
+                        Vector3 local = modifier.transform.position;
+                        ops.Add(new LevelOp(local.x, local.z, local.y + modifier.m_levelOffset,
+                            modifier.m_level ? modifier.m_levelRadius : 0f, modifier.m_square,
+                            modifier.m_smooth ? modifier.m_smoothRadius : 0f, modifier.m_smoothPower, modifier.m_sortOrder));
+                    }
+                }
+                finally
+                {
+                    // As SpawnLocation ends: Reset each, then switch its networked objects back on;
+                    // then every flag as it was.
+                    foreach (RandomSpawn spawn in spawns) spawn.Reset();
+                    foreach (RandomObject obj in objects) obj.Reset();
+                    foreach (ZNetView view in views) view.gameObject.SetActive(true);
+                    for (int i = 0; i < all.Length; i++)
+                        if (all[i] != null && all[i].gameObject.activeSelf != active[i]) all[i].gameObject.SetActive(active[i]);
+                    UnityEngine.Random.state = state;
+                    if (component != null) component.m_biome = biome;
+                    asset.transform.position = position;
+                    asset.transform.rotation = rotation;
+                }
+                return true;
+            });
+            return read ? ops : null;
         }
-        return null;
+        catch (Exception e)
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Could not replay {location.m_prefab.Name}'s placement: {e.GetType().Name} {e.Message}");
+            return null;
+        }
+    }
+
+    private static bool FacesDownhillAt(Vector2 centre)
+    {
+        return LocationAt(centre, out ZoneSystem.LocationInstance inst) && inst.m_location.m_slopeRotation;
     }
 
     private static IReadOnlyList<LevelOp> ForPrefab(ZoneSystem.ZoneLocation location)
@@ -212,10 +398,12 @@ public static class LocationPrefabLevelling
                     // and off-centre smoothing/paint beyond the exterior radius.
                     if (modifier.m_square) reach *= Mathf.Sqrt(2f);
                     terrainRadius = Mathf.Max(terrainRadius, new Vector2(local.x, local.z).magnitude + reach);
-                    if (!modifier.m_level) continue;
+                    // Smoothing-only modifiers too (radius 0): a frost cave carries six, out to
+                    // 26 m, and its ground cannot be rebuilt without them.
+                    if (!modifier.m_level && !modifier.m_smooth) continue;
                     ops.Add(new LevelOp(local.x, local.z, local.y + modifier.m_levelOffset,
-                        modifier.m_levelRadius, modifier.m_square,
-                        modifier.m_smooth ? modifier.m_smoothRadius : 0f, modifier.m_smoothPower));
+                        modifier.m_level ? modifier.m_levelRadius : 0f, modifier.m_square,
+                        modifier.m_smooth ? modifier.m_smoothRadius : 0f, modifier.m_smoothPower, modifier.m_sortOrder));
                 }
                 return true;
             });

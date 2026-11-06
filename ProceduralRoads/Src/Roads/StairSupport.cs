@@ -397,7 +397,7 @@ public static class StairSupport
     /// there at the viaduct's <see cref="DvergrViaduct.VineCurtainChance"/>, a vine on each course; ornaments only, hung
     /// after the support rule has read the staircase (<see cref="HoldUp"/>) and never read by it. A vine is hung only on a
     /// cornice still laid, with its origin at or over the finished ground (none inside it), and with no part of it in the
-    /// headroom over any walked surface (<see cref="StairLayout.ClearanceHeight"/>). Its leaves may reach down to the
+    /// headroom over any walked surface (<see cref="RoadRockPolicy.ClearanceHeight"/>). Its leaves may reach down to the
     /// ground and lie on it, as vanilla's Mistlands Dvergr structures drape theirs to the grass at the foot of the stone:
     /// the viaduct's <see cref="DvergrViaduct.VineGroundClear"/> is not read here. A vine grows only where the game's biome at
     /// its own place is one vanilla's vines grow in (<see cref="DvergrViaduct.VineBiomes"/>): a staircase climbing out of the
@@ -424,7 +424,7 @@ public static class StairSupport
     private const float VineHalfAcross = 1.15f, VineBelow = 1.17f, VineAbove = 1.26f, VineFront = 0.15f;
 
     /// <summary>Whether any part of a vine's leaves (a grid over them) stands over a walked piece's footprint between its
-    /// walking surface and <see cref="StairLayout.ClearanceHeight"/> over it. Only the walks the leaves can reach are read:
+    /// walking surface and <see cref="RoadRockPolicy.ClearanceHeight"/> over it. Only the walks the leaves can reach are read:
     /// a walk whose footprint lies farther from the vine than its leaves reach (each of their half-extents added, a bound past
     /// any of their points) and its own half-extents (and <see cref="Over"/>'s slack) holds none of them.</summary>
     private static bool InHeadroom(StairKit kit, IReadOnlyList<Walk> walks, StructurePiece vine)
@@ -449,7 +449,7 @@ public static class StairSupport
                 {
                     if (!Over(w, at)) continue;
                     float surface = w.Surface(Mathf.Clamp(Vector2.Dot(at - w.Back, w.Dir), 0f, w.Depth), kit);
-                    if (q.y > surface - 0.01f && q.y < surface + StairLayout.ClearanceHeight) return true;
+                    if (q.y > surface - 0.01f && q.y < surface + RoadRockPolicy.ClearanceHeight) return true;
                 }
             }
         return false;

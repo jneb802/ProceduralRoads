@@ -36,7 +36,7 @@ public sealed class StairPiece
 
 /// <summary>
 /// Space a walker on the stair needs clear of rock (its walking box): one stretch of a piece, its walking surface's width,
-/// from just over its walking surface to <see cref="StairLayout.ClearanceHeight"/> above it (StairLayout.AddClearance). <see cref="Centre"/> and <see cref="Half"/> are in the
+/// from just over its walking surface to <see cref="RoadRockPolicy.ClearanceHeight"/> above it (StairLayout.AddClearance). <see cref="Centre"/> and <see cref="Half"/> are in the
 /// box's own frame, turned by <see cref="YawDegrees"/> (local +z along the walk).
 /// </summary>
 public readonly struct StairClearance
@@ -316,9 +316,6 @@ public static partial class StairLayout
     /// <summary>A staircase that may finish anywhere near its goal finishes no lower than this
     /// below the goal's ground: level with it (<see cref="RoadNetworkGenerator.ArrivalLevel"/>).</summary>
     public const float ArriveBelow = RoadNetworkGenerator.ArrivalLevel;
-    /// <summary>Headroom kept clear of rock above every walking surface: player height, as a road's (one owner,
-    /// <see cref="RoadRockPolicy.ClearanceHeight"/>).</summary>
-    public const float ClearanceHeight = RoadRockPolicy.ClearanceHeight;
     /// <summary>A stair's clearance is cut into this many stretches along it, so it follows the steps up: one a cut point's
     /// spacing long (<see cref="CutSpacing"/>), 4 to a stair, each rising a quarter of its rise. With 2 a stretch's box reached
     /// 0.4 m under the walk at its high end, into the stair's body and the rock it lies on, and the carve took every chunk
@@ -1528,7 +1525,7 @@ public static partial class StairLayout
 
     /// <summary>The walking box over the piece, in stretches along the walk (the one owner of what a staircase clears of rock): its
     /// walking surface's width across, from <see cref="RockClearances.Bottom"/> of the stretch's lowest walk, as a road's
-    /// clearance starts over its surface, up to <see cref="ClearanceHeight"/> over its highest walk, so the whole headroom over
+    /// clearance starts over its surface, up to <see cref="RoadRockPolicy.ClearanceHeight"/> over its highest walk, so the whole headroom over
     /// every tread is in it (over the stretch's middle it fell a quarter of a stretch's rise short at its high end). A stair
     /// rises <see cref="PieceRise"/> / <see cref="ClearanceStretches"/> per stretch, a floor or block is level. Nothing under the walk: the piece's own body, the supports under it
     /// and its handrails may stand in rock (they were cleared from the underside up, so a rock a support stood in was fractured
@@ -1555,11 +1552,11 @@ public static partial class StairLayout
     }
 
     /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a player's headroom
-    /// (<see cref="ClearanceHeight"/>) over it. <see cref="HighestWalk"/> reads a stored box back.</summary>
-    internal static float BoxTop(float highest) => highest + ClearanceHeight;
+    /// (<see cref="RoadRockPolicy.ClearanceHeight"/>) over it. <see cref="HighestWalk"/> reads a stored box back.</summary>
+    internal static float BoxTop(float highest) => highest + RoadRockPolicy.ClearanceHeight;
 
     /// <summary>A stored walking box's highest walk, from its top <paramref name="top"/> (the inverse of <see cref="BoxTop"/>).</summary>
-    internal static float HighestWalk(float top) => top - ClearanceHeight;
+    internal static float HighestWalk(float top) => top - RoadRockPolicy.ClearanceHeight;
 
     /// <summary>Unity's yaw: 0 faces +z, 90 faces +x.</summary>
     public static Vector2 Forward(float headingDegrees)

@@ -1250,7 +1250,7 @@ public static class RoadTerrainModifier
             // the neighbouring texels; a 2 m road paints 0.85 m out on 1 m
             // texels, so each point paints its own texel only and skipping any
             // of them would leave the texels between bare. Then every point paints.
-            float paintReach = roadPoint.w * 0.5f * RoadConstants.RoadPaintOuterRatio;
+            float paintReach = RoadProfile.PaintEdge(roadPoint.w);
             if (paintReach >= scale)
             {
                 float dedupeInterval = Mathf.Min(RoadConstants.PaintDedupeInterval, paintReach);

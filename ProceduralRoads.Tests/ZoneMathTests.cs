@@ -128,3 +128,50 @@ public class NamedDefaultsTests
         Assert.Equal(1.5f, StairLayout.CutWidth);
     }
 }
+
+public class ModelledHeightRecordedTests
+{
+    /// <summary>Recorded before ModelledHeight read the writer's own delta: a hash of every height's bits.</summary>
+    [Fact]
+    public void ModelledHeightIsBitForBitAsRecorded()
+    {
+        var random = new System.Random(4711);
+        float Next(float lo, float hi) => lo + (float)random.NextDouble() * (hi - lo);
+        uint hash = 2166136261u;
+        for (int round = 0; round < 6; round++)
+        {
+            var points = new List<RoadSpatialGrid.RoadPoint>();
+            var at = new Vector2(Next(-500f, 500f), Next(-500f, 500f));
+            for (int i = 0; i < 60; i++)
+            {
+                points.Add(new RoadSpatialGrid.RoadPoint(at, Next(2f, 10f), Next(10f, 70f), paintOnly: i % 13 == 0));
+                at += new Vector2(Next(-1.5f, 1.5f), Next(-1.5f, 1.5f));
+            }
+            float[]? fill = round % 2 == 0 ? null : new float[points.Count];
+            if (fill != null) for (int i = 0; i < fill.Length; i++) fill[i] = i % 3 == 0 ? Next(0f, 4f) : 0f;
+            for (int v = 0; v < 400; v++)
+            {
+                var vertex = points[random.Next(points.Count)].p + new Vector2(Next(-14f, 14f), Next(-14f, 14f));
+                float ground = Next(0f, 80f);
+                hash = (hash ^ (uint)System.BitConverter.SingleToInt32Bits(RoadTerrainModifier.ModelledHeight(points, vertex, ground, fill))) * 16777619u;
+            }
+        }
+        Assert.Equal(4142811402u, hash);
+    }
+}
+
+public class RoadProfileExtentsTests
+{
+    [Theory]
+    [InlineData(2f)]
+    [InlineData(3.3f)]
+    [InlineData(4f)]
+    [InlineData(7.77f)]
+    [InlineData(10f)]
+    public void PaintEdgeAndFootprintAreAsTheyWere(float w)
+    {
+        Assert.Equal(w * 0.5f * 0.85f, RoadProfile.PaintEdge(w));
+        Assert.Equal(w * 0.5f * RoadConstants.RoadPaintOuterRatio, RoadProfile.PaintEdge(w));
+        Assert.Equal(w + 2f * 2f, RoadProfile.Footprint(w));
+    }
+}

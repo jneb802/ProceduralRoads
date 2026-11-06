@@ -2936,7 +2936,7 @@ public static partial class RoadNetworkGenerator
         onTrunk = default;
         var world = GenerationWorld;
         if (RoadPathfinder.JunctionStep <= 0f || world == null) return -1;
-        float band = RoadWidth + 2f * RoadConstants.TerrainBlendMargin;
+        float band = RoadProfile.Footprint(RoadWidth);
         int start = step > 0 ? 0 : path.Count - 1, best = -1;
         bool alongside = false;
         float along = 0f;
@@ -3160,7 +3160,7 @@ public static partial class RoadNetworkGenerator
         float total = along[points.Count - 1], touch = RoadWidth * 0.5f;
         // The network's line (RoadRide): a crossing's or a staircase's line is road too, so a road through a structure's gap
         // in another road crosses it as it crosses the road.
-        var lines = RoadRide.Around(points, 4f);
+        var lines = RoadRide.Around(points, RoadRide.Reach);
         int k = 0;
         while (k < points.Count)
         {

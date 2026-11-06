@@ -572,13 +572,9 @@ public static partial class RoadSpatialGrid
     /// (<see cref="JunctionMatch"/>).</summary>
     private static float JoinReach(float width) => width * 0.75f;
 
-    /// <summary>How near a road already laid a planned road's point is held to that road's height (<see cref="HoldToNetwork"/>):
-    /// its width and the terrain blend on both sides.</summary>
-    private static float HoldBand(float width) => width + 2f * RoadConstants.TerrainBlendMargin;
-
     /// <summary>
     /// The height a road planned along <paramref name="path"/> from <paramref name="startGround"/> stores at its first point,
-    /// where nothing but that value decides it: no road already laid within <see cref="HoldBand"/> of it (so it is neither
+    /// where nothing but that value decides it: no road already laid within <see cref="RoadProfile.Footprint(float)"/> of it (so it is neither
     /// joined, <see cref="JoinReach"/>, nor held to one), and no structure's end levelled (<see cref="LevelledEnds"/>), no
     /// waypoint held (<see cref="HeldPoints"/>) and no place's landing (<see cref="PlaceEnds"/>) on this thread. Every
     /// shaping step keeps the first point where it is, and the grade limiter holds its height. Null where any of them could
@@ -587,7 +583,7 @@ public static partial class RoadSpatialGrid
     internal static float? FirstHeight(List<Vector2> path, float width, float startGround)
     {
         if (path.Count < 2 || LevelledEnds != null || HeldPoints != null || PlaceEnds != default) return null;
-        if (m_initialized && TryGetRoadHeightWithin(path[0], HoldBand(width), out _)) return null;
+        if (m_initialized && TryGetRoadHeightWithin(path[0], RoadProfile.Footprint(width), out _)) return null;
         return startGround;
     }
 
@@ -708,7 +704,7 @@ public static partial class RoadSpatialGrid
         // A held waypoint stays where it is through the sway's resampling, the sway held round it (a piece meeting a
         // structure's end sways everywhere else: unswayed, a road from a crossing ran dead straight for its whole piece).
         if (!followTerrain && RoadWiggle.Enabled && !SuppressWiggle)
-            path = RoadWiggle.Apply(path, SampleTerrain, p => !RoadWater.BuiltDry(worldGen, p), p => worldGen.GetBiome(p.x, p.y), width, p => TryGetRoadWithin(p, width + 2f, out _), holds ? path.FindAll(Held) : null);
+            path = RoadWiggle.Apply(path, SampleTerrain, p => !RoadWater.BuiltDry(worldGen, p), p => worldGen.GetBiome(p.x, p.y), width, p => TryGetRoadWithin(p, width + RoadConstants.TerrainBlendMargin, out _), holds ? path.FindAll(Held) : null);
 
         // Order: the search's path was snapped onto existing road in
         // GenerateRoad; the pull above keeps every snapped waypoint; the sway
@@ -1547,7 +1543,7 @@ public static partial class RoadSpatialGrid
         bool[]? letGo = null, IReadOnlyList<float>? edgeGrades = null, float floor = float.NegativeInfinity)
     {
         if (!m_initialized || points.Count == 0) return null;
-        float band = HoldBand(width);
+        float band = RoadProfile.Footprint(width);
         int n = points.Count;
         var held = new bool[n];
         bool any = false;

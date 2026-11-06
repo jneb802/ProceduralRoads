@@ -166,6 +166,8 @@ public static partial class RoadStairRuns
     [ThreadStatic] private static (int, int) t_lastKey;
     [ThreadStatic] private static float[]? t_last;
     private static int s_generation;
+    /// <summary>Changes whenever the ground the planners read may have (<see cref="ForgetGround"/>).</summary>
+    internal static int GroundGeneration => s_generation;
 
     internal static float GroundAt(float x, float z, WorldGenerator world)
     {

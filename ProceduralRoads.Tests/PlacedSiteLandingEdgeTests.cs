@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -13,8 +14,8 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public sealed class PlacedSiteLandingEdgeTests
 {
-    private static readonly Vector2 Centre = new(1649.6f, -6338.7f);
-    private const float Yaw = 315f, Root = 59.99f, Wall = 14.7f, Width = 4f;
+    private static readonly Vector2 Centre = new(1650f, -6339f);
+    private const float Yaw = 270f, Root = 59.99f, Wall = 14.7f, Width = 4f;
 
     /// <summary>Mistlands_Excavation3's levelling (its placed record): the 17 m flat smoothed out to 25 m, its sinks.</summary>
     private static readonly IReadOnlyList<LevelOp> Ops = new[]
@@ -28,8 +29,19 @@ public sealed class PlacedSiteLandingEdgeTests
 
     /// <summary>The camp's placed ground: its flat, blended out to the natural ground 3 m over its root round it (the road
     /// stands at 63.1 at x 1625.7, 24 m out on the west).</summary>
-    private static float Ground(float x, float z) =>
-        LocationLevelling.PlacedGroundAt(new Vector2(x, z), Centre, Root, Ops, Root + 3f);
+    private static readonly Func<float, float, float> Placed = Built();
+
+    private static float Ground(float x, float z) => Placed(x, z);
+
+    /// <summary>The ground the game makes (<see cref="PlacedSiteGround.Build"/>) from that natural ground, its sinks included.
+    /// The camp stands on a whole metre and faces west, so its flat's edge falls on a vertex as the game's mesh has it.</summary>
+    private static Func<float, float, float> Built()
+    {
+        const int x0 = 1580, z0 = -6400, size = 140;
+        float[] heights = PlacedSiteGround.Build(x0, z0, size, size, Centre, Root, Yaw, Ops, (_, _) => Root + 3f);
+        Func<float, float, float> grid = PlacedSiteGround.Sampler(heights, x0, z0, size, size);
+        return (x, z) => grid(x, z) is float h && h < PlacedSiteGround.OffGrid ? h : Root + 3f;
+    }
 
     private static PlacedSiteShape Shape() =>
         PlacedSiteShape.Of(Centre, Yaw, RoadStairRuns.FlatOf(Ops)!.Value, 17f, null, Ground, root: Root, prefab: "Mistlands_Excavation3");

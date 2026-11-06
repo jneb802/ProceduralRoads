@@ -178,24 +178,72 @@ public static class PlacedSites
     /// A placed place's landing, doors and rock are worked out on its preload directly (<see cref="PlacedSite.Ground"/>),
     /// which runs on past the footprint's edge over the place's grid, where the place shapes nothing and it is the natural
     /// ground at the lattice's metres. A place the game places after its roads has no ground here until it is placed
-    /// (<see cref="ExpectedGroundAt"/>).
+    /// (<see cref="ExpectedGround"/>).
     /// </summary>
     public static float GroundAt(float x, float z, WorldGenerator world) =>
         GroundAt(new Vector2(x, z)) ?? BiomeBlendedHeight.GetBlendedHeight(x, z, world);
 
     /// <summary>
-    /// The ground a place the game places after its roads will leave at <paramref name="p"/>, for the staircase onto the
-    /// flat round its centre (<see cref="RoadStairRuns.LaySiteApproach"/>): <paramref name="ground"/>, the ground as the
-    /// places placed first leave it (<see cref="GroundAt(float, float, WorldGenerator)"/>), levelled by the place's
-    /// operations round its centre from <paramref name="centreGround"/> (<see cref="LocationLevelling.PlacedGroundAt"/>).
-    /// The owner's second source, for a place with no preload, read only where it is exact: every operation round the
-    /// centre, so the same whichever way the place is turned. A place with any off its centre is placed first
-    /// (<see cref="NeedsPlacing(string, bool, bool, Heightmap.Biome, IReadOnlyList{LevelOp}?)"/>), or, not placed, gets
-    /// no road (<see cref="NotPlaced"/>): left out, the corner levellings of the
-    /// StoneTowerRuins05 put this up to 5 m under the ground the game left 10 to 14 m from its centre.
+    /// The ground a place the game places after its roads will leave (the one owner, for every reader of it: the approach
+    /// staircase's planning ground <see cref="RoadStairRuns.ApproachGround"/>, a road's arrival height
+    /// <see cref="RoadNetworkGenerator.ArrivalHeight"/>, the carry-on to its edge, the approach's scoring ground and the end
+    /// held to its flat): <see cref="PlacedSiteGround.Build"/>, the vertex-exact rebuild the terrain writer and the preload of
+    /// a place placed first are made with, over the ground as the places placed first leave it
+    /// (<see cref="GroundAt(float, float, WorldGenerator)"/>), between the vertices as the game's mesh joins them
+    /// (<see cref="PlacedSiteGround.Sampler"/>), and past its reach that ground itself. Its centre is where the place stands
+    /// and <paramref name="root"/> the ground under it. Only the operations round the centre are known (those off it
+    /// turn with the place, which is only known once it is placed: <see cref="NeedsPlacing(string, bool, bool, Heightmap.Biome, IReadOnlyList{LevelOp}?)"/>,
+    /// <see cref="NotPlaced"/>), so the same whichever way it is turned. A place placed first is read from its preload (<see cref="PlacedSite.Ground"/>), the same build. Kept per place and world until the ground is next
+    /// forgotten (<see cref="RoadStairRuns.ForgetGround"/>).
     /// </summary>
-    public static float ExpectedGroundAt(Vector2 p, Vector2 centre, float centreGround, IReadOnlyList<LevelOp>? ops, float ground) =>
-        LocationLevelling.PlacedGroundAt(p, centre, centreGround, ops, ground);
+    public static Func<float, float, float> ExpectedGround(Vector2 centre, float root, IReadOnlyList<LevelOp>? ops, WorldGenerator world)
+    {
+        if (TryGetReady(centre, out PlacedSite placedFirst)) return placedFirst.Ground;
+        var round = new List<LevelOp>();
+        float reach = 0f;
+        if (ops != null)
+            foreach (LevelOp op in ops)
+            {
+                if (!op.Concentric) continue;
+                round.Add(new LevelOp(0f, 0f, op.Height, op.Radius, op.Square, op.SmoothRadius, op.SmoothPower, op.SortOrder));
+                reach = Mathf.Max(reach, Mathf.Max(op.Radius, op.SmoothRadius));
+            }
+        if (round.Count == 0) return (x, z) => GroundAt(x, z, world);
+        int gen = RoadStairRuns.GroundGeneration;
+        if (s_expectedGeneration != gen)
+            lock (s_expected)
+                if (s_expectedGeneration != gen) { s_expected.Clear(); s_expectedGeneration = gen; }
+        var key = (world, Key(centre), root, ops);
+        return s_expected.GetOrAdd(key, _ =>
+        {
+            int n = Mathf.CeilToInt(reach) + 1, cx = Mathf.FloorToInt(centre.x + 0.5f), cz = Mathf.FloorToInt(centre.y + 0.5f);
+            int x0 = cx - n, z0 = cz - n, w = 2 * n + 1;
+            float[] heights = PlacedSiteGround.Build(x0, z0, w, w, centre, root, 0f, round, (vx, vz) => GroundAt(vx, vz, world));
+            Func<float, float, float> grid = PlacedSiteGround.Sampler(heights, x0, z0, w, w);
+            return (x, z) => grid(x, z) is float h && h < PlacedSiteGround.OffGrid ? h : GroundAt(x, z, world);
+        });
+    }
+
+    /// <summary>The ground <see cref="ExpectedGround"/> leaves at <paramref name="p"/> where a levelling operation round the
+    /// centre covers the vertex nearest it (a square: the whole box out to its radius rounded up, a round one the vertices
+    /// within its radius, as <see cref="PlacedSiteGround.Build"/> covers them), else null: the levelled ground a road's end is
+    /// held to, and the approach's scoring ground that is levelled.</summary>
+    public static float? ExpectedLevelAt(Vector2 p, Vector2 centre, float root, IReadOnlyList<LevelOp>? ops, WorldGenerator world)
+    {
+        if (ops == null) return null;
+        int cx = Mathf.FloorToInt(centre.x + 0.5f), cz = Mathf.FloorToInt(centre.y + 0.5f);
+        int dx = Mathf.FloorToInt(p.x + 0.5f) - cx, dz = Mathf.FloorToInt(p.y + 0.5f) - cz;
+        foreach (LevelOp op in ops)
+            if (op.Concentric && op.Radius > 0f && (op.Square
+                    ? Mathf.Abs(dx) <= Mathf.CeilToInt(op.Radius) && Mathf.Abs(dz) <= Mathf.CeilToInt(op.Radius)
+                    : Mathf.Sqrt(dx * dx + dz * dz) <= op.Radius))
+                return ExpectedGround(centre, root, ops, world)(p.x, p.y);
+        return null;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(WorldGenerator, (int, int), float, IReadOnlyList<LevelOp>?),
+        Func<float, float, float>> s_expected = new();
+    private static volatile int s_expectedGeneration = -1;
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), byte> s_landed = new();
 

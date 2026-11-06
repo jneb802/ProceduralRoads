@@ -178,7 +178,7 @@ public partial class NoFlatLandingTests : IDisposable
         {
             Vector2 at = new(0f, y);
             float natural = _world.GetHeight(at.x, at.y);
-            float? before = LocationLevelling.GroundAt(at, Origin, 50f, Flat)
+            float? before = (at.magnitude <= Flat[0].Radius ? 50f + Flat[0].Height : (float?)null)
                 ?? (Mathf.Abs(natural - platform!.Value) <= RoadNetworkGenerator.ArrivalLevel ? natural : null);
             Assert.Equal(before, RoadNetworkGenerator.ApproachGround(at, Origin, Radius));
         }

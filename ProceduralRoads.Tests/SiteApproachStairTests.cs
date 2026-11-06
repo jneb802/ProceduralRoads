@@ -186,17 +186,42 @@ public class SiteApproachStairTests : IDisposable
         Assert.StartsWith("another place at (", why);
     }
 
+    /// <summary>The ground a place the game places after its roads is expected to leave is the game's own build,
+    /// vertex by vertex (<see cref="PlacedSiteGround.Build"/>): a square flat of radius 4.5 covers the whole 5 vertex box, a
+    /// round one the vertices within its radius, the smoothing counted in whole vertices from the vertex nearest the centre.</summary>
     [Fact]
-    public void PlacedGroundIsLevelledInsideAndBlendedOutToTheSmoothingRadius()
+    public void ThePlacedGroundAPlaceIsExpectedToLeaveIsTheVertexExactBuild()
     {
-        var ops = new[] { new LevelOp(0f, 0f, 2f, 10f, false, smoothRadius: 20f, smoothPower: 3f) };
-        Assert.Equal(52f, LocationLevelling.PlacedGroundAt(new Vector2(5f, 0f), new Vector2(0f, 0f), 50f, ops, 30f));
-        // Halfway out the ground has moved 1 - 0.5^3 of the way to the level.
-        Assert.Equal(Mathf.Lerp(30f, 52f, 0.875f), LocationLevelling.PlacedGroundAt(new Vector2(0f, 10f), new Vector2(0f, 0f), 50f,
-            new[] { new LevelOp(0f, 0f, 2f, 5f, false, 20f, 3f) }, 30f), 3);
-        Assert.Equal(30f, LocationLevelling.PlacedGroundAt(new Vector2(25f, 0f), new Vector2(0f, 0f), 50f, ops, 30f));
+        var centre = new Vector2(0.4f, 0f);
+        var ops = new[] { new LevelOp(0f, 0f, 1f, 4.5f, true, 10f, 3f), new LevelOp(0f, 0f, 0f, 3f, false) };
+        Func<float, float, float> expected = RoadStairRuns.ApproachGround(centre, 50f, ops, _world);
+        float[] built = PlacedSiteGround.Build(-12, -12, 25, 25, centre, 50f, 0f, ops, (x, z) => _world.GetHeight(x, z));
+        for (int z = -12; z <= 12; z++)
+            for (int x = -12; x <= 12; x++)
+                Assert.Equal(built[(z + 12) * 25 + x + 12], expected(x, z), 3);
+        // The square reaches the fifth vertex out (4.5 m rounds up), and the vertex beyond it is only smoothed.
+        Assert.Equal(51f, expected(5f, 5f), 3);
+        Assert.NotEqual(51f, expected(6f, 0f), 3);
+        // Between vertices, as the game's mesh joins them.
+        Assert.Equal((built[12 * 25 + 12 + 7] + built[12 * 25 + 12 + 8]) / 2f, expected(7.5f, 0f), 3);
         // An operation off the centre is left out: where it lies depends on the rotation.
-        Assert.Equal(30f, LocationLevelling.PlacedGroundAt(new Vector2(5f, 0f), new Vector2(0f, 0f), 50f, new[] { new LevelOp(4f, 0f, 2f, 10f, false, 20f, 3f) }, 30f));
+        Func<float, float, float> offCentre = RoadStairRuns.ApproachGround(centre, 50f, new[] { new LevelOp(4f, 0f, 2f, 10f, false, 20f, 3f) }, _world);
+        Assert.Equal(PlacedSites.GroundAt(3f, 0f, _world), offCentre(3f, 0f), 3);
+    }
+
+    /// <summary>Every reader of the ground such a place leaves reads that one build: a road's arrival height at its edge,
+    /// the carry-on to it, the scoring of its approach and the end held to its flat.</summary>
+    [Fact]
+    public void EveryReaderOfAPlaceNotPlacedFirstReadsTheVertexExactBuild()
+    {
+        var centre = new Vector2(0f, 0f);
+        var ops = new[] { new LevelOp(0f, 0f, 3f, 4.5f, true, 12f, 3f) };
+        LocationLevelling.Source = c => c.magnitude < 0.5f ? ops : null;
+        float root = LocationLevelling.CentreHeight(centre, _world);
+        Func<float, float, float> expected = RoadStairRuns.ApproachGround(centre, root, ops, _world);
+        // The end 4.9 m out on the axis: on the fifth vertex, which the square levels.
+        Assert.Equal(expected(4.9f, 0f), RoadNetworkGenerator.LocationGround(new Vector2(4.9f, 0f), centre, 32f)!.Value, 3);
+        Assert.Equal(root + 3f, RoadNetworkGenerator.LocationGround(new Vector2(4.9f, 0f), centre, 32f)!.Value, 3);
     }
 
     [Fact]

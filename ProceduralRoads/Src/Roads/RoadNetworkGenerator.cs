@@ -1050,7 +1050,7 @@ public static partial class RoadNetworkGenerator
     /// (<see cref="LocationLevelling.ApproachHeight"/>), the flat it is entered on. Else (no flat, several levels, or no
     /// levelling known) its ground at its edge on that side: the edge of the ground it shapes
     /// (<see cref="RoadSiteProtection.ArrivalRadiusAt"/>) toward <paramref name="from"/>, as its levelling round its centre leaves
-    /// it (<see cref="LocationLevelling.PlacedGroundAt"/>). A cabin only smooths the ground round it: with no level known, a
+    /// it (<see cref="PlacedSites.ExpectedGround"/>). A cabin only smooths the ground round it: with no level known, a
     /// road 10 m under AbandonedLogCabin04 reached it; its ground at its edge on the road's side (10 m out, 185.3 m) is still 4.7
     /// m over the road's end. Its root, the ground under its centre, is not the level of a place entered from its side on a
     /// hillside (a troll cave's mouth). Null outside a generation, or for a point with no radius.
@@ -1064,7 +1064,7 @@ public static partial class RoadNetworkGenerator
         IReadOnlyList<LevelOp>? ops = LocationLevelling.OpsAt(centre);
         if (LocationLevelling.ApproachHeight(root, ops) is float platform) return platform;
         Vector2 edge = EdgeToward(centre, radius, from);
-        return LocationLevelling.PlacedGroundAt(edge, centre, root, ops, BiomeBlendedHeight.GetBlendedHeight(edge.x, edge.y, world));
+        return PlacedSites.ExpectedGround(centre, root, ops, world)(edge.x, edge.y);
     }
 
     /// <summary><see cref="ArrivalHeight"/> for network anywhere round the place, its edge read once a 5 degree bearing (a
@@ -1200,7 +1200,8 @@ public static partial class RoadNetworkGenerator
             if (from - arrival < CarryOnMin) return;
             if (ArrivalHeight(centre, radius, end) is not float place || Mathf.Abs(height - place) > ReachRise) return;
             Vector2 edge = centre + out1 * (arrival / from);
-            float Ground(Vector2 q) => LocationLevelling.PlacedGroundAt(q, centre, root, ops, BiomeBlendedHeight.GetBlendedHeight(q.x, q.y, world));
+            Func<float, float, float> expected = PlacedSites.ExpectedGround(centre, root, ops, world);
+            float Ground(Vector2 q) => expected(q.x, q.y);
             world.GetRiverWeight(edge.x, edge.y, out float river, out _);
             if (!RoadWater.BuiltDry(Ground(edge), river)) return;
             var line = new List<Vector2> { end, edge };
@@ -1969,7 +1970,7 @@ public static partial class RoadNetworkGenerator
         if (ops == null)
             return null;
         float centreGround = LocationLevelling.CentreHeight(center, GenerationWorld);
-        float? levelled = LocationLevelling.GroundAt(endPoint, center, centreGround, ops);
+        float? levelled = PlacedSites.ExpectedLevelAt(endPoint, center, centreGround, ops, GenerationWorld);
         if (!levelled.HasValue)
             return null;
         return RoadWater.BuiltDry(levelled.Value) ? levelled : null;
@@ -1988,10 +1989,10 @@ public static partial class RoadNetworkGenerator
         float? platform = LocationLevelling.ApproachHeight(centreHeight, ops);
         if (platform is float level && !RoadWater.BuiltDry(level)) platform = null;
         Log.LogDebug($"Site approach {centre}: keep-out edge {radius:F1}m, approach {(platform.HasValue ? platform.Value.ToString("F2") : "unknown")}m");
-        float Ground(Vector2 p) => LocationLevelling.GroundAt(p, centre, centreHeight, ops)
-            ?? BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+        Func<float, float, float> expected = PlacedSites.ExpectedGround(centre, centreHeight, ops, world);
+        float Ground(Vector2 p) => expected(p.x, p.y);
         float? Target(Vector2 p) => platform.HasValue && Mathf.Abs(Ground(p) - platform.Value) <= ArrivalLevel
-            ? Ground(p) : LocationLevelling.GroundAt(p, centre, centreHeight, ops);
+            ? Ground(p) : PlacedSites.ExpectedLevelAt(p, centre, centreHeight, ops, world);
         return RoadSiteApproach.Improve(path, centre, radius, width, world, atStart, Target, Ground, platform);
     }
 

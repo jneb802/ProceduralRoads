@@ -670,8 +670,9 @@ public static class RoadTerrainModifier
     /// <summary>The ground a place leaves at <paramref name="p"/> in its footprint, as the game draws it under the
     /// compiler's deltas: a place placed before its roads, its preload (<see cref="PlacedSites.GroundAt"/>, the ground
     /// <see cref="FinishedGround"/> predicts on); any other placed place, rebuilt from its saved placement
-    /// (<see cref="PlacedGround"/>). Null where unknown. The writer and the predictor both read it, so a piece is judged
-    /// on the ground that is written.</summary>
+    /// (<see cref="PlacedGround"/>). Null where unknown. Only the writer reads the second source: the finished-ground predictor
+    /// (<see cref="FinishedGround"/>) reads the preload alone and takes NaN for a place placed after its roads, since
+    /// <see cref="PlacedGround"/> runs on the main thread only.</summary>
     internal static float? PlacedBaseAt(Vector2 p) => PlacedSites.GroundAt(p) ?? PlacedGround?.Invoke(p);
 
     /// <param name="only">Write only the vertices these points reach (an incremental write of

@@ -46,7 +46,7 @@ public static partial class RoadStairRuns
     /// <see cref="RoadNetworkGenerator.ArrivalLevel"/> above or below it; 2 m before the end-level rule) and within <see cref="SiteReach"/> of it, this lays a
     /// staircase from the road's end to just inside the apron's edge on the
     /// side the road comes from, over the ground the place is expected to leave
-    /// (<see cref="PlacedSites.ExpectedGroundAt"/>). It may cross the
+    /// (<see cref="PlacedSites.ExpectedGround"/>). It may cross the
     /// place's own footprint, but come no further onto the apron than its lip (<see cref="PastTheLip"/>), and every other
     /// check of a road's staircase applies. The terrain writer leaves a place's
     /// footprint alone, so its cuts are never made: it is laid out with no
@@ -173,9 +173,9 @@ public static partial class RoadStairRuns
     /// <summary>The ground an approach is laid out on (<see cref="LaySiteApproach"/>) and its kit chooses its supports on
     /// (<see cref="PlanningGround"/>): the ground the place is expected to leave, over the ground as the places placed first
     /// leave it (<see cref="GroundAt"/>): the owner's second source, for a place with no preload
-    /// (<see cref="PlacedSites.ExpectedGroundAt"/>).</summary>
+    /// (<see cref="PlacedSites.ExpectedGround"/>, the vertex-exact build).</summary>
     internal static Func<float, float, float> ApproachGround(Vector2 centre, float centreGround, IReadOnlyList<LevelOp>? ops, WorldGenerator world) =>
-        (x, z) => PlacedSites.ExpectedGroundAt(new Vector2(x, z), centre, centreGround, ops, GroundAt(x, z, world));
+        PlacedSites.ExpectedGround(centre, centreGround, ops, world);
 
     /// <summary>The flat a place levels: the widest one round its centre, or failing that the widest anywhere.</summary>
     internal static LevelOp? FlatOf(IReadOnlyList<LevelOp> ops) => Flat(ops);

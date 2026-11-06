@@ -122,9 +122,9 @@ public static class StairRailing
             {
                 foreach (int side in new[] { -1, 1 })
                 {
-                    if (!Railed(walks, ways, i, w.At(0f, side * half), w.At(w.Depth, side * half), w.Right * side, w.Underside + 0.5f)) continue;
-                    if (parapet != null) { Parapet(laid, w, side, parapet.Top, finished); continue; }
                     float middle = w.Underside + StairLayout.PieceRise / 2f;
+                    if (!Railed(walks, ways, i, w.At(0f, side * half), w.At(w.Depth, side * half), w.Right * side, middle)) continue;
+                    if (parapet != null) { Parapet(laid, w, side, parapet.Top, finished); continue; }
                     foreach (bool front in new[] { false, true })
                     {
                         var (at, bottom) = Corner(w, side, front, kit);
@@ -147,10 +147,7 @@ public static class StairRailing
             for (int e = 0; e < 4; e++)
             {
                 // Its four edges: right, front, left, back; each by its middle, the way out across it, and its run.
-                float edgeHeading = StairLayout.Wrap(w.Heading + 90f * e);
-                Vector2 middle = w.At(w.Depth / 2f, 0f), outward = StairLayout.Right(edgeHeading);
-                float reach = e % 2 == 0 ? half : w.Depth / 2f, run = e % 2 == 0 ? w.Depth : w.Across;
-                Vector2 edge = middle + outward * reach, along = StairLayout.Forward(edgeHeading);
+                var (edge, along, run, outward, edgeHeading) = EdgeFrame(w, e);
                 if (!Railed(walks, ways, i, edge - along * (run / 2f), edge + along * (run / 2f), outward, surface))
                 {
                     // An edge running on into a floor it overlaps (the inside of a jog) is railed where it stands clear of it.
@@ -376,7 +373,7 @@ public static class StairRailing
     private static bool Railed(List<StairSupport.Walk> walks, Ways ways, int i, Vector2 a, Vector2 b, Vector2 outward, float height)
     {
         if (ways.Bare.Contains(i)) return false;
-        if (Open(walks, i, a + outward * 0.3f, b + outward * 0.3f, height)) return false;
+        if (Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, height)) return false;
         return !TakenOver(walks, ways, i, (a + b) * 0.5f, outward);
     }
 
@@ -423,7 +420,7 @@ public static class StairRailing
             (Vector2 a, Vector2 b, Vector2 outward) = EdgeOf(walks[i], e);
             for (int j = own; j < walks.Count; j++)
                 foreach (float t in new[] { 0.25f, 0.5f, 0.75f })
-                    if (WalkedOn(walks[j], Vector2.Lerp(a, b, t) + outward * 0.3f, walks[i].Surface(0f, kit))) return true;
+                    if (WalkedOn(walks[j], Vector2.Lerp(a, b, t) + outward * StairLayout.EndReach, walks[i].Surface(0f, kit))) return true;
         }
         return false;
     }
@@ -448,7 +445,7 @@ public static class StairRailing
         {
             (Vector2 a, Vector2 b, Vector2 outward) = EdgeOf(w, e);
             outs[e] = outward;
-            on[e] = Open(walks, i, a + outward * 0.3f, b + outward * 0.3f, w.Surface(0f, kit));
+            on[e] = Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, w.Surface(0f, kit));
             if (!on[e]) continue;
             came += outward;
             Across(i, e);
@@ -477,7 +474,7 @@ public static class StairRailing
             float height = walks[k].Surface(walks[k].Depth, kit);
             foreach (float t in new[] { 0.25f, 0.5f, 0.75f })
             {
-                Vector2 p = Vector2.Lerp(a, b, t) + outward * 0.3f;
+                Vector2 p = Vector2.Lerp(a, b, t) + outward * StairLayout.EndReach;
                 for (int j = 0; j < walks.Count; j++)
                     if (!reached.Contains(j) && WalkedOn(walks[j], p, height))
                     {
@@ -491,11 +488,18 @@ public static class StairRailing
     /// <summary>Edge <paramref name="e"/> of a walking piece (right, back, left, front), from end to end, and the way out across it.</summary>
     private static (Vector2 a, Vector2 b, Vector2 outward) EdgeOf(StairSupport.Walk w, int e)
     {
+        var (edge, along, run, outward, _) = EdgeFrame(w, e);
+        return (edge - along * (run / 2f), edge + along * (run / 2f), outward);
+    }
+
+    /// <summary>Edge <paramref name="e"/> of a walking piece by its middle, its direction along, its run, the way out across it and
+    /// that way's heading.</summary>
+    private static (Vector2 edge, Vector2 along, float run, Vector2 outward, float heading) EdgeFrame(StairSupport.Walk w, int e)
+    {
         float edgeHeading = StairLayout.Wrap(w.Heading + 90f * e);
         Vector2 outward = StairLayout.Right(edgeHeading), along = StairLayout.Forward(edgeHeading);
         float reach = e % 2 == 0 ? w.Across / 2f : w.Depth / 2f, run = e % 2 == 0 ? w.Depth : w.Across;
-        Vector2 edge = w.At(w.Depth / 2f, 0f) + outward * reach;
-        return (edge - along * (run / 2f), edge + along * (run / 2f), outward);
+        return (w.At(w.Depth / 2f, 0f) + outward * reach, along, run, outward, edgeHeading);
     }
 
     /// <summary>
@@ -512,7 +516,7 @@ public static class StairRailing
     {
         var bare = new HashSet<int>();
         var ends = new Queue<int>();
-        Vector2 Past(StairSupport.Walk w, bool top) => w.At(top ? w.Depth + 0.3f : -0.3f, 0f);
+        Vector2 Past(StairSupport.Walk w, bool top) => w.At(top ? w.Depth + StairLayout.EndReach : -StairLayout.EndReach, 0f);
         bool Carried(int i, bool top) => Beside(walks, i, Past(walks[i], top), walks[i].Underside + (top ? StairLayout.PieceRise : 0f));
         for (int i = 0; i < walks.Count; i++)
             if (railed[i] && walks[i].Stair && (!Carried(i, false) || !Carried(i, true))) ends.Enqueue(i);
@@ -526,8 +530,7 @@ public static class StairRailing
             // The next step on, across either end.
             foreach (bool top in new[] { false, true })
                 for (int j = 0; j < walks.Count; j++)
-                    if (j != i && railed[j] && walks[j].Stair && !bare.Contains(j) && Covers(walks[j], Past(w, top), 0.05f)
-                        && Mathf.Abs(walks[j].Underside - w.Underside) <= StairLayout.PieceRise + 0.05f)
+                    if (j != i && railed[j] && walks[j].Stair && !bare.Contains(j) && WalkedOn(walks[j], Past(w, top), w.Underside, 0.05f, StairLayout.PieceRise + 0.05f))
                         ends.Enqueue(j);
         }
         return bare;
@@ -795,7 +798,7 @@ public static class StairRailing
                 {
                     float edgeHeading = StairLayout.Wrap(w.Heading + 90f * e);
                     float reach = e % 2 == 0 ? w.Across / 2f : w.Depth / 2f;
-                    if (!Covers(o, w.At(w.Depth / 2f, 0f) + StairLayout.Right(edgeHeading) * (reach + 0.3f), 0f)) continue;
+                    if (!Covers(o, w.At(w.Depth / 2f, 0f) + StairLayout.Right(edgeHeading) * (reach + StairLayout.EndReach), 0f)) continue;
                     bare.Add(j); floors.Enqueue(j);
                     break;
                 }
@@ -820,7 +823,7 @@ public static class StairRailing
             bool onto = false;
             foreach (float t in new[] { 0.25f, 0.5f, 0.75f })
             {
-                Vector2 p = Vector2.Lerp(a, b, t) + outward * 0.3f;
+                Vector2 p = Vector2.Lerp(a, b, t) + outward * StairLayout.EndReach;
                 for (int j = 0; j < own && !onto; j++)
                     onto = j != i && walks[j].Stair && WalkedOn(walks[j], p, height);
                 if (onto) break;
@@ -876,7 +879,7 @@ public static class StairRailing
         float[] at = { 0.25f, 0.5f, 0.75f };
         for (int s = 0; s < 3; s++)
         {
-            Vector2 p = Vector2.Lerp(a, b, at[s]), past = p + outward * 0.3f;
+            Vector2 p = Vector2.Lerp(a, b, at[s]), past = p + outward * StairLayout.EndReach;
             for (int j = 0; j < walks.Count; j++)
             {
                 StairSupport.Walk o = walks[j];
@@ -890,7 +893,7 @@ public static class StairRailing
         Vector2 from = covered[0] ? b : a, dir = ((covered[0] ? a : b) - from).normalized;
         Vector2 to = from + dir;
         for (int j = 0; j < walks.Count; j++)
-            if (j != self && Covers(walks[j], to, -0.05f) && Mathf.Abs(walks[j].Underside - height) <= 1.6f) return null;
+            if (j != self && WalkedOn(walks[j], to, height, -0.05f)) return null;
         return (from, to);
     }
 
@@ -904,8 +907,11 @@ public static class StairRailing
 
     /// <summary>Whether a walk at <paramref name="height"/> carries on onto <paramref name="w"/> at <paramref name="p"/> (the
     /// one test, for every edge read): it covers the point, and its underside stands within a step's reach of that height.</summary>
-    private static bool WalkedOn(StairSupport.Walk w, Vector2 p, float height) =>
-        Covers(w, p, 0.05f) && Mathf.Abs(w.Underside - height) <= 1.6f;
+    private static bool WalkedOn(StairSupport.Walk w, Vector2 p, float height, float margin = 0.05f, float reach = StepReach) =>
+        Covers(w, p, margin) && Mathf.Abs(w.Underside - height) <= reach;
+
+    /// <summary>A step's reach: how far a walked piece's underside may stand from the height it carries on from.</summary>
+    private const float StepReach = 1.6f;
 
     /// <summary>Corner <paramref name="side"/> (-1 left, +1 right) at the back or <paramref name="front"/> of walking piece
     /// <paramref name="w"/>, where a post stands, and the height it stands on: a stair's at its foot behind and a rise up in

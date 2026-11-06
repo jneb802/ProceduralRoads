@@ -407,6 +407,12 @@ public static partial class RoadNetworkGenerator
         return world == null || world.GetBiome(centre.x, centre.y) == Heightmap.Biome.Mountain;
     }
 
+    /// <summary>Whether a road may reach a placed place at its ring: not where it takes a staircase (<see cref="ApproachStairsAt"/>),
+    /// nor a place with a door (<see cref="PlacedSiteShape.HasDoor"/>: only a road to its door reaches it). The reached test
+    /// (<see cref="Reached"/>) and the refusal of a road kept at a ring both read it.</summary>
+    private static bool RingEnterable(PlacedSite site) =>
+        !ApproachStairsAt(site.Centre, site.Record.Prefab) && !PlacedSiteShape.HasDoor(site.Record.Prefab);
+
     /// <summary>The one test of whether the network reaches the place at <paramref name="flat"/> (exterior
     /// <paramref name="radius"/>, as asked, not trimmed), measured at the trim's keep-out edge (<see cref="KeepOutEdge"/>):
     /// for the count, the planner's join (<see cref="PlaceServed"/>) and whether a road's own stub to the place is dropped
@@ -442,7 +448,7 @@ public static partial class RoadNetworkGenerator
             if (OwnLandingOnly(placed.Record.Prefab)) return PlacedSites.Landed(placed.Centre);
             if (height ? LandingReached(placed) : PlacedSites.Landed(placed.Centre) || NetworkNear(placed.Shape.Landing, LandingReach, clear!, true))
                 return true;
-            if (ApproachStairsAt(placed.Centre, placed.Record.Prefab) || PlacedSiteShape.HasDoor(placed.Record.Prefab)) return false;
+            if (!RingEnterable(placed)) return false;
             // At its ring only on the side it is entered from (PlacedSiteShape.OnEntranceSide): a Dvergr town entrance's back
             // is blocked rock.
             PlacedSiteShape shape = placed.Shape;
@@ -2438,7 +2444,7 @@ public static partial class RoadNetworkGenerator
                 }
                 // A place with a door is reached only in front of it (a crypt): a road kept at its ring would not reach it.
                 // Nor one entered only from its front, kept at its ring behind it (PlacedSiteShape.OnEntranceSide).
-                if (!ApproachStairsAt(site.Centre, site.Record.Prefab) && !PlacedSiteShape.HasDoor(site.Record.Prefab)
+                if (RingEnterable(site)
                     && site.Shape.OnEntranceSide(path[atStart ? 0 : path.Count - 1]))
                 {
                     if (RoadsLog)

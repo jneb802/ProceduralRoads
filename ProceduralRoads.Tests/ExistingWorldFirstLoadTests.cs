@@ -141,7 +141,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
         ExistingWorldFirstLoad.CanAsk = () => true;
         Open(World(explored: false));
         Assert.False(RoadLifecycleManager.ChoicePending);
-        Assert.True(RoadLifecycleManager.GenerationRunning);
+        Assert.True(RoadLifecycleManager.IsGenerating);
         FinishGeneration();
         Assert.True(RoadNetworkGenerator.RoadsGenerated);
     }

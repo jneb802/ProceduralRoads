@@ -5077,7 +5077,7 @@ public static partial class RoadNetworkGenerator
 
     public static void Reset()
     {
-        bool cancelled = RoadLifecycleManager.GenerationRunning;
+        bool cancelled = RoadLifecycleManager.IsGenerating;
         RoadLifecycleManager.CancelAndDrain();
         RoadLifecycleManager.AllowInitialRetry();
         if (!cancelled) ResetData();

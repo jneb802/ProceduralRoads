@@ -156,7 +156,7 @@ public static partial class RoadLifecycleManager
     /// <summary>Whether the world is held (respawn, the server's zone streaming; in the world, the host's player): while a
     /// generation runs (at load, or in the world: the spawn fallback, road_generate, road_regen_island), or while the host
     /// is asked about an explored world's first network.</summary>
-    internal static bool HoldsTheWorld => GenerationRunning || ChoicePending;
+    internal static bool HoldsTheWorld => IsGenerating || ChoicePending;
 
     /// <summary>What the players are told once a network over the explored land is built (ExistingWorldFirstLoad.KeptNote).</summary>
     private static string? m_includedNote;

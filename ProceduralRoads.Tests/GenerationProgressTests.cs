@@ -305,7 +305,7 @@ public sealed class GenerationProgressTests : IDisposable
             var tick=Task.Run(RoadLifecycleManager.Tick);
             Assert.True(await Task.WhenAny(tick,Task.Delay(1000))==tick,"cancellation Tick blocked on live work");
             await tick;
-            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.True(RoadLifecycleManager.IsGenerating);
             Assert.Equal(0,menu); Assert.True(world.ActiveReads>0); Assert.True(LocationLevelling.Sealed);
             RoadLifecycleManager.OnPrepareSave(); Assert.Empty(ZDOMan.instance!.Zdos);
         }
@@ -364,7 +364,7 @@ public sealed class GenerationProgressTests : IDisposable
         int menus=0; RoadLifecycleManager.ReturnToMenuForTests=()=> { menus++; throw new InvalidOperationException("controlled menu failure"); };
         Assert.True(RoadLifecycleManager.RequestCancel(run)); RoadLifecycleManager.Tick();
         Assert.Equal("MenuFailed",RoadLifecycleManager.Progress.Phase);
-        Assert.Equal(1,menus); Assert.True(RoadLifecycleManager.GenerationRunning);
+        Assert.Equal(1,menus); Assert.True(RoadLifecycleManager.IsGenerating);
         for(int i=0;i<5;i++) RoadLifecycleManager.Tick(); Assert.Equal(1,menus);
         RoadLifecycleManager.ReturnToMenuForTests=()=>menus++;
         Assert.True(RoadLifecycleManager.RequestCancel(run)); Assert.Equal(1,menus);
@@ -382,7 +382,7 @@ public sealed class GenerationProgressTests : IDisposable
         RoadLifecycleManager.MenuTransitionBlockedForTests=()=>true;
         long run=RoadLifecycleManager.Progress.RunId;
         Assert.True(RoadLifecycleManager.RequestCancel(run)); RoadLifecycleManager.Tick();
-        Assert.Equal(0,menus); Assert.True(RoadLifecycleManager.GenerationRunning);
+        Assert.Equal(0,menus); Assert.True(RoadLifecycleManager.IsGenerating);
         Assert.Equal("MenuFailed",RoadLifecycleManager.Progress.Phase);
         Assert.False(RoadLifecycleManager.RetryReturnToMenu(run));
         RoadLifecycleManager.MenuTransitionBlockedForTests=()=>false;
@@ -510,7 +510,7 @@ public sealed class GenerationProgressTests : IDisposable
             ZoneSystem.instance!.LocationsGenerated=true;
             RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);
             // The owned generation, as at load: its places are placed first over frames, which no synchronous call gives.
-            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.True(RoadLifecycleManager.IsGenerating);
             Finish();
             Assert.Equal(1,primes); Assert.False(RoadLifecycleManager.IsGenerating);
             Assert.Equal(!fail,RoadNetworkGenerator.RoadsAvailable);
@@ -785,7 +785,7 @@ public sealed class GenerationProgressTests : IDisposable
         var middle = RoadLifecycleManager.Progress;
         Assert.Equal(0, initial.Completed);
         Assert.Equal(2, middle.Total);
-        Assert.True(RoadLifecycleManager.GenerationRunning);
+        Assert.True(RoadLifecycleManager.IsGenerating);
         for (int frame = 0; frame < 10; frame++) RoadLifecycleManager.Tick();
         Assert.Equal(1, RoadLifecycleManager.Progress.Completed);
         world.Release.Set(); Finish();

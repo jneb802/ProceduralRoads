@@ -151,7 +151,7 @@ public class IslandRegenerationTests : System.IDisposable
             StartLoad();
 
             double startMs = started.Elapsed.TotalMilliseconds;
-            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.True(RoadLifecycleManager.IsGenerating);
             Assert.False(RoadNetworkGenerator.RoadsAvailable);
             var (frames, longest) = FinishLoad();
             double total = started.Elapsed.TotalMilliseconds;
@@ -192,7 +192,7 @@ public class IslandRegenerationTests : System.IDisposable
                 RoadLifecycleManager.Tick();
             for (int frame = 0; frame < 10; frame++) RoadLifecycleManager.Tick();
 
-            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.True(RoadLifecycleManager.IsGenerating);
             Assert.Equal("Preparing", RoadLifecycleManager.Progress.Phase);
             Assert.Equal(PlacingStage, RoadLifecycleManager.Progress.PreparationStage);
             Assert.False(RoadNetworkGenerator.RoadsAvailable);
@@ -207,7 +207,7 @@ public class IslandRegenerationTests : System.IDisposable
             RoadNetworkGenerator.Reset();
             RoadNetworkGenerator.SitesFirst = (_, _) => Enumerable.Empty<bool>();
             RoadLifecycleManager.OnWorldDataLoaded();
-            Assert.True(RoadLifecycleManager.GenerationRunning);
+            Assert.True(RoadLifecycleManager.IsGenerating);
             FinishLoad();
             Assert.True(RoadNetworkGenerator.RoadsAvailable);
         }

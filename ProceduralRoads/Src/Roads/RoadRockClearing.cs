@@ -108,8 +108,7 @@ public static class RoadRockClearing
         RoadRockStats.SyncTicks += RoadRockStats.Now - sync;
         s_carves.Clear();
         s_carveNext = 0;
-        var lines = RoadRockProbe.Run(map.transform.position, RoadRockPolicy.ZoneCornerReach, apply: true, sites: false, mist: RoadRockPolicy.PassClearsMistlandsRocks, cliffs: RoadRockPolicy.PassClearsMistlandsCliffs,
-            partial: true, carve: RoadRockPolicy.Carves(Mode), s_carves, out int cleared);
+        var lines = RoadRockProbe.RunPass(map.transform.position, RoadRockPolicy.ZoneCornerReach, s_carves, out int cleared);
         var pass = new Pass
         {
             Map = map, Zone = zone, Line = lines[0], Version = version, Cleared = cleared,

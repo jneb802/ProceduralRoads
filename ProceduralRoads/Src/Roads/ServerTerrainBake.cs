@@ -495,8 +495,7 @@ public static class ServerTerrainBake
             Vector3 centre = ZoneSystem.GetZonePos(zone);
             float radius = GhostRockReach(centre);
             if (!settle && RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius).Count == 0) return 0;
-            var lines = RoadRockProbe.Run(centre, radius, apply: true, sites: false, mist: true, cliffs: true,
-                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out int cleared);
+            var lines = RoadRockProbe.RunPass(centre, radius, null, out int cleared);
             Log.LogDebug($"[BAKE] zone {zone} (generated for a peer): {lines[0]}");
             return cleared;
         }
@@ -548,8 +547,7 @@ public static class ServerTerrainBake
             RoadRockCarve.GhostSpawned = alive;
             Physics.SyncTransforms();
             Vector3 centre = ZoneSystem.GetZonePos(zone);
-            var lines = RoadRockProbe.Run(centre, OwnRockReach(centre, alive), apply: true, sites: false, mist: true, cliffs: true,
-                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out cleared);
+            var lines = RoadRockProbe.RunPass(centre, OwnRockReach(centre, alive), null, out cleared);
             s_step.RocksProbe = Lap();
             Log.LogDebug($"[BAKE] zone {zone} (saved rocks): {lines[0]}");
             return true;

@@ -14,26 +14,17 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadRockProbe
 {
-    public static List<string> Run(Vector3 centre, float radius, bool apply, bool sites = false, bool mist = false, bool cliffs = false,
-        bool partial = false, bool carve = false) => Run(centre, radius, apply, sites, mist, cliffs, partial, carve, out _);
-
     /// <summary>
-    /// The same, reporting how many objects were cleared. With
-    /// <paramref name="partial"/> a clearable rock that never blocks half the
-    /// road's width is kept, since a rock that only grazes the road's edge is
-    /// part of the scenery rather than an obstacle. Five narrow
-    /// capsules stand across the road at every point the rock touches.
+    /// The automatic pass round <paramref name="centre"/>, the one owner of its options: applied, outside site areas, the
+    /// Mistlands' rocks and cliffs as <see cref="RoadRockPolicy.PassClearsMistlandsRocks"/> and
+    /// <see cref="RoadRockPolicy.PassClearsMistlandsCliffs"/> say, partial rocks kept, carved as Roads/RockClearing says
+    /// (<see cref="RoadRockPolicy.Carves"/>). The client's pass (RoadRockClearing) and the server's bake (ServerTerrainBake)
+    /// both run it. <paramref name="deferCarves"/> and <paramref name="clearedCount"/>: as <see cref="Run"/>.
     /// </summary>
-    public static List<string> Run(Vector3 centre, float radius, bool apply, bool sites, bool mist, bool cliffs,
-        bool partial, out int clearedCount) => Run(centre, radius, apply, sites, mist, cliffs, partial, false, out clearedCount);
+    public static List<string> RunPass(Vector3 centre, float radius, List<PendingCarve>? deferCarves, out int clearedCount) =>
+        Run(centre, radius, apply: true, sites: false, mist: RoadRockPolicy.PassClearsMistlandsRocks, cliffs: RoadRockPolicy.PassClearsMistlandsCliffs,
+            partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), deferCarves, out clearedCount);
 
-    /// <summary>
-    /// The same, with <paramref name="carve"/>: a clearable rock loses only its
-    /// chunks in the road (<see cref="RoadRockCarve"/>) instead of being
-    /// removed whole; a rock with no chunks is still removed whole. The item
-    /// drops near the probe are counted before and after, and any rise is
-    /// reported and logged as a warning.
-    /// </summary>
     private static HashSet<string>? s_natural;
     private static (ZoneSystem? zs, int count, bool mist, bool cliffs) s_naturalKey;
 
@@ -74,12 +65,18 @@ public static class RoadRockProbe
         }
     }
 
-    public static List<string> Run(Vector3 centre, float radius, bool apply, bool sites, bool mist, bool cliffs,
-        bool partial, bool carve, out int clearedCount) =>
-        Run(centre, radius, apply, sites, mist, cliffs, partial, carve, null, out clearedCount);
-
     /// <summary>
-    /// The same, with the carves left for later: every rock the pass would carve goes into
+    /// The probe, reporting how many objects were cleared (<paramref name="clearedCount"/>). With
+    /// <paramref name="partial"/> a clearable rock that never blocks half the
+    /// road's width is kept, since a rock that only grazes the road's edge is
+    /// part of the scenery rather than an obstacle. Five narrow
+    /// capsules stand across the road at every point the rock touches.
+    /// With <paramref name="carve"/>: a clearable rock loses only its
+    /// chunks in the road (<see cref="RoadRockCarve"/>) instead of being
+    /// removed whole; a rock with no chunks is still removed whole. The item
+    /// drops near the probe are counted before and after, and any rise is
+    /// reported and logged as a warning.
+    /// With the carves left for later: every rock the pass would carve goes into
     /// <paramref name="deferCarves"/> instead (<see cref="PendingCarve"/>), for the caller to apply over the following
     /// frames (<see cref="CarveDeferred"/>); whole removals and keeps are done now. Null: carved now, as before.
     /// <paramref name="clearedCount"/> then counts the rocks removed whole only.

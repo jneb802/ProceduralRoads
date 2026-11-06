@@ -146,7 +146,7 @@ public static class RoadRide
         /// <summary>The height of the road read nearest <paramref name="p"/> within 4 m, or <paramref name="otherwise"/>.</summary>
         internal float StoredHeight(Vector2 p, float otherwise)
         {
-            float best = 16f, height = otherwise;
+            float best = Reach * Reach, height = otherwise;
             int cx = Mathf.FloorToInt(p.x / Cell), cz = Mathf.FloorToInt(p.y / Cell);
             for (int dx = -1; dx <= 1; dx++)
                 for (int dz = -1; dz <= 1; dz++)
@@ -314,7 +314,7 @@ public static class RoadRide
     {
         float At(Vector2 bank, float otherwise)
         {
-            float best = 16f, h = otherwise;
+            float best = Reach * Reach, h = otherwise;
             foreach (var plan in plans)
                 for (int i = 0; i < plan.Points.Count; i++)
                 {

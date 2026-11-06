@@ -698,7 +698,7 @@ public static class RoadCrossingDetector
         (float riverbed, Vector2 fairwayCenter, float fairwayWidth) = Profile(from, to, world);
 
         // A crossing needs water under it; a dry river valley is ordinary road.
-        if (!RoadWater.Wet(riverbed))
+        if (RoadWater.AtOrOverSea(riverbed))
             return null;
 
         Vector2 center = (from + to) * 0.5f;
@@ -1098,7 +1098,7 @@ public static class RoadCrossingDetector
         (riverbed, fairwayCenter, fairwayWidth) = Profile(turnedFrom, turnedTo, world);
 
         // Still a crossing at all.
-        if (!RoadWater.Wet(riverbed))
+        if (RoadWater.AtOrOverSea(riverbed))
             return false;
         // Still the crossing the router priced: neither bridgehead has walked
         // further than the cell size the route was chosen at. Either end may
@@ -1266,7 +1266,7 @@ public static class RoadCrossingDetector
             if (carriesPieces && !BridgeLayout.HeadingIsPlaceable(BridgeLayout.YawDegrees((b - a).normalized)))
                 return null;
             (float bed, Vector2 centre, float fairway) = Profile(a, b, world);
-            if (!RoadWater.Wet(bed)) return null;
+            if (RoadWater.AtOrOverSea(bed)) return null;
             RoadCrossing c = RoadCrossing.Between(a, b, bed, centre, fairway, CrossingKind.Bridge, FordStyle.None);
             return (BridgeLayout.DeckHeight(c, world), bed, centre, fairway);
         }

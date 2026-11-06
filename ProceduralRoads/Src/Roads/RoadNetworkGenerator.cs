@@ -3563,6 +3563,10 @@ public static partial class RoadNetworkGenerator
     /// <summary>Whether ground cut or filled to <paramref name="height"/> from <paramref name="ground"/> is past <paramref name="cap"/>.</summary>
     internal static bool PastTerrainLimit(float height, float ground, float cap) => Mathf.Abs(height - ground) > cap;
 
+    /// <summary>Whether ground cut or filled to <paramref name="height"/> from <paramref name="ground"/> stays within <paramref name="cap"/>.
+    /// Not <c>!PastTerrainLimit</c>: an unknown (NaN) height or ground is neither.</summary>
+    internal static bool WithinTerrainLimit(float height, float ground, float cap) => Mathf.Abs(height - ground) <= cap;
+
     /// <summary>Points of the plans (not wades) cut or filled past <paramref name="cap"/>, listed in <paramref name="where"/>.</summary>
     internal static int PastTerrainLimit(List<RoadSpatialGrid.PlannedPath> plans, float cap, List<Vector2> where)
     {

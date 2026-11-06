@@ -10,6 +10,21 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public class RoadWaterTests
 {
+    /// <summary>The sea line's two named cases and the cap's two keep the answers of the comparisons they replaced for an
+    /// unknown (NaN) height: neither wet nor over the sea, neither past the cap nor within it.</summary>
+    [Fact]
+    public void UnknownHeightIsNeitherSide()
+    {
+        Assert.False(RoadWater.Wet(float.NaN));
+        Assert.False(RoadWater.AtOrOverSea(float.NaN));
+        Assert.True(RoadWater.AtOrOverSea(RoadConstants.SeaLevel));
+        Assert.True(RoadWater.Wet(RoadConstants.SeaLevel - 0.001f));
+        Assert.False(RoadNetworkGenerator.PastTerrainLimit(float.NaN, 30f, 8f));
+        Assert.False(RoadNetworkGenerator.WithinTerrainLimit(float.NaN, 30f, 8f));
+        Assert.True(RoadNetworkGenerator.WithinTerrainLimit(38f, 30f, 8f));
+        Assert.True(RoadNetworkGenerator.PastTerrainLimit(38.01f, 30f, 8f));
+    }
+
     /// <summary>Ground at <see cref="Height"/> everywhere; swamp north of z = 0, meadows south; a river's core east of
     /// x = 1000.</summary>
     private sealed class Bands : WorldGenerator

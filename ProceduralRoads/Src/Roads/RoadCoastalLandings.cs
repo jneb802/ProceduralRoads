@@ -61,7 +61,7 @@ public static class RoadCoastalLandings
                     if(preparation.Checkpoint(0)) yield return true;
                     float water = H(cell.x + d.x*i, cell.y + d.z*i);
                     if (!Known(water)) break;
-                    if (!RoadWater.Wet(water))
+                    if (RoadWater.AtOrOverSea(water))
                     {
                         if (wet || i * step > 32 || water > h + 1) break;
                         continue;

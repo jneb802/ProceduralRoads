@@ -23,8 +23,9 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadRide
 {
-    /// <summary>Centrelines within this of each other are one road: the road's width (two roads nearer than it overlap).</summary>
-    public const float Reach = RoadConstants.DefaultRoadWidth;
+    /// <summary>Centrelines within this of each other are one road: the road's width, the Roads/RoadWidth setting (two roads
+    /// nearer than it overlap).</summary>
+    public static float Reach => RoadNetworkGenerator.RoadWidth;
     /// <summary>Headings within this many degrees (either way along) are the same corridor.</summary>
     public const float Angle = 25f;
     /// <summary>Within this of the other road's surface the two are at one height (RoadBeside's height).</summary>
@@ -280,8 +281,9 @@ public static class RoadRide
 
     /// <summary>Which points of a route ride the network (<paramref name="lines"/>): within <paramref name="reach"/> of its
     /// line, heading its way, at its height (along a structure, at any height), in runs of <see cref="MinRun"/> or more.</summary>
-    public static bool[] Rides(Lines lines, IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, float reach = Reach)
+    public static bool[] Rides(Lines lines, IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, float? reach = null)
     {
+        float near = reach ?? Reach;
         var on = new bool[points.Count];
         for (int i = 0; i < points.Count; i++)
         {
@@ -289,8 +291,8 @@ public static class RoadRide
             if (head.sqrMagnitude < 0.5f) continue;
             // On road at its height, or on a structure's line about the height of the road it carries (a road under a
             // deck, through the water below a footbridge, or beside a flight); never one far under a viaduct.
-            on[i] = lines.Nearest(points[i], reach, out _, head, heights[i], abreast: true)
-                || lines.Nearest(points[i], reach, out _, head, heights[i], StructureHeight, abreast: true, roads: false);
+            on[i] = lines.Nearest(points[i], near, out _, head, heights[i], abreast: true)
+                || lines.Nearest(points[i], near, out _, head, heights[i], StructureHeight, abreast: true, roads: false);
         }
         // Runs shorter than MinRun only touch the network.
         int a = 0;

@@ -740,7 +740,7 @@ public static class DvergrViaduct
             Vector2 at = crossing.FromBank + dir * a;
             // Only road under the deck, beside the pier: never the viaduct's own road at its ends, on the bank or under a
             // joining piece (a pier 3 m in from a bank with end stairs read the apron at the stairs' foot as its floor).
-            foreach (var (p, h, w) in StructureEnds.BuiltRoadNear(at, HalfWidth + RoadConstants.DefaultRoadWidth * 0.5f + 1f, plans))
+            foreach (var (p, h, w) in StructureEnds.BuiltRoadNear(at, HalfWidth + RoadNetworkGenerator.RoadWidth * 0.5f + 1f, plans))
             {
                 float along = Vector2.Dot(p - crossing.FromBank, dir);
                 if (along <= first || along >= last || Mathf.Abs(Vector2.Dot(p - crossing.FromBank, side)) > HalfWidth + w * 0.5f) continue;
@@ -1777,8 +1777,8 @@ public static class DvergrViaduct
         float bottom = p.Position.y - hy, top = p.Position.y + hy;
         // The points round it, and their neighbours for each one's heading.
         List<RoadSpatialGrid.RoadPoint> near = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(c.x, 0f, c.y),
-            hu + hv + 2f * RoadConstants.DefaultRoadWidth).FindAll(q => q.IsRoad);
-        float reach = hu + hv + RoadConstants.DefaultRoadWidth;
+            hu + hv + 2f * RoadNetworkGenerator.RoadWidth).FindAll(q => q.IsRoad);
+        float reach = hu + hv + RoadNetworkGenerator.RoadWidth;
         foreach (RoadSpatialGrid.RoadPoint q in near)
         {
             if ((q.p - c).sqrMagnitude > reach * reach) continue;

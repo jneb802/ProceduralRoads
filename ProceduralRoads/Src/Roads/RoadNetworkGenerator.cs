@@ -3097,7 +3097,7 @@ public static partial class RoadNetworkGenerator
         // Where it ends: its end away from the road's.
         int first = 0, last = entry.Points.Count - 1;
         int far = Vector2.Distance(entry.Points[first], own.End) >= Vector2.Distance(entry.Points[last], own.End) ? first : last;
-        if (!own.Lines.Nearest(entry.Points[far], RoadBeside.Reach, out _, height: entry.Heights[far], heightTolerance: RoadBeside.Height)) return false;
+        if (!own.Lines.Nearest(entry.Points[far], RoadBeside.Current, out _, height: entry.Heights[far], heightTolerance: RoadBeside.Height)) return false;
         at = entry.Points[far];
         return true;
     }
@@ -3219,7 +3219,7 @@ public static partial class RoadNetworkGenerator
         float total = along[points.Count - 1];
         // Where it rides the network (RoadRide: within a road's width, its way, at its height) it is on the other road, the
         // trunk the two share, whose road it then stores none of; beside it is past that, within RoadBeside's reach.
-        var lines = RoadRide.Around(points, RoadBeside.Reach);
+        var lines = RoadRide.Around(points, RoadBeside.Current);
         bool[] rides = RoadRide.Rides(lines, points, heights);
         var place = new RoadBeside.Place[points.Count];
         for (int i = 0; i < points.Count; i++) place[i] = rides[i] ? RoadBeside.Place.On : RoadBeside.At(lines, points[i], heights[i]);

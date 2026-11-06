@@ -13,8 +13,12 @@ public static class RoadBeside
 {
     /// <summary>A centreline (or a staircase's walked piece) this far or less across from a road's runs beside it: a road's
     /// width and its terrain blend. Nearer, the two roads' levelled ground and blend overlap and they read as one smeared road
-    /// (a road wavering just past a narrower reach would slip through it).</summary>
+    /// (a road wavering just past a narrower reach would slip through it). At the default width; what is asked is
+    /// <see cref="Current"/>, the Roads/RoadWidth setting's (RoadStairRuns.ParallelReach, a constant, still reads this one).</summary>
     public const float Reach = RoadConstants.DefaultRoadWidth + RoadConstants.TerrainBlendMargin;
+
+    /// <summary>The reach at the Roads/RoadWidth setting: the road's width and its terrain blend.</summary>
+    public static float Current => RoadNetworkGenerator.RoadWidth + RoadConstants.TerrainBlendMargin;
     /// <summary>Nearer than this a road is on the other road: the trunk the two share, not beside it.</summary>
     public const float OnRoad = 1f;
     /// <summary>Within this of the other road's surface it is beside it at its height.</summary>
@@ -33,20 +37,20 @@ public static class RoadBeside
     public enum Place { Off, Beside, On }
 
     /// <summary>Whether <paramref name="p"/>, at <paramref name="height"/>, is on a road (within <see cref="OnRoad"/>),
-    /// beside one at its height (within <see cref="Reach"/> across and <see cref="Height"/> of its surface), or off. The
+    /// beside one at its height (within <see cref="Current"/> across and <see cref="Height"/> of its surface), or off. The
     /// road is the network's line (<see cref="RoadRide.Lines"/>): a structure in a road's place (a crossing, a staircase)
     /// is road here, so a road along it is on it or beside it as along any road.</summary>
     public static Place At(RoadRide.Lines lines, Vector2 p, float height)
     {
-        if (!lines.Nearest(p, Reach, out RoadRide.Hit other)) return Place.Off;
+        if (!lines.Nearest(p, Current, out RoadRide.Hit other)) return Place.Off;
         if (other.Distance <= OnRoad) return Place.On;
         return AtItsHeight(other.Height, height) ? Place.Beside : Place.Off;
     }
 
-    /// <summary>Whether a road within <see cref="Reach"/> of <paramref name="p"/>, on it or not, stands at <paramref name="height"/>:
+    /// <summary>Whether a road within <see cref="Current"/> of <paramref name="p"/>, on it or not, stands at <paramref name="height"/>:
     /// a staircase's walked piece there runs beside it (a staircase shares no trunk with a road).</summary>
     public static bool NearAtItsHeight(Vector2 p, float height) =>
-        RoadSpatialGrid.IsInitialized && RoadSpatialGrid.TryGetRoadWithin(p, Reach, out Vector2 other)
+        RoadSpatialGrid.IsInitialized && RoadSpatialGrid.TryGetRoadWithin(p, Current, out Vector2 other)
         && RoadSpatialGrid.TryGetRoadHeightWithin(other, OnRoad, out float h) && AtItsHeight(h, height);
 
     /// <summary>Whether a surface at <paramref name="height"/> is at the height of a road at <paramref name="roadHeight"/>.</summary>

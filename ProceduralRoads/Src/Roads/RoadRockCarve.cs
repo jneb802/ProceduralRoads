@@ -26,8 +26,9 @@ public static class RoadRockCarve
 {
     public enum Outcome { Carved, Removed, Untouched, NotCarvable }
 
-    /// <summary>The widest road's half-width: how far past a rock's footprint a road can touch it.</summary>
-    internal const float WidestRoadHalfWidth = 4f;
+    /// <summary>How far past a rock's footprint a road can touch it: the Roads/RoadWidth setting's width, over any road's half
+    /// of it (4 m at the default width, as before).</summary>
+    internal static float WidestRoadHalfWidth => RoadNetworkGenerator.RoadWidth;
 
     /// <summary>Strips across the clearance the way
     /// (<see cref="RoadRockPolicy.WayStrips"/>) is counted in: 0.17 m each on a

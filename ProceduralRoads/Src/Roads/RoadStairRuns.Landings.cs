@@ -138,7 +138,7 @@ public static partial class RoadStairRuns
             if (Mathf.Abs(raised[i] - heights[i]) < 0.001f) { last = null; continue; }
             Vector2 p = points[i];
             float g = ground(p.x, p.y);
-            if (!Earthwork(raised[i], g, cap, overWater) || RoadSiteProtection.BlocksSegment(last ?? p, p, 1f, null, null)) return null;
+            if (!Earthwork(raised[i], g, cap, overWater) || RoadSiteProtection.BlocksSegment(last ?? p, p, PlaceMargin, null, null)) return null;
             last = p;
         }
         return raised;
@@ -209,7 +209,7 @@ public static partial class RoadStairRuns
             if (Mathf.Abs(to - rp.h) < 0.001f) continue;
             float g = ground(rp.p.x, rp.p.y);
             if (Vector2.Distance(rp.p, centre) > spread + OnRoad + ease - AlongOneRoad || !Earthwork(to, g, cap, overWater)
-                || RoadSiteProtection.BlocksSegment(rp.p, rp.p, 1f, null, null)) return null;
+                || RoadSiteProtection.BlocksSegment(rp.p, rp.p, PlaceMargin, null, null)) return null;
             changed.Add((rp, to));
         }
         return changed;

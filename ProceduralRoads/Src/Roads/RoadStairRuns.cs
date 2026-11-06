@@ -57,6 +57,8 @@ public static partial class RoadStairRuns
     /// <summary>A path point this close to a stair step lies on it (the path's
     /// ends are moved a little by trimming; its middle points are cell centres).</summary>
     public const float OnStep = 1f;
+    /// <summary>Stair pieces and their landing earthwork keep this far off another place's footprint, metres.</summary>
+    public const float PlaceMargin = 1f;
     /// <summary>Stairs on generated roads are this wide (2 m works well and is a bit more flexible).</summary>
     public const float Width = 2f;
     /// <summary>
@@ -1694,7 +1696,7 @@ public static partial class RoadStairRuns
             var p = new Vector2(piece.Position.x, piece.Position.z);
             if (!RoadWater.BuiltDry(ground != null ? ground(p.x, p.y) : RoadWater.Ground(world, p)))
                 return FormattableString.Invariant($"water at ({p.x:F1}, {p.y:F1})");
-            if (RoadSiteProtection.BlocksSegment(last ?? p, p, 1f, null, site))
+            if (RoadSiteProtection.BlocksSegment(last ?? p, p, PlaceMargin, null, site))
                 return FormattableString.Invariant($"another place at ({p.x:F1}, {p.y:F1})");
             last = p;
         }

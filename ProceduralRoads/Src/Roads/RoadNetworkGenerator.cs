@@ -14,25 +14,21 @@ public static partial class RoadNetworkGenerator
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
     public static bool IsGenerating => RoadLifecycleManager.IsGenerating;
     
-    private static readonly HashSet<string> BossLocationNames = new HashSet<string>
-    {
-        "Eikthyrnir",
-        "GDKing",
-        "Bonemass",
-        "Dragonqueen",
-        "GoblinKing",
-        "Mistlands_DvergrBossEntrance1",
-    };
+    /// <summary>The priority of a boss: the top tier of <see cref="LocationPriorities"/>, and a required destination.</summary>
+    private const int BossPriority = 100;
+
+    /// <summary>Whether a location is a boss (the only names at <see cref="BossPriority"/>).</summary>
+    internal static bool IsBossLocation(string name) => LocationPriorities.TryGetValue(name, out int priority) && priority == BossPriority;
 
     // Destination priorities for the vanilla locations reviewed on Valheim 1.0.12.
     private static readonly Dictionary<string, int> LocationPriorities = new()
     {
-        { "Bonemass", 100 },
-        { "Dragonqueen", 100 },
-        { "Eikthyrnir", 100 },
-        { "GDKing", 100 },
-        { "GoblinKing", 100 },
-        { "Mistlands_DvergrBossEntrance1", 100 },
+        { "Bonemass", BossPriority },
+        { "Dragonqueen", BossPriority },
+        { "Eikthyrnir", BossPriority },
+        { "GDKing", BossPriority },
+        { "GoblinKing", BossPriority },
+        { "Mistlands_DvergrBossEntrance1", BossPriority },
 
         { "Crypt2", 80 },
         { "Crypt3", 80 },
@@ -4925,7 +4921,6 @@ public static partial class RoadNetworkGenerator
     {
         public Vector3 SpawnPoint;
         public float SpawnRadius;
-        public List<(string name, Vector3 position, float radius)> BossLocations;
         public List<(string name, Vector3 position, float radius)> AllLocations;
     }
 
@@ -4936,7 +4931,6 @@ public static partial class RoadNetworkGenerator
         preparation.BeginStage("Copying world locations",source?.Length ?? 0,"locations"); yield return true;
         if(source==null || source.Length==0) { Log.LogWarning("No location instances found"); complete(null); yield break; }
         Vector3? spawn=null; float radius=0;
-        var bosses=new List<(string name,Vector3 position,float radius)>();
         var all=new List<(string name,Vector3 position,float radius)>();
         foreach(var location in source)
         {
@@ -4944,12 +4938,12 @@ public static partial class RoadNetworkGenerator
             if(item.Item1=="StartTemple") { spawn=item.Item2; radius=item.Item3; all.Add(item); }
             // HARD RULE: a place the game leaves for a player to find is never a destination (PlacedSites.PlayerDecides).
             else if(PlacedSites.PlayerDecides(item.Item1,location.m_location.m_unique,location.m_location.m_iconPlaced,location.m_location.m_iconAlways)) { }
-            else { all.Add(item); if(BossLocationNames.Contains(item.Item1)) bosses.Add(item); }
+            else all.Add(item);
             if(preparation.Checkpoint()) yield return true;
         }
         if(!spawn.HasValue) { Log.LogWarning("Could not find spawn point (StartTemple)"); spawn=Vector3.zero; }
-        Log.LogDebug($"Found spawn at {spawn.Value}, {bosses.Count} boss locations, {all.Count} total locations");
-        complete(new LocationData {SpawnPoint=spawn.Value,SpawnRadius=radius,BossLocations=bosses,AllLocations=all});
+        Log.LogDebug($"Found spawn at {spawn.Value}, {all.Count} total locations");
+        complete(new LocationData {SpawnPoint=spawn.Value,SpawnRadius=radius,AllLocations=all});
     }
 
     /// <summary>Whether a location is a destination on <paramref name="island"/>: on it, a road location, and in a biome the
@@ -4970,15 +4964,14 @@ public static partial class RoadNetworkGenerator
     private static bool IsRoadLocation(string locationName)
     {
         if (IsHildirQuestSite(locationName)) return HildirRoads(locationName);
-        return BossLocationNames.Contains(locationName) ||
-               LocationPriorities.ContainsKey(locationName) ||
+        return LocationPriorities.ContainsKey(locationName) ||
                IsCustomLocation(locationName);
     }
 
     private static bool IsCustomLocation(string name) => RegisteredLocationNames.Contains(name)
         || ConfiguredLocationNames.Contains(name);
 
-    private static bool IsRequiredLocation(string name) => BossLocationNames.Contains(name)
+    private static bool IsRequiredLocation(string name) => IsBossLocation(name)
         || HildirRoads(name)
         || name == RoadCoastalLandings.Name;
 

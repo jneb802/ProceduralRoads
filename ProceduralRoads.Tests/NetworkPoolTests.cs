@@ -12,10 +12,8 @@ public class NetworkPoolTests
     [Fact]
     public void QueenIsAnEntranceNotACreatureName()
     {
-        var bosses = (HashSet<string>)typeof(RoadNetworkGenerator).GetField("BossLocationNames", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-        Assert.Contains("Mistlands_DvergrBossEntrance1", bosses);
-        Assert.DoesNotContain("SeekerQueen", bosses);
-        Assert.Equal(100, Priorities["Mistlands_DvergrBossEntrance1"]);
+        Assert.True(RoadNetworkGenerator.IsBossLocation("Mistlands_DvergrBossEntrance1"));
+        Assert.False(RoadNetworkGenerator.IsBossLocation("SeekerQueen"));
         Assert.False(Priorities.ContainsKey("SeekerQueen"));
     }
 

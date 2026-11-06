@@ -25,7 +25,7 @@ public static class StairWear
         uint seed = Mix(Mix(Mix(Mix(0x5EEDu, Key(from.x)), Key(from.y)), Key(to.x)), Key(to.y));
         pieces.RemoveAll(p => p.Kind == StructurePieceKind.Beam && Roll(seed, p, RoleRail) < RailLoss);
         foreach (StructurePiece p in pieces)
-            p.HealthFraction = BridgeLayout.LocationDamageMin + Roll(seed, p, RoleHealth) * (BridgeLayout.LocationDamageMax - BridgeLayout.LocationDamageMin);
+            p.HealthFraction = BridgeLayout.LocationHealth(Roll(seed, p, RoleHealth));
     }
 
     /// <summary>A roll in [0, 1) for a piece, keyed by where it stands and what it decides.</summary>

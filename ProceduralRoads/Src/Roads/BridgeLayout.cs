@@ -142,6 +142,10 @@ public static partial class BridgeLayout
     /// game (cli_piece_health on 40 pieces): 10-57 %, median 35 %.</summary>
     public const float LocationDamageMin = 0.1f, LocationDamageMax = 0.6f;
 
+    /// <summary>A piece's location-wear health for a <paramref name="roll"/> in [0, 1): <see cref="LocationDamageMin"/> to
+    /// <see cref="LocationDamageMax"/>.</summary>
+    public static float LocationHealth(float roll) => LocationDamageMin + roll * (LocationDamageMax - LocationDamageMin);
+
     /// <summary>
     /// How a bridge ruins: one profile for every kit (<see cref="BridgeRuin"/>), by the part a piece is, not by the kit. The
     /// rolls are <see cref="Ruin"/>'s, keyed by what they decide; the profile only says the rates.
@@ -725,7 +729,7 @@ public static partial class BridgeLayout
                 int key = unchecked(Mathf.RoundToInt(p.Position.x * 2f) * 73856093 ^ Mathf.RoundToInt(p.Position.z * 2f) * 19349663);
                 int side = Mathf.RoundToInt(p.Position.y * 2f);
                 int extra = StableHash(p.Prefab) ^ Mathf.RoundToInt(p.YawDegrees);
-                p.HealthFraction = LocationDamageMin + Roll(key, side, RoleLocationHealth, extra) * (LocationDamageMax - LocationDamageMin);
+                p.HealthFraction = LocationHealth(Roll(key, side, RoleLocationHealth, extra));
             }
         }
 

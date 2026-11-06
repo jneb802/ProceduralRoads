@@ -994,13 +994,8 @@ public static class RoadCrossingDetector
     /// loads and worlds regenerate identically.</summary>
     private static int SiteHash(Vector2 center)
     {
-        unchecked
-        {
-            int x = Mathf.RoundToInt(center.x), y = Mathf.RoundToInt(center.y);
-            uint h = (uint)(x * 374761393 + y * 668265263);
-            h = (h ^ (h >> 13)) * 1274126177u;
-            return (int)((h ^ (h >> 16)) & 0x7FFFFFFF);
-        }
+        int x = Mathf.RoundToInt(center.x), y = Mathf.RoundToInt(center.y);
+        return (int)(RoadPathfinder.HashCell(x, y) & 0x7FFFFFFF);
     }
 
     /// <summary>

@@ -963,14 +963,17 @@ public class RoadPathfinder
         return Mathf.Lerp(Mathf.Lerp(a, b, fx), Mathf.Lerp(c, d, fx), fy);
     }
 
-    private static float Lattice(int x, int y)
+    private static float Lattice(int x, int y) => (HashCell(x, y) & 0xFFFFFF) / (float)0xFFFFFF;
+
+    /// <summary>The one integer hash of a cell: the lattice values of <see cref="ValueNoise"/>, and a ford's style
+    /// (RoadCrossing.SiteHash).</summary>
+    internal static uint HashCell(int x, int y)
     {
         unchecked
         {
             uint h = (uint)x * 374761393u + (uint)y * 668265263u;
             h = (h ^ (h >> 13)) * 1274126177u;
-            h ^= h >> 16;
-            return (h & 0xFFFFFF) / (float)0xFFFFFF;
+            return h ^ (h >> 16);
         }
     }
 

@@ -2798,8 +2798,8 @@ public static partial class RoadNetworkGenerator
                 foreach (StructureEnds.End end in new[] { near, far })
                     for (int k = 0; k < end.Steps; k++)
                     {
-                        Vector2 at = end.Edge - end.Up * (BridgeLayout.StairHalfRun + k * BridgeLayout.StairRun);
-                        ground.Cuts.Add(new Vector3(at.x, end.Height - BridgeLayout.StairRise * (k + 1), at.y));
+                        Vector2 at = end.Edge - end.Up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun);
+                        ground.Cuts.Add(new Vector3(at.x, end.Height - StairLayout.PieceRise * (k + 1), at.y));
                     }
             }
             // No road painted in under a viaduct's deck at the ground's height: its road runs on under the end module at the

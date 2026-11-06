@@ -77,7 +77,7 @@ public sealed class StructureEndTests : IDisposable
         var (near, far) = DvergrViaduct.Ends(viaduct, world);
         foreach (var (end, which) in new[] { (near, "near"), (far, "far") })
         {
-            float walk = deck - end.Steps * BridgeLayout.StairRise;
+            float walk = deck - end.Steps * StairLayout.PieceRise;
             // The stored road nearest the end's meeting point.
             var points = roads.SelectMany(r => r.Points.Select((p, i) => (p, h: r.Heights[i]))).OrderBy(x => Vector2.Distance(x.p, end.Meet)).ToList();
             Assert.True(points.Count > 0 && Vector2.Distance(points[0].p, end.Meet) <= 1f, $"{site}, {which} end: no road at its foot {end.Meet}");
@@ -159,7 +159,7 @@ public sealed class StructureEndTests : IDisposable
         var (near, far) = DvergrViaduct.Ends(viaduct, world);
         foreach (var end in new[] { near, far })
         {
-            float walk = deck - end.Steps * BridgeLayout.StairRise;
+            float walk = deck - end.Steps * StairLayout.PieceRise;
             Vector2 line = -end.Up, across = new(-line.y, line.x);
             int seen = 0;
             foreach (var r in roads)
@@ -219,7 +219,7 @@ public sealed class StructureEndTests : IDisposable
             Vector2 other = near ? c.ToBank : c.FromBank;
             var flight = stairs.FindAll(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), bank) < Vector2.Distance(new Vector2(p.Position.x, p.Position.z), other));
             if (flight.Count == 0) continue;
-            float lowest = flight.Min(p => p.Position.y), highest = flight.Max(p => p.Position.y), deck = highest + BridgeLayout.StairRise;
+            float lowest = flight.Min(p => p.Position.y), highest = flight.Max(p => p.Position.y), deck = highest + StairLayout.PieceRise;
             Vector2 Mean(float y)
             {
                 var at = flight.FindAll(p => Mathf.Abs(p.Position.y - y) < 0.01f);
@@ -724,7 +724,7 @@ public sealed class StructureEndTests : IDisposable
         var world = new LowSeaBanks();
         _scope.WithWorld(world);
         float floor = RoadConstants.DryRoadFloor;
-        Assert.Equal(floor + BridgeLayout.StairRise, BridgeLayout.MinDeck(RoadConstants.SeaLevel), 3);
+        Assert.Equal(floor + StairLayout.PieceRise, BridgeLayout.MinDeck(RoadConstants.SeaLevel), 3);
         var path = new List<Vector2> { new(-90f, 0f), new(-60f, 0f), new(-30f, 0f), new(30f, 0f), new(60f, 0f), new(90f, 0f) };
         foreach (var (kind, style) in new[] { (CrossingKind.Bridge, FordStyle.None), (CrossingKind.Ford, FordStyle.Span) })
             foreach (var kit in new[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced, BridgeStructures.Kit.Stone, BridgeStructures.Kit.DvergrWood })
@@ -734,7 +734,7 @@ public sealed class StructureEndTests : IDisposable
                 c.WaterLevel = RoadConstants.SeaLevel;
                 c.Kit = kit;
                 float deck = BridgeStructures.DeckHeight(c, world);
-                Assert.True(deck >= floor + BridgeLayout.StairRise - 1e-3f, FormattableString.Invariant($"{what}: the deck at {deck:F2} m"));
+                Assert.True(deck >= floor + StairLayout.PieceRise - 1e-3f, FormattableString.Invariant($"{what}: the deck at {deck:F2} m"));
                 Assert.Null(Meet(path, c, world, RoadConstants.TerrainDeltaMax));
                 var (near, far) = BridgeStructures.Ends(c, world);
                 foreach (var end in new[] { near, far })

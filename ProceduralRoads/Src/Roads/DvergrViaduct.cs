@@ -458,7 +458,7 @@ public static class DvergrViaduct
     {
         if (Recorded(crossing) is { } ends) return ends.near.Height;
         float atGrade = AtGrade(crossing, world);
-        return atGrade + RaisedSteps(crossing, world, atGrade) * BridgeLayout.StairRise;
+        return atGrade + RaisedSteps(crossing, world, atGrade) * StairLayout.PieceRise;
     }
 
     /// <summary>
@@ -592,7 +592,7 @@ public static class DvergrViaduct
     /// moves a pier, so the bays carry whichever it takes. (The draw, not the raise: the raise asks the piers' height.)</summary>
     private static float ReachDeck(RoadCrossing crossing, WorldGenerator world) =>
         Recorded(crossing) is { } ends ? ends.near.Height
-            : AtGrade(crossing, world) + Mathf.Max(0, Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost)) * BridgeLayout.StairRise;
+            : AtGrade(crossing, world) + Mathf.Max(0, Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost)) * StairLayout.PieceRise;
 
     // ----------------------------------------------------------- deck reach
 
@@ -853,7 +853,7 @@ public static class DvergrViaduct
 
     /// <summary>How far past each bank a viaduct's end-approach volume reaches: its most end stairs, then the road's
     /// levelled apron (StructureEnds).</summary>
-    public static float ApproachReach => BridgeLayout.StairRun * Mathf.CeilToInt(MaxEndStairRise / BridgeLayout.StairRise - 1e-3f) + StructureEnds.ApronLength;
+    public static float ApproachReach => StairLayout.PieceRun * Mathf.CeilToInt(MaxEndStairRise / StairLayout.PieceRise - 1e-3f) + StructureEnds.ApronLength;
 
     /// <summary>Half a viaduct's width, its arches and heads included (the course and arches stand 3 m out).</summary>
     public const float HalfWidth = 3f;
@@ -1050,7 +1050,7 @@ public static class DvergrViaduct
     private const int RoleRaise = 36;
 
     /// <summary>
-    /// How many stair rises (<see cref="BridgeLayout.StairRise"/>) the deck stands over the deck at grade
+    /// How many stair rises (<see cref="StairLayout.PieceRise"/>) the deck stands over the deck at grade
     /// (<see cref="AtGrade"/>): 0, the road running onto it at the higher bank, or 1 or 2, each end then a short flight
     /// whose foot the road meets (StructureEnds.MeetEnds, as any end's). The one owner of the choice, which the ends then
     /// carry once they are recorded with the crossing (<see cref="Recorded"/>). Drawn per crossing
@@ -1068,7 +1068,7 @@ public static class DvergrViaduct
     private static int RaisedSteps(RoadCrossing crossing, WorldGenerator world, float atGrade)
     {
         for (int steps = Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost); steps > 0; steps--)
-            if (DeckRefusal(crossing, world, PierCeiling, atGrade + steps * BridgeLayout.StairRise) == null)
+            if (DeckRefusal(crossing, world, PierCeiling, atGrade + steps * StairLayout.PieceRise) == null)
                 return steps;
         return 0;
     }
@@ -1894,7 +1894,7 @@ public static class DvergrViaduct
     public static string Describe(RoadCrossing crossing, WorldGenerator world)
     {
         float deck = DeckHeight(crossing, world);
-        int raised = Mathf.RoundToInt((deck - AtGrade(crossing, world)) / BridgeLayout.StairRise);
+        int raised = Mathf.RoundToInt((deck - AtGrade(crossing, world)) / StairLayout.PieceRise);
         List<float> piers = PierAlongs(crossing, world);
         bool river = HasNavigationBay(crossing, world), water = crossing.RiverbedHeight < crossing.WaterLevel;
         return FormattableString.Invariant(

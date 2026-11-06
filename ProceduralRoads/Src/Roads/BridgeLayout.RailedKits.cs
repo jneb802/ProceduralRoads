@@ -30,7 +30,7 @@ namespace ProceduralRoads;
 /// zig-zags between the columns; the two end braces lean from the bank columns into the banks;</item>
 /// <item><b>ends</b>: the stairs as the road meets the end (<see cref="LayEndStairs"/>), two abreast, each step with a <see cref="StairRailPrefab"/>
 /// stringer at its outer edge and a handrail over it each side, on a railing post at every step's joint as on the deck
-/// (every <see cref="StairRun"/>), the last one (the newel) at the foot; a step over the ground stands on columns under its
+/// (every <see cref="StairLayout.PieceRun"/>), the last one (the newel) at the foot; a step over the ground stands on columns under its
 /// edges at its low joint.</item>
 /// </list>
 /// <para><b>Runs without a column</b>: none stands in the open bays over a river, under a free span (<see cref="IsFreeSpan"/>)
@@ -463,7 +463,7 @@ public static partial class BridgeLayout
     /// One end: its stairs as the road meets it (<see cref="LayEndStairs"/>), and each side of it, a stringer
     /// (<see cref="StairRailPrefab"/>) along every step's outer edge, a handrail <see cref="RailHeight"/> over it, and a
     /// railing post (<see cref="RailPostPrefab"/>) at every joint down the run, where one step's stringer and handrail meet
-    /// the next's, every <see cref="StairRun"/> as the deck's every <see cref="DeckSpan"/>; the last is the newel at the foot
+    /// the next's, every <see cref="StairLayout.PieceRun"/> as the deck's every <see cref="DeckSpan"/>; the last is the newel at the foot
     /// under the last handrail. A step whose middle stands over the ground (<see cref="EmitSteps"/>'s test) is carried on a
     /// column of <see cref="PostPrefab"/> poles under each edge at its low joint, down to the ground as the deck's are. A
     /// stringer, handrail or post wholly in the ground is left out. All on <paramref name="ground"/>, the finished ground
@@ -479,8 +479,8 @@ public static partial class BridgeLayout
         float railYaw = YawDegrees(inward) - 90f;   // its local x from its low snap (outward) to its high one
         for (int k = 0; k < steps; k++)
         {
-            Vector2 c = anchor - inward * (StairHalfRun + k * StairRun);
-            float foot = deckH - StairRise - k * StairRise;
+            Vector2 c = anchor - inward * (StairHalfRun + k * StairLayout.PieceRun);
+            float foot = deckH - StairLayout.PieceRise - k * StairLayout.PieceRise;
             // A step over the ground (the stair run's test, either lane's middle) stands on a column under each edge at its
             // low joint, as the deck does on its stations.
             bool carried = false;
@@ -499,7 +499,7 @@ public static partial class BridgeLayout
                 for (int tier = 0; tier < 2; tier++)
                 {
                     float y = foot + tier * RailHeight;
-                    if (Buried(ground, low, y, high, y + StairRise)) continue;
+                    if (Buried(ground, low, y, high, y + StairLayout.PieceRise)) continue;
                     // Its origin over the middle of the step, at its low snap's height.
                     AddPiece(pieces, StructurePieceKind.Beam, StairRailPrefab, c + off, y, railYaw,
                         r.Health(bayKey, s, tier == 0 ? Ruin.RoleBeamHealth : RoleRailHealth, k + 1));
@@ -509,8 +509,8 @@ public static partial class BridgeLayout
         // The deck's railing post stands at the top joint; one at each joint below it, the newel at the foot.
         for (int k = 1; k <= steps; k++)
         {
-            Vector2 at = anchor - inward * (k * StairRun);
-            float bottom = deckH - k * StairRise;
+            Vector2 at = anchor - inward * (k * StairLayout.PieceRun);
+            float bottom = deckH - k * StairLayout.PieceRise;
             bool newel = k == steps;
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
             {

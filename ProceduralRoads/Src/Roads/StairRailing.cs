@@ -85,8 +85,8 @@ public static class StairRailing
         var railed = new List<bool>();
         for (int k = 0; k < end.Steps; k++)
         {
-            walks.Add(new StairSupport.Walk(end.Edge - end.Up * (BridgeLayout.StairRun * (k + 1)), heading, BridgeLayout.StairRun, across,
-                end.Height - BridgeLayout.StairRise * (k + 1), true));
+            walks.Add(new StairSupport.Walk(end.Edge - end.Up * (StairLayout.PieceRun * (k + 1)), heading, StairLayout.PieceRun, across,
+                end.Height - StairLayout.PieceRise * (k + 1), true));
             railed.Add(true);
         }
         // The road meets the flight at its foot.
@@ -269,7 +269,7 @@ public static class StairRailing
     /// beside the road does (after a hand-built example at a river viaduct's east end, (4443.2, -4992), railed over the
     /// drop on both sides; and the owner's word on it, 5 Nov 2026: one side alone "could look uneven", so both, unless it
     /// gets in the way): the parapet the end's first step down would have (<see cref="Parapet"/>), a module
-    /// (<see cref="BridgeLayout.StairRun"/>) further out, its courses from its own foot, as built by hand (a
+    /// (<see cref="StairLayout.PieceRun"/>) further out, its courses from its own foot, as built by hand (a
     /// <see cref="ParapetCapPrefab"/> half a metre past the first module, a <see cref="ParapetPrefab"/> over the next sloping
     /// down onto the bank, black marble under it to the ground); and under the first module's edge, the deck's course carried
     /// on (<see cref="ParapetCoursePrefab"/>, its top at the edge's height) and on down to the ground. Over a bank rising
@@ -288,10 +288,10 @@ public static class StairRailing
         if (!end.IsSet || end.Steps != 0) return sides;
         float heading = StairLayout.Wrap(BridgeLayout.YawDegrees(end.Up));
         // The bank's first module past the edge, and the first step's walk a module further out.
-        var bank = new StairSupport.Walk(end.Edge - end.Up * BridgeLayout.StairRun, heading, BridgeLayout.StairRun, across,
+        var bank = new StairSupport.Walk(end.Edge - end.Up * StairLayout.PieceRun, heading, StairLayout.PieceRun, across,
             end.Height - StairKit.BlackMarble.FloorThickness, false);
-        var step = new StairSupport.Walk(end.Edge - end.Up * (2f * BridgeLayout.StairRun), heading, BridgeLayout.StairRun, across,
-            end.Height - BridgeLayout.StairRise, true);
+        var step = new StairSupport.Walk(end.Edge - end.Up * (2f * StairLayout.PieceRun), heading, StairLayout.PieceRun, across,
+            end.Height - StairLayout.PieceRise, true);
         float yaw = StairLayout.Wrap(heading + 90f), half = across / 2f;
         foreach (int side in new[] { -1, 1 })
         {

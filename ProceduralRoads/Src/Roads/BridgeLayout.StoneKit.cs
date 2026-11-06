@@ -65,7 +65,7 @@ public static partial class BridgeLayout
     /// <summary>The arch: 2 m along its local x, 1 m deep, its tall end (+x) 1 m high, snaps there top and bottom
     /// (1, +-0.5, +-0.5), its crown (-x) thin, snaps on top (-1, 0.5, +-0.5); origin at the centre of its bounds.</summary>
     public const string StoneArchPrefab = "stone_arch";
-    /// <summary>The steps: the shared stair's geometry (<see cref="StairRun"/>, <see cref="StairRise"/>), origin at the
+    /// <summary>The steps: the shared stair's geometry (<see cref="StairLayout.PieceRun"/>, <see cref="StairLayout.PieceRise"/>), origin at the
     /// foot, rising toward its local -z; snaps HIGH (+-1, 1, -1), LOW (+-1, 0, 1) and under its top edge (+-1, 0, -1).</summary>
     public const string StoneStairPrefab = "stone_stair";
     /// <summary>The stairs' footing: 1 x 2 x 1 m, origin at its centre, snaps at its eight corners (+-0.5, +-1, +-0.5).</summary>
@@ -293,7 +293,7 @@ public static partial class BridgeLayout
         foreach (StructureEnds.End end in new[] { f.Near, f.Far })
             for (int k = 0; k < end.Steps; k++)
                 foreach (Vector2 p in StoneFooting(end, f.Side, k))
-                    if (f.FootingPillars(p, end.Height - StairRise * (k + 1)) > BridgeSupport.StoneMaxFootingPillars()) return false;
+                    if (f.FootingPillars(p, end.Height - StairLayout.PieceRise * (k + 1)) > BridgeSupport.StoneMaxFootingPillars()) return false;
         return true;
     }
 
@@ -562,7 +562,7 @@ public static partial class BridgeLayout
         int steps = LayEndStairs(pieces, f.Ground, end, f.Side, r, bayKey, StoneStairPrefab, carry: false);
         for (int k = 0; k < steps; k++)
         {
-            float foot = end.Height - StairRise * (k + 1);
+            float foot = end.Height - StairLayout.PieceRise * (k + 1);
             int n = 0;
             foreach (Vector2 p in StoneFooting(end, f.Side, k))
             {
@@ -573,7 +573,7 @@ public static partial class BridgeLayout
                         r.Health(bayKey, n, Ruin.RolePostHealth, k * 16 + m));
                 n++;
             }
-            Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairRun);
+            Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairLayout.PieceRun);
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
                 f.LayAt(pieces, StructurePieceKind.Beam, StonePierBlock, c + f.Side * (s * DeckHalfWidth), foot + 0.5f, f.AlongYaw,
                     r.Health(bayKey, s, RoleRailHealth, k + 2));
@@ -585,7 +585,7 @@ public static partial class BridgeLayout
     /// each a metre square.</summary>
     private static IEnumerable<Vector2> StoneFooting(StructureEnds.End end, Vector2 side, int k)
     {
-        Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairRun);
+        Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairLayout.PieceRun);
         foreach (float along in new[] { -0.5f, 0.5f })
             foreach (float across in new[] { -1.5f, -0.5f, 0.5f, 1.5f })
                 yield return c + end.Up * along + side * across;

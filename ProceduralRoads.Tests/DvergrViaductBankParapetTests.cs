@@ -198,7 +198,7 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
     {
         var level = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 30f, 0);
         // The bank two steps down, whatever the ledge: black marble stands under the parapet piece only if its foot is over a drop.
-        float drop = 2f * BridgeLayout.StairRise;
+        float drop = 2f * StairLayout.PieceRise;
         Func<int, int, float> ground = (x, z) => Mathf.Abs(z) <= 2 ? 30f : 30f - under * drop;
         List<(Vector2 outward, List<StructurePiece> pieces)> sides = StairRailing.LayBankParapet(level, 4f, ground);
         Assert.Equal(2, sides.Count);

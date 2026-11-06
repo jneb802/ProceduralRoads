@@ -103,7 +103,7 @@ public sealed class BridgeEndPaintTests : IDisposable
             if (end.Steps == 0) continue;
             stepped++;
             Vector2 across = new(-end.Up.y, end.Up.x);
-            float stairs = BridgeLayout.StairRun * end.Steps;
+            float stairs = StairLayout.PieceRun * end.Steps;
             int underStairs = 0, before = 0;
             bool underDeck = false;
             foreach (var rp in RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(end.Meet.x, 0f, end.Meet.y), stairs + 12f))

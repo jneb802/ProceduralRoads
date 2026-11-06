@@ -36,10 +36,8 @@ public static partial class BridgeLayout
     public const float LaneOffset = 1f;       // the two lanes' centres, either side of the crossing line
     public const float DeckHalfWidth = 2f;    // two 2 m plates side by side: a 4 m deck, the road's width
     public const int MaxStairSteps = 12;      // a stair marches outward until its foot is in the dirt, at most this far
-    public const float StairRun = 2f;         // one step: 2 m out, 1 m down
-    public const float StairRise = 1f;
-    public const float StairHalfRun = 1f;     // origin at the foot: its LOW snaps are this far OUTWARD
-    public const float StairHalfWidth = 1f;   // ... and this far to either side
+    public const float StairHalfRun = StairLayout.PieceRun / 2f;     // origin at the foot: its LOW snaps are this far OUTWARD
+    public const float StairHalfWidth = StairLayout.PieceRun / 2f;   // ... and this far to either side
     public const float StairFootTolerance = 0.15f; // a foot this far above the dirt still counts as landed
 
     /// <summary>Bumped whenever the emitted geometry changes shape. Persisted
@@ -317,10 +315,10 @@ public static partial class BridgeLayout
     }
 
     /// <summary>The lowest a deck stands over water at <paramref name="waterLevel"/>: the water plus
-    /// <see cref="DeckFreeboard"/>, and a step (<see cref="StairRise"/>) over the floor every road on land is built up to
+    /// <see cref="DeckFreeboard"/>, and a step (<see cref="StairLayout.PieceRise"/>) over the floor every road on land is built up to
     /// (RoadConstants.DryRoadFloor), so a low deck's end can take a step down to the road
     /// (StructureEnds.OverTheFloor).</summary>
-    public static float MinDeck(float waterLevel) => Mathf.Max(waterLevel + DeckFreeboard, RoadConstants.DryRoadFloor + StairRise);
+    public static float MinDeck(float waterLevel) => Mathf.Max(waterLevel + DeckFreeboard, RoadConstants.DryRoadFloor + StairLayout.PieceRise);
 
     /// <summary>Deck height where it meets each bank: the bank's ground,
     /// lifted to <see cref="MinDeck"/> where the ground is lower.</summary>
@@ -815,8 +813,8 @@ public static partial class BridgeLayout
         // step wholly in the ground (BuriedPieces), which the game breaks.
         for (int k = 0; count.HasValue ? k < count.Value : k < MaxStairSteps && !landed; k++)
         {
-            Vector2 c = anchor - inward * (StairHalfRun + k * StairRun);
-            float foot = deckH - StairRise - k * StairRise;
+            Vector2 c = anchor - inward * (StairHalfRun + k * StairLayout.PieceRun);
+            float foot = deckH - StairLayout.PieceRise - k * StairLayout.PieceRise;
             bool bothLanded = true;
             foreach (int lane in new[] { Ruin.Left, Ruin.Right })
             {

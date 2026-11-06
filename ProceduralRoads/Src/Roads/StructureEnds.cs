@@ -57,8 +57,8 @@ public static class StructureEnds
         public readonly Vector2 Up;
         /// <summary>The structure's walking surface at the edge.</summary>
         public readonly float Height;
-        /// <summary>Stairs down from the edge, each <see cref="BridgeLayout.StairRise"/> down and
-        /// <see cref="BridgeLayout.StairRun"/> out; 0 where the road runs onto the structure flush.</summary>
+        /// <summary>Stairs down from the edge, each <see cref="StairLayout.PieceRise"/> down and
+        /// <see cref="StairLayout.PieceRun"/> out; 0 where the road runs onto the structure flush.</summary>
         public readonly int Steps;
         /// <summary>The crossing is road here (a waded or raised ford, a span too short for a deck): the road runs on over
         /// it at its own height, nothing is laid and nothing held.</summary>
@@ -67,9 +67,9 @@ public static class StructureEnds
         {
             Edge = edge; Up = up; Height = height; Steps = steps; Road = road;
         }
-        public float Rise => Steps * BridgeLayout.StairRise;
+        public float Rise => Steps * StairLayout.PieceRise;
         /// <summary>Where the road ends: the foot of the stairs, or the edge.</summary>
-        public Vector2 Meet => Edge - Up * (BridgeLayout.StairRun * Steps);
+        public Vector2 Meet => Edge - Up * (StairLayout.PieceRun * Steps);
         /// <summary>The road's height there.</summary>
         public float MeetHeight => Height - Rise;
         /// <summary>The far end of the road's levelled apron, on the structure's line.</summary>
@@ -147,11 +147,11 @@ public static class StructureEnds
         float bestOff = float.MaxValue;
         for (int s = 0; s <= mostSteps; s++)
         {
-            Vector2 foot = edge - up * (BridgeLayout.StairRun * s);
-            float off = Mathf.Abs(height - s * BridgeLayout.StairRise - Arrival(foot, -up, ground));
+            Vector2 foot = edge - up * (StairLayout.PieceRun * s);
+            float off = Mathf.Abs(height - s * StairLayout.PieceRise - Arrival(foot, -up, ground));
             if (off < bestOff - 1e-3f) { best = s; bestOff = off; }
             // Past a flush end that already meets the arriving road, no stairs.
-            if (s == 0 && off <= BridgeLayout.StairRise * 0.5f) break;
+            if (s == 0 && off <= StairLayout.PieceRise * 0.5f) break;
         }
         return new End(edge, up, height, best);
     }
@@ -300,7 +300,7 @@ public static class StructureEnds
     {
         if (!natural.IsStructure) return null;
         Vector2 outward = -natural.Up;
-        float reach = Vector2.Distance(natural.Edge, bank) + natural.Steps * BridgeLayout.StairRun + ApronLength * 1.5f
+        float reach = Vector2.Distance(natural.Edge, bank) + natural.Steps * StairLayout.PieceRun + ApronLength * 1.5f
             + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap)) + 2f * PadLength;
         var path = new List<Vector2> { bank };
         for (float d = RoadPathfinder.CellSize; d <= reach + RoadPathfinder.CellSize; d += RoadPathfinder.CellSize)
@@ -472,7 +472,7 @@ public static class StructureEnds
     /// road's approach along its line.</summary>
     private static float ArrivalOnPath(List<Vector2> path, End natural, int at, int step, int bound, Func<Vector2, float> ground)
     {
-        float clear = natural.Steps * BridgeLayout.StairRun + ApronLength * 1.5f + 1f;
+        float clear = natural.Steps * StairLayout.PieceRun + ApronLength * 1.5f + 1f;
         Vector2 p = natural.Meet;
         for (int i = at; i >= 0 && i < path.Count && (step > 0 ? i <= bound : i >= bound); i += step)
         {
@@ -510,7 +510,7 @@ public static class StructureEnds
 
     /// <summary>The ground an end needs to itself for the road to come to it alone: its whole run, and a landing pad and
     /// the room to leave it (<see cref="PadLength"/> each).</summary>
-    private static float OwnGround(End natural) => natural.Steps * BridgeLayout.StairRun + 2f * PadLength;
+    private static float OwnGround(End natural) => natural.Steps * StairLayout.PieceRun + 2f * PadLength;
 
     /// <summary>
     /// One landing two structures' facing ends share, where the ground between them is too short for each end's own run-up
@@ -558,7 +558,7 @@ public static class StructureEnds
                 var removed = new List<Vector2>(points) { f.Joint, m.Joint };
                 foreach (var (e, whole) in new[] { (f, far), (m, near) })
                     for (int k = e.Steps; k < whole.Steps; k++)
-                        removed.Add(whole.Edge - whole.Up * (BridgeLayout.StairHalfRun + k * BridgeLayout.StairRun));
+                        removed.Add(whole.Edge - whole.Up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun));
                 var heights = points.Select(ground).ToList();
                 bool overWater = false;
                 float[]? raised = RoadStairRuns.Land(points, heights, removed, f.Meet, height, (x, z) => ground(new Vector2(x, z)), cap, out var others);
@@ -704,7 +704,7 @@ public static class StructureEnds
         Func<Vector2, float> ground, float cap, bool overWater, out float earthwork)
     {
         earthwork = 0f;
-        float reach = natural.Steps * BridgeLayout.StairRun + ApronLength * 1.5f + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap));
+        float reach = natural.Steps * StairLayout.PieceRun + ApronLength * 1.5f + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap));
         var points = new List<Vector2> { way[0] };
         void To(Vector2 b)
         {
@@ -717,7 +717,7 @@ public static class StructureEnds
         for (int i = k + step; k >= 0 && i >= 0 && i < path.Count && Vector2.Distance(points[points.Count - 1], end.Meet) <= reach; i += step) To(path[i]);
         var removed = new List<Vector2>();
         for (int s = end.Up == natural.Up ? end.Steps : 0; s < natural.Steps; s++)
-            removed.Add(natural.Edge - natural.Up * (BridgeLayout.StairHalfRun + s * BridgeLayout.StairRun));
+            removed.Add(natural.Edge - natural.Up * (BridgeLayout.StairHalfRun + s * StairLayout.PieceRun));
         // The road's last ApronLength to the foot, along the road as it comes, and on under the joining piece: levelled at
         // the foot's height (RoadSpatialGrid.LevelledEnds).
         removed.Add(end.Joint);

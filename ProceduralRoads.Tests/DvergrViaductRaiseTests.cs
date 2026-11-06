@@ -83,7 +83,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
             RoadCrossing c = Across(again, 0f);
             Assert.Equal(first, DvergrViaduct.RaisedSteps(c, again));
             Assert.Equal(first, DvergrViaduct.RaisedSteps(c, again));
-            Assert.Equal(DvergrViaduct.AtGrade(c, again) + first * BridgeLayout.StairRise, DvergrViaduct.DeckHeight(c, again), 3);
+            Assert.Equal(DvergrViaduct.AtGrade(c, again) + first * StairLayout.PieceRise, DvergrViaduct.DeckHeight(c, again), 3);
             var (near, far) = DvergrViaduct.Ends(c, again);
             Assert.Equal((first, first), (near.Steps, far.Steps));
             outcomes.Add(first);
@@ -137,7 +137,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
                 float price = Price(c, world), deck = DvergrViaduct.DeckHeight(c, world);
                 DvergrViaduct.RaisedShare = DvergrViaduct.DefaultRaisedShare;
                 Assert.Equal(steps, DvergrViaduct.RaisedSteps(c, world));
-                Assert.Equal(deck + steps * BridgeLayout.StairRise, DvergrViaduct.DeckHeight(c, world), 3);
+                Assert.Equal(deck + steps * StairLayout.PieceRise, DvergrViaduct.DeckHeight(c, world), 3);
                 Assert.Equal(price, Price(c, world), 3);
                 Assert.True(DvergrViaduct.Applies(c, world), DvergrViaduct.Refusal(c, world));
                 Assert.Equal(c.Center, Across(world, 0f).Center);
@@ -181,7 +181,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
             Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { viaduct }, world));
             List<StructurePiece> pieces = BridgeStructures.Solve(viaduct, world, world.GetSeed());
             foreach (StructureEnds.End stairs in new[] { near, far })
-                Assert.Contains(pieces, p => p.Kind == StructurePieceKind.Stair && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), stairs.Meet) <= BridgeLayout.StairRun);
+                Assert.Contains(pieces, p => p.Kind == StructurePieceKind.Stair && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), stairs.Meet) <= StairLayout.PieceRun);
         }
         Assert.Equal(new[] { 1, 2 }, seen.OrderBy(k => k));
     }
@@ -225,7 +225,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
             var world = new StepValley { Depth = _ => depth };
             _scope.WithWorld(world);
             RoadCrossing c = Across(world, 0f, 8f + depth / 1.2f + 2f);
-            Assert.Equal(depth, DvergrViaduct.TallestPier(c, world) - DvergrViaduct.RaisedSteps(c, world) * BridgeLayout.StairRise, 1);
+            Assert.Equal(depth, DvergrViaduct.TallestPier(c, world) - DvergrViaduct.RaisedSteps(c, world) * StairLayout.PieceRise, 1);
             world.Seed = SeedDrawing(c, drawn);
             Assert.Equal(taken, DvergrViaduct.RaisedSteps(c, world));
             Assert.True(DvergrViaduct.TallestPier(c, world) <= DvergrViaduct.PierCeiling, $"{depth} m deep, drawn {drawn}: a pier {DvergrViaduct.TallestPier(c, world):F1} m");
@@ -260,7 +260,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
         Assert.Equal(DvergrViaduct.MostRaisedSteps, DvergrViaduct.DrawnSteps(raised, world.GetSeed()));
         var (near, far) = DvergrViaduct.Ends(raised, world);
         float deck = DvergrViaduct.DeckHeight(raised, world);
-        Assert.True(deck < grade + DvergrViaduct.MostRaisedSteps * BridgeLayout.StairRise - 0.5f, $"deck {deck:F1} m, at grade {grade:F1} m");
+        Assert.True(deck < grade + DvergrViaduct.MostRaisedSteps * StairLayout.PieceRise - 0.5f, $"deck {deck:F1} m, at grade {grade:F1} m");
         Assert.Equal((deck, deck), (near.Height, far.Height));
         Assert.All(DvergrViaduct.SolveComplete(raised, world, world.GetSeed()).FindAll(p => p.Prefab == DvergrViaduct.Floor),
             p => Assert.Equal(deck - DvergrViaduct.FloorDrop, p.Position.y, 3));

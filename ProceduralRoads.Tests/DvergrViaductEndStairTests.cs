@@ -253,7 +253,7 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         // No road under the flight past its bottom step (the road runs on under the bottom step, the joining piece,
         // StructureEnds.JoinOverlap, levelled at the foot's height, and stops there).
         Vector2 across = new(-stairs.Up.y, stairs.Up.x);
-        float flight = stairs.Steps * BridgeLayout.StairRun;
+        float flight = stairs.Steps * StairLayout.PieceRun;
         Assert.True(roads.All(r => r.Points.All(p => Vector2.Dot(p - stairs.Meet, stairs.Up) <= StructureEnds.JoinOverlap + 0.3f
             || Vector2.Dot(p - stairs.Meet, stairs.Up) > flight + 0.5f || Mathf.Abs(Vector2.Dot(p - stairs.Meet, across)) > 3f)), "road under the flight");
         Assert.True(roads.All(r => r.Points.Select((p, i) => (p, h: r.Heights[i])).All(x => !stairs.UnderTheJoint(x.p, 1.5f) || Mathf.Abs(x.h - stairs.MeetHeight) <= 0.05f)), "road under the bottom step not at the foot's height");
@@ -281,7 +281,7 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         var (near, far) = DvergrViaduct.Ends(probe, world);
         Assert.Equal(1, far.Steps);
         Assert.Equal(0, near.Steps);
-        Assert.Equal(StructureEnds.ApronLength + 1f * BridgeLayout.StairRun, Vector2.Distance(far.Apron, far.Edge), 3);
+        Assert.Equal(StructureEnds.ApronLength + 1f * StairLayout.PieceRun, Vector2.Distance(far.Apron, far.Edge), 3);
         Vector2 dir = probe.Direction;
         Vector2 Mid(StructureEnds.End e) => e.Meet - e.Up * (StructureEnds.ApronLength * 0.5f);
         void Brought(List<Vector2> path, Vector2[] past, string what)
@@ -330,7 +330,7 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         {
             var (plan, i) = roads.SelectMany(r => r.Points.Select((p, k) => (r, k))).OrderBy(x => Vector2.Distance(x.r.Points[x.k], bank)).First();
             Assert.True(Vector2.Distance(plan.Points[i], bank) <= 2f, $"the road does not come to the bank at {bank}");
-            Assert.True(Mathf.Abs(plan.Heights[i] - deck) <= BridgeLayout.StairRise * 0.5f, $"road at {plan.Heights[i]:F2} against the deck at {deck:F2}");
+            Assert.True(Mathf.Abs(plan.Heights[i] - deck) <= StairLayout.PieceRise * 0.5f, $"road at {plan.Heights[i]:F2} against the deck at {deck:F2}");
         }
     }
 }

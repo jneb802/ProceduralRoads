@@ -1110,6 +1110,7 @@ public static partial class RoadStairRuns
                 }
             }
             int beyond = plan.Reversed ? to + 1 : start - 1;
+            bool roadPast = beyond >= 0 && beyond < path.Count;
             // A foot set off from its road's end's ring moved down toward its road takes the road's end with it (RoadEndAt), only
             // where the road's end moved so still meets it on a ring, the road's travel read into the moved end: the ring judges
             // it, as it judges any foot, straight on or turned (no straight/turned split; held to straight on, the first of a
@@ -1125,7 +1126,7 @@ public static partial class RoadStairRuns
                 return !there.Intrudes(moved);
             }
             // The plan is this road's own (PlanCache hands out copies), so it is edited without a lock.
-            if (existing == null && beyond >= 0 && beyond < path.Count && !valleyFirst && meet == null)
+            if (existing == null && roadPast && !valleyFirst && meet == null)
             {
                 Vector3? lowered = plan.FootLowered > 0 ? plan.Foot : null;
                 if (lowered == null)
@@ -1149,6 +1150,7 @@ public static partial class RoadStairRuns
             // from it where the road keeps out of it (RoadEndPast; its top's likewise, once every staircase is laid). A staircase
             // an earlier road laid is met where that road met it.
             (Vector2, float)? ownFoot = null;
+            bool ownFootEnd = !valleyFirst && !(meet != null && !plan.Reversed);
             if (existing != null)
             {
                 Vector2 Met(Vector2 near) => new[] { existing.FromMeet, existing.ToMeet }.Where(m => m.HasValue).Select(m => m!.Value)
@@ -1157,7 +1159,7 @@ public static partial class RoadStairRuns
             }
             else
             {
-                if (beyond >= 0 && beyond < path.Count && !valleyFirst && !(meet != null && !plan.Reversed))
+                if (roadPast && ownFootEnd)
                 {
                     ownFoot = (footAt, footHeight);
                     footAt = plan.RingStart.HasValue ? RoadEndAt(plan, footAt)
@@ -1169,7 +1171,7 @@ public static partial class RoadStairRuns
                 : new RoadStairSpan { FromIndex = start, ToIndex = to, FromPoint = footAt, FromHeight = footHeight, ToPoint = end, ToHeight = endHeight, Kit = kit, Plan = plan };
             span.Existing = existing != null;
             span.OwnFoot = ownFoot;
-            span.NoRoadAtFoot = existing == null && (beyond < 0 || beyond >= path.Count) && !valleyFirst && !(meet != null && !plan.Reversed);
+            span.NoRoadAtFoot = existing == null && !roadPast && ownFootEnd;
             span.Merged = start != from;
             // Its top the crest the staircase before it met, or the one before's met by this one: no road at it.
             span.TopMet = ridgeFirst || meet != null && plan.Reversed;

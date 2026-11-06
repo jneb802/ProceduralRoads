@@ -25,7 +25,7 @@ public partial class SitesFirstTests
         LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
         var finder = new RoadPathfinder(sea) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f };
         SetPathfinder(finder);
-        float ring = RoadSiteProtection.RadiusAt(site.Centre, 10f) + 4f * 0.5f + 2f;
+        float ring = RoadNetworkGenerator.KeepOutEdge(site.Centre, 10f, 4f, placed: true);
         Vector2 LeadIn(Vector2 a) => a + (a - site.Centre).normalized * RoadNetworkGenerator.LeadInLength;
         Vector2 aim = RoadNetworkGenerator.DoorsOf(site.Centre, 10f, 4f).OrderBy(d => d.Price).First().At;
 

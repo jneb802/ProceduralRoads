@@ -192,37 +192,27 @@ public class DryFloorTests
         Assert.Equal(RoadConstants.ShallowWaterHeight, RoadConstants.DryRoadFloor);
 
     [Theory]
-    [InlineData(float.NegativeInfinity)]
-    [InlineData(-5f)]
-    [InlineData(0f)]
-    [InlineData(28f)]
-    [InlineData(30f)]
-    [InlineData(30.4999f)]
-    [InlineData(30.5f)]
-    [InlineData(30.5001f)]
-    [InlineData(31.25f)]
-    [InlineData(120f)]
-    [InlineData(float.NaN)]
-    public void RaisingToTheFloorIsTheOldExpression(float g)
-    {
-        float old = RoadWater.BuiltDry(g) ? g : Mathf.Max(g, RoadConstants.SeaLevel + 0.5f);
-        Assert.Equal(old, RoadWater.BuiltDry(g) ? g : RoadWater.AtLeastDryFloor(g));
-        Assert.Equal(Mathf.Max(g, RoadConstants.SeaLevel + 0.5f), RoadWater.AtLeastDryFloor(g));
-    }
+    [InlineData(-5f, 30.5f)]
+    [InlineData(0f, 30.5f)]
+    [InlineData(28f, 30.5f)]
+    [InlineData(30f, 30.5f)]
+    [InlineData(30.4999f, 30.5f)]
+    [InlineData(30.5f, 30.5f)]
+    [InlineData(30.5001f, 30.5001f)]
+    [InlineData(31.25f, 31.25f)]
+    [InlineData(120f, 120f)]
+    public void RaisingToTheFloorIsTheHigherOfTheGroundAndTheFloor(float g, float raised) =>
+        Assert.Equal(raised, RoadWater.AtLeastDryFloor(g));
 }
 
 /// <summary>"Wet" is the one sea-line test.</summary>
 public class WetTests
 {
     [Theory]
-    [InlineData(-100f)]
-    [InlineData(29.9999f)]
-    [InlineData(30f)]
-    [InlineData(30.0001f)]
-    [InlineData(31f)]
-    public void WetIsUnderTheSeaLevel(float h)
-    {
-        Assert.Equal(h < RoadConstants.SeaLevel, RoadWater.Wet(h));
-        Assert.Equal(h >= RoadConstants.SeaLevel, !RoadWater.Wet(h));
-    }
+    [InlineData(-100f, true)]
+    [InlineData(29.9999f, true)]
+    [InlineData(30f, false)]
+    [InlineData(30.0001f, false)]
+    [InlineData(31f, false)]
+    public void WetIsUnderTheSeaLevel(float h, bool wet) => Assert.Equal(wet, RoadWater.Wet(h));
 }

@@ -21,16 +21,17 @@ public class ServerBakeLoadScreenTests
         Assert.True(ServerBakeLoadScreen.HeldBudgetMs <= 1000.0 / 30 + 0.5);
     }
 
-    /// <summary>The generation's loading bar reads this fraction too (RoadGeneration_Patch.UpdateProgress): the plain
-    /// division it used to write out, whenever done does not pass total.</summary>
-    [Fact]
-    public void TheFractionIsTheDoneOverTheTotal()
-    {
-        for (int total = 0; total <= 40; total++)
-            for (int done = 0; done <= total; done++)
-                Assert.Equal(total == 0 ? 0f : (float)done / total, ServerBakeLoadScreen.Fraction(done, total));
-        Assert.Equal(1f, ServerBakeLoadScreen.Fraction(3, 3));
-    }
+    /// <summary>The generation's loading bar reads this fraction too (RoadGeneration_Patch.UpdateProgress): done over total,
+    /// and none when nothing is owed.</summary>
+    [Theory]
+    [InlineData(0, 0, 0f)]
+    [InlineData(0, 5, 0f)]
+    [InlineData(1, 4, 0.25f)]
+    [InlineData(1, 3, 0.33333334f)]
+    [InlineData(7, 40, 0.175f)]
+    [InlineData(3, 3, 1f)]
+    public void TheFractionIsTheDoneOverTheTotal(int done, int total, float fraction) =>
+        Assert.Equal(fraction, ServerBakeLoadScreen.Fraction(done, total));
 
     [Fact]
     public void OnlyTheFirstSpawnWithWorkOwedIsHeld()

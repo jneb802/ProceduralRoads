@@ -33,10 +33,13 @@ public static partial class StairLayout
 
     internal const float SurfaceSpacing = CutSpacing / 2f;
 
+    /// <summary>The walking height <paramref name="along"/> metres on from a piece's back edge: a stair rises along it.</summary>
+    internal static float WalkHeight(bool stair, float height, float along) => height + (stair ? PieceRise * along / PieceRun : 0f);
+
     private static Vector3 WalkPoint(bool stair, Vector2 back, Vector2 dir, Vector2 right, float height, float along, float side)
     {
         Vector2 p = back + dir * along + right * side;
-        return new Vector3(p.x, height + (stair ? PieceRise * along / PieceRun : 0f), p.y);
+        return new Vector3(p.x, WalkHeight(stair, height, along), p.y);
     }
 
     /// <summary>The complete walked surface, its boundary included, whether or not cuts were emitted.

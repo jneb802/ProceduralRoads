@@ -976,7 +976,7 @@ public static class ServerTerrainBake
                     Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);
                     return Outcome.Waiting;
                 }
-                if (!live.m_nview.IsOwner())
+                if (!RoadTerrainModifier.TakeIfReleased(live.m_nview))
                 {
                     // Somebody else's to write; ours only once they let go.
                     Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);

@@ -1,3 +1,4 @@
+using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
@@ -7,6 +8,8 @@ public static class RoadConstants
 {
     public const float ZoneSize = 64f;
     public const float HalfZoneSize = ZoneSize / 2f;
+    /// <summary>The zone a world coordinate falls in along one axis: the game's ZoneSystem.GetZone.</summary>
+    public static int ZoneIndex(float coordinate) => Mathf.FloorToInt((coordinate + HalfZoneSize) / ZoneSize);
     public const float SeaLevel = 30f;
     /// <summary>No road on land (and no raised shallow ford) stands lower than this: a cut into
     /// ground at the water line would flood (measured: a swamp road cut 4.8 m into a
@@ -194,7 +197,7 @@ public static class RoadConstants
     public const float HeightFitRidgeMetres = 0.02f;
     public const float HeightFitMaxGradient = 1.5f;
     
-    public const float SpatialGridSize = 64f;
+    public const float SpatialGridSize = ZoneSize;
     public const float DefaultRoadWidth = 4f;
     public const float EdgeFalloffStart = 0.6f;
     public const int HeightSmoothingWindow = 41;

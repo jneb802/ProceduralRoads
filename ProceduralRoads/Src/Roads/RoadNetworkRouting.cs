@@ -58,7 +58,7 @@ public static partial class RoadNetworkGenerator
             Vector2 from=Ground(a),to=Ground(b);
             if (OpenSeaOnLine(world,from,to)) return null;
             var pricer = RoadParallel.PricingWorkers > 1 ? pricers.Value! : finder;
-            var path=pricer.FindPath(from,to,System.Math.Max(1000,RoadPathfinder.MaxIterations/2));
+            var path=pricer.FindPath(from,to,RoadPathfinder.PricingIterations);
             float? cost = path != null && path.Count>=2 ? pricer.LastPathCost : null;
             if (cost is float c && !float.IsNaN(c) && !float.IsInfinity(c)) prices[(a.Position, b.Position)] = c;
             return cost;

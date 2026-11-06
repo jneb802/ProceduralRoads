@@ -15,6 +15,9 @@ public class RoadPathfinder
     public const float CellSize = RoadConstants.PathfindingCellSize;
     public static int MaxIterations = RoadConstants.PathfindingMaxIterations;
 
+    /// <summary>The iteration limit of a pricing search (half the building budget, at least 1000).</summary>
+    internal static int PricingIterations => System.Math.Max(1000, MaxIterations / 2);
+
     /// <summary>
     /// Price of steepness per step, times the step's grade squared. At 10 an
     /// 8 m step at 0.33 cost about 1.1 over its 8 for length, so a straight

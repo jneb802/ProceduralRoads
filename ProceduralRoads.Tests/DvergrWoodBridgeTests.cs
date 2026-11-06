@@ -418,7 +418,7 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         var (_, low) = Low();
         RoadCrossing ford = SpanFord();
         float deck = BridgeLayout.SpanDeckHeight(ford, low);
-        Assert.Equal(deck, DvergrWoodBridge.DeckHeight(ford, low));
+        Assert.Equal(deck, BridgeLayout.WoodDeckHeight(ford, low));
         var dvergr = BridgeStructures.Solve(ford, low, 1);
         Assert.Contains(dvergr, p => p.Prefab == DvergrWoodBridge.Plank && p.Kind == StructurePieceKind.Deck);
         Assert.All(dvergr, p => Assert.StartsWith("dvergrprops_", p.Prefab));
@@ -472,7 +472,7 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         var w = new MistRiver { Bank = 50f };
         _scope.WithWorld(w);
         RoadCrossing c = River();
-        float deck = DvergrWoodBridge.DeckHeight(c, w);
+        float deck = BridgeLayout.WoodDeckHeight(c, w);
         float length = BridgeLayout.BuiltLength(c.Width);
         Assert.True(deck - w.Bed > BridgeLayout.RailedMaxColumn, $"deck {deck:F1} m over a {w.Bed:F0} m bed");
         foreach (bool complete in new[] { true, false })

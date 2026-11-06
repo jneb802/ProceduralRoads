@@ -210,7 +210,7 @@ public static class ServerTerrainBake
         foreach (ServerBakePlanner.Compiler c in facts)
         {
             string owner = c.Owner == 0 ? "nobody" : c.Owner == me ? "this peer" : c.OwnerActiveHere ? "a peer in the zone" : "a peer elsewhere";
-            string current = c.AppliedVersion != 0 && (c.AppliedVersion == RoadSpatialGrid.RoadNetworkVersion || c.UnchangedByAppends) ? " (current)" : "";
+            string current = c.Current ? " (current)" : "";
             described.Add($"stamp {c.AppliedVersion}{current}, owned by {owner}");
         }
         string next = points == 0

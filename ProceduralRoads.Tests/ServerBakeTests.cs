@@ -70,7 +70,7 @@ public class ServerBakeTests
 
         // Already carrying this network: nothing to do, loaded or not.
         Assert.Equal(ServerBakePlanner.Action.AlreadyCurrent,
-            Decide(true, true, Compilers(new ServerBakePlanner.Compiler(Version, 0, false))));
+            Decide(true, true, Compilers(new ServerBakePlanner.Compiler(Version, 0, false, current: true))));
         // Two compilers are left alone, loaded here or saved.
         foreach (bool loadedHere in new[] { true, false })
             Assert.Equal(ServerBakePlanner.Action.DuplicateCompilers,
@@ -88,7 +88,7 @@ public class ServerBakeTests
     public void AStampedCompilerIsLeftAloneAndAnOldStampIsRewritten()
     {
         Assert.Equal(ServerBakePlanner.Action.AlreadyCurrent,
-            Decide(true, false, Compilers(new ServerBakePlanner.Compiler(Version, 0, false))));
+            Decide(true, false, Compilers(new ServerBakePlanner.Compiler(Version, 0, false, current: true))));
         Assert.Equal(ServerBakePlanner.Action.WriteSavedCompiler,
             Decide(true, false, Compilers(new ServerBakePlanner.Compiler(Version - 1, 0, false))));
     }
@@ -150,7 +150,7 @@ public class ServerBakeTests
             Decide(true, false, Compilers(new ServerBakePlanner.Compiler(0, Me, ownerActiveHere: true))));
         // Already current is current whoever owns it.
         Assert.Equal(ServerBakePlanner.Action.AlreadyCurrent,
-            Decide(true, false, Compilers(new ServerBakePlanner.Compiler(Version, 7, ownerActiveHere: true))));
+            Decide(true, false, Compilers(new ServerBakePlanner.Compiler(Version, 7, ownerActiveHere: true, current: true))));
     }
 
     [Fact]

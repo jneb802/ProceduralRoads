@@ -147,15 +147,16 @@ public static class ServerBakePlanner
         /// <summary>Whether that owner is connected and has the zone in its active area.</summary>
         public readonly bool OwnerActiveHere;
 
-        /// <summary>The saved stamp is an ancestor, with no new road points in this zone.</summary>
-        public readonly bool UnchangedByAppends;
+        /// <summary>It carries the current roads (<see cref="RoadTerrainModifier.CarriesCurrentRoads"/>): stamped
+        /// with the network's version, or with an ancestor of it and no new road points in this zone.</summary>
+        public readonly bool Current;
 
-        public Compiler(int appliedVersion, long owner, bool ownerActiveHere, bool unchangedByAppends = false)
+        public Compiler(int appliedVersion, long owner, bool ownerActiveHere, bool current = false)
         {
             AppliedVersion = appliedVersion;
             Owner = owner;
             OwnerActiveHere = ownerActiveHere;
-            UnchangedByAppends = unchangedByAppends;
+            Current = current;
         }
     }
 
@@ -177,7 +178,7 @@ public static class ServerBakePlanner
             return loadedHere ? Action.LeaveToLiveZone : Action.CreateCompiler;
 
         Compiler compiler = compilers[0];
-        if (compiler.AppliedVersion == networkVersion || (compiler.AppliedVersion != 0 && compiler.UnchangedByAppends))
+        if (compiler.Current)
             return Action.AlreadyCurrent;
         // A live compiler of another owner is never taken (its owner may be
         // editing it); a saved one is taken unless its owner is active here.

@@ -4474,9 +4474,8 @@ public static partial class RoadNetworkGenerator
     }
 
     /// <summary>The ground a placed place's road is judged on (RoadStairRuns.RidgeToFoot, LowerEnd): the place's placed ground,
-    /// the natural ground past its grid.</summary>
-    private static Func<Vector2, float> PlacedGround(PlacedSite site) =>
-        q => site.Ground(q.x, q.y) is float h && h < PlacedSiteGround.OffGrid ? h : NaturalGround(q);
+    /// the natural ground past its grid (<see cref="PlacedSite.Ground"/> already falls back to it).</summary>
+    private static Func<Vector2, float> PlacedGround(PlacedSite site) => q => site.Ground(q.x, q.y);
 
     /// <summary>
     /// The way onto a placed place's landing from lower down the road, where the road to its end is built as a ridge or a

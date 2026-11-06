@@ -416,8 +416,11 @@ public static class DvergrViaduct
     /// </summary>
     public static bool Applies(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world) == null;
 
-    /// <summary><see cref="Applies(RoadCrossing, WorldGenerator)"/> under another pier ceiling.</summary>
-    public static bool Applies(RoadCrossing crossing, WorldGenerator world, float ceiling) => Refusal(crossing, world, ceiling) == null;
+    /// <summary>Whether a crossing saved before kits were recorded (format 1-2) was laid as a viaduct, by the rule it was laid
+    /// under: the former pier ceiling (<see cref="FormerPierCeiling"/>) and its centre's biome, not today's Mistlands share
+    /// (BridgeStructures.InMistlands). A saved network is read as it was laid, never re-decided.</summary>
+    public static bool AppliedFormerly(RoadCrossing crossing, WorldGenerator world) =>
+        Refusal(crossing, world, FormerPierCeiling, formerBiome: true) == null;
 
     /// <summary>Whether a crossing stands under the viaduct's floor: its deck under <see cref="MinClearance"/> over the
     /// ground or water, or its tallest pier under <see cref="MinViaductPier"/>, the same two tests <see cref="Refusal"/>
@@ -433,11 +436,14 @@ public static class DvergrViaduct
     /// raise (<see cref="RaisedSteps"/>) is decided after it and keeps within it, so it never changes the answer.</summary>
     public static string? Refusal(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world, PierCeiling);
 
-    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling)
+    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling, bool formerBiome = false)
     {
         if (crossing == null || world == null) return "no crossing";
         if (crossing.Kind != CrossingKind.Bridge) return "a ford";
-        if (!BridgeStructures.InMistlands(crossing, world)) return "not in the Mistlands";
+        bool mistlands = formerBiome
+            ? world.GetBiome(crossing.Center.x, crossing.Center.y) == Heightmap.Biome.Mistlands
+            : BridgeStructures.InMistlands(crossing, world);
+        if (!mistlands) return "not in the Mistlands";
         return DeckRefusal(crossing, world, ceiling, AtGrade(crossing, world));
     }
 

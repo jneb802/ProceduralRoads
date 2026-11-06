@@ -953,7 +953,7 @@ public static class RoadNetworkPersistence
                 {
                     if (version >= 3) crossing.Kit = BridgeStructures.Kit.Undecided;
                     else if (world != null)
-                        crossing.Kit = DvergrViaduct.Applies(crossing, world, DvergrViaduct.FormerPierCeiling)
+                        crossing.Kit = DvergrViaduct.AppliedFormerly(crossing, world)
                             ? BridgeStructures.Kit.DvergrViaduct : BridgeStructures.Kit.Undecided;
                 }
                 if (version >= 4)

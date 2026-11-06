@@ -174,7 +174,7 @@ public sealed class DvergrViaductReloadTests : IDisposable
         {
             world.Bank = bank;
             if (!DvergrViaduct.Applies(probe, world)) continue;
-            if (DvergrViaduct.Applies(probe, world, DvergrViaduct.FormerPierCeiling)) under ??= bank;
+            if (DvergrViaduct.AppliedFormerly(probe, world)) under ??= bank;
             else between ??= bank;
         }
         Assert.True(between.HasValue && under.HasValue, "no river whose viaduct the ceiling's raise decides");
@@ -187,6 +187,33 @@ public sealed class DvergrViaductReloadTests : IDisposable
             Assert.Equal(BridgeStructures.Kit.Undecided, loaded[0].Kit);
         }
         world.Bank = under!.Value;
+        foreach (int version in new[] { 1, 2 })
+        {
+            var loaded = new List<RoadCrossing>();
+            Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(OldRecord(version, world.Bank, 0), loaded, world));
+            Assert.Equal(BridgeStructures.Kit.DvergrViaduct, Assert.Single(loaded).Kit);
+        }
+    }
+
+    /// <summary>A record from before kits were stored (formats 1 and 2) is read by the biome rule it was laid under, its
+    /// centre's biome, not today's Mistlands share: a bridge whose middle is Mistlands but under the share of its length still
+    /// loads as the viaduct it was laid as.</summary>
+    [Fact]
+    public void AnOldRecordKeepsTheBiomeRuleItWasLaidUnder()
+    {
+        var world = new DvergrViaductTests.MistRiver();
+        RoadCrossing probe = DvergrViaductTests.River();
+        float? laid = null;
+        for (float bank = 30f; bank <= 70f && laid == null; bank += 0.5f)
+        {
+            world.Bank = bank;
+            if (DvergrViaduct.AppliedFormerly(probe, world)) laid = bank;
+        }
+        Assert.True(laid.HasValue, "no river laid as a viaduct under the former rule");
+        world.Bank = laid!.Value;
+        world.BiomeWithin = 5f;
+        Assert.False(DvergrViaduct.Applies(probe, world), "today's share rule would not lay it");
+        Assert.True(DvergrViaduct.AppliedFormerly(probe, world), "its centre is Mistlands");
         foreach (int version in new[] { 1, 2 })
         {
             var loaded = new List<RoadCrossing>();

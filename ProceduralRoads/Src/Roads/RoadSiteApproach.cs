@@ -166,10 +166,6 @@ public static class RoadSiteApproach
         for (int margin = 1; best == null && desiredHeight.HasValue && oldMismatch > Level && radius + margin < farthest; margin += 4)
         {
             const float step = 4f;
-            var directions = new[] { new Vector2i(1,0), new Vector2i(-1,0), new Vector2i(0,1), new Vector2i(0,-1),
-                new Vector2i(1,1),new Vector2i(1,-1),new Vector2i(-1,1),new Vector2i(-1,-1),
-                new Vector2i(2,1),new Vector2i(2,-1),new Vector2i(-2,1),new Vector2i(-2,-1),
-                new Vector2i(1,2),new Vector2i(1,-2),new Vector2i(-1,2),new Vector2i(-1,-2) };
             var frontier = new SortedSet<(float cost,int x,int z)>();
             var costs = new Dictionary<Vector2i,float>();
             var parents = new Dictionary<Vector2i,Vector2i>();
@@ -200,7 +196,7 @@ public static class RoadSiteApproach
                     if (worst <= Mathf.Max(2f,oldWorst+oldMismatch*0.5f) && score < bestScore && score <= oldScore*0.8f)
                     { best=candidate; bestScore=score; }
                 }
-                foreach (var direction in directions)
+                foreach (var direction in RoadPathfinder.Directions)
                 {
                     var next=new Vector2i(key.x+direction.x,key.y+direction.y);
                     Vector2 there=Point(next), delta=there-here;

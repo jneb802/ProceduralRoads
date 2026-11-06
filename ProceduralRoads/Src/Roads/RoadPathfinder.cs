@@ -230,7 +230,7 @@ public class RoadPathfinder
     /// dear. Nothing may buy its way past this one.</summary>
     public const float Impassable = float.PositiveInfinity;
 
-    private static readonly Vector2Int[] Directions = new Vector2Int[]
+    internal static readonly Vector2Int[] Directions = new Vector2Int[]
     {
         new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
         new Vector2Int(1, 1), new Vector2Int(-1, 1), new Vector2Int(1, -1), new Vector2Int(-1, -1),

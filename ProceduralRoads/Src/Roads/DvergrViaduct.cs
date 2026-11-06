@@ -381,9 +381,9 @@ public static class DvergrViaduct
     {
         Footing => (1f, 1f, 4f),
         Band or Block => (1f, 1f, 1f),
-        Filler or Corbel or Arch => (1f, 0.5f, 1f),
-        // Rip: blackmarble_outcorner's collider is 2 x 2 x 2 (was taken as 1 x 1 x 2).
-        CorbelCorner => (1f, 1f, 1f),
+        Filler => (1f, 0.5f, 1f),
+        // The collider tables are one: these are BuriedPieces' bounds (Rip: blackmarble_outcorner's is 2 x 2 x 2).
+        Corbel or CorbelCorner or Arch => HalfOf(prefab),
         // Rip: iron_floor_2x2 is 0.1 m thick and iron_wall_2x2 0.1 m (was taken as 0.2).
         Floor => (1f, 1f, 0.05f),
         Screen => (0.05f, 1f, 1f),
@@ -391,12 +391,18 @@ public static class DvergrViaduct
         HeadLeft or HeadRight => (1f, 1f, 1f),
         // Origin at the foot (Rip: y 0..1): only the stairs' own run (BridgeLayout.LayEndStairs) lays it, never Add.
         StepPrefab => (1f, 1f, 0.5f),
-        // The end stairs' parapet (StairRailing.LayParapet), laid along the deck: base_1 2 x 2 x 1 (Rip: its sloped face
-        // taken as its box), its half course 2 x 1 x 1.
-        StairRailing.ParapetPrefab => (1f, 0.5f, 1f),
-        StairRailing.ParapetHalfCoursePrefab => (1f, 0.5f, 0.5f),
+        // The end stairs' parapet (StairRailing.LayParapet), laid along the deck: base_1 and its half course.
+        StairRailing.ParapetPrefab or StairRailing.ParapetHalfCoursePrefab => HalfOf(prefab),
         _ => (0.5f, 0.5f, 0.5f),
     };
+
+    /// <summary>Half-extents on the deck's frame (along the deck is the prefab's x, across it z) of a piece whose collider
+    /// <see cref="BuriedPieces"/> knows.</summary>
+    private static (float u, float v, float y) HalfOf(string prefab)
+    {
+        BuriedPieces.BoundsOf(prefab, out Vector3 min, out Vector3 max);
+        return ((max.x - min.x) / 2f, (max.z - min.z) / 2f, (max.y - min.y) / 2f);
+    }
 
     // --------------------------------------------------------------- choice
 

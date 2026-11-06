@@ -220,7 +220,7 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
                 string prefab = reader.ReadString();
                 var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                 float pitch = reader.ReadSingle(), yaw = reader.ReadSingle(), roll = reader.ReadSingle(), health = reader.ReadSingle();
-                if (prefab.Length > 100 || !Enum.IsDefined(typeof(StructurePieceKind), kind) ||
+                if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !Enum.IsDefined(typeof(StructurePieceKind), kind) ||
                     !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) || !ManualRoadDraft.IsFinite(pos.y) ||
                     !ManualRoadDraft.IsFinite(pitch) || !ManualRoadDraft.IsFinite(yaw) || !ManualRoadDraft.IsFinite(roll) ||
                     !ManualRoadDraft.IsFinite(health) || health < 0f || health > 1f)

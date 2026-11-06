@@ -73,10 +73,13 @@ public static class StructureAppendQueue
             foreach (var piece in entry.Value) if (keys.Add(Key(piece))) pieces.Add(piece);
         }
     }
+    /// <summary>The saved record's format.</summary>
+    private const int Format = 1;
+
     public static byte[] Serialize()
     {
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
-        writer.Write(1); writer.Write(pending.Count);
+        writer.Write(Format); writer.Write(pending.Count);
         foreach (var entry in pending)
         {
             writer.Write((int)entry.Key.x); writer.Write((int)entry.Key.y); writer.Write(entry.Value.Count);
@@ -94,7 +97,7 @@ public static class StructureAppendQueue
         if (bytes != null && bytes.Length > 0)
         {
             using var stream = new MemoryStream(bytes); using var reader = new BinaryReader(stream);
-            if (reader.ReadInt32() != 1) throw new InvalidDataException("Unknown bridge append data version.");
+            if (reader.ReadInt32() != Format) throw new InvalidDataException("Unknown bridge append data version.");
             int zones = reader.ReadInt32();
             if (zones < 0 || zones > 10000) throw new InvalidDataException("Invalid bridge append zone count.");
             int total = 0;
@@ -109,7 +112,7 @@ public static class StructureAppendQueue
                     string prefab = reader.ReadString();
                     var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     float pitch = reader.ReadSingle(), yaw = reader.ReadSingle(), roll = reader.ReadSingle(), health = reader.ReadSingle();
-                    if (prefab.Length > 100 || !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) ||
+                    if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) ||
                         !ManualRoadDraft.IsFinite(pos.y) || !ManualRoadDraft.IsFinite(pitch) || !ManualRoadDraft.IsFinite(yaw) ||
                         !ManualRoadDraft.IsFinite(roll) || !ManualRoadDraft.IsFinite(health) || health < 0 || health > 1)
                         throw new InvalidDataException("Invalid pending bridge piece.");

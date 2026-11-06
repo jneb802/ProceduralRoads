@@ -356,6 +356,8 @@ public static class PlacedSites
 
     public static void Load(IEnumerable<PlacedSiteRecord> records) { foreach (var r in records) Remember(r); }
 
+    private const int Format = 1;
+
     /// <summary>
     /// The places placed before their roads, saved with the network: format 1, then their records as <see cref="Write"/>
     /// writes them. A load remembers them again (<see cref="Restore"/>) and the generator makes them ready
@@ -366,7 +368,7 @@ public static class PlacedSites
     {
         using var stream = new System.IO.MemoryStream();
         using var writer = new System.IO.BinaryWriter(stream);
-        writer.Write(1);
+        writer.Write(Format);
         writer.Write(Write(All));
         return stream.ToArray();
     }
@@ -381,7 +383,7 @@ public static class PlacedSites
         {
             using var reader = new System.IO.BinaryReader(new System.IO.MemoryStream(data));
             int format = reader.ReadInt32();
-            if (format != 1) throw new System.IO.InvalidDataException($"placed places format {format}");
+            if (format != Format) throw new System.IO.InvalidDataException($"placed places format {format}");
             records = Read(reader.ReadString());
         }
         Reset();

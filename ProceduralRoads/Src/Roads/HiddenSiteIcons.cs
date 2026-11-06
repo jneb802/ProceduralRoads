@@ -127,13 +127,16 @@ public static class HiddenSiteIcons
         return shown;
     }
 
+    /// <summary>The saved record's format.</summary>
+    private const int Format = 1;
+
     public static byte[] Serialize()
     {
         using var stream = new MemoryStream();
         using var writer = new BinaryWriter(stream);
         lock (s_gate)
         {
-            writer.Write(1);
+            writer.Write(Format);
             writer.Write(s_hidden.Count);
             foreach (Vector3 p in s_hidden.Values) { writer.Write(p.x); writer.Write(p.y); writer.Write(p.z); }
         }
@@ -149,7 +152,7 @@ public static class HiddenSiteIcons
         {
             using var reader = new BinaryReader(new MemoryStream(data));
             int format = reader.ReadInt32();
-            if (format != 1) throw new InvalidDataException($"hidden site icons format {format}");
+            if (format != Format) throw new InvalidDataException($"hidden site icons format {format}");
             int count = reader.ReadInt32();
             if (count < 0 || count > 100000) throw new InvalidDataException($"hidden site icons count {count}");
             for (int i = 0; i < count; i++) loaded.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));

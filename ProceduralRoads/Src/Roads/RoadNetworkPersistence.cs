@@ -138,6 +138,16 @@ public static class RoadNetworkPersistence
         }
     }
 
+    /// <summary>The metadata object a save writes to, claimed for this session so the change is persisted to the save file
+    /// (null when there is none).</summary>
+    private static ZDO? ClaimedMetadata()
+    {
+        ZDO? zdo = GetMetadataZDO();
+        if (zdo != null && !zdo.IsOwner())
+            zdo.SetOwner(ZDOMan.instance.m_sessionID);
+        return zdo;
+    }
+
     /// <summary>Set a record, or write back the one kept unread (<see cref="ReadOrKeep"/>).</summary>
     private static void WriteRecord(ZDO zdo, int key, Func<byte[]> current) =>
         zdo.Set(key, s_kept.TryGetValue(key, out var kept) ? kept.bytes : current());
@@ -203,19 +213,12 @@ public static class RoadNetworkPersistence
     {
         Log.LogDebug($"[SAVE] SaveGlobalRoadData called");
 
-        ZDO? metadataZdo = GetMetadataZDO();
+        ZDO? metadataZdo = ClaimedMetadata();
 
         if (metadataZdo == null)
         {
             Log.LogError("[SAVE] No metadata ZDO available! EnsureMetadataInstance should have been called after road generation.");
             return;
-        }
-
-        // Claim ownership so our changes are persisted to the save file
-        if (!metadataZdo.IsOwner())
-        {
-            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
-            Log.LogDebug($"[SAVE] Claimed ownership of metadata ZDO");
         }
 
         Log.LogDebug($"[SAVE] Using metadata ZDO: m_uid={metadataZdo.m_uid}, prefab={metadataZdo.GetPrefab()}, owner={metadataZdo.GetOwner()}");
@@ -268,14 +271,12 @@ public static class RoadNetworkPersistence
     /// </summary>
     public static void SaveBridgeZones(IReadOnlyCollection<Vector2s> bridgeZones, IReadOnlyList<RoadCrossing>? roadCrossings = null)
     {
-        ZDO? metadataZdo = GetMetadataZDO();
+        ZDO? metadataZdo = ClaimedMetadata();
         if (metadataZdo == null)
         {
             Log.LogWarning("[SAVE] No metadata ZDO: bridge zones not saved");
             return;
         }
-        if (!metadataZdo.IsOwner())
-            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
         // The crossings, when given: the kits chosen as their bridges were built (BridgeStructures.ChooseKit).
         if (roadCrossings != null)
             WriteRecord(metadataZdo, RoadCrossingsHash, () => SerializeRoadCrossings(roadCrossings));
@@ -292,28 +293,21 @@ public static class RoadNetworkPersistence
     public static void SaveClearedZones(int networkVersion, IReadOnlyCollection<Vector2s> zones,
         IReadOnlyDictionary<Vector2s, int>? through = null)
     {
-        ZDO? metadataZdo = GetMetadataZDO();
+        ZDO? metadataZdo = ClaimedMetadata();
         if (metadataZdo == null)
         {
             Log.LogWarning("[SAVE] No metadata ZDO: cleared zones not saved");
             return;
         }
-        if (!metadataZdo.IsOwner())
-            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
 
         WriteRecord(metadataZdo, ClearedZonesHash, () =>
         {
             using var ms = new MemoryStream();
             using var writer = new BinaryWriter(ms);
             bool owed = through != null && through.Count > 0;
-            writer.Write(owed ? 2 : 1);
+            writer.Write(owed ? ClearedZonesOwedFormat : ClearedZonesFormat);
             writer.Write(networkVersion);
-            writer.Write(zones.Count);
-            foreach (Vector2s zone in zones)
-            {
-                writer.Write((int)zone.x);
-                writer.Write((int)zone.y);
-            }
+            WriteZones(writer, zones);
             if (owed)
             {
                 writer.Write(through!.Count);
@@ -337,18 +331,14 @@ public static class RoadNetworkPersistence
         using var ms = new MemoryStream(data);
         using var reader = new BinaryReader(ms);
         int format = reader.ReadInt32();
-        if (format != 1 && format != 2) throw new InvalidDataException($"unknown cleared zone data format {format}");
+        if (format != ClearedZonesFormat && format != ClearedZonesOwedFormat) throw new InvalidDataException($"unknown cleared zone data format {format}");
         int version = reader.ReadInt32();
-        int count = reader.ReadInt32();
-        if (count < 0 || count > 1_000_000) throw new InvalidDataException($"invalid cleared zone count {count}");
-        var zones = new List<Vector2s>(count);
-        for (int i = 0; i < count; i++)
-            zones.Add(new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32()));
+        List<Vector2s> zones = ReadZones(reader, "cleared zone");
         var through = new Dictionary<Vector2s, int>();
-        if (format == 2)
+        if (format == ClearedZonesOwedFormat)
         {
             int owed = reader.ReadInt32();
-            if (owed < 0 || owed > 1_000_000) throw new InvalidDataException($"invalid owed zone count {owed}");
+            if (owed < 0 || owed > MaxSavedZones) throw new InvalidDataException($"invalid owed zone count {owed}");
             for (int i = 0; i < owed; i++)
                 through[new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32())] = reader.ReadInt32();
         }
@@ -463,14 +453,12 @@ public static class RoadNetworkPersistence
     /// <summary>Save the record of zones generated with the network in place (NetworkCutoff), or write back the one kept unread.</summary>
     public static void SaveZonesWithNetwork(byte[] record)
     {
-        ZDO? metadataZdo = GetMetadataZDO();
+        ZDO? metadataZdo = ClaimedMetadata();
         if (metadataZdo == null)
         {
             Log.LogWarning("[SAVE] No metadata ZDO: zones generated with the network not saved");
             return;
         }
-        if (!metadataZdo.IsOwner())
-            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
         WriteRecord(metadataZdo, ZonesWithNetworkHash, () => record);
     }
 
@@ -481,14 +469,12 @@ public static class RoadNetworkPersistence
     public static void SaveFirstLoadSkipped()
     {
         EnsureMetadataInstance();
-        ZDO? metadataZdo = GetMetadataZDO();
+        ZDO? metadataZdo = ClaimedMetadata();
         if (metadataZdo == null)
         {
             Log.LogWarning("[SAVE] No metadata ZDO: the skipped roads are not remembered, and the next load asks again");
             return;
         }
-        if (!metadataZdo.IsOwner())
-            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
         metadataZdo.Set(FirstLoadHash, ExistingWorldFirstLoad.SkipRecord());
     }
 
@@ -701,7 +687,7 @@ public static class RoadNetworkPersistence
     /// </summary>
     private static void ReadBridgeZonesOrStartAfresh(byte[]? data, HashSet<Vector2s> bridgeZones)
     {
-        if (data != null && data.Length >= 4 && BitConverter.ToInt32(data, 0) > 2)
+        if (data != null && data.Length >= 4 && BitConverter.ToInt32(data, 0) > BridgeZonesFormat)
             throw new InvalidDataException($"bridge zone data version {BitConverter.ToInt32(data, 0)} is a newer build's");
         try { ReadBridgeZones(data, bridgeZones); }
         catch (Exception e) when (!(e is OutOfMemoryException))
@@ -730,22 +716,19 @@ public static class RoadNetworkPersistence
             // a shape this build no longer makes.
             layout = 1;
         }
-        else if (version == 2)
+        else if (version == BridgeZonesFormat)
         {
             layout = reader.ReadInt32();
         }
         else
             throw new InvalidDataException($"unknown bridge zone data version {version}");
-        int count = reader.ReadInt32();
-        if (count < 0 || count > 1_000_000)
-            throw new InvalidDataException($"invalid bridge zone count {count}");
+        List<Vector2s> zones = ReadZones(reader, "bridge zone");
         if (layout != BridgeLayout.LayoutVersion)
         {
             Log.LogInfo($"[BRIDGES] the saved bridges were laid out by layout {layout}; this build is layout {BridgeLayout.LayoutVersion}. " +
-                        $"Their {count} zone(s) keep the pieces they have; only zones without pieces get the new layout.");
+                        $"Their {zones.Count} zone(s) keep the pieces they have; only zones without pieces get the new layout.");
         }
-        for (int i = 0; i < count; i++)
-            bridgeZones.Add(new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32()));
+        bridgeZones.UnionWith(zones);
         Log.LogDebug($"Loaded {bridgeZones.Count} bridge zones from ZDO");
     }
 
@@ -760,15 +743,45 @@ public static class RoadNetworkPersistence
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
-        writer.Write(2);
+        writer.Write(BridgeZonesFormat);
         writer.Write(BridgeLayout.LayoutVersion);
+        WriteZones(writer, zones);
+        return ms.ToArray();
+    }
+
+    /// <summary>The bridge-zones record's format: 2 adds the layout id; 1 is read too.</summary>
+    private const int BridgeZonesFormat = 2;
+
+    /// <summary>The cleared-zones record's formats: 1, and 2 when some zone is owed only the roads appended since.</summary>
+    private const int ClearedZonesFormat = 1, ClearedZonesOwedFormat = 2;
+
+    /// <summary>The longest prefab name a saved piece may carry (a damaged length is refused).</summary>
+    internal const int MaxSavedPrefabName = 100;
+
+    /// <summary>The most zones any saved zone list may hold (a damaged count is refused, not allocated).</summary>
+    internal const int MaxSavedZones = 1_000_000;
+
+    /// <summary>A zone list: [count] then [x][y] per zone, each a 32-bit int (the casts keep the bytes as they were before
+    /// Valheim 1.0 made a zone id a pair of shorts).</summary>
+    private static void WriteZones(BinaryWriter writer, IReadOnlyCollection<Vector2s> zones)
+    {
         writer.Write(zones.Count);
         foreach (Vector2s zone in zones)
         {
             writer.Write((int)zone.x);
             writer.Write((int)zone.y);
         }
-        return ms.ToArray();
+    }
+
+    /// <summary>A zone list as <see cref="WriteZones"/> writes it; a count past <see cref="MaxSavedZones"/> throws.</summary>
+    private static List<Vector2s> ReadZones(BinaryReader reader, string what)
+    {
+        int count = reader.ReadInt32();
+        if (count < 0 || count > MaxSavedZones) throw new InvalidDataException($"invalid {what} count {count}");
+        var zones = new List<Vector2s>(count);
+        for (int i = 0; i < count; i++)
+            zones.Add(new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32()));
+        return zones;
     }
 
     /// <summary>The crossings record's format: 2 carries each crossing's flags (a valley viaduct's

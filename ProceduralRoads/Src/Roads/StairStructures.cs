@@ -715,7 +715,7 @@ public sealed class StairStructures : IStructureSource
                     var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     float yaw = reader.ReadSingle();
                     bool cantilevered = version >= 3 && reader.ReadBoolean();
-                    if (prefab.Length > 100 || !Enum.IsDefined(typeof(StructurePieceKind), kind) ||
+                    if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !Enum.IsDefined(typeof(StructurePieceKind), kind) ||
                         !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) || !ManualRoadDraft.IsFinite(pos.y) || !ManualRoadDraft.IsFinite(yaw))
                         throw new InvalidDataException("Invalid stair piece.");
                     run.Pieces.Add(new StructurePiece { Kind = (StructurePieceKind)kind, Prefab = prefab, Position = pos, YawDegrees = yaw, Cantilevered = cantilevered });

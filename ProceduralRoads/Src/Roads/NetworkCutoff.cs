@@ -444,7 +444,7 @@ public static class NetworkCutoff
             if (reader.ReadInt32() != RecordFormat) return false;
             int version = reader.ReadInt32();
             int count = reader.ReadInt32();
-            if (count < 0 || count > 1_000_000) return false;
+            if (count < 0 || count > RoadNetworkPersistence.MaxSavedZones) return false;
             for (int i = 0; i < count; i++)
                 zones.Add(new Vector2s(reader.ReadInt16(), reader.ReadInt16()));
             if (ms.Position != ms.Length) { zones.Clear(); return false; }

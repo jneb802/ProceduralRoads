@@ -266,11 +266,10 @@ public class SiteApproachToppingFloorTests
             maxBuried: StairCover.ApproachSearch);
         float Lip(StairPlan p)
         {
-            Vector2 ahead = new Vector2(p.End.x, p.End.z) + StairLayout.Forward(p.EndHeading) * StairLayout.TopAhead;
-            return Knoll(ahead.x, ahead.y) - p.End.y;
+            return StairEnds.OverAhead(new Vector2(p.End.x, p.End.z), StairLayout.Forward(p.EndHeading), p.End.y, 2f, Knoll);
         }
         StairPlan plan = Lay();
         Assert.True(plan.Reached, plan.Reason);
-        Assert.True(Lip(plan) <= StairLayout.PieceRise + StairLayout.StepUp, $"top at {plan.End}, the ground {Lip(plan):F2} m over it 2.5 m on");
+        Assert.True(Lip(plan) <= StairLayout.PieceRise + StairLayout.StepUp, $"top at {plan.End}, the ground {Lip(plan):F2} m over it ahead");
     }
 }

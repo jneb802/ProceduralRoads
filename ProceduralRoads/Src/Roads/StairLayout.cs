@@ -664,7 +664,7 @@ public static partial class StairLayout
             if (!final) return n.Goal > 0 && Mathf.Abs(ground(n.Edge.x, n.Edge.y) - n.Height) <= LegEndHeight;
             if (EndsTurnedBack(n) || !Arrived(n, route) || (route.ExitAllowed != null && !route.ExitAllowed(n.Edge))
                 || Mathf.Abs(ground(n.Edge.x, n.Edge.y) - n.Height) > ReachHeight
-                || route.ArriveWithin.HasValue && !TopReachesGround(n.Edge, n.Heading, n.Height, ground)) return false;
+                || route.ArriveWithin.HasValue && !TopReachesGround(n.Edge, n.Heading, n.Height, width, ground)) return false;
             // A finish turned away only for how it arrives at the place (StairPlan.HeldToFace).
             if (ArrivesIntoThePlace(n, route)) return true;
             route.HeldToFace++;

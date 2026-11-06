@@ -93,7 +93,23 @@ public static class StairEnds
         if (a == b) return a;
         disagree = true;
         if (Mathf.Abs(left) <= StairLayout.StepUp || Mathf.Abs(right) <= StairLayout.StepUp) return Case.Floor;
-        return Mathf.Abs(left) <= Mathf.Abs(right) ? a : b;
+        return CaseOf(Gentler(left, right));
+    }
+
+    /// <summary>Of two corners' drops (<see cref="Drops"/>) the gentler: the one nearer level (the first where they are as near),
+    /// the other where one is NaN (no ground read), NaN where both are. The one combine of two corners: the rule's case where they
+    /// differ (<see cref="Choose"/>), and the ground ahead of a top that gates its finish (<see cref="OverAhead"/>).</summary>
+    public static float Gentler(float left, float right) =>
+        float.IsNaN(left) ? right : float.IsNaN(right) ? left : Mathf.Abs(left) <= Mathf.Abs(right) ? left : right;
+
+    /// <summary>How far the ground ahead of an exit edge at <paramref name="edge"/> stands over its walking height
+    /// <paramref name="height"/>: read at the two far corners of the floor it would take (<see cref="Corners"/>, a floor out),
+    /// the gentler of the two (<see cref="Gentler"/>). The one reading of the ground ahead of a top, for the search's arrival
+    /// and a road top's finish; each keeps its own band.</summary>
+    public static float OverAhead(Vector2 edge, Vector2 dir, float height, float width, Func<float, float, float> ground)
+    {
+        var (l, r) = Drops(edge, dir, height, width, ground);
+        return -Gentler(l, r);
     }
 
     /// <summary>The rule's case off an exit edge at <paramref name="edge"/> (<see cref="Drops"/>, <see cref="Choose"/>).</summary>

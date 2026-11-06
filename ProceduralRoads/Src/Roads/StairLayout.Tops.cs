@@ -171,19 +171,13 @@ public static partial class StairLayout
 
     /// <summary>
     /// Whether a top finishing anywhere near its aim (an area to reach: a landing, a ledge) leaves the walker on the
-    /// ground it leads onto: the ground just past it (<see cref="TopAhead"/> on) stands no more than a rise and a
+    /// ground it leads onto: the ground just past it (<see cref="StairEnds.OverAhead"/>, the end reader's corners) stands no more than a rise and a
     /// step-up over it, which a crest (<see cref="ClimbOn"/> and <see cref="AddDescent"/>) or a step meets. Finishing within reach of the aim and up
     /// to <see cref="ArriveBelow"/> under it, two tops stopped under the shoulder they led onto (at the
     /// mountain cave entry -9293.7,706.8 and at 3522.0,-5773.6: the top did not fully make it).
     /// </summary>
-    internal static bool TopReachesGround(Vector2 edge, float heading, float height, Func<float, float, float> ground)
-    {
-        Vector2 ahead = edge + Forward(heading) * TopAhead;
-        return ground(ahead.x, ahead.y) - height <= PieceRise + StepUp;
-    }
-
-    /// <summary>How far past a top the ground it leads onto is read.</summary>
-    public const float TopAhead = 2.5f;
+    internal static bool TopReachesGround(Vector2 edge, float heading, float height, float width, Func<float, float, float> ground) =>
+        StairEnds.OverAhead(edge, Forward(heading), height, width, ground) <= PieceRise + StepUp;
 
     /// <summary>
     /// The end rule's stair down (StairEnds.Case.Reverse): where a staircase's top (<see cref="Terminal"/>'s exit edge, facing

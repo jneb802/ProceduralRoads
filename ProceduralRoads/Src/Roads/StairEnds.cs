@@ -148,6 +148,20 @@ public static class StairEnds
 
     private static bool IsWalked(StructurePieceKind k) => k is StructurePieceKind.StairStep or StructurePieceKind.StairFloor or StructurePieceKind.StairFiller;
 
+    /// <summary>Whether a walk at <paramref name="height"/> carries on onto a walked piece at <paramref name="q"/>: the one
+    /// test of it, for the walk graph (<see cref="Foot.Meets"/>) and for the railing's open edges. The piece is a footprint
+    /// (<paramref name="back"/> edge's middle, <paramref name="dir"/>, <paramref name="right"/>, <paramref name="depth"/> along,
+    /// <paramref name="across"/>), <paramref name="margin"/> off it at most, and its walking SURFACE at <paramref name="q"/> (a
+    /// stair's rises over its run from <paramref name="surfaceAtBack"/>) stands within <see cref="StairLayout.TopFloorBand"/>
+    /// of <paramref name="height"/>.</summary>
+    internal static bool Walks(Vector2 back, Vector2 dir, Vector2 right, float depth, float across, float surfaceAtBack, bool stair,
+        Vector2 q, float height, float margin)
+    {
+        float along = Vector2.Dot(q - back, dir);
+        float surface = surfaceAtBack + (stair ? StairLayout.PieceRise * along / depth : 0f);
+        return StairLayout.OnFootprint(back, dir, right, depth, across, q, margin) && Mathf.Abs(surface - height) <= StairLayout.TopFloorBand;
+    }
+
     /// <summary>A walked piece's footprint and its walking height along it.</summary>
     private sealed class Foot
     {
@@ -166,11 +180,7 @@ public static class StairEnds
         public Vector2 At(float along, float side) => Back + Dir * along + Right * side;
         public float Walk(float along) => Height + (Stair ? StairLayout.PieceRise * along / Depth : 0f);
         public (float along, float side) Local(Vector2 q) { Vector2 d = q - Back; return (Vector2.Dot(d, Dir), Vector2.Dot(d, Right)); }
-        public bool Covers(Vector2 q, float height)
-        {
-            return StairLayout.OnFootprint(Back, Dir, Right, Depth, Across, q, 0f)
-                && Mathf.Abs(Walk(Local(q).along) - height) <= StairLayout.TopFloorBand;
-        }
+        public bool Covers(Vector2 q, float height) => Walks(Back, Dir, Right, Depth, Across, Height, Stair, q, height, 0f);
         /// <summary>Three points along an edge (0 front, 1 back, 2 left, 3 right), its way out, the walking heights there and
         /// its length.</summary>
         public (Vector2[] at, Vector2 outward, float[] heights, float length) Edge(int e)

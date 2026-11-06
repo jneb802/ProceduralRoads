@@ -530,7 +530,7 @@ public static class StairRailing
             // The next step on, across either end.
             foreach (bool top in new[] { false, true })
                 for (int j = 0; j < walks.Count; j++)
-                    if (j != i && railed[j] && walks[j].Stair && !bare.Contains(j) && WalkedOn(walks[j], Past(w, top), w.Underside, 0.05f, StairLayout.PieceRise + 0.05f))
+                    if (j != i && railed[j] && walks[j].Stair && !bare.Contains(j) && WalkedOn(walks[j], Past(w, top), w.Underside + (top ? StairLayout.PieceRise : 0f)))
                         ends.Enqueue(j);
         }
         return bare;
@@ -906,12 +906,10 @@ public static class StairRailing
     }
 
     /// <summary>Whether a walk at <paramref name="height"/> carries on onto <paramref name="w"/> at <paramref name="p"/> (the
-    /// one test, for every edge read): it covers the point, and its underside stands within a step's reach of that height.</summary>
-    private static bool WalkedOn(StairSupport.Walk w, Vector2 p, float height, float margin = 0.05f, float reach = StepReach) =>
-        Covers(w, p, margin) && Mathf.Abs(w.Underside - height) <= reach;
-
-    /// <summary>A step's reach: how far a walked piece's underside may stand from the height it carries on from.</summary>
-    private const float StepReach = 1.6f;
+    /// one test, for every edge read): <see cref="StairEnds.Walks"/>, the stair-end rule, its walking surface within
+    /// <see cref="StairLayout.TopFloorBand"/>. A floor beside a higher or lower piece is railed, as against a wall.</summary>
+    private static bool WalkedOn(StairSupport.Walk w, Vector2 p, float height, float margin = 0.05f) =>
+        StairEnds.Walks(w.Back, w.Dir, w.Right, w.Depth, w.Across, w.Walking(0f), w.Stair, p, height, margin);
 
     /// <summary>Corner <paramref name="side"/> (-1 left, +1 right) at the back or <paramref name="front"/> of walking piece
     /// <paramref name="w"/>, where a post stands, and the height it stands on: a stair's at its foot behind and a rise up in

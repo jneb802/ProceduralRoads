@@ -133,17 +133,21 @@ public static class StairSupport
     {
         public readonly Vector2 Back;
         public readonly float Heading, Depth, Across, Underside;
+        /// <summary>How thick the piece is under its walking surface (a stair's none: its slope is its walking surface).</summary>
+        public readonly float Thickness;
         public readonly bool Stair;
         /// <summary>Its heading's forward and right, worked out once: <see cref="Choose"/> asks for a point on it a few dozen
         /// times a piece the search tries, each a sine and a cosine when worked out afresh.</summary>
         public readonly Vector2 Dir, Right;
-        public Walk(Vector2 back, float heading, float depth, float across, float underside, bool stair)
+        public Walk(Vector2 back, float heading, float depth, float across, float underside, bool stair, float thickness = 0f)
         {
-            Back = back; Heading = heading; Depth = depth; Across = across; Underside = underside; Stair = stair;
+            Thickness = thickness; Back = back; Heading = heading; Depth = depth; Across = across; Underside = underside; Stair = stair;
             Dir = StairLayout.Forward(heading); Right = StairLayout.Right(heading);
         }
         public Vector2 At(float along, float across) => Back + Dir * along + Right * across;
         /// <summary>The walking surface <paramref name="along"/> it: a stair's rises its metre over its run.</summary>
+        /// <summary>The walking surface <paramref name="along"/> it by its own kit's thickness (<see cref="Surface"/> by the kit asked).</summary>
+        public float Walking(float along) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + Thickness;
         public float Surface(float along, StairKit kit) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + kit.FloorThickness;
     }
 
@@ -166,7 +170,7 @@ public static class StairSupport
                 FillerKind flat = kit.FlatOf(piece.Prefab);
                 float heading = piece.Prefab == kit.Floor ? piece.YawDegrees : StairLayout.Wrap(piece.YawDegrees + 180f);
                 float underside = piece.Position.y + kit.FloorTop - kit.FloorThickness;
-                return new Walk(at - StairLayout.Forward(heading) * (flat.Depth / 2f), heading, flat.Depth, flat.Across, underside, false);
+                return new Walk(at - StairLayout.Forward(heading) * (flat.Depth / 2f), heading, flat.Depth, flat.Across, underside, false, kit.FloorThickness);
             }
             default: return null;
         }

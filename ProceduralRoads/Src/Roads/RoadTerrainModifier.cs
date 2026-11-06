@@ -784,8 +784,7 @@ public static class RoadTerrainModifier
                 }
                 if (blendResult.InfluencingPoints > 0)
                 {
-                    float road = Mathf.Clamp(RoadTarget(blendResult, vertexPos2D, baseHeight) - baseHeight,
-                        RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+                    float road = Clamped(RoadTarget(blendResult, vertexPos2D, baseHeight) - baseHeight);
                     // The road's change as the fade writes it, so its paint is held to the ground just written.
                     if (Writes(road, blendResult.MaxBlend)) stats.RoadDeltas[index] = Faded(held ?? 0f, seam, road);
                 }
@@ -800,6 +799,9 @@ public static class RoadTerrainModifier
     /// the shared border, to <paramref name="to"/>, this zone's own, past the fade. Both the ground written and the road's
     /// change its paint is held to (<see cref="ModificationStats.RoadDeltas"/>) read it, so paint follows the ground.</summary>
     private static float Faded(float from, float seam, float to) => from + Mathf.Clamp01(seam) * (to - from);
+
+    /// <summary>A level change as the game keeps it: clamped to its terrain edit limit.</summary>
+    private static float Clamped(float delta) => Mathf.Clamp(delta, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
 
     /// <summary>
     /// The delta <see cref="ModifyVertexHeights"/> writes at a vertex, null where it writes none: the road's earthwork
@@ -818,7 +820,7 @@ public static class RoadTerrainModifier
         if (StructureGround.Held(vertex) is not float held) return road;
         // The road's own delta where it leaves the held ground exactly: the ground a structure was laid on by this writer.
         if (road is float same && baseHeight + same == held) return same;
-        float delta = Mathf.Clamp(held - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        float delta = Clamped(held - baseHeight);
         return road.HasValue || Writes(delta, 0f) ? delta : null;
     }
 
@@ -836,7 +838,7 @@ public static class RoadTerrainModifier
         bool cutHere = cut < finalHeight;
         if (blend.InfluencingPoints == 0 && !cutHere) return null;
         if (cutHere) finalHeight = cut;
-        float delta = Mathf.Clamp(finalHeight - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        float delta = Clamped(finalHeight - baseHeight);
         return Writes(delta, blend.MaxBlend) || cutHere ? delta : null;
     }
 
@@ -957,7 +959,7 @@ public static class RoadTerrainModifier
     {
         BlendResult blend = CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
         if (blend.InfluencingPoints == 0) return baseHeight;
-        float delta = Mathf.Clamp(RoadTarget(blend, vertex, baseHeight) - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        float delta = Clamped(RoadTarget(blend, vertex, baseHeight) - baseHeight);
         return Writes(delta, blend.MaxBlend) ? baseHeight + delta : baseHeight;
     }
 

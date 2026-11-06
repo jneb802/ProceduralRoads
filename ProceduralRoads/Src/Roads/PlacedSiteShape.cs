@@ -122,6 +122,35 @@ public readonly struct SiteRock
     /// <summary><see cref="Kept(bool, bool, bool, out string)"/>, without the reason.</summary>
     public static bool Kept(bool large, bool keepsEveryRock, bool roundItsMouth) => Kept(large, keepsEveryRock, roundItsMouth, out _);
 
+    /// <summary>
+    /// Whether this rock is kept on an approach to the place at <paramref name="centre"/> (<see cref="Kept(bool, bool, bool, out string)"/>):
+    /// the one question planning (the shape, the reader) and the rock clearing's probe both ask, of the same box: its oriented
+    /// size (<see cref="Large"/>) and its middle (<see cref="RoundItsMouth"/>).
+    /// </summary>
+    public bool KeptAt(Vector2 centre, float rockRadius, bool keepsEveryRock, out string why) =>
+        Kept(Large, keepsEveryRock, RoundItsMouth(centre, rockRadius), out why);
+
+    /// <summary>A rock's box seen from above: the corners of its colliders' box (<paramref name="local"/>, in its root's frame),
+    /// scaled and turned as saved, measured along and across its turn about the vertical.</summary>
+    public static SiteRock Of(Vector3 position, Quaternion rotation, Vector3 scale, Bounds local, string name)
+    {
+        float yaw = rotation.eulerAngles.y;
+        float minX = float.PositiveInfinity, maxX = float.NegativeInfinity, minZ = float.PositiveInfinity, maxZ = float.NegativeInfinity;
+        float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
+        for (int i = 0; i < 8; i++)
+        {
+            Vector3 corner = new Vector3(local.center.x + ((i & 1) == 0 ? -1f : 1f) * local.extents.x,
+                local.center.y + ((i & 2) == 0 ? -1f : 1f) * local.extents.y, local.center.z + ((i & 4) == 0 ? -1f : 1f) * local.extents.z);
+            Vector3 w = rotation * new Vector3(corner.x * scale.x, corner.y * scale.y, corner.z * scale.z);
+            Vector2 q = Local(new Vector2(w.x, w.z), yaw);
+            minX = Mathf.Min(minX, q.x); maxX = Mathf.Max(maxX, q.x);
+            minZ = Mathf.Min(minZ, q.y); maxZ = Mathf.Max(maxZ, q.y);
+            minY = Mathf.Min(minY, position.y + w.y); maxY = Mathf.Max(maxY, position.y + w.y);
+        }
+        Vector2 middle = new Vector2(position.x, position.z) + World(new Vector2((minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f), yaw);
+        return new SiteRock(middle, (maxX - minX) * 0.5f, (maxZ - minZ) * 0.5f, yaw, minY, maxY, name);
+    }
+
     /// <summary>A place none of whose rocks an approach may clear, small ones included: Hildir's
     /// cave, whose boulder blocking the entrance is not disturbed (the landing near by is still
     /// reached).</summary>

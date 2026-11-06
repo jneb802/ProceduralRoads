@@ -374,6 +374,15 @@ public static class RoadRockPolicy
     /// <summary>Whether any clearing rule could take this prefab (every rock in <see cref="KnownRocks"/>).</summary>
     public static bool IsClearableRock(string name) => IsNaturalBoulder(name) || IsMistlandsRock(name, true, true);
 
+    /// <summary><see cref="IsClearableRock(string)"/> for a rock or the fractured copy a carve or a pickaxe left of one
+    /// (<see cref="PolicyNames"/>): the one way a rock saved under either name is recognised.</summary>
+    public static bool IsClearableRock(string name, IReadOnlyDictionary<string, List<string>> fracturedFrom)
+    {
+        foreach (string judged in PolicyNames(name, fracturedFrom))
+            if (IsClearableRock(judged)) return true;
+        return false;
+    }
+
     public static bool CanClear(string name, bool registeredVegetation, Heightmap.Biome biome,
         bool protectedSite, bool playerPiece, bool hasNetworkView, bool validView, bool owned) =>
         BoulderInBiome(name, biome) && registeredVegetation &&

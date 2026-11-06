@@ -569,7 +569,7 @@ public static class ServerTerrainBake
         foreach (ZDO zdo in zdos)
         {
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
-            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, PlayerChanges.IsPlayers(zdo)))
+            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, PlayerChanges.IsPlayers(zdo), RoadRockCarve.FracturedFrom()))
                 rocks.Add((zdo, prefab));
         }
         s_step.RocksFind += clock.Elapsed.TotalMilliseconds;
@@ -666,7 +666,7 @@ public static class ServerTerrainBake
         var bounds = new List<(Vector2 min, Vector2 max)>();
         foreach (var go in objects)
         {
-            if (go == null || !RoadRockPolicy.IsClearableRock(RoadRockCarve.PrefabName(go, go.GetComponent<ZNetView>()))) continue;
+            if (go == null || !RoadRockPolicy.IsClearableRock(RoadRockCarve.PrefabName(go, go.GetComponent<ZNetView>()), RoadRockCarve.FracturedFrom())) continue;
             foreach (var c in go.GetComponentsInChildren<Collider>())
                 bounds.Add((new Vector2(c.bounds.min.x, c.bounds.min.z), new Vector2(c.bounds.max.x, c.bounds.max.z)));
         }

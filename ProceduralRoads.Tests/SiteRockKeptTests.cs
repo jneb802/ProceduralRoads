@@ -33,6 +33,30 @@ public class SiteRockKeptTests
         }
     }
 
+    /// <summary>A 3 x 3 x 1.5 m rock turned 45 degrees is 4.5 m across its oriented box (kept as small), though the world box of
+    /// its colliders is 6.2 m (large). The rock clearing's probe asks the box planning reads (<see cref="SiteRock.Of"/>) the
+    /// one rule (<see cref="SiteRock.KeptAt"/>), and the middle of the oriented box, not the rock's pivot, is what is
+    /// measured against the place's exterior radius.</summary>
+    [Fact]
+    public void ARockIsMeasuredByItsOrientedBoxAndItsMiddleAsPlanningDoes()
+    {
+        var local = new Bounds(new Vector3(2f, 0.75f, 0f), new Vector3(3f, 1.5f, 3f));
+        SiteRock turned = SiteRock.Of(new Vector3(Centre.x + 20f, 10f, Centre.y), Quaternion.Euler(0f, 45f, 0f), new Vector3(1f, 1f, 1f), local, "r");
+        Assert.False(turned.Large);
+        Assert.InRange(Mathf.Sqrt(4f * turned.HalfX * turned.HalfX + 4f * turned.HalfZ * turned.HalfZ + 1.5f * 1.5f), 4.4f, 4.6f);
+        Assert.False(turned.KeptAt(Centre, 10f, keepsEveryRock: false, out string why));
+        Assert.Equal("", why);
+        // The pivot is 20 m out, its middle 2 m further along its own x: round the mouth of a 21.5 m exterior radius by the pivot
+        // alone, not by the middle.
+        Assert.True(Vector2.Distance(turned.At, Centre) > 21.4f);
+        Assert.False(turned.KeptAt(Centre, 21.4f, false, out _));
+        Assert.True(turned.KeptAt(Centre, 22f, false, out why));
+        Assert.Equal("round its mouth", why);
+        SiteRock big = SiteRock.Of(new Vector3(Centre.x + 40f, 10f, Centre.y), Quaternion.identity, new Vector3(2f, 2f, 2f), local, "r");
+        Assert.True(big.KeptAt(Centre, 10f, false, out why));
+        Assert.Equal("large", why);
+    }
+
     /// <summary>The shape's split over twelve rocks (9.999, 10 and 10.001 m from the centre, the two sides of the large-rock
     /// size, with and without a real top; each triple of tops numbered in that order), for a place with an exterior radius
     /// of 10 m and for one with none, each keeping the small rocks or not: its body is the rocks round its mouth, its kept

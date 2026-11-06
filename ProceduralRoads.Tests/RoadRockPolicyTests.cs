@@ -143,7 +143,7 @@ public class RoadRockPolicyTests
         Assert.False(RoadRockPolicy.ClearingTakes(name, Heightmap.Biome.Ocean));
         // Placed with the zone, left to the rock clearing rather than kept off the road with the vegetation.
         Assert.True(VegetationClearing.LeftToRockClearing(name.GetStableHashCode(), home));
-        Assert.True(ServerBakePlanner.BringsRockAlive(name, playerCreated: false));
+        Assert.True(ServerBakePlanner.BringsRockAlive(name, playerCreated: false, new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>()));
         // A fractured deposit (carved or mined) is judged as the deposit that fractures into it.
         var map = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>
             { [name + "_frac"] = new() { name } };

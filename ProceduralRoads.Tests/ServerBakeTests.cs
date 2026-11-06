@@ -134,7 +134,24 @@ public class ServerBakeTests
     [InlineData("MineRock_Tin", false, false)]
     [InlineData("Beech1", false, false)]
     public void TheRockPassBringsAliveOnlyClearableRocksNoPlayerMade(string prefab, bool playerCreated, bool brought) =>
-        Assert.Equal(brought, ServerBakePlanner.BringsRockAlive(prefab, playerCreated));
+        Assert.Equal(brought, ServerBakePlanner.BringsRockAlive(prefab, playerCreated, new Dictionary<string, List<string>>()));
+
+    /// <summary>A rock mined or carved earlier is saved under its fractured copy's name; the bake still brings it alive, so a
+    /// road added later carves it (a player's own is still left).</summary>
+    [Theory]
+    [InlineData("rock4_copper_frac", false, true)]
+    [InlineData("rock4_copper_frac", true, false)]
+    [InlineData("rock1_mountain_frac", false, true)]
+    [InlineData("Beech1_frac", false, false)]
+    public void TheRockPassBringsAliveAFracturedRockToo(string prefab, bool playerCreated, bool brought)
+    {
+        var fracturedFrom = new Dictionary<string, List<string>>
+        {
+            ["rock4_copper_frac"] = new() { "rock4_copper" },
+            ["rock1_mountain_frac"] = new() { "rock1_mountain" },
+        };
+        Assert.Equal(brought, ServerBakePlanner.BringsRockAlive(prefab, playerCreated, fracturedFrom));
+    }
 
     [Fact]
     public void APlayerInTheZoneKeepsTheirCompilerUntilTheyLeave()

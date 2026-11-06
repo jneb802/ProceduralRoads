@@ -132,9 +132,9 @@ public static class ServerBakePlanner
     /// </summary>
     public static bool SavedRocksOwed(bool loadedHere) => !loadedHere;
 
-    /// <summary>Which saved objects the rock pass brings alive: the clearable rocks, never a player's.</summary>
-    public static bool BringsRockAlive(string prefab, bool playerCreated) =>
-        !playerCreated && RoadRockPolicy.IsClearableRock(prefab);
+    /// <summary>Which saved objects the rock pass brings alive: the clearable rocks and their fractured copies (a mined or carved rock), never a player's.</summary>
+    public static bool BringsRockAlive(string prefab, bool playerCreated, IReadOnlyDictionary<string, List<string>> fracturedFrom) =>
+        !playerCreated && RoadRockPolicy.IsClearableRock(prefab, fracturedFrom);
 
     /// <summary>What the server knows about one saved compiler ZDO.</summary>
     public readonly struct Compiler

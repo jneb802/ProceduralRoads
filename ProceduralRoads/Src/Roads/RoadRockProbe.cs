@@ -174,23 +174,15 @@ public static class RoadRockProbe
 
     private static string KeptForApproach(string why) => $"keep: the place's own rock ({why}), on its approach";
 
-    /// <summary>A rock's whole box across, corner to corner: a fractured one's largest chunk is small.</summary>
-    private static float Across(GameObject root)
-    {
-        Bounds? whole = null;
-        foreach (var part in root.GetComponentsInChildren<Collider>())
-            if (whole == null) whole = part.bounds; else { Bounds u = whole.Value; u.Encapsulate(part.bounds); whole = u; }
-        return whole?.size.magnitude ?? 0f;
-    }
-
-    /// <summary>Whether a rock in a site area is kept on an approach to the place: a large one
+    /// <summary>Whether a rock in a site area is kept on an approach to the place, as planning keeps it
+    /// (<see cref="SiteRock.KeptAt"/>, the rock's box as the reader makes it): a large one
     /// (<see cref="SiteRock.LargeRock"/> or more across), any round its mouth (inside its exterior
     /// radius), or any at a
     /// place that keeps every rock (<see cref="SiteRock.KeepsEveryRock"/>: Hildir's cave). Small
     /// ones further out are cleared out of the way, and a boulder that is not one of the place's
     /// parts (<see cref="LocationPrefabLevelling.IsPart"/>) is any road's. <paramref name="why"/>:
     /// what made it the place's own, for the verdict.</summary>
-    private static bool KeptOnApproach(GameObject root, float size, out string why)
+    private static bool KeptOnApproach(GameObject root, out string why)
     {
         Vector3 at = root.transform.position;
         Location? place = Location.GetLocation(at, checkDungeons: false);
@@ -204,9 +196,16 @@ public static class RoadRockProbe
         bool? part = LocationPrefabLevelling.IsPart(Utils.GetPrefabName(place.gameObject), place.transform.position, place.transform.rotation, at);
         if (part == false) return false;
         string kind = part == true ? "one of its parts" : "its parts not known";
-        Vector3 d = at - place.transform.position;
-        if (!SiteRock.Kept(size >= SiteRock.LargeRock, SiteRock.KeepsEveryRock(place.name),
-                new Vector2(d.x, d.z).magnitude <= place.m_exteriorRadius, out string reason)) return false;
+        // The box planning reads (a place's rocks saved with it, PlacedSiteReader.PlaceRocks), of this rock as it stands, and
+        // the one rule planning asks of it (SiteRock.KeptAt): the same size, the same middle.
+        var view = root.GetComponent<ZNetView>();
+        var zdo = view != null && view.IsValid() ? view.GetZDO() : null;
+        GameObject? prefab = ZNetScene.instance.GetPrefab(Utils.GetPrefabName(root));
+        if (prefab == null) return false;
+        SiteRock box = SiteRock.Of(at, root.transform.rotation, (zdo != null ? PlacedSiteReader.SavedScale(zdo) : null) ?? Vector3.one,
+            PlacedSiteReader.LocalBox(prefab), prefab.name);
+        var centre = new Vector2(place.transform.position.x, place.transform.position.z);
+        if (!box.KeptAt(centre, PlacedSiteReader.RockRadius(centre), PlacedSiteReader.KeepsEveryRock(centre), out string reason)) return false;
         why = kind + ", " + reason;
         return true;
     }
@@ -273,7 +272,7 @@ public static class RoadRockProbe
             touchedHere.Add(root);
             if (hits.TryGetValue(root, out Hit before))
             {
-                if (keepSiteRocks && before.Kind == HitKind.ClearInSiteArea && KeptOnApproach(root, Across(root), out string keptBefore))
+                if (keepSiteRocks && before.Kind == HitKind.ClearInSiteArea && KeptOnApproach(root, out string keptBefore))
                     hits[root] = new Hit(before.Name, KeptForApproach(keptBefore), before.Size, before.Listed);
                 continue;
             }
@@ -309,7 +308,7 @@ public static class RoadRockProbe
             // a road's last metres at a site. Parts of a location are still
             // never touched.
             string keptWhy = "";
-            bool keptOnApproach = inSiteArea && keepSiteRocks && KeptOnApproach(root, Across(root), out keptWhy);
+            bool keptOnApproach = inSiteArea && keepSiteRocks && KeptOnApproach(root, out keptWhy);
             bool protectedSite = locationChild || keptOnApproach;
             var biome = Heightmap.FindBiome(root.transform.position);
             bool listed = false, ok = false;

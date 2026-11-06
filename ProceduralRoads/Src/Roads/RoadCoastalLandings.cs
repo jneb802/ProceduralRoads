@@ -13,6 +13,8 @@ public static class RoadCoastalLandings
     public const float AreaPerLanding = 5_000_000;
     public const float Separation = 400;
     public const float Radius = 16;
+    /// <summary>Its selection weight and place in the connection order: below a custom location, above the default.</summary>
+    public const int Priority = 60;
     private const float Sea = RoadConstants.SeaLevel;
     private static readonly (int x, int z)[] Directions =
         { (-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1) };

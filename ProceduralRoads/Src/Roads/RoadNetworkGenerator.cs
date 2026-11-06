@@ -4994,7 +4994,7 @@ public static partial class RoadNetworkGenerator
 
     private static int GetLocationPriority(string locationName)
     {
-        if (locationName == RoadCoastalLandings.Name) return 60;
+        if (locationName == RoadCoastalLandings.Name) return RoadCoastalLandings.Priority;
         if (LocationPriorities.TryGetValue(locationName, out int priority))
             return priority;
 

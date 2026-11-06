@@ -1527,7 +1527,7 @@ public static partial class StairLayout
     }
 
     /// <summary>The walking box over the piece, in stretches along the walk (the one owner of what a staircase clears of rock): its
-    /// walking surface's width across, from <see cref="RoadRockPolicy.ClearanceLift"/> over the stretch's lowest walk, as a road's
+    /// walking surface's width across, from <see cref="RockClearances.Bottom"/> of the stretch's lowest walk, as a road's
     /// clearance starts over its surface, up to <see cref="ClearanceHeight"/> over its highest walk, so the whole headroom over
     /// every tread is in it (over the stretch's middle it fell a quarter of a stretch's rise short at its high end). A stair
     /// rises <see cref="PieceRise"/> / <see cref="ClearanceStretches"/> per stretch, a floor or block is level. Nothing under the walk: the piece's own body, the supports under it
@@ -1544,7 +1544,7 @@ public static partial class StairLayout
             float surface = stair ? baseHeight + PieceRise * (i + 0.5f) / stretches : baseHeight;
             float lowest = stair ? baseHeight + PieceRise * i / stretches : baseHeight;
             float highest = stair ? baseHeight + PieceRise * (i + 1) / stretches : baseHeight;
-            float bottom = lowest + RoadRockPolicy.ClearanceLift;
+            float bottom = RockClearances.Bottom(lowest);
             float top = highest + ClearanceHeight;
             Vector2 mid = laneStart + dir * (length * (i + 0.5f));
             plan.Clearances.Add(new StairClearance(

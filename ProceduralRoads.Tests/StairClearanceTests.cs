@@ -174,6 +174,20 @@ public class StairClearanceTests : IDisposable
         Assert.Equal(Flat + RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, road.Top, 3);
     }
 
+    /// <summary>A stair's walking box starts where a road's does (RockClearances.Bottom): the same float, bit for bit, as the
+    /// sum StairLayout.AddClearance wrote before it read the owner, over walks under and over the sea, at zero and at NaN.</summary>
+    [Fact]
+    public void AStairBoxStartsWhereARoadBoxStartsBitForBit()
+    {
+        foreach (float walk in Walks)
+            Assert.Equal(Bits(walk + RoadRockPolicy.ClearanceLift), Bits(RockClearances.Bottom(walk)));
+    }
+
+    private static readonly float[] Walks =
+        { 0f, -0f, 1e-7f, -1e-7f, 0.1f, 1.9f, 2f, 2.1f, 29.99f, 30f, -30.5f, 1234.567f, -4321.1f, 1e7f, float.NaN };
+
+    private static int Bits(float f) => BitConverter.ToInt32(BitConverter.GetBytes(f), 0);
+
     /// <summary>Whether a stored walking box is a stair's stretch: its top stands a player's headroom over a walk higher than
     /// its middle one.</summary>
     private static bool Rises(StairClearance box) => box.Centre.y + box.Half.y - StairLayout.ClearanceHeight > box.Surface + 0.01f;

@@ -703,6 +703,23 @@ public class CantileverTests
         Assert.Equal(low!.Value.y, walked[0], 2);
         Assert.Equal(low.Value.y + StairLayout.PieceRise, walked[1], 2);
     }
+    /// <summary>A foot lowers to the nearest whole stair, as a foot carried to a crossing's end does (StairLayout.LowerFootTo): over
+    /// its road by less than half a rise it stays (the road's landing is filled up to it), and from half a rise up one stair
+    /// drops. The mound's foot stands 2.3 m up, the plain road 5 m back climbing at the cap.</summary>
+    [Theory]
+    [InlineData(0.40f, 0)]   // over 0.3: stays
+    [InlineData(0.35f, 1)]   // over 0.55: one stair
+    [InlineData(0.20f, 1)]   // over 1.3: one stair, not two
+    [InlineData(0.10f, 2)]   // over 1.8: two
+    public void AFootLowersToTheNearestWholeStair(float cap, int stairs)
+    {
+        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
+        Assert.True(plan.Reached, plan.Reason);
+        Vector3? foot = StairLayout.LowerFoot(plan, Mound, 2f, 0f, 5f, cap);
+        Assert.Equal(stairs, plan.FootLowered);
+        Assert.Equal(stairs > 0, foot.HasValue);
+    }
+
     /// <summary>A foot 1.12 m over its road's ground 5 m back (-5353.5,2896.1). The road ends there on its level landing
     /// (6 m at 5 %, RoadPitches.ClimbToFoot), climbing 0.25 m over those 5 m, not 1.75 m at the cap: one stair more down
     /// from the foot toward the road. Read climbing at the cap, the foot was left as it was and its road's landing stood on

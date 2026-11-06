@@ -65,6 +65,10 @@ public static partial class StairLayout
     /// <summary>Most stairs <see cref="LowerFoot"/> adds down from a foot.</summary>
     public const int MostLowered = 2;
 
+    /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise the
+    /// foot stays (the road's landing is filled up to it); from half a rise up, a stair drops (<see cref="LowerFoot"/>, <see cref="LowerFootTo"/>).</summary>
+    private static int WholeStairsOver(float over) => Mathf.RoundToInt(over / PieceRise);
+
     /// <summary>
     /// A staircase whose foot (the first step's low edge, at the ground's height there) stands over its road's ground
     /// further back more than the road may climb to it: more stairs on down from the foot toward the road, up to
@@ -81,10 +85,8 @@ public static partial class StairLayout
     public static Vector3? LowerFoot(StairPlan plan, Func<float, float, float> ground, float width, float back, float run, float cap)
     {
         if (plan.Foot is not Vector3 foot || plan.SunkPieces <= 0 || plan.FootLowered > 0) return null;
-        float over = foot.y - back - RoadPitches.ClimbToFoot(run, cap);
-        if (over <= StepUp) return null;
-        int steps = Mathf.Min(MostLowered, Mathf.CeilToInt((over - StepUp) / PieceRise));
-        return AddFootStairs(plan, ground, width, steps);
+        int steps = Mathf.Min(MostLowered, WholeStairsOver(foot.y - back - RoadPitches.ClimbToFoot(run, cap)));
+        return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
     }
 
     /// <summary>
@@ -97,7 +99,7 @@ public static partial class StairLayout
     public static Vector3? LowerFootTo(StairPlan plan, Func<float, float, float> ground, float width, float height)
     {
         if (plan.Foot is not Vector3 foot) return null;
-        int steps = Mathf.RoundToInt((foot.y - height) / PieceRise);
+        int steps = WholeStairsOver(foot.y - height);
         return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
     }
 

@@ -333,7 +333,7 @@ public sealed class BridgeStructures : IStructureSource
     /// <see cref="DvergrWoodBridge.BeamLength"/> beams laid across the deck); else the railed and stone kits'.</summary>
     public static float DeckHalfWidth(RoadCrossing crossing, WorldGenerator world) =>
         IsViaduct(crossing, world) ? DvergrViaduct.HalfWidth
-        : world != null && world.GetBiome(crossing.Center.x, crossing.Center.y) == Heightmap.Biome.Mistlands ? DvergrWoodBridge.BeamLength * 0.5f
+        : world != null && Fits(Kit.DvergrWood, crossing, world) ? DvergrWoodBridge.BeamLength * 0.5f
         : BridgeLayout.DeckHalfWidth;
 
     /// <summary>Both ends of a crossing structure as they meet the road, near (from-bank) end first: the one owner's

@@ -227,7 +227,7 @@ public readonly struct RoadEndRing
         {
             StairPiece p = plan.Pieces[i];
             if (p.Kind == StairPieceKind.Support) continue;
-            float surface = p.Position.y + (p.Kind == StairPieceKind.Stair ? StairLayout.PieceRise / 2f : StairKit.FloorTopOf(p.Prefab));
+            float surface = StairLayout.CentreSurface(p);
             if (Mathf.Abs(surface - Height) > RoadStairRuns.JunctionHeight) continue;
             if (top && p.Kind != StairPieceKind.Stair && Mathf.Abs(surface - Height) <= LevelWithRoad) continue;
             foreach (Vector3 s in StairLayout.WalkingSurface(p))

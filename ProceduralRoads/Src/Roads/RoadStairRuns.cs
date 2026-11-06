@@ -1480,7 +1480,7 @@ public static partial class RoadStairRuns
         {
             if (piece.Kind != StairPieceKind.Stair && piece.Kind != StairPieceKind.Landing) continue;
             var p = new Vector2(piece.Position.x, piece.Position.z);
-            float top = piece.Position.y + (piece.Kind == StairPieceKind.Stair ? StairLayout.PieceRise : StairKit.FloorTopOf(piece.Prefab));
+            float top = StairLayout.TopSurface(piece);
             if (Vector2.Distance(p, a) <= ParallelReach || Vector2.Distance(p, b) <= ParallelReach) { run = 0; continue; }
             bool beside = false;
             for (int i = 1; i < path.Count && !beside; i++)
@@ -1577,7 +1577,7 @@ public static partial class RoadStairRuns
             if (piece.Kind == StairPieceKind.Support) continue;
             var p = new Vector2(piece.Position.x, piece.Position.z);
             // Its top walking surface: a stair rises a step from its base.
-            float top = piece.Position.y + (piece.Kind == StairPieceKind.Stair ? StairLayout.PieceRise : StairKit.FloorTopOf(piece.Prefab));
+            float top = StairLayout.TopSurface(piece);
             // Only the joining step (and its sunk step) may stand on the road, at the foot and at a road staircase's top
             // (an approach's path[from..to] is the road's end alone); near a junction, only at the road's level there.
             float topJoins = to > from ? JoiningStep : JunctionReach;

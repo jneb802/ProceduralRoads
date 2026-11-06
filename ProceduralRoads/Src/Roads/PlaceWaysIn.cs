@@ -116,7 +116,7 @@ public static class PlaceWaysIn
             if (p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing)
             {
                 points.Add(new Vector2(p.Position.x, p.Position.z));
-                heights.Add(p.Kind == StairPieceKind.Stair ? p.Position.y + StairLayout.PieceRise / 2f : p.Position.y + StairKit.FloorTopOf(p.Prefab));
+                heights.Add(StairLayout.CentreSurface(p));
             }
         if (points.Count < 2) return null;
         var end = new Vector2(plan.End.x, plan.End.z);

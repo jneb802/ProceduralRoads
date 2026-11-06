@@ -71,6 +71,14 @@ public static partial class StairLayout
     /// RoadStairRuns.SpanTheValley): its half width, a piece's at least, a little in from its corners.</summary>
     internal static float ExitHalf(float width) => Mathf.Max(PieceRun, width) / 2f - 0.1f;
 
+    /// <summary>The walking surface at the centre of a walked piece: a stair by its middle (its origin is its base), a floor by its top.</summary>
+    internal static float CentreSurface(StairPiece piece) =>
+        piece.Position.y + (piece.Kind == StairPieceKind.Stair ? PieceRise / 2f : StairKit.FloorTopOf(piece.Prefab));
+
+    /// <summary>The top walking surface of a walked piece: a stair rises a step from its base, a floor stands at its top.</summary>
+    internal static float TopSurface(StairPiece piece) =>
+        piece.Position.y + (piece.Kind == StairPieceKind.Stair ? PieceRise : StairKit.FloorTopOf(piece.Prefab));
+
     /// <summary>How many pieces side by side a row <paramref name="width"/> wide takes: one at least.</summary>
     internal static int Lanes(float width) => Mathf.Max(1, Mathf.RoundToInt(width / PieceRun));
 

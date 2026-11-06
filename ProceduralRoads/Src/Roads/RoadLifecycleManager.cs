@@ -85,6 +85,9 @@ public static partial class RoadLifecycleManager
     /// <summary>Whether this peer has a screen of its own to ask on: not a dedicated server.</summary>
     internal static bool HostHasScreen => ZNet.instance != null && !ZNet.instance.IsDedicated();
 
+    /// <summary>What a peer that does not hold the network is told when asked to make one.</summary>
+    internal const string NotTheServer = "Roads are generated only on the server; this peer holds no road network";
+
     /// <summary>Whether this peer may hold a road network: only the server (or the hosting player). A client, whatever it
     /// can see of the world, loads, generates and writes no road. The one check every way a network is made asks: the load
     /// decision, the spawn fallback, road_generate and road_regen_island.</summary>

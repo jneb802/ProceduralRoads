@@ -175,7 +175,7 @@ public static partial class RoadLifecycleManager
     internal static string? BeginForOperator(Vector3? island, Action<string> tell, Action<RoadNetworkGenerator.GenerationWork>? published = null,
         string? command = null, bool force = false, DateTime? now = null)
     {
-        if (!HoldsTheNetwork) return "Roads are generated only on the server; this peer holds no road network";
+        if (!HoldsTheNetwork) return NotTheServer;
         if (ChoicePending) return "The host is still asked what this world's first road network does";
         if (IsGenerating || ManualRoads.Busy) return Busy;
         if (WorldCannotHold?.Invoke() is string held) return held;

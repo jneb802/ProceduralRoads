@@ -1459,7 +1459,7 @@ public static partial class RoadNetworkGenerator
     {
         if (!RoadLifecycleManager.HoldsTheNetwork)
         {
-            preparation.Refuse("Roads are generated only on the server; this peer holds no road network");
+            preparation.Refuse(RoadLifecycleManager.NotTheServer);
             yield break;
         }
         if (NetworkInMemory && !force) yield break;

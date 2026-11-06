@@ -19,4 +19,12 @@ public sealed class ServerRoleTests : System.IDisposable
         _world.WithNetwork(server: false);
         Assert.False(RoadLifecycleManager.HoldsTheNetwork);
     }
+
+    [Fact]
+    public void AClientIsRefusedANetworkOperationInTheOneWording()
+    {
+        _world.WithNetwork(server: false);
+        Assert.Equal("Roads are generated only on the server; this peer holds no road network",
+            RoadLifecycleManager.BeginForOperator(null, _ => { }));
+    }
 }

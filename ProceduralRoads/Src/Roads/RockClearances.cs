@@ -100,7 +100,7 @@ public static class RockClearances
         bool wholeOnly, bool keepsSiteRocks)
     {
         var dir = RoadRockPolicy.Heading(point, line);
-        var half = new Vector3(point.w * 0.5f * RoadConstants.RoadPaintOuterRatio, height * 0.5f, ClearanceHalfLength);
+        var half = new Vector3(RoadProfile.PaintEdge(point.w), height * 0.5f, ClearanceHalfLength);
         return new RockClearance(new Vector3(point.p.x, Bottom(surface) + half.y, point.p.y), half,
             Quaternion.Euler(0f, Mathf.Atan2(dir.x, dir.y) * Mathf.Rad2Deg, 0f), surface, true, point, wholeOnly, keepsSiteRocks);
     }

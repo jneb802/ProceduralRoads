@@ -141,7 +141,7 @@ public static partial class RoadNetworkGenerator
         for (int attempt=0; attempt<=JoinRetries; attempt++)
         {
             // Served already: the search says so at its start and goes no further.
-            var path=finder.FindPathToNetwork(from,8,hints,tried.Count==0 ? allowed : Allowed,served: served);
+            var path=finder.FindPathToNetwork(from,RoadPathfinder.CellSize,hints,tried.Count==0 ? allowed : Allowed,served: served);
             if (finder.AlreadyOnNetwork) return true;
             if (path==null || path.Count<2) { t_capture?.Refused("no route to the network",from); return false; }
             Vector2 end=path[path.Count-1];

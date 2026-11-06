@@ -335,7 +335,7 @@ public class ManualRoadTests : IDisposable
         Assert.True(RoadSpatialGrid.TryGetRoadWithin(new Vector2(0,60),100,out var near,p=>p.y<0));
         Assert.True(near.y<0);
         var finder=new RoadPathfinder(world);
-        var path=finder.FindPathToNetwork(new Vector2(0,60),8,new[]{new Vector2(0,-16)},p=>p.y<0);
+        var path=finder.FindPathToNetwork(new Vector2(0,60), RoadPathfinder.CellSize,new[]{new Vector2(0,-16)},p=>p.y<0);
         Assert.NotNull(path); Assert.True(path![path.Count-1].y<0);
     }
     [Fact] public void AlreadyConnectedIsANoop()

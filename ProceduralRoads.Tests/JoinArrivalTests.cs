@@ -44,7 +44,7 @@ public class JoinArrivalTests : System.IDisposable
                     new List<RoadPointDebugInfo> { default, default, default }, 4f, 4f, false));
                 RoadSpatialGrid.FinalizeRoadNetwork();
                 var finder = new RoadPathfinder(world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f };
-                var path = finder.FindPathToNetwork(new Vector2(0f, 48f), 8f);
+                var path = finder.FindPathToNetwork(new Vector2(0f, 48f), RoadPathfinder.CellSize);
                 Assert.False(finder.AlreadyOnNetwork);
                 return path;
             }
@@ -81,7 +81,7 @@ public class JoinArrivalTests : System.IDisposable
             {
                 RoadPathfinder.MaxIterations = iterations;
                 var finder = new RoadPathfinder(world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f };
-                var path = finder.FindPathToNetwork(new Vector2(0f, 48f), 8f);
+                var path = finder.FindPathToNetwork(new Vector2(0f, 48f), RoadPathfinder.CellSize);
                 spent = (int)used.GetValue(finder)!;
                 return path;
             }

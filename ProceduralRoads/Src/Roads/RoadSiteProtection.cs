@@ -9,8 +9,9 @@ namespace ProceduralRoads;
 /// the world's full location list per move. No Unity objects are retained.</summary>
 public static class RoadSiteProtection
 {
-    /// <summary>How far a road's centreline keeps from a protected site's edge: half its width and a margin.</summary>
-    public static float Clearance(float width) => width * 0.5f + 2f;
+    /// <summary>How far a road's centreline keeps from a protected site's edge: half its width and the terrain blend margin
+    /// (<see cref="RoadConstants.TerrainBlendMargin"/>): room for the road's whole terrain blend.</summary>
+    public static float Clearance(float width) => width * 0.5f + RoadConstants.TerrainBlendMargin;
 
     public readonly struct Footprint
     {

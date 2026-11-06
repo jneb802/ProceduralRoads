@@ -104,8 +104,8 @@ public static class DvergrViaduct
     /// a river its wooden bridge: <see cref="Refusal"/> is the one owner of the kit, and this carries its "under 6 m
     /// stays wood" (<see cref="MinClearance"/>) up to the floor. Its default.</summary>
     public const float DefaultMinViaductPier = 12f;
-    /// <summary>As set: PROCEDURALROADS_VIADUCT_MIN_PIER (metres, 6-20). Settable for tests.</summary>
-    public static float MinViaductPier = DebugSwitches.Number("VIADUCT_MIN_PIER", DefaultMinViaductPier, MinClearance, PierCeiling);
+    /// <summary>As set (metres). Settable for tests.</summary>
+    public static float MinViaductPier = DefaultMinViaductPier;
 
     /// <summary>Pier centre to pier centre, as the vanilla viaduct.</summary>
     public const float PierSpacing = 16f;
@@ -1029,19 +1029,19 @@ public static class DvergrViaduct
     /// <summary>The most stairs, bank to deck, a viaduct has at either end (at most about 3 m of end
     /// stairs between the bank and the deck on each side; past that, no viaduct there). Its default.</summary>
     public const float DefaultMaxEndStairRise = 3f;
-    /// <summary>The most end stairs, as set: PROCEDURALROADS_VIADUCT_END_STAIRS (metres, 0-12).
+    /// <summary>The most end stairs, as set (metres).
     /// Past it at either end <see cref="Refusal"/> refuses the viaduct: a valley keeps
     /// its stairs or road, a river its wooden bridge. 0: level banks only. Settable for tests.</summary>
-    public static float MaxEndStairRise = DebugSwitches.Number("VIADUCT_END_STAIRS", DefaultMaxEndStairRise, 0f, BridgeLayout.MaxStairSteps * BridgeLayout.StairRise);
+    public static float MaxEndStairRise = DefaultMaxEndStairRise;
 
     // ----------------------------------------------------- at grade or raised
 
     /// <summary>The share of viaducts whose deck stands a step or two over the deck at grade (some
     /// at grade, some one or two steps up): about half. Its default.</summary>
     public const float DefaultRaisedShare = 0.5f;
-    /// <summary>The share raised, as set: PROCEDURALROADS_VIADUCT_RAISED (0-1). 0: every viaduct at grade. Settable for
+    /// <summary>The share raised, as set. 0: every viaduct at grade. Settable for
     /// tests.</summary>
-    public static float RaisedShare = DebugSwitches.Number("VIADUCT_RAISED", DefaultRaisedShare, 0f, 1f);
+    public static float RaisedShare = DefaultRaisedShare;
     /// <summary>Of the viaducts raised, the share raised two steps rather than one: half.</summary>
     public const float TwoStepShare = 0.5f;
     /// <summary>The most steps a deck is raised.</summary>

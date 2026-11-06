@@ -3010,7 +3010,7 @@ public static partial class RoadNetworkGenerator
     /// <see cref="CorridorRun"/> metres; the waypoints either side of a run move halfway, so the
     /// road leans into the join instead of jogging. Settable for tests; 0 is off.
     /// </summary>
-    internal static float CorridorSnap = DebugSwitches.Number("CORRIDOR_SNAP", 14f, 0f, 40f);
+    internal static float CorridorSnap = 14f;
     internal const float CorridorAngle = RoadRide.Angle;
     internal const float CorridorHeight = 3f;
     internal const float CorridorRun = 12f;

@@ -49,9 +49,6 @@ public static class ServerTerrainBake
     private static bool? s_probe;
     private static bool Enabled => s_enabled ??= DebugSwitches.Flag("SERVER_BAKE", true);
     private static bool Probe => s_probe ??= DebugSwitches.Flag("PEER_PROBE", false);
-    private static bool? s_holdSpawn;
-    /// <summary>PROCEDURALROADS_BAKE_LOADSCREEN (default on): the host's first spawn waits for the bake, behind the loading screen.</summary>
-    private static bool HoldSpawnEnabled => s_holdSpawn ??= DebugSwitches.Flag("BAKE_LOADSCREEN", true);
     private static readonly ServerBakeLoadScreen s_loadScreen = new();
     /// <summary>Frame time the bake used behind the loading screen; at the host's first spawn, frame time used so far (-1 before).</summary>
     private static double s_heldMs, s_busyAtSpawn = -1;
@@ -129,7 +126,7 @@ public static class ServerTerrainBake
     internal static bool HoldsFirstSpawn => s_loadScreen.Holds(BeforeFirstSpawn(), WorkOwed());
 
     private static bool BeforeFirstSpawn() =>
-        HoldSpawnEnabled && RoadLifecycleManager.HoldsTheNetwork && RoadLifecycleManager.HostHasScreen && Game.instance != null &&
+        RoadLifecycleManager.HoldsTheNetwork && RoadLifecycleManager.HostHasScreen && Game.instance != null &&
         Player.m_localPlayer == null && Game.instance.m_firstSpawn && Game.instance.WaitingForRespawn();
 
     // A network whose queue is not built yet (its first Tick is still to come) is owed work too.
@@ -171,8 +168,7 @@ public static class ServerTerrainBake
         int pending = Pending();
         // Wall time: game time crawls through a frame the bake holds long (Unity caps each frame's step).
         Log.LogInfo($"[BAKE] first spawn {s_wall.Elapsed.TotalSeconds:F1} s after the bake started: {s_busyMs:F0} ms of bake before it " +
-                    $"({s_heldMs:F0} ms of it holding the spawn); {pending} zone(s) pending for the in-world slices" +
-                    (HoldSpawnEnabled ? "" : " (loading-screen hold off by startup setting)"));
+                    $"({s_heldMs:F0} ms of it holding the spawn); {pending} zone(s) pending for the in-world slices");
     }
 
     /// <summary>
@@ -583,7 +579,7 @@ public static class ServerTerrainBake
 
     /// <summary>
     /// Whether the saved-rock pass can make the zone's terrain now without waiting on the game's builder: the terrain
-    /// write's build data is handed back first (PROCEDURALROADS_BAKE_KEEP_BUILD), then the game is asked as the terrain
+    /// write's build data is handed back first, then the game is asked as the terrain
     /// write asks it (asking starts the build). Not ready: the zone comes back through the queue, as a terrain write does.
     /// </summary>
     private static ServerBakeBuilderRequests.Answer RockTerrainReady(Vector2s zone)
@@ -605,13 +601,8 @@ public static class ServerTerrainBake
 
     private static StepTimes s_step;
 
-    /// <summary>PROCEDURALROADS_BAKE_KEEP_BUILD (default on): the rock pass's temporary terrain reuses the build data
-    /// the zone's terrain write took from the game's builder (ServerBakeKeptBuild), instead of asking for it again.
-    /// Off, the rock pass asks the builder again and the zone waits for it through the queue (on the main thread only
-    /// when the builder evicts the build between the readiness answer and the terrain being made).</summary>
-    private static bool? s_keepBuild;
-    private static bool KeepBuild => s_keepBuild ??= DebugSwitches.Flag("BAKE_KEEP_BUILD", true);
-
+    // The rock pass's temporary terrain reuses the build data the zone's terrain write took from the game's builder
+    // (ServerBakeKeptBuild), instead of asking for it again.
     private static readonly ServerBakeKeptBuild<HeightmapBuilder.HMBuildData> s_keptBuild = new();
     /// <summary>The kept data while it sits on the builder's ready list, taken back off at the end of the zone if unused.</summary>
     private static HeightmapBuilder.HMBuildData? s_handedBack;
@@ -619,7 +610,7 @@ public static class ServerTerrainBake
     /// <summary>The terrain write made the zone's terrain: keep the data it was made from for the zone's rock pass.</summary>
     private static void KeepBuildData(Vector2s zone, Heightmap hmap)
     {
-        if (KeepBuild) s_keptBuild.Keep(zone, hmap.m_buildData);
+        s_keptBuild.Keep(zone, hmap.m_buildData);
     }
 
     /// <summary>Put the kept data back among the builder's ready data, where the next Heightmap.Generate for the zone
@@ -627,7 +618,7 @@ public static class ServerTerrainBake
     /// (HMBuildData.IsEqual, as RequestTerrain matches it), so it can never serve another zone.</summary>
     private static void HandBackKeptBuild(Vector2s zone)
     {
-        HeightmapBuilder.HMBuildData? data = s_keptBuild.Take(zone, KeepBuild);
+        HeightmapBuilder.HMBuildData? data = s_keptBuild.Take(zone);
         Heightmap? template = ZoneTemplate();
         HeightmapBuilder? builder = HeightmapBuilder.instance;
         if (data == null || template == null || builder == null || builder.m_lock == null || WorldGenerator.instance == null ||

@@ -59,10 +59,10 @@ public class RoadPathfinder
     /// buys the jump where DvergrViaduct.ValleyCrossing builds it, at DvergrViaduct.Price: dearer
     /// the lower its piers and the more end stairs it has. The road is brought to each end's foot
     /// as the one owner of a crossing's ends decides (StructureEnds.MeetEnds). Needs
-    /// <see cref="Bridges"/>. On by default; PROCEDURALROADS_VIADUCTS=off for a control run.
+    /// <see cref="Bridges"/>. On by default.
     /// </summary>
     public bool Viaducts = ConfiguredViaducts;
-    public static bool ConfiguredViaducts = DebugSwitches.Flag("VIADUCTS", true);
+    public static bool ConfiguredViaducts = true;
     public float ViaductCostFixed = RoadConstants.DefaultViaductCostFixed;
     public float ViaductCostPerMeter = RoadConstants.DefaultViaductCostPerMeter;
     /// <summary>Per metre of a viaduct's end stairs, bank to deck, both ends together (DvergrViaduct.Price).</summary>
@@ -903,8 +903,8 @@ public class RoadPathfinder
     /// <summary>Settable for tests; 0 is no meander.</summary>
     internal static float DefaultMeander = 3f;
     /// <summary>Slope at which the meander field has faded out: the top of the 20-28 % climbs,
-    /// below <see cref="RoadPitches.Sustained"/>. Validation switch MEANDER_FLAT.</summary>
-    public static readonly float MeanderFlat = DebugSwitches.Number("MEANDER_FLAT", 0.28f, 0.02f, 1f);
+    /// below <see cref="RoadPitches.Sustained"/>. </summary>
+    public static readonly float MeanderFlat = 0.28f;
     internal float MeanderCost(Vector2 from, Vector2 to, Vector2i toCell, float slope, float dist)
     {
         if (slope >= MeanderFlat || Meander <= 0f) return 0f;

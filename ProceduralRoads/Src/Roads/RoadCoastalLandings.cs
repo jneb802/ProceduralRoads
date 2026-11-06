@@ -45,7 +45,7 @@ public static class RoadCoastalLandings
             // First screen is entirely in memory; query the biome only at a low shore.
             int shoreReach = Mathf.CeilToInt(32 / spacing);
             if (!Directions.Any(d => Known(H(cell.x+d.x*shoreReach, cell.y+d.z*shoreReach))
-                && H(cell.x+d.x*shoreReach, cell.y+d.z*shoreReach) < Sea)) continue;
+                && RoadWater.Wet(H(cell.x+d.x*shoreReach, cell.y+d.z*shoreReach)))) continue;
             var p = island.CellToWorld(cell);
 
             // A continuous sampled water approach, not a deep point behind another bank.
@@ -61,7 +61,7 @@ public static class RoadCoastalLandings
                     if(preparation.Checkpoint(0)) yield return true;
                     float water = H(cell.x + d.x*i, cell.y + d.z*i);
                     if (!Known(water)) break;
-                    if (water >= Sea)
+                    if (!RoadWater.Wet(water))
                     {
                         if (wet || i * step > 32 || water > h + 1) break;
                         continue;

@@ -77,6 +77,9 @@ public static class RoadWater
     public static bool Walked(WorldGenerator world, Vector2 p, bool wade = true) =>
         At(world, p, wade) is Kind.Dry or Kind.Waded;
 
+    /// <summary>Ground under the sea line (named case): water, whatever a road may do on it.</summary>
+    public static bool Wet(float height) => height < RoadConstants.SeaLevel;
+
     /// <summary>The lowest ground the search walks at <paramref name="p"/>: the deep line in a swamp it wades, else the
     /// shallow line.</summary>
     public static float Floor(WorldGenerator world, Vector2 p, bool wade = true) =>

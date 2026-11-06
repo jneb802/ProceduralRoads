@@ -195,3 +195,19 @@ public class DryFloorTests
         Assert.Equal(Mathf.Max(g, RoadConstants.SeaLevel + 0.5f), RoadWater.AtLeastDryFloor(g));
     }
 }
+
+/// <summary>"Wet" is the one sea-line test.</summary>
+public class WetTests
+{
+    [Theory]
+    [InlineData(-100f)]
+    [InlineData(29.9999f)]
+    [InlineData(30f)]
+    [InlineData(30.0001f)]
+    [InlineData(31f)]
+    public void WetIsUnderTheSeaLevel(float h)
+    {
+        Assert.Equal(h < RoadConstants.SeaLevel, RoadWater.Wet(h));
+        Assert.Equal(h >= RoadConstants.SeaLevel, !RoadWater.Wet(h));
+    }
+}

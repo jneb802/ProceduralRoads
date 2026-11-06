@@ -344,7 +344,7 @@ public static class RoadCrossingDetector
         if ((from != crossing.FromBank || to != crossing.ToBank) && Vector2.Distance(from, to) >= 1f)
         {
             (float bed, Vector2 fairwayCenter, float fairwayWidth) = Profile(from, to, world);
-            if (bed < RoadConstants.SeaLevel)
+            if (RoadWater.Wet(bed))
             {
                 RoadCrossing walked = RoadCrossing.Between(from, to, bed, fairwayCenter, fairwayWidth, crossing.Kind, crossing.Style);
                 walked.FromIndex = crossing.FromIndex;
@@ -511,7 +511,7 @@ public static class RoadCrossingDetector
             for (float d = 1f; d <= length + 12f; d += 1f)
             {
                 Vector2 p = from + dir * d;
-                bool wet = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world) < RoadConstants.SeaLevel;
+                bool wet = RoadWater.Wet(BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world));
                 if (wet) { sawWater = true; continue; }
                 if (!sawWater) continue;
                 if (Vector2.Distance(p, to) <= 8f && d <= ShallowMaxLength) return p;
@@ -595,7 +595,7 @@ public static class RoadCrossingDetector
             {
                 Vector2 p = Vector2.Lerp(a, b, (float)k / n);
                 float h = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
-                bool wet = h < RoadConstants.SeaLevel;
+                bool wet = RoadWater.Wet(h);
                 if (wet)
                 {
                     if (runSeg < 0) { runSeg = i - 1; runStart = last; }
@@ -634,7 +634,7 @@ public static class RoadCrossingDetector
             float y = a.y + (b.y - a.y) * t;
             world.GetRiverWeight(x, y, out float weight, out _);
             if (RoadWater.River(weight)
-                && BiomeBlendedHeight.GetBlendedHeight(x, y, world) < RoadConstants.SeaLevel)
+                && RoadWater.Wet(BiomeBlendedHeight.GetBlendedHeight(x, y, world)))
                 return true;
         }
         return false;
@@ -698,7 +698,7 @@ public static class RoadCrossingDetector
         (float riverbed, Vector2 fairwayCenter, float fairwayWidth) = Profile(from, to, world);
 
         // A crossing needs water under it; a dry river valley is ordinary road.
-        if (riverbed >= RoadConstants.SeaLevel)
+        if (!RoadWater.Wet(riverbed))
             return null;
 
         Vector2 center = (from + to) * 0.5f;
@@ -815,7 +815,7 @@ public static class RoadCrossingDetector
                 && Vector2.Distance(edgeFrom, edgeTo) >= 1f)
             {
                 (float edgeBed, Vector2 edgeCentre, float edgeFairway) = Profile(edgeFrom, edgeTo, world);
-                if (edgeBed < RoadConstants.SeaLevel)
+                if (RoadWater.Wet(edgeBed))
                 {
                     from = edgeFrom;
                     to = edgeTo;
@@ -1098,7 +1098,7 @@ public static class RoadCrossingDetector
         (riverbed, fairwayCenter, fairwayWidth) = Profile(turnedFrom, turnedTo, world);
 
         // Still a crossing at all.
-        if (riverbed >= RoadConstants.SeaLevel)
+        if (!RoadWater.Wet(riverbed))
             return false;
         // Still the crossing the router priced: neither bridgehead has walked
         // further than the cell size the route was chosen at. Either end may
@@ -1266,7 +1266,7 @@ public static class RoadCrossingDetector
             if (carriesPieces && !BridgeLayout.HeadingIsPlaceable(BridgeLayout.YawDegrees((b - a).normalized)))
                 return null;
             (float bed, Vector2 centre, float fairway) = Profile(a, b, world);
-            if (bed >= RoadConstants.SeaLevel) return null;
+            if (!RoadWater.Wet(bed)) return null;
             RoadCrossing c = RoadCrossing.Between(a, b, bed, centre, fairway, CrossingKind.Bridge, FordStyle.None);
             return (BridgeLayout.DeckHeight(c, world), bed, centre, fairway);
         }

@@ -2757,7 +2757,7 @@ public static partial class RoadNetworkGenerator
         /// <summary>The ground cut to each step under a viaduct's end stairs, decided from the road's arrival (StructureEnds),
         /// <see cref="CutWidth"/> wide.</summary>
         public readonly List<Vector3> Cuts = new();
-        public static float CutWidth => BridgeLayout.DeckHalfWidth * 2f;
+        public static float CutWidth => BridgeLayout.EndStairsWidth;
         /// <summary>
         /// Road carried in under each end of every bridge, up to
         /// <see cref="DeckGroundReach"/> and only while the ground is above the

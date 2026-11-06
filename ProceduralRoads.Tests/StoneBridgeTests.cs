@@ -520,7 +520,7 @@ public sealed class StoneBridgeTests : IDisposable
             Assert.Equal(36, pier.Count);
             Assert.Equal(Deck - 1.5f, heights[0], 3);
             float foot = heights[heights.Count - 1] - 0.5f;
-            Assert.True(foot <= w.GetHeight(along, 0f) + BuriedPieces.Growth && foot + 1f > w.GetHeight(along, 0f));
+            Assert.True(foot <= w.GetHeight(along, 0f) + SupportGraph.Reach && foot + 1f > w.GetHeight(along, 0f));
         }
         bool drawn = false;
         for (int seed = 1; seed <= 30 && !drawn; seed++) { w.Seed = seed; drawn = BridgeStructures.KitFor(c, w) == BridgeStructures.Kit.Stone; }
@@ -617,7 +617,7 @@ public sealed class StoneBridgeTests : IDisposable
                         }
                         for (int m = 0; m < column.Count; m++)
                             Assert.Equal(foot - 1f - 2f * m, column[m].At.z, 2);
-                        Assert.True(column[column.Count - 1].At.z - 1f <= TallBank(Mathf.Abs(along + da)) + BuriedPieces.Growth);
+                        Assert.True(column[column.Count - 1].At.z - 1f <= TallBank(Mathf.Abs(along + da)) + SupportGraph.Reach);
                     }
             }
             Assert.Equal(2 * far.Steps, plan.Count(p => p.Prefab == BridgeLayout.StoneStairPrefab && p.At.x * end > 10f));

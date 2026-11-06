@@ -22,16 +22,13 @@ namespace ProceduralRoads;
 /// its top 1.5 m under the ground broke about 30 s on and left its Stone on the pillar above; one on a slope,
 /// its top 0.3 m under the ground at its middle but out of it downhill, stood.
 ///
-/// A piece is dropped here where the ground over its whole footprint grown by <see cref="Growth"/> stands at or
+/// A piece is dropped here where the ground over its whole footprint grown by <see cref="SupportGraph.Reach"/> stands at or
 /// above its top: wholly under the surface, so out of sight, and the game's own test with a margin of the growth
 /// for ground that comes out lower than it was modelled. Nothing it held is lost: a piece standing on it stands
 /// on its top, which is in the ground, so it is grounded itself.
 /// </summary>
 public static class BuriedPieces
 {
-    /// <summary>How far WearNTear grows each collider box on every side for its overlap.</summary>
-    public const float Growth = 0.15f;
-
     /// <summary>Each stair kit piece's collider bounds about its origin (cli_piece_geometry, Valheim 1.0.x).</summary>
     private static readonly Dictionary<string, (Vector3 min, Vector3 max)> s_bounds = new()
     {
@@ -72,7 +69,7 @@ public static class BuriedPieces
     /// <summary>
     /// Whether the piece, turned <paramref name="yawDegrees"/> about its origin at <paramref name="position"/>, lies
     /// wholly under the ground: the lowest of the game's terrain mesh over its footprint grown by
-    /// <see cref="Growth"/> at or above its top. <paramref name="vertex"/>: the ground at a whole-metre vertex
+    /// <see cref="SupportGraph.Reach"/> at or above its top. <paramref name="vertex"/>: the ground at a whole-metre vertex
     /// (NaN where not known: then never). A piece tipped off level or of unknown bounds is never buried.
     /// </summary>
     public static bool Buried(string prefab, Vector3 position, float yawDegrees, Func<int, int, float> vertex, float pitchDegrees = 0f)
@@ -84,7 +81,7 @@ public static class BuriedPieces
         Vector2 middle = at + right * ((b.min.x + b.max.x) / 2f) + forward * ((b.min.z + b.max.z) / 2f);
         float h = MeshHeight(middle.x, middle.y, vertex);
         if (!(h >= top)) return false;
-        float x0 = b.min.x - Growth, x1 = b.max.x + Growth, z0 = b.min.z - Growth, z1 = b.max.z + Growth;
+        float x0 = b.min.x - SupportGraph.Reach, x1 = b.max.x + SupportGraph.Reach, z0 = b.min.z - SupportGraph.Reach, z1 = b.max.z + SupportGraph.Reach;
         var corners = new[]
         {
             at + right * x0 + forward * z0, at + right * x1 + forward * z0,

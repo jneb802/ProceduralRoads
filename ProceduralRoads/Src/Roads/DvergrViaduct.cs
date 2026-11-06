@@ -1840,7 +1840,7 @@ public static class DvergrViaduct
     }
 
     private static Func<Vector2, float> FinishedGround(WorldGenerator world, StructureEnds.End nearEnd, StructureEnds.End farEnd) =>
-        StructureGround.Of(world, nearEnd, farEnd, HalfWidth + BuriedPieces.Growth);
+        StructureGround.Of(world, nearEnd, farEnd, HalfWidth + SupportGraph.Reach);
 
     /// <summary>Whether a vine's origin lies within <see cref="VineTouch"/> of a stone piece laid (its bounds,
     /// <see cref="Extents"/>), on the bridge's axes.</summary>
@@ -1869,7 +1869,7 @@ public static class DvergrViaduct
     internal static float Ground(Vector2 p, WorldGenerator world) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
 
     /// <summary>Whether a piece would be wholly under the ground: its top at or under the ground
-    /// over its whole footprint grown by <see cref="BuriedPieces.Growth"/> (the game breaks such a
+    /// over its whole footprint grown by <see cref="SupportGraph.Reach"/> (the game breaks such a
     /// piece: it touches no terrain triangle, so it is not grounded).</summary>
     internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, WorldGenerator world) =>
         WhollyBuried(prefab, centre, dir, side, y, p => Ground(p, world));
@@ -1878,8 +1878,8 @@ public static class DvergrViaduct
     internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, Func<Vector2, float> ground)
     {
         var (hu, hv, hy) = Extents(prefab);
-        float top = y + hy + BuriedPieces.Growth;
-        hu += BuriedPieces.Growth; hv += BuriedPieces.Growth;
+        float top = y + hy + SupportGraph.Reach;
+        hu += SupportGraph.Reach; hv += SupportGraph.Reach;
         foreach (float su in new[] { -1f, 0f, 1f })
             foreach (float sv in new[] { -1f, 0f, 1f })
                 if (ground(centre + dir * (su * hu) + side * (sv * hv)) < top)

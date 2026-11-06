@@ -632,7 +632,7 @@ public static partial class BridgeLayout
                     low = Mathf.Min(low, m_ground(At(bay * DeckSpan + a, s * DeckHalfWidth)));
             float top = DeckH - StoneFloorDepth;
             int courses = 1;
-            while (top - courses > low + BuriedPieces.Growth && courses < 256) courses++;
+            while (top - courses > low + SupportGraph.Reach && courses < 256) courses++;
             return courses;
         }
 
@@ -642,7 +642,7 @@ public static partial class BridgeLayout
         {
             float ground = m_ground(p);
             int pillars = 1;
-            while (foot - StonePillarHeight * pillars > ground + BuriedPieces.Growth && pillars < 256) pillars++;
+            while (foot - StonePillarHeight * pillars > ground + SupportGraph.Reach && pillars < 256) pillars++;
             return pillars;
         }
 

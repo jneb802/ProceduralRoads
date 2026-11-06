@@ -202,7 +202,7 @@ public static class DvergrWoodBridge
         BridgeLayout.RuinProfile profile = Profile;
         // The finished ground (StructureGround): the piles stand on it, and the end stairs' columns are carried down to it.
         var (nearEnd, farEnd) = StructureEnds.Of(crossing, world);
-        System.Func<Vector2, float> groundAt = StructureGround.Of(world, nearEnd, farEnd, BeamLength * 0.5f + BuriedPieces.Growth);
+        System.Func<Vector2, float> groundAt = StructureGround.Of(world, nearEnd, farEnd, BeamLength * 0.5f + SupportGraph.Reach);
 
         float[] bents = BentAlongs(length);
         int n = bents.Length;

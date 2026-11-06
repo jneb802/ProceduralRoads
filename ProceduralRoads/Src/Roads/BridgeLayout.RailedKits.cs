@@ -137,7 +137,7 @@ public static partial class BridgeLayout
     /// bank the road cuts away, and a piece under a landing the road raises is left out as buried.
     /// </summary>
     private static System.Func<Vector2, float> RailedGround(StructureEnds.End near, StructureEnds.End far, WorldGenerator world) =>
-        StructureGround.Of(world, near, far, DeckHalfWidth + BuriedPieces.Growth);
+        StructureGround.Of(world, near, far, DeckHalfWidth + SupportGraph.Reach);
 
     /// <summary>The crossings a railed kit is laid on: a bridge, and a ford laid as a span (its footbridge, the same kit on
     /// a lower deck, <see cref="SpanDeckHeight"/>). A wading or raised ford is road.</summary>
@@ -515,7 +515,7 @@ public static partial class BridgeLayout
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
             {
                 Vector2 p = at + side * (s * DeckHalfWidth);
-                if (ground(p) >= bottom + RailHeight + BuriedPieces.Growth) continue;
+                if (ground(p) >= bottom + RailHeight + SupportGraph.Reach) continue;
                 AddPiece(pieces, StructurePieceKind.Post, RailPostPrefab, p, bottom + RailHeight * 0.5f, postYaw,
                     newel ? r.Health(bayKey, s, RoleRailHealth, 0) : r.Health(bayKey, s, RoleRailPost, k));
             }

@@ -936,12 +936,12 @@ public static partial class BridgeLayout
     /// <summary>A column of <paramref name="segment"/>-long posts (origin at their centre) from topHeight down until one
     /// is buried in the ground (grounded by construction).
     /// <para><paramref name="toFoot"/>: stop instead at the first post whose foot is in the ground (within
-    /// <see cref="BuriedPieces.Growth"/> of it, where the game grounds it), and lay none where the top already is; the
+    /// <see cref="SupportGraph.Reach"/> of it, where the game grounds it), and lay none where the top already is; the
     /// railed kits' columns (<see cref="RailedKit"/>) stand on the ground as the hand-built reference's do.</para></summary>
     private static void EmitColumn(List<StructurePiece> pieces, Vector2 pos, float ground, float topHeight, float yaw, float health,
         string postPrefab = PostPrefab, float segment = PostSegment, bool toFoot = false)
     {
-        if (toFoot ? topHeight <= ground + BuriedPieces.Growth : topHeight <= ground - segment)
+        if (toFoot ? topHeight <= ground + SupportGraph.Reach : topHeight <= ground - segment)
             return;
         for (float top = topHeight; ; top -= segment)
         {
@@ -954,7 +954,7 @@ public static partial class BridgeLayout
                 YawDegrees = yaw,
                 HealthFraction = health,
             });
-            if (toFoot ? top - segment <= ground + BuriedPieces.Growth : center <= ground)
+            if (toFoot ? top - segment <= ground + SupportGraph.Reach : center <= ground)
                 break;
         }
     }

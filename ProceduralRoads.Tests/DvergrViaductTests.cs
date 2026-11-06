@@ -485,9 +485,9 @@ public sealed class DvergrViaductTests : IDisposable
             {
                 List<float> g = GroundUnder(boxes[i], c, world);
                 // Never wholly under the ground: the game would break it.
-                Assert.False(g.All(h => h >= boxes[i].Y1 + BuriedPieces.Growth), $"{boxes[i].Piece.Prefab} at {boxes[i].Piece.Position} is wholly buried");
+                Assert.False(g.All(h => h >= boxes[i].Y1 + SupportGraph.Reach), $"{boxes[i].Piece.Prefab} at {boxes[i].Piece.Position} is wholly buried");
                 // Grounded: the ground's surface passes through it somewhere.
-                if (g.Max() >= boxes[i].Y0 - 0.05f && g.Min() <= boxes[i].Y1 + BuriedPieces.Growth) { supported[i] = true; queue.Enqueue(i); }
+                if (g.Max() >= boxes[i].Y0 - 0.05f && g.Min() <= boxes[i].Y1 + SupportGraph.Reach) { supported[i] = true; queue.Enqueue(i); }
             }
             while (queue.Count > 0)
             {

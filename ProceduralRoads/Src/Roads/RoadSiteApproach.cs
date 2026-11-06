@@ -176,7 +176,7 @@ public static class RoadSiteApproach
             var origin = new Vector2i(0,0);
             costs[origin]=0f; frontier.Add((0f,0,0));
             float maxRadius = Mathf.Min(192f, Vector2.Distance(anchor,centre)+Reach);
-            float maxGrade = RoadGrade.Configured > 0f ? RoadGrade.Configured : 0.35f;
+            float maxGrade = RoadGrade.Configured > 0f ? RoadGrade.Configured : RoadConstants.DefaultMaxRoadGrade;
             Vector2 Point(Vector2i node) => anchor + new Vector2(node.x*step,node.y*step);
             int visited=0, goals=0;
             while (frontier.Count > 0 && visited++ < 4096 && goals < 8)

@@ -479,8 +479,8 @@ public static partial class BridgeLayout
         float railYaw = YawDegrees(inward) - 90f;   // its local x from its low snap (outward) to its high one
         for (int k = 0; k < steps; k++)
         {
-            Vector2 c = anchor - inward * (StairHalfRun + k * StairLayout.PieceRun);
-            float foot = deckH - StairLayout.PieceRise - k * StairLayout.PieceRise;
+            Vector2 c = StructureEnds.StepCentre(anchor, inward, k);
+            float foot = StructureEnds.StepFoot(deckH, k);
             // A step over the ground (the stair run's test, either lane's middle) stands on a column under each edge at its
             // low joint, as the deck does on its stations.
             bool carried = false;
@@ -509,7 +509,7 @@ public static partial class BridgeLayout
         // The deck's railing post stands at the top joint; one at each joint below it, the newel at the foot.
         for (int k = 1; k <= steps; k++)
         {
-            Vector2 at = anchor - inward * (k * StairLayout.PieceRun);
+            Vector2 at = StructureEnds.StepJoint(anchor, inward, k);
             float bottom = deckH - k * StairLayout.PieceRise;
             bool newel = k == steps;
             foreach (int s in new[] { Ruin.Left, Ruin.Right })

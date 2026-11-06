@@ -48,6 +48,19 @@ public static class StructureEnds
     /// step a player takes without a jump.</summary>
     public const float StepTolerance = 0.5f;
 
+    /// <summary>The middle of the end's step <paramref name="k"/> (0 at the edge): its origin, a half run out from the joint above it.</summary>
+    public static Vector2 StepCentre(Vector2 edge, Vector2 up, int k) => edge - up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun);
+
+    /// <summary>The joint <paramref name="steps"/> steps out from the edge: the foot of that many steps (0 is the edge).</summary>
+    public static Vector2 StepJoint(Vector2 edge, Vector2 up, int steps) => edge - up * (StairLayout.PieceRun * steps);
+
+    /// <summary>The base of the end's step <paramref name="k"/>, <paramref name="height"/> being the walking surface at the edge:
+    /// k + 1 rises under it.</summary>
+    public static float StepBase(float height, int k) => height - StairLayout.PieceRise * (k + 1);
+
+    /// <summary>The base of a step <paramref name="k"/> as the bridge kits lay it: one rise off the deck, then k more.</summary>
+    public static float StepFoot(float deckHeight, int k) => deckHeight - StairLayout.PieceRise - k * StairLayout.PieceRise;
+
     /// <summary>One end of a structure as it meets the road.</summary>
     public readonly struct End
     {
@@ -69,7 +82,7 @@ public static class StructureEnds
         }
         public float Rise => Steps * StairLayout.PieceRise;
         /// <summary>Where the road ends: the foot of the stairs, or the edge.</summary>
-        public Vector2 Meet => Edge - Up * (StairLayout.PieceRun * Steps);
+        public Vector2 Meet => StepJoint(Edge, Up, Steps);
         /// <summary>The road's height there.</summary>
         public float MeetHeight => Height - Rise;
         /// <summary>The far end of the road's levelled apron, on the structure's line.</summary>
@@ -558,7 +571,7 @@ public static class StructureEnds
                 var removed = new List<Vector2>(points) { f.Joint, m.Joint };
                 foreach (var (e, whole) in new[] { (f, far), (m, near) })
                     for (int k = e.Steps; k < whole.Steps; k++)
-                        removed.Add(whole.Edge - whole.Up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun));
+                        removed.Add(StepCentre(whole.Edge, whole.Up, k));
                 var heights = points.Select(ground).ToList();
                 bool overWater = false;
                 float[]? raised = RoadStairRuns.Land(points, heights, removed, f.Meet, height, (x, z) => ground(new Vector2(x, z)), cap, out var others);
@@ -717,7 +730,7 @@ public static class StructureEnds
         for (int i = k + step; k >= 0 && i >= 0 && i < path.Count && Vector2.Distance(points[points.Count - 1], end.Meet) <= reach; i += step) To(path[i]);
         var removed = new List<Vector2>();
         for (int s = end.Up == natural.Up ? end.Steps : 0; s < natural.Steps; s++)
-            removed.Add(natural.Edge - natural.Up * (BridgeLayout.StairHalfRun + s * StairLayout.PieceRun));
+            removed.Add(StepCentre(natural.Edge, natural.Up, s));
         // The road's last ApronLength to the foot, along the road as it comes, and on under the joining piece: levelled at
         // the foot's height (RoadSpatialGrid.LevelledEnds).
         removed.Add(end.Joint);

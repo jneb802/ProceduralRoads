@@ -813,8 +813,8 @@ public static partial class BridgeLayout
         // step wholly in the ground (BuriedPieces), which the game breaks.
         for (int k = 0; count.HasValue ? k < count.Value : k < MaxStairSteps && !landed; k++)
         {
-            Vector2 c = anchor - inward * (StairHalfRun + k * StairLayout.PieceRun);
-            float foot = deckH - StairLayout.PieceRise - k * StairLayout.PieceRise;
+            Vector2 c = StructureEnds.StepCentre(anchor, inward, k);
+            float foot = StructureEnds.StepFoot(deckH, k);
             bool bothLanded = true;
             foreach (int lane in new[] { Ruin.Left, Ruin.Right })
             {

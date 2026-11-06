@@ -293,7 +293,7 @@ public static partial class BridgeLayout
         foreach (StructureEnds.End end in new[] { f.Near, f.Far })
             for (int k = 0; k < end.Steps; k++)
                 foreach (Vector2 p in StoneFooting(end, f.Side, k))
-                    if (f.FootingPillars(p, end.Height - StairLayout.PieceRise * (k + 1)) > BridgeSupport.StoneMaxFootingPillars()) return false;
+                    if (f.FootingPillars(p, StructureEnds.StepBase(end.Height, k)) > BridgeSupport.StoneMaxFootingPillars()) return false;
         return true;
     }
 
@@ -562,7 +562,7 @@ public static partial class BridgeLayout
         int steps = LayEndStairs(pieces, f.Ground, end, f.Side, r, bayKey, StoneStairPrefab, carry: false);
         for (int k = 0; k < steps; k++)
         {
-            float foot = end.Height - StairLayout.PieceRise * (k + 1);
+            float foot = StructureEnds.StepBase(end.Height, k);
             int n = 0;
             foreach (Vector2 p in StoneFooting(end, f.Side, k))
             {
@@ -573,7 +573,7 @@ public static partial class BridgeLayout
                         r.Health(bayKey, n, Ruin.RolePostHealth, k * 16 + m));
                 n++;
             }
-            Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairLayout.PieceRun);
+            Vector2 c = StructureEnds.StepCentre(end.Edge, end.Up, k);
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
                 f.LayAt(pieces, StructurePieceKind.Beam, StonePierBlock, c + f.Side * (s * DeckHalfWidth), foot + 0.5f, f.AlongYaw,
                     r.Health(bayKey, s, RoleRailHealth, k + 2));
@@ -585,7 +585,7 @@ public static partial class BridgeLayout
     /// each a metre square.</summary>
     private static IEnumerable<Vector2> StoneFooting(StructureEnds.End end, Vector2 side, int k)
     {
-        Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairLayout.PieceRun);
+        Vector2 c = StructureEnds.StepCentre(end.Edge, end.Up, k);
         foreach (float along in new[] { -0.5f, 0.5f })
             foreach (float across in new[] { -1.5f, -0.5f, 0.5f, 1.5f })
                 yield return c + end.Up * along + side * across;

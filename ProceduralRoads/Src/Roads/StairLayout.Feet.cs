@@ -185,7 +185,7 @@ public static partial class StairLayout
     {
         if (UnpricedLedge) return 0f;
         float drop = 0f;
-        float side = Mathf.Max(half, PieceRun / 2f) - 0.1f;
+        float side = ExitHalf(2f * half);
         foreach (float along in new[] { PieceRun / 4f, PieceRun * 3f / 4f })
         {
             Vector2 mid = start + dir * along;

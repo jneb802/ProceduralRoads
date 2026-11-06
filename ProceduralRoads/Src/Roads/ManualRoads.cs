@@ -302,7 +302,6 @@ public static class ManualRoads
         }
         else ManualRoadDraft.Validate(points);
         float width = RoadNetworkGenerator.RoadWidth;
-        if (!ManualRoadDraft.IsFinite(width) || width < 1 || width > 32) throw new InvalidOperationException("Road width must be between 1 and 32 metres.");
         foreach (var point in points)
         {
             // From a place, its point is in it (PlaceAt): the road leaves from the place, as the generator's does.

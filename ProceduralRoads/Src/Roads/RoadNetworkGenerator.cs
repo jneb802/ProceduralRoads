@@ -415,7 +415,7 @@ public static partial class RoadNetworkGenerator
 
     /// <summary>The one test of whether the network reaches the place at <paramref name="flat"/> (exterior
     /// <paramref name="radius"/>, as asked, not trimmed), measured at the trim's keep-out edge (<see cref="KeepOutEdge"/>):
-    /// for the count, the planner's join (<see cref="PlaceServed"/>) and whether a road's own stub to the place is dropped
+    /// for the count, the planner's join (<see cref="JoinPlace"/>) and whether a road's own stub to the place is dropped
     /// where it merges (<see cref="EndReached"/>).
     ///
     /// Reached only where the network ends level with the place (<see cref="ReachRise"/> of <see cref="ArrivalHeight"/>, the

@@ -498,7 +498,7 @@ public class RoadPathfinder
     /// <summary>Search from a destination towards any existing road. Sampled hints
     /// guide the search; they do not promise a globally cheapest junction.
     /// <paramref name="served"/>: whether the place the search starts from is already served by the network
-    /// (RoadNetworkGenerator.PlaceServed), the caller's own test of it, asked first in place of a junction at the first cell
+    /// (RoadNetworkGenerator.Reached), the caller's own test of it, asked first in place of a junction at the first cell
     /// (AlreadyOnNetwork). Not served, a junction at the first cell is one the search finds like any other: a path from the
     /// start to it.</summary>
     public List<Vector2>? FindPathToNetwork(Vector2 start, float reach, IReadOnlyList<Vector2>? hints = null, System.Func<Vector2, bool>? targetAllowed = null,

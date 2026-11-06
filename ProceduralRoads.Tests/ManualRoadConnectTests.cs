@@ -195,7 +195,7 @@ public sealed class ManualRoadConnectTests : IDisposable
         Assert.StartsWith($"Road added: ", output[1]);
         Assert.Contains($"from {Ruin} at (80, 80) to the network", output[1]);
         Assert.Equal(appends + 1, RoadSpatialGrid.AppendCount);
-        Assert.True(RoadNetworkGenerator.PlaceServed(Ruin, new Vector3(RuinAt.x, 0f, RuinAt.y), RuinRadius), "the ruin is not served");
+        Assert.True(RoadNetworkGenerator.Reached(new Vector3(RuinAt.x, 0f, RuinAt.y), RuinRadius, Ruin), "the ruin is not served");
 
         // Built: a third run is the first again.
         Assert.StartsWith("Not built yet: ", Assert.Single(Run(line)));

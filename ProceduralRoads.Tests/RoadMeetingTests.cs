@@ -210,7 +210,7 @@ public class RoadMeetingTests : IDisposable
             Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
             Assert.True(RoadNetworkGenerator.JoinPlace(finder, world, hints, new RoadConnectionPlanner.Place("Cave", Vector3.zero, 10f)));
             Assert.Equal(laid, RoadSpatialGrid.TotalRoadLength);
-            Assert.False(RoadNetworkGenerator.PlaceServed("SomeBossEntrance", Vector3.zero, 10f));
+            Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f, "SomeBossEntrance"));
         }
         finally { RoadPathfinder.JunctionStep = step; }
     }

@@ -348,7 +348,7 @@ public static class ManualRoads
             Vector2 centre = fromPlace?.Centre ?? points[0];
             float radius = fromPlace?.Radius ?? 0f;
             Func<bool>? served = fromPlace == null ? null
-                : () => RoadNetworkGenerator.PlaceServed(fromPlace.Name, new Vector3(centre.x, 0f, centre.y), radius);
+                : () => RoadNetworkGenerator.Reached(new Vector3(centre.x, 0f, centre.y), radius, fromPlace.Name);
             var capture = new RoadNetworkGenerator.RoadCapture();
             bool joined;
             using (RoadNetworkGenerator.PlanningWith(finder, capture))

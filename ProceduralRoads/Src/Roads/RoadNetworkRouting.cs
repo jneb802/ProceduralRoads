@@ -103,15 +103,7 @@ public static partial class RoadNetworkGenerator
         foreach (var pricer in pricers.Values) pricer.FoldTerrainMemoCounters();
     }
 
-    /// <summary>
-    /// Whether the network serves a place: the one test for the planner's join and its search's start
-    /// (<see cref="JoinPlace"/>), and the same as the count of places reached (<see cref="Reached"/>).
-    /// A boss's entrance is served only by a road onto its own landing, never by a road passing within reach of it.
-    /// </summary>
-    internal static bool PlaceServed(string name, Vector3 position, float radius) =>
-        Reached(position, radius, name);
-
-    /// <summary>The planner's join: the place already served (<see cref="PlaceServed"/>), else a road from it to the
+    /// <summary>The planner's join: the place already served (<see cref="Reached"/>, as the count of places reached), else a road from it to the
     /// nearest junction its search finds; where that road is refused or not found, to the next junction the search finds
     /// away from it, up to <see cref="JoinRetries"/> more times. The search returns only its cheapest level junction: a road
     /// there that could not be built (its ends too steep once its turns were flattened, a ridge at the junction, the junction
@@ -121,7 +113,7 @@ public static partial class RoadNetworkGenerator
         if (hints.Count==0) return false;
         Vector2 from=RoadEndpoint.FindGround(world,new Vector2(place.Position.x,place.Position.z),place.Radius);
         return JoinTo(finder,from,hints,place.Name,place.Position,place.Radius,null,
-            () => PlaceServed(place.Name, place.Position, place.Radius),hints);
+            () => Reached(place.Position, place.Radius, place.Name),hints);
     }
 
     /// <summary>

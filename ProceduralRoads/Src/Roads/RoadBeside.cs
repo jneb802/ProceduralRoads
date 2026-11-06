@@ -47,7 +47,7 @@ public static class RoadBeside
     /// a staircase's walked piece there runs beside it (a staircase shares no trunk with a road).</summary>
     public static bool NearAtItsHeight(Vector2 p, float height) =>
         RoadSpatialGrid.IsInitialized && RoadSpatialGrid.TryGetRoadWithin(p, Reach, out Vector2 other)
-        && RoadSpatialGrid.TryGetRoadHeightWithin(other, 1f, out float h) && AtItsHeight(h, height);
+        && RoadSpatialGrid.TryGetRoadHeightWithin(other, OnRoad, out float h) && AtItsHeight(h, height);
 
     /// <summary>Whether a surface at <paramref name="height"/> is at the height of a road at <paramref name="roadHeight"/>.</summary>
     public static bool AtItsHeight(float roadHeight, float height) => Mathf.Abs(roadHeight - height) <= Height;

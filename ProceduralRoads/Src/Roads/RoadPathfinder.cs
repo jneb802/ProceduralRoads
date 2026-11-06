@@ -572,7 +572,7 @@ public class RoadPathfinder
                 || RoadSpatialGrid.TryGetRoadAtGradeWithin(at, reach, Ground(cell), JunctionStep, out junction, targetAllowed);
         }
         bool ArrivesLevel(Vector2 junction, Vector2i before) =>
-            !RoadSpatialGrid.TryGetRoadHeightWithin(junction, 1f, out float surface)
+            !RoadSpatialGrid.TryGetRoadHeightWithin(junction, RoadBeside.OnRoad, out float surface)
             || Mathf.Abs(surface - Ground(before)) <= 2f * JunctionStep;
 
         if (served != null ? served() : Join(startGrid, out _))

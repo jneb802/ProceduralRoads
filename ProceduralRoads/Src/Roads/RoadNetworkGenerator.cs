@@ -2917,13 +2917,13 @@ public static partial class RoadNetworkGenerator
     private static int MergeWithin(List<Vector2> path, int step)
     {
         int start = step > 0 ? 0 : path.Count - 1;
-        if (RoadSpatialGrid.TryGetRoadWithin(path[start], 1f, out _)) return -1;
+        if (RoadSpatialGrid.TryGetRoadWithin(path[start], RoadBeside.OnRoad, out _)) return -1;
         float along = 0f;
         for (int i = start + step; i >= 0 && i < path.Count; i += step)
         {
             along += Vector2.Distance(path[i - step], path[i]);
             if (along > StubLength) return -1;
-            if (RoadSpatialGrid.TryGetRoadWithin(path[i], 1f, out _)) return i;
+            if (RoadSpatialGrid.TryGetRoadWithin(path[i], RoadBeside.OnRoad, out _)) return i;
         }
         return -1;
     }

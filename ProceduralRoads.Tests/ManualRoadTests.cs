@@ -23,7 +23,7 @@ public class ManualRoadTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         _scope.WithWorld(world).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
-        Heightmap.Registered = null; RoadGrade.Configured = .35f;
+        Heightmap.Registered = null; RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
     }

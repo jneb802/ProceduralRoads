@@ -22,7 +22,7 @@ public sealed class ManualViaductKeepOutTests : IDisposable
         _scope = new ValheimWorldScope().WithWorld(_world).WithZdos().WithZoneSystem().WithScene().AsServer();
         RoadNetworkGenerator.Reset(); NetworkCutoff.Forget();
         RoadNetworkGenerator.MarkLocationsReady();
-        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth; RoadGrade.Configured = .35f;
+        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth; RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
         RoadNetworkGenerator.ConfigureFinders(f => { f.Stairs = true; f.Viaducts = true; f.TerrainVarianceThreshold = 1000f; f.Meander = 0f; });
     }

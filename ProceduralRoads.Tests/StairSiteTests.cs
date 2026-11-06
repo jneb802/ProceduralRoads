@@ -19,7 +19,7 @@ public sealed class StairSiteTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         CommitFixtureRoad();
     }
     public void Dispose() { RoadNetworkGenerator.Reset(); _world.Dispose(); }

@@ -34,7 +34,7 @@ public sealed class ManualRoadUnreadNetworkTests : IDisposable
         _world = new ValheimWorldScope().WithWorld(_island)
             .WithZdos().WithZoneSystem().WithScene().WithNetwork(server: true).WithCommands().WithCheats();
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); NetworkCutoff.Forget();
-        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth; RoadGrade.Configured = .35f;
+        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth; RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         ManualRoadCommands.Register();
     }
 

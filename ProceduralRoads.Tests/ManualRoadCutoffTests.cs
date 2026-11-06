@@ -31,7 +31,7 @@ public sealed class ManualRoadCutoffTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); NetworkCutoff.Forget();
         _scope.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
-        RoadGrade.Configured = .35f;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
     }

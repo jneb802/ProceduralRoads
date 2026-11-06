@@ -37,7 +37,7 @@ public sealed class UpgradeWorldTests : IDisposable
     {
         RoadNetworkPersistence.Reset(); RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); NetworkCutoff.Forget();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
     }
 
     public void Dispose()

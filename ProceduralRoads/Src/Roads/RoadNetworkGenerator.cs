@@ -1556,7 +1556,7 @@ public static partial class RoadNetworkGenerator
         // Which of the destinations get no road, their landing not known (PlacedSites.NotPlaced): once, here on the
         // main thread, for the island workers to read.
         PlacedSites.FindNotPlaced(work.AllSelected.Select(d => new Vector2(d.position.x, d.position.z)), world);
-        RoadParallel.IslandsRunning = Math.Min(work.Islands.Count, RoadParallel.IslandWorkers);
+        RoadParallel.IslandsRunning = Math.Min(work.Islands.Count, work.Workers);
         foreach(var step in PrepareAndSealSteps(preparation)) yield return step;
         CatalogueDoors(work);
         preparation.Result=work;

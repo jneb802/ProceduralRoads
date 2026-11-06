@@ -120,8 +120,8 @@ public static class RockClearances
     {
         var turn = Quaternion.Euler(0f, s.YawDegrees, 0f);
         float bottom = s.Centre.y - s.Half.y, top = s.Centre.y + s.Half.y;
-        // The box's top stands ClearanceHeight over its highest walk; a stair's stretch rises, its middle walk under that.
-        float highest = top - StairLayout.ClearanceHeight;
+        // A stair's stretch rises: its middle walk stands under its highest.
+        float highest = StairLayout.HighestWalk(top);
         if (highest <= s.Surface + RisesOver || Corridor(s.Half.x) >= s.Half.x)
         {
             boxes.Add(Of(s, turn, s.Centre, s.Half));

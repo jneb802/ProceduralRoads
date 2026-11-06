@@ -162,7 +162,7 @@ public class StairClearanceTests : IDisposable
             RockClearance inner = Assert.Single(mine, b => Mathf.Abs(2f * b.Half.x - corridor) < 1e-3f);
             RockClearance tread = Assert.Single(mine, b => Mathf.Abs(2f * b.Half.x - RoadStairRuns.Width) < 1e-3f);
             Assert.Equal(storedTop, inner.Top, 3);
-            Assert.Equal(storedTop - StairLayout.ClearanceHeight + StairLayout.StepUp, tread.Top, 3);
+            Assert.Equal(StairLayout.HighestWalk(storedTop) + StairLayout.StepUp, tread.Top, 3);
         }
 
         // A road's clearance is a player's height over the road, its own roof too.
@@ -174,13 +174,19 @@ public class StairClearanceTests : IDisposable
         Assert.Equal(Flat + RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, road.Top, 3);
     }
 
-    /// <summary>A stair's walking box starts where a road's does (RockClearances.Bottom): the same float, bit for bit, as the
-    /// sum StairLayout.AddClearance wrote before it read the owner, over walks under and over the sea, at zero and at NaN.</summary>
+    /// <summary>A stair's walking box starts where a road's does (RockClearances.Bottom), and its top and highest walk are
+    /// StairLayout.BoxTop and HighestWalk: the same floats, bit for bit, as the sums StairLayout.AddClearance and
+    /// RockClearances.AddBox wrote before they read the owners, over walks under and over the sea, at zero and at NaN.</summary>
     [Fact]
     public void AStairBoxStartsWhereARoadBoxStartsBitForBit()
     {
         foreach (float walk in Walks)
+        {
             Assert.Equal(Bits(walk + RoadRockPolicy.ClearanceLift), Bits(RockClearances.Bottom(walk)));
+            // Its top, and the highest walk the rock clearing reads back off it (RockClearances.AddBox).
+            Assert.Equal(Bits(walk + RoadRockPolicy.ClearanceHeight), Bits(StairLayout.BoxTop(walk)));
+            Assert.Equal(Bits(walk - RoadRockPolicy.ClearanceHeight), Bits(StairLayout.HighestWalk(walk)));
+        }
     }
 
     private static readonly float[] Walks =
@@ -190,7 +196,7 @@ public class StairClearanceTests : IDisposable
 
     /// <summary>Whether a stored walking box is a stair's stretch: its top stands a player's headroom over a walk higher than
     /// its middle one.</summary>
-    private static bool Rises(StairClearance box) => box.Centre.y + box.Half.y - StairLayout.ClearanceHeight > box.Surface + 0.01f;
+    private static bool Rises(StairClearance box) => StairLayout.HighestWalk(box.Centre.y + box.Half.y) > box.Surface + 0.01f;
 
     /// <summary>Whether a box centred at <paramref name="centre"/>, turned to <paramref name="yaw"/>, is one of a walked piece's
     /// own: standing over its footprint, turned to its heading.</summary>

@@ -1545,7 +1545,7 @@ public static partial class StairLayout
             float lowest = stair ? baseHeight + PieceRise * i / stretches : baseHeight;
             float highest = stair ? baseHeight + PieceRise * (i + 1) / stretches : baseHeight;
             float bottom = RockClearances.Bottom(lowest);
-            float top = highest + ClearanceHeight;
+            float top = BoxTop(highest);
             Vector2 mid = laneStart + dir * (length * (i + 0.5f));
             plan.Clearances.Add(new StairClearance(
                 new Vector3(mid.x, (bottom + top) / 2f, mid.y),
@@ -1553,6 +1553,13 @@ public static partial class StairLayout
                 heading, surface));
         }
     }
+
+    /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a player's headroom
+    /// (<see cref="ClearanceHeight"/>) over it. <see cref="HighestWalk"/> reads a stored box back.</summary>
+    internal static float BoxTop(float highest) => highest + ClearanceHeight;
+
+    /// <summary>A stored walking box's highest walk, from its top <paramref name="top"/> (the inverse of <see cref="BoxTop"/>).</summary>
+    internal static float HighestWalk(float top) => top - ClearanceHeight;
 
     /// <summary>Unity's yaw: 0 faces +z, 90 faces +x.</summary>
     public static Vector2 Forward(float headingDegrees)

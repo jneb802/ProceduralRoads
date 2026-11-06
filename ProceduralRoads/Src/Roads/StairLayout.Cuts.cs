@@ -56,9 +56,7 @@ public static partial class StairLayout
         StairKit kit = StairKit.OfPrefab(piece.Prefab);
         bool stair = piece.Kind == StairPieceKind.Stair;
         float across = PieceRun, depth = PieceRun;
-        if (piece.Kind == StairPieceKind.Filler)
-            foreach (FillerKind filler in kit.Fillers)
-                if (filler.Prefab == piece.Prefab) { across = filler.Across; depth = filler.Depth; break; }
+        if (piece.Kind == StairPieceKind.Filler) { FillerKind filler = kit.FlatOf(piece.Prefab); across = filler.Across; depth = filler.Depth; }
         float heading = stair ? Wrap(piece.YawDegrees + 180f) : piece.YawDegrees;
         Vector2 back = new Vector2(piece.Position.x, piece.Position.z) - Forward(heading) * (depth / 2f);
         return (back, heading, across, depth, piece.Position.y + (stair ? 0f : kit.FloorTop));

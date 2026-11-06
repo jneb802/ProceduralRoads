@@ -139,7 +139,7 @@ namespace ProceduralRoads
                 "joins your own builds to the network. Read once, on that first load.");
             ExistingWorldFirstLoad.Setting = ExistingWorldFirstLoadRoads.Value;
             ExistingWorldFirstLoadRoads.SettingChanged += (_, _) => ExistingWorldFirstLoad.Setting = ExistingWorldFirstLoadRoads.Value;
-            ExistingWorldFirstLoad.CanAsk = () => ZNet.instance != null && !ZNet.instance.IsDedicated();
+            ExistingWorldFirstLoad.CanAsk = () => RoadLifecycleManager.HostHasScreen;
             ExistingWorldFirstLoad.Backup = WorldBackup.Make;
             ExistingWorldFirstLoad.Tell = text => MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft, text);
 

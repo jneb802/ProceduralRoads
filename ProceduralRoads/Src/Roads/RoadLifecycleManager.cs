@@ -82,6 +82,9 @@ public static partial class RoadLifecycleManager
         DecideOnce("world data loaded");
     }
 
+    /// <summary>Whether this peer has a screen of its own to ask on: not a dedicated server.</summary>
+    internal static bool HostHasScreen => ZNet.instance != null && !ZNet.instance.IsDedicated();
+
     /// <summary>Whether this peer may hold a road network: only the server (or the hosting player). A client, whatever it
     /// can see of the world, loads, generates and writes no road. The one check every way a network is made asks: the load
     /// decision, the spawn fallback, road_generate and road_regen_island.</summary>
@@ -167,12 +170,7 @@ public static partial class RoadLifecycleManager
         if (!ChoicePending || answer == ExistingWorldRoads.Ask) return false;
         ChoicePending = false;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Existing world, first load: {answer} (chosen on screen)");
-        Carry(answer switch
-        {
-            ExistingWorldRoads.Skip => ExistingWorldFirstLoad.Decision.Skip,
-            ExistingWorldRoads.IncludeExplored => ExistingWorldFirstLoad.Decision.IncludeExplored,
-            _ => ExistingWorldFirstLoad.Decision.NewZonesOnly,
-        });
+        Carry(ExistingWorldFirstLoad.DecisionFor(answer));
         return true;
     }
 

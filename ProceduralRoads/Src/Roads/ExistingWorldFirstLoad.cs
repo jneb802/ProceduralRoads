@@ -52,15 +52,22 @@ public static class ExistingWorldFirstLoad
     {
         if (explored == 0) return Decision.AsAlways;
         if (skippedBefore) return Decision.Skip;
-        return setting switch
-        {
-            ExistingWorldRoads.Skip => Decision.Skip,
-            ExistingWorldRoads.NewZonesOnly => Decision.NewZonesOnly,
-            ExistingWorldRoads.IncludeExplored => Decision.IncludeExplored,
-            // What most players want: roads through their world, round what they made.
-            _ => canAsk && !playerInWorld ? Decision.Ask : Decision.IncludeExplored,
-        };
+        return setting == ExistingWorldRoads.Ask
+            ? canAsk && !playerInWorld ? Decision.Ask : DecisionFor(Recommended)
+            : DecisionFor(setting);
     }
+
+    /// <summary>What most players want, and what a dedicated server and the loading screen's first choice take: roads
+    /// through their world, round what they made.</summary>
+    public const ExistingWorldRoads Recommended = ExistingWorldRoads.IncludeExplored;
+
+    /// <summary>The decision an answer (never Ask) comes to: the setting's, or the host's choice on the loading screen.</summary>
+    public static Decision DecisionFor(ExistingWorldRoads answer) => answer switch
+    {
+        ExistingWorldRoads.Skip => Decision.Skip,
+        ExistingWorldRoads.IncludeExplored => Decision.IncludeExplored,
+        _ => Decision.NewZonesOnly,
+    };
 
     /// <summary>What players are told about the zones an IncludeExplored network left as they are.</summary>
     public static string KeptNote(int kept) =>
@@ -110,6 +117,9 @@ public static class ExistingWorldFirstLoad
 public static class PlayerChanges
 {
 
+    /// <summary>Whether a player made this object: vanilla stamps what a player builds with its creator.</summary>
+    public static bool IsPlayers(ZDO zdo) => zdo.GetLong(ZDOVars.s_creator, 0L) != 0L;
+
     /// <summary>
     /// The zones players changed, among <paramref name="within"/> (null: anywhere). <paramref name="compilerIsPlayers"/>
     /// says where a terrain compiler can only be a player's.
@@ -122,7 +132,7 @@ public static class PlayerChanges
         foreach (ZDO zdo in ZDOMan.instance.m_objectsByID.Values)
         {
             bool compiler = zdo.GetPrefab() == RoadTerrainModifier.TerrainCompilerPrefabHash;
-            if (!compiler && zdo.GetLong(ZDOVars.s_creator, 0L) == 0L) continue;
+            if (!compiler && !IsPlayers(zdo)) continue;
             Vector2s zone = ZoneSystem.GetZone(zdo.GetPosition());
             if (only != null && !only.Contains(zone)) continue;
             if (compiler && !compilerIsPlayers(zone)) continue;

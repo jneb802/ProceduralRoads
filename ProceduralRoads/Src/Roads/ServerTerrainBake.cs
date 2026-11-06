@@ -129,7 +129,7 @@ public static class ServerTerrainBake
     internal static bool HoldsFirstSpawn => s_loadScreen.Holds(BeforeFirstSpawn(), WorkOwed());
 
     private static bool BeforeFirstSpawn() =>
-        HoldSpawnEnabled && RoadLifecycleManager.HoldsTheNetwork && !ZNet.instance.IsDedicated() && Game.instance != null &&
+        HoldSpawnEnabled && RoadLifecycleManager.HoldsTheNetwork && RoadLifecycleManager.HostHasScreen && Game.instance != null &&
         Player.m_localPlayer == null && Game.instance.m_firstSpawn && Game.instance.WaitingForRespawn();
 
     // A network whose queue is not built yet (its first Tick is still to come) is owed work too.
@@ -576,7 +576,7 @@ public static class ServerTerrainBake
         foreach (ZDO zdo in zdos)
         {
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
-            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, IsPlayerCreated(zdo)))
+            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, PlayerChanges.IsPlayers(zdo)))
                 rocks.Add((zdo, prefab));
         }
         s_step.RocksFind += clock.Elapsed.TotalMilliseconds;
@@ -1263,7 +1263,7 @@ public static class ServerTerrainBake
         {
             Vector3 position = zdo.GetPosition();
             if (VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                    PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
                     structureAreas, RoadRockClearing.Mode, BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
                 count++;
         }
@@ -1285,9 +1285,6 @@ public static class ServerTerrainBake
         }
         return locations;
     }
-
-    /// <summary>Whether a player made this object: vanilla stamps what a player builds with its creator.</summary>
-    private static bool IsPlayerCreated(ZDO zdo) => zdo.GetLong(ZDOVars.s_creator, 0L) != 0L;
 
     /// <summary>
     /// Ground a player has built on, as a circle around each of their objects,
@@ -1317,7 +1314,7 @@ public static class ServerTerrainBake
                     new HashSet<ZoneSystem.SectorIndex>());
                 foreach (ZDO zdo in zdos)
                 {
-                    if (!IsPlayerCreated(zdo))
+                    if (!PlayerChanges.IsPlayers(zdo))
                         continue;
                     Vector3 position = zdo.GetPosition();
                     ground.Add(new VegetationClearing.Footprint(
@@ -1350,7 +1347,7 @@ public static class ServerTerrainBake
             Vector3 position = zdo.GetPosition();
             Vector3 euler = zdo.GetRotation().eulerAngles;
             VegetationClearing.Lying verdict = VegetationClearing.Decide(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
                 structureAreas, RoadRockClearing.Mode, BiomeAt, euler.y, out float turned, LeanOf(zdo));
             VegetationClearing.Note(zdo.GetPrefab(), new Vector2(position.x, position.z), verdict, euler.y, turned);
             ZNetView instance = ZNetScene.instance.FindInstance(zdo);

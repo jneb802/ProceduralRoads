@@ -171,7 +171,7 @@ public static class PlaceWaysIn
         int me = CrossIslandReads.Me;
         lock (s_roads)
             foreach (var (at, way, island) in s_roads)
-                if ((at - place).sqrMagnitude < 1f && CrossIslandReads.Sees(me, island)) ways.Add(way);
+                if ((RoadStairRuns.IntoThePlace(at) - into).sqrMagnitude < 1f && CrossIslandReads.Sees(me, island)) ways.Add(way);
         return ways;
     }
 

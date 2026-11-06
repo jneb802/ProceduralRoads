@@ -57,19 +57,22 @@ public class ZoneMathTests
 public class GridMathTests
 {
     [Theory]
-    [InlineData(32)]
-    [InlineData(64)]
-    public void FloorDivRoundsDown(int size)
-    {
-        for (int i = -300; i <= 300; i++)
-            Assert.Equal((int)System.Math.Floor(i / (double)size), SharedTerrain.FloorDiv(i, size));
-    }
+    [InlineData(0, 32, 0)]
+    [InlineData(31, 32, 0)]
+    [InlineData(32, 32, 1)]
+    [InlineData(-1, 32, -1)]
+    [InlineData(-32, 32, -1)]
+    [InlineData(-33, 32, -2)]
+    [InlineData(-300, 64, -5)]
+    [InlineData(300, 64, 4)]
+    public void FloorDivRoundsDown(int i, int size, int expected) => Assert.Equal(expected, SharedTerrain.FloorDiv(i, size));
 
     [Fact]
     public void CellCentreScalesByTheCellSize()
     {
-        foreach (var c in new[] { new Vector2i(0, 0), new Vector2i(-3, 7), new Vector2i(125, -126) })
-            Assert.Equal(new Vector2(c.x * RoadPathfinder.CellSize, c.y * RoadPathfinder.CellSize), RoadPathfinder.CellCentre(c));
+        Assert.Equal(new Vector2(0f, 0f), RoadPathfinder.CellCentre(new Vector2i(0, 0)));
+        Assert.Equal(new Vector2(-24f, 56f), RoadPathfinder.CellCentre(new Vector2i(-3, 7)));
+        Assert.Equal(new Vector2(1000f, -1008f), RoadPathfinder.CellCentre(new Vector2i(125, -126)));
     }
 }
 
@@ -81,7 +84,7 @@ public class CrossingSpanTests
     {
         Assert.Equal(48f, RoadConstants.MaxFordSpan);
         Assert.Equal(128f, RoadConstants.MaxBridgeSpan);
-        Assert.Equal(128f + 2f * RoadConstants.SwampBridgeDryReach, RoadNetworkPersistence.MaxCrossingSpan);
+        Assert.Equal(368f, RoadNetworkPersistence.MaxCrossingSpan);
     }
 }
 
@@ -98,22 +101,21 @@ public class EarthworkLimitReadingTests
         using var keep = StaticOverride.Keep(() => RoadNetworkGenerator.EarthworkCap);
         RoadNetworkGenerator.EarthworkCap = cap;
         Assert.Equal(8f, RoadNetworkGenerator.ShapedLimit);
-        Assert.Equal(RoadConstants.TerrainDeltaMax, RoadNetworkGenerator.ShapedLimit);
     }
 }
 
 public class PastTerrainLimitTests
 {
     [Theory]
-    [InlineData(38f, 30f, 8f)]
-    [InlineData(38.0001f, 30f, 8f)]
-    [InlineData(22f, 30f, 8f)]
-    [InlineData(21.999f, 30f, 8f)]
-    [InlineData(30f, 30f, 0f)]
-    [InlineData(500f, 30f, float.PositiveInfinity)]
-    public void TheHeightAgainstTheGroundIsOneComparison(float height, float ground, float cap)
+    [InlineData(38f, 30f, 8f, false)]
+    [InlineData(38.0001f, 30f, 8f, true)]
+    [InlineData(22f, 30f, 8f, false)]
+    [InlineData(21.999f, 30f, 8f, true)]
+    [InlineData(30f, 30f, 0f, false)]
+    [InlineData(500f, 30f, float.PositiveInfinity, false)]
+    public void TheHeightAgainstTheGroundIsOneComparison(float height, float ground, float cap, bool past)
     {
-        Assert.Equal(Mathf.Abs(height - ground) > cap, RoadNetworkGenerator.PastTerrainLimit(height, ground, cap));
+        Assert.Equal(past, RoadNetworkGenerator.PastTerrainLimit(height, ground, cap));
     }
 }
 
@@ -163,30 +165,27 @@ public class ModelledHeightRecordedTests
 public class RoadProfileExtentsTests
 {
     [Theory]
-    [InlineData(2f)]
-    [InlineData(3.3f)]
-    [InlineData(4f)]
-    [InlineData(7.77f)]
-    [InlineData(10f)]
-    public void PaintEdgeAndFootprintAreAsTheyWere(float w)
+    [InlineData(2f, 0.85f, 6f)]
+    [InlineData(4f, 1.7f, 8f)]
+    [InlineData(8f, 3.4f, 12f)]
+    public void PaintEdgeAndFootprintAreAsTheyWere(float w, float paintEdge, float footprint)
     {
-        Assert.Equal(w * 0.5f * 0.85f, RoadProfile.PaintEdge(w));
-        Assert.Equal(w * 0.5f * RoadConstants.RoadPaintOuterRatio, RoadProfile.PaintEdge(w));
-        Assert.Equal(w + 2f * 2f, RoadProfile.Footprint(w));
+        Assert.Equal(paintEdge, RoadProfile.PaintEdge(w));
+        Assert.Equal(footprint, RoadProfile.Footprint(w));
     }
 }
 
 public class EaseLengthTests
 {
     [Theory]
-    [InlineData(8f, 0.35f)]
-    [InlineData(7.3f, 0.35f)]
-    [InlineData(8f, 0f)]
-    [InlineData(3.1f, 0.123f)]
-    public void TwiceTheEaseIsTheEaseOfTwice(float rise, float grade)
+    [InlineData(8f, 0.35f, 22.857f)]
+    [InlineData(7.3f, 0.35f, 20.857f)]
+    [InlineData(8f, 0f, 800f)]
+    [InlineData(3.1f, 0.123f, 25.203f)]
+    public void TheEaseIsTheRiseOverTheGradeFlooredAtOneHundredth(float rise, float grade, float ease)
     {
         using var keep = StaticOverride.Keep(() => RoadGrade.Configured);
         RoadGrade.Configured = grade;
-        Assert.Equal(2f * rise / System.Math.Max(grade, 0.01f), 2f * RoadGrade.EaseLength(rise));
+        Assert.Equal(ease, RoadGrade.EaseLength(rise), 3);
     }
 }

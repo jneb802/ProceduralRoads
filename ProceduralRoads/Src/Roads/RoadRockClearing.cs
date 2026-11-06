@@ -284,19 +284,16 @@ public static class RoadRockClearing
 
     /// <summary>
     /// Where StaticPhysics will move an object on its next check, if anywhere:
-    /// down to its fall height (StaticPhysics.GetFallHeight: the solid height
-    /// round it with m_checkSolids, else the ground) when it is above it, or up
-    /// to the ground when it is below it (PushUp). False when it stays put.
+    /// down to its fall height (the game's own StaticPhysics.GetFallHeight: the solid
+    /// height round it with m_checkSolids, else the ground) when it is above it, or up
+    /// to the ground when it is below it (PushUp, copied: the game's moves the object).
+    /// False when it stays put.
     /// </summary>
     internal static bool FallTarget(StaticPhysics physics, out float y)
     {
         Vector3 p = physics.transform.position;
         y = p.y;
-        float floor;
-        if (physics.m_checkSolids)
-            floor = ZoneSystem.instance.GetSolidHeight(p, physics.m_fallCheckRadius, out float solid, physics.transform) ? solid : p.y;
-        else
-            floor = ZoneSystem.instance.GetGroundHeight(p, out float ground) ? ground : p.y;
+        float floor = physics.GetFallHeight();
         if (physics.m_fall && p.y > floor + 0.05f) { y = floor; return true; }
         if (physics.m_pushUp && ZoneSystem.instance.GetGroundHeight(p, out float under) && p.y < under - 0.05f) { y = under; return true; }
         return false;

@@ -1467,11 +1467,15 @@ public static class ServerTerrainBake
                 Release(compiler, bound: saved != null);
             if (root != null)
                 Object.DestroyImmediate(root);
-            // A compiler made for a zone the roads only brush would sit in the
-            // save with nothing in it.
-            if (result == WriteResult.NothingToWrite && made != null)
-                ZDOMan.instance.DestroyZDO(made);
+            DropIfEmpty(result, made);
         }
+    }
+
+    /// <summary>A compiler made for a zone the roads only brush would sit in the save with nothing in it.</summary>
+    private static void DropIfEmpty(WriteResult result, ZDO? made)
+    {
+        if (result == WriteResult.NothingToWrite && made != null)
+            ZDOMan.instance.DestroyZDO(made);
     }
 
     /// <summary>The ghost-generation path: the zone's own heightmap, still alive.</summary>
@@ -1526,8 +1530,7 @@ public static class ServerTerrainBake
             ZDO? made = created && go != null ? go.GetComponent<ZNetView>()?.GetZDO() : null;
             if (go != null)
                 Release(go, bound);
-            if (result == WriteResult.NothingToWrite && made != null)
-                ZDOMan.instance.DestroyZDO(made);
+            DropIfEmpty(result, made);
         }
     }
 

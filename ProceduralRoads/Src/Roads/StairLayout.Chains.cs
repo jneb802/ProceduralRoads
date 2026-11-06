@@ -255,7 +255,7 @@ public static partial class StairLayout
     /// </summary>
     public static bool CarryTopTo(StairPlan plan, Vector2 to, float height, Func<float, float, float> ground, float width, StairKit? kit = null)
     {
-        kit ??= StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        kit ??= StairKit.Of(plan.Kit);
         if (!plan.Reached || Mathf.Abs(height - plan.End.y) > 0.05f) return false;
         Vector2 end = new Vector2(plan.End.x, plan.End.z);
         Vector2 dir = Forward(plan.EndHeading);
@@ -294,7 +294,7 @@ public static partial class StairLayout
     /// lay it unheld over a drop.</summary>
     public static bool AddFloorRow(StairPlan plan, Vector2 start, float heading, float height, Func<float, float, float> ground, float width)
     {
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         if (!RowHeld(kit, kit.Floor, start, heading, height, lanes, ground)) return false;
         AddRow(plan, kit, StairPieceKind.Landing, kit.Floor, start, heading, height, lanes, ground, mark: true);

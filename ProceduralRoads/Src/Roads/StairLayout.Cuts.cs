@@ -53,7 +53,7 @@ public static partial class StairLayout
     /// walking height at its back edge (a stair's low edge, a floor's top).</summary>
     internal static (Vector2 back, float heading, float across, float depth, float height) Footprint(StairPiece piece)
     {
-        StairKit kit = StairKit.Named(piece.Prefab.Split('_')[0]) ?? StairKit.Stone;
+        StairKit kit = StairKit.OfPrefab(piece.Prefab);
         bool stair = piece.Kind == StairPieceKind.Stair;
         float across = PieceRun, depth = PieceRun;
         if (piece.Kind == StairPieceKind.Filler)

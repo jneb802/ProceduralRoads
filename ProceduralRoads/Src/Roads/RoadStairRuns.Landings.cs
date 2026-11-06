@@ -58,7 +58,7 @@ public static partial class RoadStairRuns
     {
         IReadOnlyList<StairRun> runs = StairStructures.Runs;
         if (points.Count == 0 || OnAFlight(runs, points, heights, out _) is not StairRun run) return null;
-        StairKit kit = run.Kit ?? StairKit.Named(run.KitName) ?? StairKit.Stone;
+        StairKit kit = StairStructures.KitOf(run);
         var steps = run.Pieces.Where(p => p.Kind == StructurePieceKind.StairStep).OrderBy(p => p.Position.y).ToList();
         if (steps.Count < 3) return null;
         float lowest = steps[0].Position.y, highest = steps[steps.Count - 1].Position.y;

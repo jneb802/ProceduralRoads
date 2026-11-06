@@ -497,7 +497,7 @@ public sealed class StairStructures : IStructureSource
 
     /// <summary>The kit a staircase is laid in: the one its layout was made for (<see cref="StairRun.Kit"/>), else the one its
     /// steps name; stone for neither.</summary>
-    public static StairKit KitOf(StairRun run) => run.Kit ?? StairKit.Named(run.KitName) ?? StairKit.Stone;
+    public static StairKit KitOf(StairRun run) => run.Kit ?? StairKit.Of(run.KitName);
 
     /// <summary>A staircase's kit laying its pieces over its layout now: this build's kits (<see cref="StairKit.Dress"/>),
     /// its supports chosen on the ground its layout was laid out on (<see cref="RoadStairRuns.PlanningGround"/>), the

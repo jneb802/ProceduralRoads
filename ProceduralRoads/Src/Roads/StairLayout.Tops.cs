@@ -199,7 +199,7 @@ public static partial class StairLayout
     public static (int pieces, int clearances) AddDescent(StairPlan plan, Func<float, float, float> ground, float width)
     {
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         TerminalExit? exit=Terminal(plan);
         Vector2 dir=Forward(plan.EndHeading);
@@ -252,7 +252,7 @@ public static partial class StairLayout
         float top = plan.End.y;
         if (!StairEnds.Lands(edge, dir, top, width, ground)) return (0,0);
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         if (!RowHeld(kit, kit.Floor, edge, plan.EndHeading, top, lanes, ground)) return (0, 0);
         AddRow(plan, kit, StairPieceKind.Landing, kit.Floor, edge, plan.EndHeading, top, lanes, ground, mark: true, cut: false);
@@ -277,7 +277,7 @@ public static partial class StairLayout
         if (!plan.Reached) return null;
         int first = plan.Pieces.FindIndex(plan.SunkPieces, p => p.Kind != StairPieceKind.Support && !p.Sunk);
         if (first < 0 || plan.Pieces[first].Kind != StairPieceKind.Landing) return null;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         var (back, heading, across, depth, height) = Footprint(plan.Pieces[first]);
         Vector2 middle = back + Forward(heading) * (depth / 2f);
         // On the end: as the railing finds a place's landing (StairRailing's AtEnd).
@@ -342,7 +342,7 @@ public static partial class StairLayout
         stairs = 0;
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
         if (!plan.Reached) return (0, 0);
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         Vector2 dir = Forward(plan.EndHeading), edge = new Vector2(plan.End.x, plan.End.z);
         float top = plan.End.y;
@@ -551,7 +551,7 @@ public static partial class StairLayout
             var (at, heading, surface) = ExitOf(piece);
             if (StairEnds.Lands(at, Forward(heading), surface, width, ground))
             {
-                StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+                StairKit kit = StairKit.Of(plan.Kit);
                 if (TrimAbove(plan, previous, false, kit) == 0) return false;
                 plan.End = new Vector3(at.x, surface, at.y);
                 plan.EndHeading = heading;
@@ -585,7 +585,7 @@ public static partial class StairLayout
         // middle, a cave's approach's last floor at 5046.8,-5892.6 stood 0.3-0.6 m over the ground across its way off and was
         // kept; walkable off one side only, replaced by hand with a stair down in its place.
         if (StairEnds.Lands(plan.LastRowStart, dir, plan.LastRowHeight, width, ground)) return false;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         if (!RowHeld(kit, kit.Stair, front, Wrap(plan.LastRowHeading + 180f), plan.LastRowHeight - PieceRise, lanes, ground)) return false;
         // Only the row's own pieces (and its columns): supports sunk later for other pieces stay.

@@ -179,7 +179,7 @@ public sealed class StairKit
 
     /// <summary>The walking surface of a floor piece over its origin, by the kit its prefab names (stone and black marble
     /// floors stand half a metre under their surface, wood floors at it): the one owner every caller asks.</summary>
-    public static float FloorTopOf(string prefab) => (Named(prefab.Split('_')[0]) ?? Stone).FloorTop;
+    public static float FloorTopOf(string prefab) => OfPrefab(prefab).FloorTop;
 
     /// <summary>The kit with this record number (<see cref="Number"/>), null for none this build has.</summary>
     public static StairKit? Numbered(int number) => Array.Find(All, k => k.Number == number);
@@ -191,6 +191,12 @@ public sealed class StairKit
         "wood" => Wood,
         _ => null,
     };
+
+    /// <summary>The kit named <paramref name="name"/>; stone for none: the one default every caller reads.</summary>
+    public static StairKit Of(string name) => Named(name) ?? Stone;
+
+    /// <summary>The kit a piece's prefab names (the part before its first underscore); stone for none.</summary>
+    public static StairKit OfPrefab(string prefab) => Of(prefab.Split('_')[0]);
 
     /// <summary>The kit for a staircase in <paramref name="biome"/>: black marble in the Mistlands, stone everywhere else.</summary>
     public static StairKit ForSite(Heightmap.Biome biome) => biome == Heightmap.Biome.Mistlands ? BlackMarble : Stone;

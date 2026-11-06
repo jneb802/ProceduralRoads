@@ -446,7 +446,7 @@ public static partial class RoadStairRuns
     private static bool RunsInto(StairPlan plan, int from, StairPlan other, float foot)
     {
         bool Walked(StairPiece p) => p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         var laid = plan.Pieces.Take(from).Concat(other.Pieces)
             .Where(p => Walked(p) && !(p.Kind == StairPieceKind.Landing && Mathf.Abs(p.Position.y + kit.FloorTop - foot) < 0.05f)).ToList();
         foreach (StairPiece p in plan.Pieces.Skip(from).Where(Walked))

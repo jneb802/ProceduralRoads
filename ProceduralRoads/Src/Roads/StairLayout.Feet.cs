@@ -104,7 +104,7 @@ public static partial class StairLayout
     private static Vector3? AddFootStairs(StairPlan plan, Func<float, float, float> ground, float width, int steps)
     {
         Vector3 foot = plan.Foot!.Value;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         Vector2 dir = Forward(plan.StartHeading), at = new Vector2(foot.x, foot.z);
         // None where something within reach would not hold one up (RowHeld).

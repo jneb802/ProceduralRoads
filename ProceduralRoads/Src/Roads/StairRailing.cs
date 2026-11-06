@@ -40,7 +40,7 @@ namespace ProceduralRoads;
 public static class StairRailing
 {
     /// <summary>A level rail along a floor's edge, 2 m.</summary>
-    public const string LevelRailPrefab = "wood_beam";
+    public const string LevelRailPrefab = BridgeLayout.BeamPrefab;
 
     /// <summary>Two 26 degree rails crossed (they read as two 26 degree pieces crossed).</summary>
     public const string CrossedRailPrefab = "wood_wall_roof_top";
@@ -187,7 +187,7 @@ public static class StairRailing
     public const string ParapetCapPrefab = "blackmarble_1x1";
 
     /// <summary>A course under a parapet: a 2 x 2 x 2 block, and a 2 x 1 x 1 to bring it to the courses.</summary>
-    public const string ParapetCoursePrefab = "blackmarble_2x2x2", ParapetHalfCoursePrefab = "blackmarble_2x1x1";
+    public const string ParapetCoursePrefab = DvergrViaduct.Block, ParapetHalfCoursePrefab = "blackmarble_2x1x1";
 
     /// <summary>
     /// One side of a step's parapet, as built by hand (a river viaduct's west end): a

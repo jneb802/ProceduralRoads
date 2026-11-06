@@ -158,12 +158,12 @@ public sealed class StairKit
     /// support sideways and black marble half, so a tall column leaves its top nearly unsupported.</summary>
     public const float WalkwayCap = 5f;
 
-    public static readonly StairKit Stone = new(1, "stone", "stone_stair", "stone_floor_2x2", 0.5f, 1f,
-        new[] { new FillerKind("stone_wall_2x1", 2f, 1f), new FillerKind("stone_wall_1x1", 1f, 1f), new FillerKind("stone_floor_2x2", 2f, 2f) },
+    public static readonly StairKit Stone = new(1, "stone", BridgeLayout.StoneStairPrefab, BridgeLayout.StoneFloorPrefab, 0.5f, 1f,
+        new[] { new FillerKind("stone_wall_2x1", 2f, 1f), new FillerKind("stone_wall_1x1", 1f, 1f), new FillerKind(BridgeLayout.StoneFloorPrefab, 2f, 2f) },
         holdsOut: true);
 
     /// <summary>Mistlands. Every piece here is a 1 m thick block like stone's.</summary>
-    public static readonly StairKit BlackMarble = new(2, "blackmarble", "blackmarble_stair", "blackmarble_floor", 0.5f, 1f,
+    public static readonly StairKit BlackMarble = new(2, "blackmarble", DvergrViaduct.StepPrefab, "blackmarble_floor", 0.5f, 1f,
         new[] { new FillerKind("blackmarble_2x1x1", 2f, 1f), new FillerKind("blackmarble_1x1", 1f, 1f), new FillerKind("blackmarble_floor", 2f, 2f) },
         holdsOut: true);
 

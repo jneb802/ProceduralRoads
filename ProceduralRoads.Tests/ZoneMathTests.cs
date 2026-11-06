@@ -1,3 +1,4 @@
+using Valheim.Testing;
 using System.Collections.Generic;
 using UnityEngine;
 using Valheim.Testing.Doubles;
@@ -81,5 +82,22 @@ public class CrossingSpanTests
         Assert.Equal(48f, RoadConstants.MaxFordSpan);
         Assert.Equal(128f, RoadConstants.MaxBridgeSpan);
         Assert.Equal(128f + 2f * RoadConstants.SwampBridgeDryReach, RoadNetworkPersistence.MaxCrossingSpan);
+    }
+}
+
+public class EarthworkLimitReadingTests
+{
+    /// <summary>At the default cap and with none, shaping is limited to the game's level-delta clamp: what the sway and the
+    /// stair apron used to write as a literal 8.</summary>
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(8f)]
+    [InlineData(20f)]
+    public void ShapedLimitIsTheGamesClamp(float cap)
+    {
+        using var keep = StaticOverride.Keep(() => RoadNetworkGenerator.EarthworkCap);
+        RoadNetworkGenerator.EarthworkCap = cap;
+        Assert.Equal(8f, RoadNetworkGenerator.ShapedLimit);
+        Assert.Equal(RoadConstants.TerrainDeltaMax, RoadNetworkGenerator.ShapedLimit);
     }
 }

@@ -349,7 +349,7 @@ public static partial class StairLayout
     /// Where the ground a walker comes onto a staircase's foot from rises into a bank (straight back from its first stair and
     /// 45 degrees either side, more than a step over the foot plus what a road climbs per metre), a small level apron cut
     /// there at the foot's height by the road's earthwork: <see cref="ApronDepth"/> back and the foot's width plus a metre
-    /// either side, blended into the bank, and only where no cut is deeper than <see cref="ApronMaxCut"/> (foot
+    /// either side, blended into the bank, and only where no cut is deeper than <see cref="RoadNetworkGenerator.ShapedLimit"/> (foot
     /// at -8018,-660 against a bank: minor earthworks give it space). Returns the
     /// cut points added; none for a foot that opens onto flat ground.
     /// </summary>
@@ -380,7 +380,7 @@ public static partial class StairLayout
                 deepest = Mathf.Max(deepest, g - target);
                 cuts.Add(new Vector3(p.x, target, p.y));
             }
-        if (cuts.Count == 0 || deepest > ApronMaxCut) return 0;
+        if (cuts.Count == 0 || deepest > RoadNetworkGenerator.ShapedLimit) return 0;
         plan.Cuts.AddRange(cuts);
         plan.MaxCut = Mathf.Max(plan.MaxCut, deepest);
         plan.FootApron = cuts.Count;
@@ -389,9 +389,6 @@ public static partial class StairLayout
 
     /// <summary>How far back from a foot its apron is cut (<see cref="CutFootApron"/>).</summary>
     public const float ApronDepth = 3f;
-
-    /// <summary>The deepest an apron may cut: the road's own earthwork cap.</summary>
-    public const float ApronMaxCut = 8f;
 
     /// <summary>What a road climbs per metre off a foot (the default grade cap): ground behind it steeper than this over a step is a bank.</summary>
     public const float ApronBankGrade = RoadConstants.DefaultMaxRoadGrade;

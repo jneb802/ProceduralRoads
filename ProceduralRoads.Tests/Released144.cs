@@ -12,6 +12,19 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 internal static class Released144
 {
+    /// <summary>A 1.4.4 blob of one grid cell and the points [px, py, w, h] in it, written out by hand.</summary>
+    internal static byte[] Blob(int cellX, int cellY, params (float x, float y, float w, float h)[] points)
+    {
+        using var ms = new MemoryStream();
+        using var writer = new BinaryWriter(ms);
+        writer.Write(1);
+        writer.Write(1);
+        writer.Write(cellX); writer.Write(cellY);
+        writer.Write(points.Length);
+        foreach (var p in points) { writer.Write(p.x); writer.Write(p.y); writer.Write(p.w); writer.Write(p.h); }
+        return ms.ToArray();
+    }
+
     /// <summary>A 1.4.4 blob of the network this build's grid holds now (cells and points as this build stores them).</summary>
     internal static byte[] BlobOfCurrentGrid()
     {

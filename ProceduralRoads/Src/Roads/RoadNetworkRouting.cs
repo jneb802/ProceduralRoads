@@ -120,18 +120,38 @@ public static partial class RoadNetworkGenerator
     {
         if (hints.Count==0) return false;
         Vector2 from=RoadEndpoint.FindGround(world,new Vector2(place.Position.x,place.Position.z),place.Radius);
+        return JoinTo(finder,from,hints,place.Name,place.Position,place.Radius,null,
+            () => PlaceServed(place.Name, place.Position, place.Radius),hints);
+    }
+
+    /// <summary>
+    /// The join (<see cref="JoinPlace"/>, and road_connect's: ManualRoads, planning it with <see cref="PlanningWith"/>): from
+    /// <paramref name="from"/> (the ground of the place at <paramref name="position"/>, exterior <paramref name="radius"/>, or
+    /// a point with radius 0) a road to the nearest junction the search finds among the network's points
+    /// <paramref name="allowed"/> admits; where that road is refused or not found, to the next junction the search finds away
+    /// from it, up to <see cref="JoinRetries"/> more times. True where one is built, or where the network already serves it
+    /// (<paramref name="served"/>, or within the search's reach of a road where none is given).
+    /// </summary>
+    internal static bool JoinTo(RoadPathfinder finder, Vector2 from, IReadOnlyList<Vector2> hints, string name,
+        Vector3 position, float radius, System.Func<Vector2, bool>? allowed, System.Func<bool>? served, List<Vector2>? networkHints)
+    {
         var tried=new List<Vector2>();
         bool Untried(Vector2 p) { foreach (var t in tried) if ((p-t).sqrMagnitude<JoinRetryApart*JoinRetryApart) return false; return true; }
+        bool Allowed(Vector2 p) => (allowed==null || allowed(p)) && Untried(p);
         for (int attempt=0; attempt<=JoinRetries; attempt++)
         {
             // Served already: the search says so at its start and goes no further.
-            var path=finder.FindPathToNetwork(from,8,hints,tried.Count==0 ? null : Untried,
-                served: () => PlaceServed(place.Name, place.Position, place.Radius));
+            var path=finder.FindPathToNetwork(from,8,hints,tried.Count==0 ? allowed : Allowed,served: served);
             if (finder.AlreadyOnNetwork) return true;
-            if (path==null || path.Count<2) return false;
+            if (path==null || path.Count<2) { t_capture?.Refused("no route to the network",from); return false; }
             Vector2 end=path[path.Count-1];
-            IslandActivity?.Connecting(place.Name,Vector2.Distance(new Vector2(place.Position.x,place.Position.z),end));
-            if (GenerateRoad(place.Position,place.Radius,new Vector3(end.x,0,end.y),0,RoadWidth,$"{place.Name} -> road",hints)) return true;
+            IslandActivity?.Connecting(name,Vector2.Distance(new Vector2(position.x,position.z),end));
+            int noted=t_capture?.Refusals.Count ?? 0;
+            if (GenerateRoad(position,radius,new Vector3(end.x,0,end.y),0,RoadWidth,$"{name} -> road",networkHints)) return true;
+            // A refusal that does not say where: on the road to this junction.
+            if (t_capture is RoadCapture capture)
+                for (int i=noted; i<capture.Refusals.Count; i++)
+                    if (capture.Refusals[i].at==null) capture.Refusals[i]=(capture.Refusals[i].why,end);
             tried.Add(end);
         }
         return false;

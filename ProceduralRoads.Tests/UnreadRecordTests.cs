@@ -15,7 +15,7 @@ public class UnreadRecordTests : System.IDisposable
 
     public void Dispose()
     {
-        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StairStructures.Reset(); BuiltBridges.Reset(); BuiltStairs.Reset();
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StructureAppendQueue.Reset(); StairStructures.Reset(); BuiltBridges.Reset(); BuiltStairs.Reset();
         _world.Dispose();
     }
 
@@ -27,13 +27,14 @@ public class UnreadRecordTests : System.IDisposable
     [InlineData("ProceduralRoads_BuiltBridges")]
     [InlineData("ProceduralRoads_BuiltStairs")]
     [InlineData("ProceduralRoads_HiddenSiteIcons")]
+    [InlineData("ProceduralRoads_AppendBridges")]
     [InlineData("ProceduralRoads_Crossings")]
     [InlineData("ProceduralRoads_BridgeZones")]
     [InlineData("ProceduralRoads_StartPoints")]
     public void ARecordThatCannotBeReadIsWrittenBackAsItWas(string key)
     {
         _world.WithZdos();
-        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear();
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StructureAppendQueue.Reset();
         RoadNetworkPersistence.EnsureMetadataInstance();
         RoadSpatialGrid.CommitLevelled(new List<Vector2> { new(0, 0), new(8, 0), new(16, 0) }, new List<float> { 40, 40, 40 }, 4f);
         RoadSpatialGrid.FinalizeRoadNetwork();
@@ -56,7 +57,7 @@ public class UnreadRecordTests : System.IDisposable
     {
         // The spawned-zone record is a cache: kept unread, every later session's zones would be lost with it.
         _world.WithZdos();
-        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear();
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StructureAppendQueue.Reset();
         RoadNetworkPersistence.EnsureMetadataInstance();
         RoadSpatialGrid.CommitLevelled(new List<Vector2> { new(0, 0), new(8, 0), new(16, 0) }, new List<float> { 40, 40, 40 }, 4f);
         RoadSpatialGrid.FinalizeRoadNetwork();
@@ -83,7 +84,7 @@ public class UnreadRecordTests : System.IDisposable
         // A malformed string length (BinaryReader.ReadString throws FormatException) is one more way a record cannot be
         // read: the record is kept, the roads load.
         _world.WithZdos();
-        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear();
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); StructureAppendQueue.Reset();
         RoadNetworkPersistence.EnsureMetadataInstance();
         RoadSpatialGrid.CommitLevelled(new List<Vector2> { new(0, 0), new(8, 0), new(16, 0) }, new List<float> { 40, 40, 40 }, 4f);
         RoadSpatialGrid.FinalizeRoadNetwork();

@@ -122,6 +122,7 @@ public static class StructurePlacement
         // A zone explored before this network gets no pieces (NetworkCutoff).
         if (NetworkCutoff.Excludes(zoneID))
             return 0;
+        if (StructureAppendQueue.ForZone(zoneID) != null) return SpawnAppend(zoneID);
         // Nor does a bridge that reaches into such a zone anywhere else: it is built whole or not at all.
         // The zone is not marked spawned, so the bridge is built if those zones stop being excluded.
         List<StructurePiece>? pieces = StructurePlans.BuildablePlanFor(zoneID);
@@ -156,7 +157,21 @@ public static class StructurePlacement
         // and saved.
         if (WorldGenerator.instance is WorldGenerator world) StructureSites.KeepFirstBuilt(pieces, world, condemned);
         RoadNetworkGenerator.ChooseKitsAsBuilt(pieces);
-        int spawned = SpawnPieces(pieces, ghost);
+        int spawned = 0;
+        var emitted = new List<StructurePiece>();
+        for (int i = 0; i < pieces.Count; i++)
+        {
+            try { spawned += SpawnPieces(pieces.GetRange(i, 1), ghost, emitted: emitted); }
+            catch
+            {
+                // The pieces already out stand, and would make the zone look done (ZoneHasLivePieces): the rest of the
+                // plan is owed as a manual road's pieces are, one by one, and the zone is recorded once they are out.
+                // A piece whose object is out though a step after it failed stands too, and is not owed again.
+                int rest = emitted.Count > 0 && emitted[emitted.Count - 1] == pieces[i] ? i + 1 : i;
+                StructureAppendQueue.Enqueue(new Dictionary<Vector2s, List<StructurePiece>> { [zoneID] = pieces.GetRange(rest, pieces.Count - rest) });
+                throw;
+            }
+        }
         // Recorded only once the plan is out.
         StructurePlans.MarkSpawned(zoneID);
         if (spawned > 0)
@@ -173,12 +188,72 @@ public static class StructurePlacement
         return null;
     }
 
+    private static int s_appendCursor;
+    public static void ApplyPendingAppends()
+    {
+        if (RoadLifecycleManager.WorkersOwnWorld) return;
+        if (!IsServer || ZNetScene.instance == null || ZDOMan.instance == null) return;
+        var zones = new List<Vector2s>(StructureAppendQueue.Zones);
+        if (zones.Count == 0) return;
+        // One zone / at most 64 new objects per retry. A missing prefab in one
+        // zone must not starve every other pending bridge.
+        if (s_appendCursor >= zones.Count) s_appendCursor = 0;
+        SpawnAppend(zones[s_appendCursor++]);
+    }
+
+    private static readonly int AppendPieceHash = "ProceduralRoads_AppendPiece".GetStableHashCode();
+    private static int SpawnAppend(Vector2s zone)
+    {
+        var pieces = StructureAppendQueue.ForZone(zone);
+        if (pieces == null || NetworkCutoff.Excludes(zone)) return 0;
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        var existing = new HashSet<string>();
+        foreach (var zdo in zdos)
+        {
+            string key = zdo.GetString(AppendPieceHash, "");
+            if (key.Length > 0) existing.Add(key);
+        }
+        int count = 0;
+        bool changed = false;
+        try
+        {
+            while (pieces.Count > 0 && count < 64)
+            {
+                var piece = pieces[0];
+                string key = StructureAppendQueue.Key(piece);
+                if (!existing.Contains(key))
+                {
+                    if (ZNetScene.instance.GetPrefab(piece.Prefab) == null)
+                    {
+                        if (s_warnedPrefabs.Add(piece.Prefab))
+                            Log.LogWarning($"[BRIDGES] append pending in {zone}: missing prefab {piece.Prefab}");
+                        return count;
+                    }
+                    count += SpawnPieces(new List<StructurePiece> { piece }, ghost: true, appendKey: key);
+                    existing.Add(key);
+                }
+                // Once emitted, a piece is no longer owed, even if physics or
+                // a player destroys it before the rest of the bridge is built.
+                StructureAppendQueue.Acknowledge(zone, key);
+                changed = true;
+            }
+            if (pieces.Count == 0) { StructureAppendQueue.Complete(zone); changed = true; }
+            return count;
+        }
+        // Saved when the queue moved: a piece owed for a prefab that is missing (a removed kit mod) rewrote the
+        // records on every retry.
+        finally { if (changed) RoadNetworkGenerator.SaveBridgeZones(); }
+    }
+
     /// <summary>A piece's turn as spawned: pitch, yaw and roll in Unity's own Euler order, as the vanilla locations'
     /// children read: a vine hangs by its 180 degree roll. The roll was dropped here before
     /// (the wooden kits' toppled debris laid one too).</summary>
     internal static Quaternion Rotation(StructurePiece piece) => Quaternion.Euler(piece.PitchDegrees, piece.YawDegrees, piece.RollDegrees);
 
-    private static int SpawnPieces(List<StructurePiece> pieces, bool ghost, string? appendKey = null)
+    /// <summary>Places the pieces; <paramref name="emitted"/>, when given, gets each piece as its object (its ZDO) is out,
+    /// before the steps that follow on it.</summary>
+    private static int SpawnPieces(List<StructurePiece> pieces, bool ghost, string? appendKey = null, List<StructurePiece>? emitted = null)
     {
         int spawned = 0;
         foreach (StructurePiece piece in pieces)
@@ -194,30 +269,39 @@ public static class StructurePlacement
             if (ghost)
                 ZNetView.StartGhostInit();
 
-            Quaternion rotation = Rotation(piece);
-            GameObject go = Object.Instantiate(prefab, piece.Position, rotation);
-
-            ZNetView nview = go.GetComponent<ZNetView>();
-            ZDO? zdo = nview != null ? nview.GetZDO() : null;
-            if (zdo != null)
+            GameObject? go = null;
+            try
             {
-                zdo.Set(MarkerHash, 1);
-                WearNTear wearNTear = go.GetComponent<WearNTear>();
-                if (wearNTear != null)
+                Quaternion rotation = Rotation(piece);
+                go = Object.Instantiate(prefab, piece.Position, rotation);
+
+                ZNetView nview = go.GetComponent<ZNetView>();
+                ZDO? zdo = nview != null ? nview.GetZDO() : null;
+                if (zdo != null)
                 {
-                    zdo.Set("health", wearNTear.m_health * piece.HealthFraction);
-                    ShowHealth(wearNTear, piece.HealthFraction);
+                    emitted?.Add(piece);
+                    zdo.Set(MarkerHash, 1);
+                    if (appendKey != null) zdo.Set(AppendPieceHash, appendKey);
+                    WearNTear wearNTear = go.GetComponent<WearNTear>();
+                    if (wearNTear != null)
+                    {
+                        zdo.Set("health", wearNTear.m_health * piece.HealthFraction);
+                        ShowHealth(wearNTear, piece.HealthFraction);
+                    }
+                }
+
+                if (appendKey != null && zdo == null)
+                    throw new System.InvalidOperationException($"Bridge append produced no ZDO for {piece.Prefab}");
+                spawned++;
+            }
+            finally
+            {
+                if (ghost)
+                {
+                    if (go != null) Object.Destroy(go);
+                    ZNetView.FinishGhostInit();
                 }
             }
-
-            if (ghost)
-            {
-                // Plain Destroy: a ghost-init view keeps its ZDO (the point of
-                // ghost generation); ZNetView.Destroy would drop it.
-                Object.Destroy(go);
-                ZNetView.FinishGhostInit();
-            }
-            spawned++;
         }
         return spawned;
     }

@@ -271,7 +271,27 @@ public static class RoadTerrainModifier
     internal static bool CarriesCurrentRoads(Vector2s zone, int applied)
     {
         int version = RoadSpatialGrid.RoadNetworkVersion;
-        return version != 0 && applied != 0 && applied == version;
+        return version != 0 && applied != 0 && (applied == version ||
+            RoadSpatialGrid.PendingPoints(RoadSpatialGrid.GetRoadPointsInZone(zone), applied).Count == 0);
+    }
+
+    /// <summary>Write appended roads into the loaded zones at once (a manual road's command): stamped and pre-network
+    /// zones are left alone, and each zone gets only what it does not carry yet (OnTerrainCompilerReady).</summary>
+    public static void ApplyAdditionsToLoadedZones()
+    {
+        if (RoadLifecycleManager.WorkersOwnWorld) return;
+        foreach (var heightmap in Heightmap.GetAllHeightmaps())
+        {
+            if (heightmap == null) continue;
+            var zone = ZoneSystem.GetZone(heightmap.transform.position);
+            var points = RoadSpatialGrid.GetRoadPointsInZone(zone);
+            if (points.Count > 0)
+            {
+                var compiler = TerrainComp.FindTerrainCompiler(heightmap.transform.position);
+                if (compiler != null) OnTerrainCompilerReady(compiler);
+                else OnZoneSpawned(zone, points);
+            }
+        }
     }
 
     /// <summary>
@@ -438,9 +458,18 @@ public static class RoadTerrainModifier
             GridSize = gridSize, VertexSpacing = RoadConstants.ZoneSize / terrainComp.m_width,
             PreCompilerHeights = heights
         };
-        ModificationStats stats = ModifyVertexHeights(request.Zone, request.Points, context);
-        stats.PaintedTexels = ApplyRoadPaint(request.Points, terrainComp, stats.PaintedCells, stats.RoadDeltas, context) + stats.KeptPaint;
-        FinalizeTerrainMods(request.Zone, request.Points, stats, context);
+        // A compiler carrying an ancestor needs only the new road footprint.
+        // Old roads in this same zone may contain player edits: never replay them.
+        var pending = request.Force ? request.Points : RoadSpatialGrid.PendingPoints(
+            request.Points, terrainComp.m_nview.GetZDO().GetInt(AppliedVersionHash, 0));
+        // The pending points say which vertices to write; every road point of the zone says to
+        // what height, as a full write would: written from the new points alone, the north zone
+        // of a frost cave's approach stood 0.43 m above its neighbour along their shared edge, a
+        // tear.
+        ModificationStats stats = ModifyVertexHeights(request.Zone, request.Points, context,
+            ReferenceEquals(pending, request.Points) || pending.Count == request.Points.Count ? null : pending);
+        stats.PaintedTexels = ApplyRoadPaint(pending, terrainComp, stats.PaintedCells, stats.RoadDeltas, context) + stats.KeptPaint;
+        FinalizeTerrainMods(request.Zone, request.Points, stats, context, onlyCuts: pending.Count > 0 && pending.TrueForAll(p => p.cutOnly));
         // Vanilla now applies our deltas to this very array and rebuilds its
         // collider. Do not Poke again from here: that would queue another rebuild.
     }
@@ -644,7 +673,11 @@ public static class RoadTerrainModifier
     /// on the ground that is written.</summary>
     internal static float? PlacedBaseAt(Vector2 p) => PlacedSites.GroundAt(p) ?? PlacedGround?.Invoke(p);
 
-    private static ModificationStats ModifyVertexHeights(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
+    /// <param name="only">Write only the vertices these points reach (an incremental write of
+    /// appended points); null for every vertex any point reaches. Heights always come from all
+    /// of <paramref name="roadPoints"/>.</param>
+    private static ModificationStats ModifyVertexHeights(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context,
+        List<RoadSpatialGrid.RoadPoint>? only = null)
     {
         ModificationStats stats = new ModificationStats { PaintedCells = new HashSet<Vector2i>(), RoadDeltas = new float[context.GridSize * context.GridSize] };
         for (int i = 0; i < stats.RoadDeltas.Length; i++) stats.RoadDeltas[i] = float.NaN;
@@ -661,6 +694,9 @@ public static class RoadTerrainModifier
         // A road onto a place's landing (RoadSiteEntry): the only points that level
         // the ground inside a place's footprint, and there only close to them.
         var entering = roadPoints.FindAll(rp => rp.intoSite && rp.IsRoad);
+        float[]? onlyFill = only != null ? FillExtras(only, WorldGenerator.instance) : null;
+        var onlyCuts = only?.FindAll(rp => rp.cutOnly);
+        var onlyEntering = only?.FindAll(rp => rp.intoSite && rp.IsRoad);
 
         for (int vz = 0; vz < context.GridSize; vz++)
         {
@@ -703,6 +739,11 @@ public static class RoadTerrainModifier
                 // Inside a place: the ground it leaves, which the game draws under the compiler's
                 // deltas in play, whatever terrain this is written on (PlacedGround).
                 if (inside && PlacedBaseAt(vertexPos2D) is float placed) baseHeight = placed;
+                if (only != null && !(inside
+                        ? onlyEntering!.Count > 0 && CalculateBlendedHeight(onlyEntering, vertexPos2D, baseHeight, bounded: true).InfluencingPoints > 0
+                        : CalculateBlendedHeight(only, vertexPos2D, baseHeight, onlyFill).InfluencingPoints > 0
+                          || (onlyCuts!.Count > 0 && !float.IsPositiveInfinity(LowestCut(onlyCuts, vertexPos2D)))))
+                    continue;
                 // With no road point here the vertex keeps what the compiler already
                 // holds (an older road's cut, a player's digging): a staircase's cut
                 // added later must lower it from there, never lift it back up.
@@ -892,6 +933,7 @@ public static class RoadTerrainModifier
             }
         return fillExtra;
     }
+
     /// <summary>The height the road asks for at a vertex its points reach: the level blend, with the earthwork noise on
     /// its face, kept between the natural ground and the road's height, so the noise never digs a fill face below the
     /// ground nor raises a cut face above it (a dip at a fill's toe stood its whole height as one wall).</summary>

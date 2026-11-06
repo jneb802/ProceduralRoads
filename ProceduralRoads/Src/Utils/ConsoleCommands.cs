@@ -29,9 +29,13 @@ public static class ConsoleCommands
     private static List<Minimap.PinData> s_modPins = new();
     private static List<GameObject> s_debugMarkers = new();
 
-    /// <summary>
-    /// Register console commands. Called from Terminal.InitTerminal patch.
-    /// </summary>
+    /// <summary>Lets the game draw <see cref="ManualRoadCommands.FramesBeforeSearch"/> frames, then runs the work on the main thread.</summary>
+    private static System.Collections.IEnumerator AfterFrames(System.Action work)
+    {
+        for (int i = 0; i < ManualRoadCommands.FramesBeforeSearch; i++) yield return null;
+        work();
+    }
+
     private static bool GenerationBusy(Terminal.ConsoleEventArgs args)
     {
         if (!RoadLifecycleManager.IsGenerating) return false;
@@ -39,6 +43,17 @@ public static class ConsoleCommands
         return true;
     }
 
+    /// <summary>road_generate's help, its confirm said by its owner (RoadLifecycleManager.AsksFirstHelp).</summary>
+    private static string GenerateHelp =>
+        "Generate roads for an existing world. Use after adding mod to existing save." + RoadLifecycleManager.AsksFirstHelp;
+
+    /// <summary>road_regen_island's help, its confirm as road_generate's.</summary>
+    private static string RegenIslandHelp =>
+        "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Its places are placed first, then its roads built, with the world held still; much faster than a whole-world generation when iterating on one site." + RoadLifecycleManager.AsksFirstHelp;
+
+    /// <summary>
+    /// Register console commands. Called from Terminal.InitTerminal patch.
+    /// </summary>
     public static void RegisterCommands()
     {
         if (s_commandsRegistered)
@@ -49,6 +64,8 @@ public static class ConsoleCommands
             var p = RoadLifecycleManager.Progress;
             args.Context.AddString($"Road progress: run={p.RunId} phase={p.Phase} completed={p.Completed} total={p.Total} elapsed={p.ElapsedSeconds:F1}s frame={Time.frameCount}");
         });
+        ManualRoadCommands.Register();
+        ManualRoadCommands.NextFrame = work => BepInEx.ThreadingHelper.Instance.StartCoroutine(AfterFrames(work));
         if (DevCommands)
         {
             RegisterDevCommands();
@@ -58,7 +75,7 @@ public static class ConsoleCommands
         }
         new Terminal.ConsoleCommand(
             "road_regen_island",
-            "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Its places are placed first, then its roads built, with the world held still; much faster than a whole-world generation when iterating on one site.",
+            RegenIslandHelp,
             (args) => { if (!GenerationBusy(args)) RegenerateIslandHere(args); },
             isCheat: true,
             isNetwork: false,
@@ -90,7 +107,7 @@ public static class ConsoleCommands
         // road_generate - Generate roads for existing worlds
         new Terminal.ConsoleCommand(
             "road_generate",
-            "Generate roads for an existing world. Use after adding mod to existing save.",
+            GenerateHelp,
             (args) => { if (!GenerationBusy(args)) GenerateRoadsCommand(args); },
             isCheat: true,
             isNetwork: false,
@@ -646,15 +663,17 @@ public static class ConsoleCommands
             return;
         }
 
-        args.Context.AddString(RoadNetworkGenerator.RoadsGenerated ? "Roads already generated. Forcing regeneration..." : "Generating roads for existing world...");
         Log.LogInfo("Manual road generation triggered via console command");
         // As at load: places placed before their roads, over frames, then the roads built by workers. This command
         // returns at once; the panel and road_progress show how it goes, and the console hears how it ended.
-        if (RoadLifecycleManager.BeginForOperator(null, args.Context.AddString) is string refused)
+        if (RoadLifecycleManager.BeginForOperator(null, args.Context.AddString, command: "road_generate", force: HasForce(args)) is string refused)
             args.Context.AddString(refused);
         else
-            args.Context.AddString(RoadGeneration_Patch.HeldWhileBuilding);
+            args.Context.AddString("Generating roads..." + " " + RoadGeneration_Patch.HeldWhileBuilding);
     }
+
+    /// <summary>Whether the command's words (after its name) end in force (ManualRoads.EndsInForce).</summary>
+    private static bool HasForce(Terminal.ConsoleEventArgs args) => ManualRoads.EndsInForce(args.Args.Skip(1).ToArray());
 
     /// <summary>road_crossings [count] lists the river crossings nearest the player.</summary>
     private static void CrossingsCommand(Terminal.ConsoleEventArgs args)
@@ -849,12 +868,11 @@ public static class ConsoleCommands
             return;
         }
 
-        args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})...");
         // The same generation road_generate runs, for one island: its places placed before their roads, over frames.
-        if (RoadLifecycleManager.BeginForOperator(pos, args.Context.AddString) is string refused)
+        if (RoadLifecycleManager.BeginForOperator(pos, args.Context.AddString, command: "road_regen_island", force: HasForce(args)) is string refused)
             args.Context.AddString(refused);
         else
-            args.Context.AddString(RoadGeneration_Patch.HeldWhileBuilding);
+            args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})... " + RoadGeneration_Patch.HeldWhileBuilding);
     }
 
 

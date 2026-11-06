@@ -15,7 +15,7 @@ public sealed class RoadStatisticsTests : IDisposable
     private readonly ValheimWorldScope scope=new ValheimWorldScope().WithWorld(new SyntheticWorld());
     private readonly bool debug=RoadSpatialGrid.RecordPointDebugInfo;
     public RoadStatisticsTests() { scope.WithZdos().WithZoneSystem().WithNetwork(server:true); RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); RoadSpatialGrid.RecordPointDebugInfo=false; }
-    public void Dispose() { RoadSpatialGrid.BeforeStatisticsPublication=null; RoadSpatialGrid.BeforeVersionCalculation=null; RoadNetworkGenerator.Reset(); RoadNetworkPersistence.Reset(); RoadSpatialGrid.RecordPointDebugInfo=debug; scope.Dispose(); }
+    public void Dispose() { RoadSpatialGrid.BeforeStatisticsPublication=null; RoadSpatialGrid.BeforeVersionCalculation=null; RoadSpatialGrid.BeforeAppendTransaction=null; RoadSpatialGrid.AfterAppendPublication=null; RoadNetworkGenerator.Reset(); RoadNetworkPersistence.Reset(); RoadSpatialGrid.RecordPointDebugInfo=debug; scope.Dispose(); }
     private static RoadSpatialGrid.PlannedPath Plan(float length=2)=>new(
         new List<Vector2> {new(31,0),new(33,0)},new List<float> {40,40},new List<RoadPointDebugInfo>(),4,length,false);
     private static void Commit()=>RoadSpatialGrid.Commit(Plan());
@@ -40,6 +40,35 @@ public sealed class RoadStatisticsTests : IDisposable
         RoadSpatialGrid.FinalizeRoadNetwork(); int version=RoadSpatialGrid.RoadNetworkVersion;
         byte[] saved=Bytes(); RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
         AssertStatistics(records,4); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion); Assert.Equal(saved,Bytes());
+    }
+    [Fact]
+    public void KnownLengthBitsAndAppendHistoryRoundTripWithoutInventingUniqueLength()
+    {
+        RoadSpatialGrid.Commit(Plan(123.4567f)); RoadSpatialGrid.FinalizeRoadNetwork();
+        int parent=RoadSpatialGrid.RoadNetworkVersion;
+        RoadSpatialGrid.CommitAppend(new[]{Plan(99.8765f)},parent);
+        var before=RoadSpatialGrid.Statistics; byte[] saved=Bytes(); int version=RoadSpatialGrid.RoadNetworkVersion;
+        RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
+        AssertStatistics(before.StoredPointRecords,before.CommittedPathLengthMeters);
+        Assert.Equal(BitConverter.GetBytes(before.CommittedPathLengthMeters!.Value),BitConverter.GetBytes(RoadSpatialGrid.CommittedPathLengthMeters!.Value));
+        Assert.Equal(1,RoadSpatialGrid.AppendCount); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion);
+        Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.addition==1);
+        Assert.Equal(saved,Bytes());
+    }
+    [Theory]
+    [InlineData(1)] [InlineData(2)] [InlineData(3)]
+    public void LegacyNonemptyLoadReplacesPriorLengthWithUnknownAndAppendPreservesUnknown(int format)
+    {
+        Commit(); Assert.True(RoadSpatialGrid.Statistics.LengthKnown);
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Legacy(format)));
+        AssertStatistics(1,null); Assert.True(float.IsNaN(RoadSpatialGrid.TotalRoadLength));
+        Assert.Equal("unknown (legacy save)",RoadSpatialGrid.Statistics.LengthText());
+        var before=Bytes(); Assert.Equal(4,BitConverter.ToInt32(before,0));
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(before)); AssertStatistics(1,null);
+        RoadSpatialGrid.CommitAppend(new[]{Plan()},RoadSpatialGrid.RoadNetworkVersion);
+        Assert.False(RoadSpatialGrid.Statistics.LengthKnown);
+        before=Bytes(); RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(before));
+        Assert.Null(RoadSpatialGrid.CommittedPathLengthMeters); Assert.Equal(before,Bytes());
     }
     [Theory]
     [InlineData(1)] [InlineData(2)] [InlineData(3)]
@@ -107,6 +136,50 @@ public sealed class RoadStatisticsTests : IDisposable
         finally { release.Set(); await writer; RoadSpatialGrid.BeforeStatisticsPublication=null; }
     }
     [Fact]
+    public async Task AppendUsesTheBaseThatExistsWhenItsWriteTransactionBegins()
+    {
+        Commit(); RoadSpatialGrid.FinalizeRoadNetwork(); int version=RoadSpatialGrid.RoadNetworkVersion;
+        int records=RoadSpatialGrid.StoredPointRecords;
+        using var entered=new ManualResetEventSlim(); using var release=new ManualResetEventSlim();
+        RoadSpatialGrid.BeforeAppendTransaction=()=> { entered.Set(); Assert.True(release.Wait(5000)); };
+        var append=Task.Run(()=>RoadSpatialGrid.CommitAppend(new[]{Plan()},version));
+        try
+        {
+            Assert.True(entered.Wait(3000));
+            Commit(); // A real competing geometry/statistics transaction after append entered but before it acquired the lock.
+            AssertStatistics(records*2,4);
+            release.Set(); await append;
+            AssertStatistics(records*3,6); Assert.Equal(1,RoadSpatialGrid.AppendCount);
+            byte[] saved=Bytes(); RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
+            AssertStatistics(records*3,6);
+        }
+        finally { release.Set(); await append; RoadSpatialGrid.BeforeAppendTransaction=null; }
+    }
+    [Fact]
+    public async Task ASecondAppendCannotReuseTheParentOfAnAlreadyPublishedAppend()
+    {
+        Commit(); RoadSpatialGrid.FinalizeRoadNetwork(); int parent=RoadSpatialGrid.RoadNetworkVersion;
+        int records=RoadSpatialGrid.StoredPointRecords;
+        using var published=new ManualResetEventSlim(); using var release=new ManualResetEventSlim();
+        int entries=0;
+        RoadSpatialGrid.AfterAppendPublication=()=>
+        {
+            if(Interlocked.Increment(ref entries)==1) { published.Set(); Assert.True(release.Wait(5000)); }
+        };
+        var first=Task.Run(()=>RoadSpatialGrid.CommitAppend(new[]{Plan()},parent));
+        try
+        {
+            Assert.True(published.Wait(3000));
+            var stale=await Task.Run(()=>Record.Exception(()=>RoadSpatialGrid.CommitAppend(new[]{Plan()},parent)));
+            Assert.IsType<InvalidOperationException>(stale);
+            AssertStatistics(records*2,4); Assert.Equal(1,RoadSpatialGrid.AppendCount);
+            release.Set(); await first;
+            var saved=Bytes(); RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
+            AssertStatistics(records*2,4); Assert.Equal(1,RoadSpatialGrid.AppendCount);
+        }
+        finally { release.Set(); await first; RoadSpatialGrid.AfterAppendPublication=null; }
+    }
+    [Fact]
     public void TheGlobalMetadataZdoCarriesTheStatisticsBlob()
     {
         Commit(); RoadSpatialGrid.FinalizeRoadNetwork(); var stats=RoadSpatialGrid.Statistics;
@@ -117,6 +190,22 @@ public sealed class RoadStatisticsTests : IDisposable
         Assert.True(RoadNetworkPersistence.TryLoadGlobalRoadData(starts,crossings,zones));
         AssertStatistics(stats.StoredPointRecords,stats.CommittedPathLengthMeters);
         Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion); Assert.Equal(expected,Bytes());
+    }
+    [Theory]
+    [InlineData(false)] [InlineData(true)]
+    public void HashFailureCannotPublishCandidateGeometryStatisticsOrHistory(bool append)
+    {
+        Commit(); RoadSpatialGrid.FinalizeRoadNetwork(); int version=RoadSpatialGrid.RoadNetworkVersion;
+        var before=Bytes();
+        RoadSpatialGrid.BeforeVersionCalculation=()=>throw new InvalidOperationException("controlled canonical hash failure");
+        try
+        {
+            if(append) Assert.Throws<InvalidOperationException>(()=>RoadSpatialGrid.CommitAppend(new[]{Plan()},version));
+            else Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Legacy(2)));
+            Assert.Equal(before,Bytes()); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion);
+            Assert.Equal(0,RoadSpatialGrid.AppendCount);
+        }
+        finally { RoadSpatialGrid.BeforeVersionCalculation=null; }
     }
     /// <summary>
     /// A world saved by 1.4.x (format 1) whose network holds a point that build never checked: the point is left out,
@@ -172,6 +261,42 @@ public sealed class RoadStatisticsTests : IDisposable
         Assert.Equal(1,RoadSpatialGrid.GridCellsWithRoads);
         RoadSpatialGrid.Clear();
         Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(2)));
+    }
+    /// <summary>
+    /// The point flags (cut-only, into-site, unpainted) travel as geometry encodings 4, 5 and 6 inside the v4 envelope, so one
+    /// format number means one thing. Every encoding round-trips byte for byte with its flags; an encoding or envelope
+    /// this build does not know is refused (and the world then takes the unreadable path: nothing generated over it).
+    /// </summary>
+    [Fact]
+    public void EveryEncodingRoundTrips()
+    {
+        int Encoding(byte[] b)=>BitConverter.ToInt32(b,4);
+        void RoundTrip(int encoding,Func<RoadSpatialGrid.RoadPoint,bool>? flag=null)
+        {
+            byte[] saved=Bytes(); int version=RoadSpatialGrid.RoadNetworkVersion;
+            Assert.Equal(4,BitConverter.ToInt32(saved,0)); Assert.Equal(encoding,Encoding(saved));
+            RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
+            Assert.Equal(saved,Bytes()); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion);
+            if(flag!=null) Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>flag(p));
+            byte[] unknown=(byte[])saved.Clone(); Array.Copy(BitConverter.GetBytes(7),0,unknown,4,4);
+            Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(unknown),"encoding 7");
+            byte[] envelope=(byte[])saved.Clone(); Array.Copy(BitConverter.GetBytes(5),0,envelope,0,4);
+            Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(envelope),"envelope 5");
+            Assert.Equal(saved,Bytes());
+        }
+        Commit(); RoadSpatialGrid.FinalizeRoadNetwork();
+        RoundTrip(2);
+        RoadSpatialGrid.CommitAppend(new[]{Plan()},RoadSpatialGrid.RoadNetworkVersion);
+        RoundTrip(3,p=>p.addition>0);
+        RoadSpatialGrid.CommitAppendCuts(new[]{new Vector3(32,39,1)},2f,RoadSpatialGrid.RoadNetworkVersion);
+        RoundTrip(4,p=>p.cutOnly);
+        RoadSpatialGrid.CommitAppend(new[]{Plan()},RoadSpatialGrid.RoadNetworkVersion,intoSite:true);
+        RoundTrip(5,p=>p.intoSite);
+        var under=Plan(); under.Unpainted=new List<bool>{false,true};
+        RoadSpatialGrid.CommitAppend(new[]{under},RoadSpatialGrid.RoadNetworkVersion);
+        RoundTrip(6,p=>p.unpainted&&p.IsRoad);
+        Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.cutOnly);
+        Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.intoSite);
     }
     /// <summary>
     /// A generated network with a staircase's cuts and nothing appended: encoding 4 with an empty append block, the

@@ -190,6 +190,7 @@ public static partial class RoadSpatialGrid
         {
             LoadedFromReleasedFormat = false;
             m_roadPoints.Clear();
+            s_appendParents.Clear();
             m_initialized = false;
             m_storedPointRecords = 0;
             lock (m_recordGate) Junctions.Clear();
@@ -1017,23 +1018,31 @@ public static partial class RoadSpatialGrid
     public static void Commit(PlannedPath plan, int addition = 0, bool intoSite = false)
     {
         Dictionary<Vector2i, List<RoadPoint>> tempPoints = new Dictionary<Vector2i, List<RoadPoint>>();
-        for (int i = 0; i < plan.Points.Count; i++)
-        {
-            AddRoadPoint(tempPoints, plan.Points[i], plan.Widths != null && i < plan.Widths.Count ? plan.Widths[i] : plan.Width, plan.Heights[i], plan.FollowTerrain, addition,
-                intoSite: intoSite || (!plan.FollowTerrain && RoadSiteProtection.Contains(plan.Points[i])),
-                unpainted: plan.Unpainted != null && i < plan.Unpainted.Count && plan.Unpainted[i]);
-
-            if (!RecordPointDebugInfo) continue;
-            RoadPointDebugInfo debugInfo = plan.DebugInfos[i];
-            debugInfo.SmoothedHeight = plan.Heights[i];
-            lock (m_recordGate) m_debugInfo[plan.Points[i]] = debugInfo;
-        }
+        AddPlan(tempPoints, plan, addition, intoSite);
+        if (RecordPointDebugInfo)
+            for (int i = 0; i < plan.Points.Count; i++)
+            {
+                RoadPointDebugInfo debugInfo = plan.DebugInfos[i];
+                debugInfo.SmoothedHeight = plan.Heights[i];
+                lock (m_recordGate) m_debugInfo[plan.Points[i]] = debugInfo;
+            }
 
         if (plan.PlaceLandingStart) System.Threading.Interlocked.Increment(ref s_placeLandingsStored);
         if (plan.PlaceLandingEnd) System.Threading.Interlocked.Increment(ref s_placeLandingsStored);
         MergePoints(tempPoints,plan.TotalLength,true);
         if (plan.Junctions != null && SearchStats.Enabled) lock (m_recordGate) Junctions.AddRange(plan.Junctions);
         RoadNetworkGenerator.IslandActivity?.Committed(plan.TotalLength);
+    }
+
+    /// <summary>A plan's points as road points, the one loop a generated road (<see cref="Commit"/>) and a manual road
+    /// (<see cref="CommitAppend"/>) are stored by: each point at its own width (a switchback's turns are wider), and a
+    /// point inside a place's footprint stored into it (<see cref="Commit"/>'s intoSite).</summary>
+    private static void AddPlan(Dictionary<Vector2i, List<RoadPoint>> into, PlannedPath plan, int addition, bool intoSite)
+    {
+        for (int i = 0; i < plan.Points.Count; i++)
+            AddRoadPoint(into, plan.Points[i], plan.Widths != null && i < plan.Widths.Count ? plan.Widths[i] : plan.Width, plan.Heights[i], plan.FollowTerrain, addition,
+                intoSite: intoSite || (!plan.FollowTerrain && RoadSiteProtection.Contains(plan.Points[i])),
+                unpainted: plan.Unpainted != null && i < plan.Unpainted.Count && plan.Unpainted[i]);
     }
 
     /// <summary>

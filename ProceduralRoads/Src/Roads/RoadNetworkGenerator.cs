@@ -201,7 +201,64 @@ public static partial class RoadNetworkGenerator
     // its own; Finder hands out the calling thread's.
     private static System.Threading.ThreadLocal<RoadPathfinder>? m_threadPathfinders;
     private static RoadPathfinder? Finder =>
-        m_threadPathfinders != null ? m_threadPathfinders.Value : m_pathfinder;
+        t_finder ?? (m_threadPathfinders != null ? m_threadPathfinders.Value : m_pathfinder);
+    /// <summary>The search a road planned outside generation is planned with on this thread (<see cref="PlanningWith"/>).</summary>
+    [System.ThreadStatic] private static RoadPathfinder? t_finder;
+    /// <summary>Where a road planned outside generation is handed over instead of stored (<see cref="PlanningWith"/>): the
+    /// road the generator plans (GenerateRoad, with every search again it makes) is captured as it would be stored.</summary>
+    [System.ThreadStatic] private static RoadCapture? t_capture;
+
+    /// <summary>
+    /// Plan roads on this thread as the generator plans them, outside generation and storing nothing: with
+    /// <paramref name="finder"/>, each road GenerateRoad would store captured into <paramref name="capture"/> instead (a
+    /// manual road stores it in its one append), and every refusal noted there. Until disposed. The staircases onto placed
+    /// places' landings a generation found it could not lay (<see cref="m_entryStairsFailed"/>, <see cref="m_entryStairsTried"/>)
+    /// are its own memo, for the network it was planning: forgotten here, so a road planned on the network as it is now lays
+    /// them out afresh. Never while a generation runs (its workers read that memo): a manual road is refused then.
+    /// </summary>
+    internal static IDisposable PlanningWith(RoadPathfinder finder, RoadCapture capture)
+    {
+        if (RoadLifecycleManager.IsGenerating) throw new InvalidOperationException("A road is planned outside generation only while none runs.");
+        m_entryStairsFailed.Clear();
+        m_entryStairsTried.Clear();
+        var (finderBefore, captureBefore) = (t_finder, t_capture);
+        (t_finder, t_capture) = (finder, capture);
+        return new Restore(() => (t_finder, t_capture) = (finderBefore, captureBefore));
+    }
+
+    private sealed class Restore : IDisposable
+    {
+        private Action? m_restore;
+        public Restore(Action restore) => m_restore = restore;
+        public void Dispose() { m_restore?.Invoke(); m_restore = null; }
+    }
+
+    /// <summary>What a road's planning outside generation tried (<see cref="PlanningWith"/>): each refusal, why and where
+    /// (where it says), and the road planned, as it would be stored.</summary>
+    internal sealed class RoadCapture
+    {
+        public readonly List<(string why, Vector2? at)> Refusals = new();
+        public PlannedRoad? Road;
+        public void Refused(string why, Vector2? at) => Refusals.Add((why, at));
+    }
+
+    /// <summary>A road as the generator planned it (GenerateRoadCore), before anything of it is stored.</summary>
+    internal sealed class PlannedRoad
+    {
+        public Vector2 StartCenter, EndCenter;
+        public List<Vector2> Path = new();
+        public List<RoadSpatialGrid.PlannedPath> Plans = new();
+        public List<RoadCrossing> Crossings = new();
+        /// <summary>The staircases its search bought (some already laid, <see cref="RoadStairSpan.Existing"/>), and those
+        /// laid at its places' ends.</summary>
+        public List<RoadStairSpan> Stairs = new(), Approaches = new();
+        /// <summary>Its ways onto placed places' landings (<see cref="PlanEntry"/>).</summary>
+        public List<(PlacedSite site, RoadSpatialGrid.PlannedPath? road, RoadStairSpan? stairs)> Entries = new();
+        /// <summary>Its ends carried on into their places (<see cref="CarryOnToEdges"/>).</summary>
+        public List<RoadSpatialGrid.PlannedPath> Carried = new();
+        /// <summary>Its ends arriving at their places as road: ways into them once it is committed (PlaceWaysIn.Record).</summary>
+        public List<(Vector2 place, PlaceWaysIn.Way way)> WaysIn = new();
+    }
     private static readonly object m_recordGate = new object();
     [System.ThreadStatic] private static int m_islandRoads;
     /// <summary>This island's network version: one more at every write to what a road's search, its build and the served
@@ -1691,6 +1748,7 @@ public static partial class RoadNetworkGenerator
         RoadSpatialGrid.FinalizeRoadNetwork();
         
         NetworkCutoff.UseNewNetwork();
+        RoadNetworkPersistence.NetworkGenerated();
         m_roadsGenerated = true;
         m_networkDirty = true;
         work.Published = true;
@@ -1770,8 +1828,9 @@ public static partial class RoadNetworkGenerator
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), string> m_lastFailure = new();
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), bool> m_builtTo = new();
     private static (int, int) PlaceKey(Vector2 c) => (Mathf.RoundToInt(c.x), Mathf.RoundToInt(c.y));
-    private static void NoteFailure(Vector2 a, Vector2 b, string why)
+    private static void NoteFailure(Vector2 a, Vector2 b, string why, Vector2? at = null)
     {
+        t_capture?.Refused(why, at);
         if (!RoadsLog) return;
         m_lastFailure[PlaceKey(a)] = why;
         m_lastFailure[PlaceKey(b)] = why;
@@ -2406,7 +2465,7 @@ public static partial class RoadNetworkGenerator
         // No road crosses another, nor runs beside one at its height, nor on a staircase's flight but onto a landing level
         // with the row it reaches (MeetingRefusal).
         RoadStairRuns.FlightLanding? landing = null;
-        if (plans != null && MeetingRefusal(plans, out Vector2 meetsAt, out landing, landOnFlight: true) is string meetingRefused)
+        if (plans != null && MeetingRefusal(plans, out Vector2 meetsAt, out landing, landOnFlight: t_capture == null) is string meetingRefused)
         {
             plans = null;
             refusedAt.Add(meetsAt);
@@ -2481,9 +2540,31 @@ public static partial class RoadNetworkGenerator
             m_refusalReasons.AddOrUpdate(why, 1, (_, n) => n + 1);
             if (label != null)
                 Log.LogDebug($"Road could not be built ({why}), destination left unconnected: {label}");
-            NoteFailure(startCenter, endCenter, "refused: " + why);
+            NoteFailure(startCenter, endCenter, "refused: " + why, refusedAt.Count > 0 ? refusedAt[0] : null);
             System.Threading.Interlocked.Increment(ref m_roadsRefusedForGrade);
             return false;
+        }
+        // Its ends arriving at their places as road (no staircase there): the ways into those places it adds (PlaceWaysIn),
+        // recorded once it is stored, here or (planned outside generation) where its plan is committed (ManualRoads.Commit).
+        var waysIn = new List<(Vector2 place, PlaceWaysIn.Way way)>();
+        foreach (var (atStart, centre, asked, atPlace, site) in new[]
+            { (true, startCenter, askedStartRadius, startAtPlace, startSite), (false, endCenter, askedEndRadius, endAtPlace, endSite) })
+        {
+            if (!atPlace || asked <= 0f || !PlaceWaysIn.On) continue;
+            Vector2 place = site?.Centre ?? centre;
+            if (StairsAt(atStart, entries, approaches, site) == null && ArrivalAt(place, atStart, plans, entries, approaches, site) is PlaceWaysIn.Way way)
+                waysIn.Add((place, way));
+        }
+        // Planned outside generation (PlanningWith): handed over as it would be stored, nothing stored. A road onto a
+        // staircase's flight is not planned so (MeetingRefusal above): it changes a staircase already laid.
+        if (t_capture != null)
+        {
+            t_capture.Road = new PlannedRoad
+            {
+                StartCenter = startCenter, EndCenter = endCenter, Path = path, Plans = plans, Crossings = crossings, Stairs = stairs,
+                Approaches = approaches, Entries = entries, Carried = carried, WaysIn = waysIn,
+            };
+            return true;
         }
 
         // One road where two would ride along each other (RoadRide, the one owner): where this road rides the network --
@@ -2560,14 +2641,7 @@ public static partial class RoadNetworkGenerator
             }
         }
         // Its ends arriving at their places as road (no staircase there): ways into those places from now on (PlaceWaysIn).
-        foreach (var (atStart, centre, asked, atPlace, site) in new[]
-            { (true, startCenter, askedStartRadius, startAtPlace, startSite), (false, endCenter, askedEndRadius, endAtPlace, endSite) })
-        {
-            if (!atPlace || asked <= 0f || !PlaceWaysIn.On) continue;
-            Vector2 place = site?.Centre ?? centre;
-            if (StairsAt(atStart, entries, approaches, site) == null && ArrivalAt(place, atStart, plans, entries, approaches, site) is PlaceWaysIn.Way way)
-                PlaceWaysIn.Record(place, way);
-        }
+        foreach (var (place, way) in waysIn) PlaceWaysIn.Record(place, way);
         foreach (RoadSpatialGrid.PlannedPath edge in carried)
         {
             RoadSpatialGrid.CommitRoad(RoadRide.Own(new List<RoadSpatialGrid.PlannedPath> { edge }, out _), intoSite: true,
@@ -3823,14 +3897,26 @@ public static partial class RoadNetworkGenerator
     private static void JoinNetwork(Vector2 from, Vector2 to, StairPlan plan, StairKit kit, bool atPlace, Vector2? fromMeet = null, Vector2? toMeet = null,
         (Vector2 Centre, float Ground)? expectedPlace = null)
     {
-        RoadSpatialGrid.CommitCuts(atPlace ? RoadStairRuns.CutsOutsideFootprints(plan) : plan.Cuts, StairLayout.CutRadius * 2f);
+        RoadSpatialGrid.CommitCuts(CutsOf(plan, atPlace), StairLayout.CutRadius * 2f);
+        AddToNetwork(RunOf(from, to, plan, kit, atPlace, fromMeet, toMeet, expectedPlace), plan, kit);
+    }
+
+    /// <summary>A staircase's earthwork as it is laid (<see cref="JoinNetwork"/>, and a manual road's append): at a place, only
+    /// outside every footprint.</summary>
+    internal static IReadOnlyList<Vector3> CutsOf(StairPlan plan, bool atPlace) =>
+        atPlace ? RoadStairRuns.CutsOutsideFootprints(plan) : plan.Cuts;
+
+    /// <summary>A staircase's run as it is laid (<see cref="JoinNetwork"/>, and a manual road's append).</summary>
+    internal static StairRun RunOf(Vector2 from, Vector2 to, StairPlan plan, StairKit kit, bool atPlace, Vector2? fromMeet = null,
+        Vector2? toMeet = null, (Vector2 Centre, float Ground)? expectedPlace = null)
+    {
         var run = StairRun.FromPlan(from, to, RoadStairRuns.Width, plan, kit);
         run.KeepsSiteRocks = atPlace;
         run.ExpectedPlace = expectedPlace;
         run.FromMeet = fromMeet;
         // At a place, where its ground meets a floor laid out onto it from the foot (StairPlan.PlaceMeet): the place's end.
         run.ToMeet = toMeet ?? (atPlace ? plan.PlaceMeet : null);
-        AddToNetwork(run, plan, kit);
+        return run;
     }
 
     /// <summary>A laid staircase's run becomes the network's: a structure source's pieces, standing from now on for later
@@ -4995,6 +5081,7 @@ public static partial class RoadNetworkGenerator
         RoadLifecycleManager.CancelAndDrain();
         RoadLifecycleManager.AllowInitialRetry();
         if (!cancelled) ResetData();
+        RoadNetworkPersistence.Reset();
     }
 
     /// <summary>
@@ -5071,6 +5158,7 @@ public static partial class RoadNetworkGenerator
         ResetDoors();
         PlacedSites.ForgetLanded();
         OnReset?.Invoke();
+        ManualRoads.Reset();
         LocationLevelling.ResetPlacements?.Invoke();
         m_roadsGenerated = false;
         m_locationsReady = false;
@@ -5090,7 +5178,6 @@ public static partial class RoadNetworkGenerator
         RoadStairRuns.ResetCache();
         StructurePlans.Reset();
         VegetationClearing.Reset();
-        RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
     }
 
@@ -5285,7 +5372,7 @@ public static partial class RoadNetworkGenerator
     /// </summary>
     public static void SaveNetworkCutoff()
     {
-        if (!RoadsAvailable || ZoneSystem.instance == null) return;
+        if (IsGenerating || !RoadsAvailable || ZoneSystem.instance == null) return;
         byte[]? record = NetworkCutoff.Record(RoadSpatialGrid.RoadNetworkVersion, ZoneSystem.instance.m_generatedZones);
         if (record != null) RoadNetworkPersistence.SaveZonesWithNetwork(record);
     }
@@ -5301,7 +5388,7 @@ public static partial class RoadNetworkGenerator
         if (!RoadsAvailable || VegetationClearing.Version == 0 ||
             VegetationClearing.Version != RoadSpatialGrid.RoadNetworkVersion)
             return;
-        RoadNetworkPersistence.SaveClearedZones(VegetationClearing.Version, VegetationClearing.ClearedZones);
+        RoadNetworkPersistence.SaveClearedZones(VegetationClearing.Version, VegetationClearing.ClearedZones, VegetationClearing.ClearedThrough);
     }
 
     #endregion

@@ -254,7 +254,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
         Assert.True(NetworkCutoff.Excludes(Built));
         Assert.True(NetworkCutoff.Excludes(Dug));
         Assert.False(NetworkCutoff.AvoidsAny, "a later search would still go round them");
-        Assert.Contains(_told, t => t.Contains("2 explored zone(s)"));
+        Assert.Contains(_told, t => t.Contains("2 explored zone(s)") && t.Contains("road_connect"));
 
         // Saved: the wild zone is the network's from now on, the two others stay left alone.
         Reopen(zones);

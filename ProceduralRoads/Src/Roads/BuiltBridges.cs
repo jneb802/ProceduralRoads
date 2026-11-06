@@ -251,7 +251,7 @@ public static class StructureSites
 
     /// <summary>
     /// The sites these planned pieces of a zone built for the first time belong to saved (<see cref="PlannedSite.Keep"/>),
-    /// each whose zones are none of them built yet, or holding pieces. A site
+    /// each whose zones are none of them built yet, owed pieces (<see cref="StructureAppendQueue"/>) or holding pieces. A site
     /// with a zone built and no saved pieces (a world built before sites were saved, or whose zone record was lost) is laid
     /// zone by zone as before, as is every site of a network a released build saved (<see cref="Saving"/>). The records are
     /// written with the zones built (<see cref="RoadNetworkPersistence.SaveBridgeZones"/>).
@@ -274,7 +274,7 @@ public static class StructureSites
     private static bool Started(HashSet<Vector2s> zones, ICollection<ZDOID>? condemned)
     {
         foreach (Vector2s zone in zones)
-            if (StructurePlans.IsSpawned(zone) || StructurePlans.ZoneHasLivePieces(zone, condemned))
+            if (StructurePlans.IsSpawned(zone) || StructureAppendQueue.ForZone(zone) != null || StructurePlans.ZoneHasLivePieces(zone, condemned))
                 return true;
         return false;
     }

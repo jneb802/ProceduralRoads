@@ -168,3 +168,30 @@ public class RoadWaterTests
         }
     }
 }
+
+/// <summary>The dry floor is the shallow line, and raising to it is one rule.</summary>
+public class DryFloorTests
+{
+    [Fact]
+    public void DryFloorIsTheShallowLine() =>
+        Assert.Equal(RoadConstants.ShallowWaterHeight, RoadConstants.DryRoadFloor);
+
+    [Theory]
+    [InlineData(float.NegativeInfinity)]
+    [InlineData(-5f)]
+    [InlineData(0f)]
+    [InlineData(28f)]
+    [InlineData(30f)]
+    [InlineData(30.4999f)]
+    [InlineData(30.5f)]
+    [InlineData(30.5001f)]
+    [InlineData(31.25f)]
+    [InlineData(120f)]
+    [InlineData(float.NaN)]
+    public void RaisingToTheFloorIsTheOldExpression(float g)
+    {
+        float old = RoadWater.BuiltDry(g) ? g : Mathf.Max(g, RoadConstants.SeaLevel + 0.5f);
+        Assert.Equal(old, RoadWater.BuiltDry(g) ? g : RoadWater.AtLeastDryFloor(g));
+        Assert.Equal(Mathf.Max(g, RoadConstants.SeaLevel + 0.5f), RoadWater.AtLeastDryFloor(g));
+    }
+}

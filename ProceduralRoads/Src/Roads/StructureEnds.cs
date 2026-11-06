@@ -481,7 +481,7 @@ public static class StructureEnds
             if (Vector2.Distance(p, natural.Edge) >= clear) break;
         }
         float g = ground(p);
-        return RoadWater.BuiltDry(g) ? g : Mathf.Max(g, RoadConstants.DryRoadFloor);
+        return RoadWater.BuiltDry(g) ? g : RoadWater.AtLeastDryFloor(g);
     }
 
     /// <summary>The length of <paramref name="path"/> walked from <paramref name="at"/> outward (<paramref name="step"/>,

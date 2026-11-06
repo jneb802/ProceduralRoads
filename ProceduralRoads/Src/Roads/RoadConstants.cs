@@ -12,7 +12,7 @@ public static class RoadConstants
     /// ground at the water line would flood (measured: a swamp road cut 4.8 m into a
     /// hummock ran 105 m under up to 4 m of water). A constant floor never steepens a profile,
     /// so it keeps the grade cap.</summary>
-    public const float DryRoadFloor = SeaLevel + 0.5f;
+    public const float DryRoadFloor = ShallowWaterHeight;
     public const float DeepWaterHeight = 28f;
     public const float ShallowWaterHeight = 30.5f;
     public const float TerrainDeltaMin = -8f;

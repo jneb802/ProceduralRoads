@@ -152,7 +152,7 @@ public static partial class RoadStairRuns
     /// </summary>
     private static bool Earthwork(float height, float ground, float cap, bool overWater) =>
         RoadWater.BuiltDry(ground) ? Mathf.Abs(height - ground) <= cap
-        : overWater && Mathf.Max(height, RoadConstants.DryRoadFloor) - ground <= cap;
+        : overWater && RoadWater.AtLeastDryFloor(height) - ground <= cap;
 
     /// <summary>How far apart two points of one stored road may stand and be walked from one to the other
     /// (<see cref="RaiseOthers"/>): the network's roads are stored a few metres apart at most, and two roads this close

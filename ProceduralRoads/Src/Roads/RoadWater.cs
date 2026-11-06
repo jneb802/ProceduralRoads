@@ -85,6 +85,9 @@ public static class RoadWater
     /// <summary>Ground a shaped or built road stands on (named case: never waded): at or over the shallow line.</summary>
     public static bool BuiltDry(float height) => height >= RoadConstants.ShallowWaterHeight;
 
+    /// <summary>The height raised to the floor every road on land is built up to (<see cref="RoadConstants.DryRoadFloor"/>).</summary>
+    public static float AtLeastDryFloor(float height) => Mathf.Max(height, RoadConstants.DryRoadFloor);
+
     /// <summary><see cref="BuiltDry(float, float)"/> on the <see cref="Ground"/> and the world's river at <paramref name="p"/>.</summary>
     public static bool BuiltDry(WorldGenerator world, Vector2 p)
     {

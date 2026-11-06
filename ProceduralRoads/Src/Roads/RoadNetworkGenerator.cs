@@ -532,7 +532,7 @@ public static partial class RoadNetworkGenerator
     /// grade cap (<see cref="RoadGrade.Configured"/>): a place standing above the road's end (never one below it) gets a road
     /// ending out in the open, the last climb the player's, not an end under a cliff.</summary>
     private static float StandOffRadius(float ring, float place, float h) =>
-        ring + Mathf.Max(0f, place - h) / Mathf.Max(RoadGrade.Configured, 0.01f);
+        ring + RoadGrade.EaseLength(Mathf.Max(0f, place - h));
 
     /// <summary>MWL stand-off, 30 m past the ring: a road's end at a custom location standing above it is
     /// first tried this far past its ring (<see cref="StandOffInBand"/>); only where no end there works does it stand off at the

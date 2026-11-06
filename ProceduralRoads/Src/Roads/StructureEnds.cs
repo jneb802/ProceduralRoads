@@ -300,9 +300,8 @@ public static class StructureEnds
     {
         if (!natural.IsStructure) return null;
         Vector2 outward = -natural.Up;
-        float grade = Mathf.Max(RoadGrade.Configured, 0.01f);
         float reach = Vector2.Distance(natural.Edge, bank) + natural.Steps * BridgeLayout.StairRun + ApronLength * 1.5f
-            + RoadNetworkGenerator.Shaped(cap) / grade + 2f * PadLength;
+            + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap)) + 2f * PadLength;
         var path = new List<Vector2> { bank };
         for (float d = RoadPathfinder.CellSize; d <= reach + RoadPathfinder.CellSize; d += RoadPathfinder.CellSize)
             path.Add(bank + outward * d);
@@ -705,8 +704,7 @@ public static class StructureEnds
         Func<Vector2, float> ground, float cap, bool overWater, out float earthwork)
     {
         earthwork = 0f;
-        float grade = Mathf.Max(RoadGrade.Configured, 0.01f);
-        float reach = natural.Steps * BridgeLayout.StairRun + ApronLength * 1.5f + RoadNetworkGenerator.Shaped(cap) / grade;
+        float reach = natural.Steps * BridgeLayout.StairRun + ApronLength * 1.5f + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap));
         var points = new List<Vector2> { way[0] };
         void To(Vector2 b)
         {

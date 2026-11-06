@@ -34,6 +34,12 @@ public static class RoadGrade
     /// </summary>
     public static float Configured = RoadConstants.DefaultMaxRoadGrade;
 
+    /// <summary>The cap as a divisor: never under 0.01, so a test with no cap (0) does not divide by zero.</summary>
+    public static float Floored => Mathf.Max(Configured, 0.01f);
+
+    /// <summary>The metres of road that ease a rise of <paramref name="rise"/> at the grade cap.</summary>
+    public static float EaseLength(float rise) => rise / Floored;
+
     /// <summary>
     /// The steepest step of any road planned since the last reset, as rise
     /// over run. This is the cap's own claim about the roads it let through,

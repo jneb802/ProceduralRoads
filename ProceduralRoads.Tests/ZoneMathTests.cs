@@ -175,3 +175,18 @@ public class RoadProfileExtentsTests
         Assert.Equal(w + 2f * 2f, RoadProfile.Footprint(w));
     }
 }
+
+public class EaseLengthTests
+{
+    [Theory]
+    [InlineData(8f, 0.35f)]
+    [InlineData(7.3f, 0.35f)]
+    [InlineData(8f, 0f)]
+    [InlineData(3.1f, 0.123f)]
+    public void TwiceTheEaseIsTheEaseOfTwice(float rise, float grade)
+    {
+        using var keep = StaticOverride.Keep(() => RoadGrade.Configured);
+        RoadGrade.Configured = grade;
+        Assert.Equal(2f * rise / System.Math.Max(grade, 0.01f), 2f * RoadGrade.EaseLength(rise));
+    }
+}

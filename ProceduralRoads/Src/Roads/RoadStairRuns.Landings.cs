@@ -172,8 +172,8 @@ public static partial class RoadStairRuns
     {
         var changed = new List<(RoadSpatialGrid.RoadPoint at, float to)>();
         if (removed.Count == 0) return changed;
-        float grade = Mathf.Max(RoadGrade.Configured, 0.01f);
-        float ease = 2f * RoadNetworkGenerator.Shaped(cap) / grade;
+        float grade = RoadGrade.Floored;
+        float ease = 2f * RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap));
         Vector2 centre = default;
         foreach (Vector2 r in removed) centre += r;
         centre *= 1f / removed.Count;

@@ -95,8 +95,8 @@ public static class RoadRockClearing
             // collider, and its road terrain must be written, or the road is
             // judged on the ungraded ground. Looked at again when it is ready.
             if (s_retryAt.TryGetValue(candidate.GetInstanceID(), out float retry) && Time.unscaledTime < retry) { RoadRockStats.NotReady++; continue; }
-            if (candidate.HaveQueuedRebuild() || !ZNetScene.instance.IsAreaReady(candidate.transform.position) ||
-                !RoadTerrainModifier.TerrainSettled(candidate.transform.position)) { RoadRockStats.NotReady++; continue; }
+            if (!TerrainWritten(candidate, candidate.transform.position, zone, orRoadless: false) ||
+                !ZNetScene.instance.IsAreaReady(candidate.transform.position)) { RoadRockStats.NotReady++; continue; }
             map = candidate;
         }
         if (map == null) return;
@@ -118,6 +118,15 @@ public static class RoadRockClearing
         if (s_carves.Count > 0) { s_pass = pass; return; }
         Finish(pass);
     }
+
+    /// <summary>Whether a zone's road terrain is written, the one owner of the test: its heightmap <paramref name="map"/> has
+    /// no rebuild queued, and the road's terrain at <paramref name="zonePos"/> is written
+    /// (<see cref="RoadTerrainModifier.TerrainSettled"/>) or, <paramref name="orRoadless"/>, <paramref name="zone"/> has no
+    /// road point for it to write. The pass asks it without (and waits for the zone's objects too); the carve's fragment
+    /// ground with it.</summary>
+    internal static bool TerrainWritten(Heightmap map, Vector3 zonePos, Vector2s zone, bool orRoadless) =>
+        !map.HaveQueuedRebuild() &&
+        (RoadTerrainModifier.TerrainSettled(zonePos) || orRoadless && RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
 
     /// <summary>This frame's share of the pending carves, then the zone judged once the last is done. A zone unloaded
     /// meanwhile (its heightmap gone) drops what is left: its next heightmap is a new zone to the pass.</summary>

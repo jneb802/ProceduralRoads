@@ -297,16 +297,15 @@ public static class RoadRockCarve
             return RoadRockPolicy.FragmentGround(ready, read, terrain, finished, out ground);
         }
 
-        /// <summary>Whether a zone's loaded terrain is the ground the players will have: a full heightmap is built there,
-        /// with no rebuild queued, and its road terrain is written (<see cref="RoadTerrainModifier.TerrainSettled"/>), or it
-        /// has no road for the writer to write.</summary>
+        /// <summary>Whether a zone's loaded terrain is the ground the players will have: a full heightmap is built there
+        /// and its road terrain is written, or it has no road for the writer to write
+        /// (<see cref="RoadRockClearing.TerrainWritten"/>).</summary>
         private static bool TerrainReady(Vector2s zone)
         {
             Vector3 centre = ZoneSystem.GetZonePos(zone);
             foreach (var map in Heightmap.GetAllHeightmaps())
                 if (map != null && !map.IsDistantLod && map.IsPointInside(centre))
-                    return !map.HaveQueuedRebuild() &&
-                        (RoadTerrainModifier.TerrainSettled(centre) || RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
+                    return RoadRockClearing.TerrainWritten(map, centre, zone, orRoadless: true);
             return false;
         }
     }

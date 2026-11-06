@@ -108,7 +108,9 @@ public static partial class RoadNetworkGenerator
     private const int CustomLocationPriority = 80;
     public static RoadNetworkOptions NetworkOptions { get; set; } = new();
 
-    public static int MaxLocationsPerIsland = 48;
+    /// <summary>The shipped Roads.MaxLocationsPerIsland.</summary>
+    public const int DefaultMaxLocationsPerIsland = 48;
+    public static int MaxLocationsPerIsland = DefaultMaxLocationsPerIsland;
 
 
     /// <summary>
@@ -187,7 +189,9 @@ public static partial class RoadNetworkGenerator
     #endregion
 
     public static float RoadWidth = RoadConstants.DefaultRoadWidth;
-    public static int IslandRoadPercentage = 33;
+    /// <summary>The shipped Roads.IslandRoadPercentage.</summary>
+    public const int DefaultIslandRoadPercentage = 33;
+    public static int IslandRoadPercentage = DefaultIslandRoadPercentage;
 
     private static bool m_roadsGenerated = false;
     private static bool m_locationsReady = false;

@@ -25,7 +25,9 @@ public enum ExistingWorldRoads
 public static class ExistingWorldFirstLoad
 {
     /// <summary>The setting (the plugin keeps it in step with the config).</summary>
-    public static ExistingWorldRoads Setting = ExistingWorldRoads.Ask;
+    /// <summary>The shipped Roads.ExistingWorldFirstLoadRoads.</summary>
+    public const ExistingWorldRoads DefaultSetting = ExistingWorldRoads.Ask;
+    public static ExistingWorldRoads Setting = DefaultSetting;
 
     /// <summary>Whether this peer has a screen to ask on: false on a dedicated server (the plugin sets it).</summary>
     public static Func<bool> CanAsk = () => false;

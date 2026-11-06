@@ -7,7 +7,9 @@ namespace ProceduralRoads;
 /// <summary>Generation choices, independent of config I/O and saved networks.</summary>
 public sealed class RoadNetworkOptions
 {
-    public Heightmap.Biome ExcludedBiomes { get; set; } = Heightmap.Biome.AshLands | Heightmap.Biome.DeepNorth;
+    /// <summary>The shipped Locations.ExcludedRoadBiomes.</summary>
+    public const Heightmap.Biome DefaultExcludedBiomes = Heightmap.Biome.AshLands | Heightmap.Biome.DeepNorth;
+    public Heightmap.Biome ExcludedBiomes { get; set; } = DefaultExcludedBiomes;
     /// <summary>The shipped value of the player's config Locations.AttemptRoadsToHildirQuestSites: off.</summary>
     public const bool DefaultHildirQuestSites = false;
     /// <summary>Hildir's three quest sites (<see cref="RoadNetworkGenerator.IsHildirQuestSite"/>) are destinations,

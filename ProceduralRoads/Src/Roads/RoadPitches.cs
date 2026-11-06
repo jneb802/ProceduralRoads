@@ -61,19 +61,18 @@ public static class RoadPitches
     public const float JunctionLandingGrade = 0.05f;
 
     /// <summary>
-    /// The most a road ending at a staircase's foot climbs to it over its last <paramref name="run"/> metres, as it is built
+    /// How much a road ending at a staircase's foot climbs to it over its last <paramref name="run"/> metres, as it is built
     /// there (RoadSpatialGrid.StairStarts, <see cref="LandEnd"/>): its level landing (<see cref="JunctionLanding"/> at
-    /// <see cref="JunctionLandingGrade"/>), then the pitch the landing allows beside it as an ease (<see cref="PitchGrade"/>
-    /// over <see cref="PitchLength"/>, <see cref="PlacePitches"/>), then <paramref name="cap"/>; with no landing,
-    /// <paramref name="cap"/> all the way. The one prediction of "the road can climb to this foot": a foot's road was
-    /// read climbing at the cap right up to it, where its last 6 m rise 0.3 m.
+    /// <see cref="JunctionLandingGrade"/>), then <paramref name="cap"/>; with no landing, <paramref name="cap"/> all the way.
+    /// The one prediction of "the road can climb to this foot": a foot's road was read climbing at the cap right up to it,
+    /// where its last 6 m rise 0.3 m. A pitch beside the landing is not counted: PlacePitches lays one only where the climb
+    /// needs it, and the limiter holds the road at the cap, so counting it predicted more climb than is built.
     /// </summary>
     public static float ClimbToFoot(float run, float cap)
     {
         if (JunctionLanding <= 0f) return cap * run;
-        float landing = Mathf.Min(run, JunctionLanding), past = run - landing;
-        float pitch = Enabled ? Mathf.Min(past, PitchLength) : 0f;
-        return JunctionLandingGrade * landing + PitchGrade * pitch + cap * (past - pitch);
+        float landing = Mathf.Min(run, JunctionLanding);
+        return JunctionLandingGrade * landing + cap * (run - landing);
     }
 
     /// <summary>Hold the edges within <paramref name="length"/> metres of a

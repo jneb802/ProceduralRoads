@@ -163,7 +163,7 @@ public static class SitesFirstLoad
         string prefab = ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";
         // One that levels no flat but smooths round it is landed on the level ground beside it (PlacedSiteShape.OnLevelGround),
         // clear of its own pieces: read with its boulders.
-        bool pieces = RoadStairRuns.FlatOf(ops) == null && !PlacedSiteShape.HasDoor(prefab) && PlacedSites.SmoothsItsGround(ops);
+        bool pieces = PlacedSites.FlatFor(prefab, ops) == null && PlacedSites.SmoothsItsGround(ops);
         List<SiteRock> rocks = PlacedSiteReader.PlaceRocks(x0, z0, w, w, centre, root, yaw, out _, pieces);
         PlacedSites.Remember(new PlacedSiteRecord
         {

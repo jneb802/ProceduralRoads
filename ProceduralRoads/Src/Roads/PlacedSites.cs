@@ -124,7 +124,7 @@ public static class PlacedSites
     private static bool PrepareOne(PlacedSiteRecord r, Func<float, float, float> natural)
     {
         // A place with a door lands its road in front of it, flat or not (PlacedSiteShape.DoorLandings).
-        LevelOp? flat = RoadStairRuns.FlatOf(r.Ops) ?? (PlacedSiteShape.HasDoor(r.Prefab) ? PlacedSiteShape.DoorFlat : null);
+        LevelOp? flat = FlatFor(r.Prefab, r.Ops);
         if ((flat == null && !SmoothsItsGround(r.Ops)) || r.W <= 1 || r.H <= 1) return false;
         Func<float, float, float> grid = PlacedSiteGround.Sampler(r.Ground((x, z) => natural(x, z)), r.X0, r.Z0, r.W, r.H);
         // Past its grid the place has shaped nothing: the natural ground, where a way onto its landing
@@ -336,8 +336,12 @@ public static class PlacedSites
     /// ring as a place not placed first, level with its ground at its edge on the road's side
     /// (RoadNetworkGenerator.ArrivalHeight).</summary>
     public static bool FlatlessPlaced(Vector2 centre) =>
-        !TryGetReady(centre, out _) && TryGet(centre, out PlacedSiteRecord record) && RoadStairRuns.FlatOf(record.Ops) == null
-        && !PlacedSiteShape.HasDoor(record.Prefab);
+        !TryGetReady(centre, out _) && TryGet(centre, out PlacedSiteRecord record) && FlatFor(record.Prefab, record.Ops) == null;
+
+    /// <summary>The flat a placed place is shaped round: the one it levels, else (a place with a door) the door's flat
+    /// (<see cref="PlacedSiteShape.DoorFlat"/>); null where it has neither.</summary>
+    public static LevelOp? FlatFor(string prefab, IReadOnlyList<LevelOp> ops) =>
+        RoadStairRuns.FlatOf(ops) ?? (PlacedSiteShape.HasDoor(prefab) ? PlacedSiteShape.DoorFlat : null);
 
     /// <summary>Why <see cref="NotPlaced"/> leaves the place at <paramref name="centre"/> without a road, or null.</summary>
     internal static string? NotPlacedWhy(Vector2 centre) => s_notPlaced.TryGetValue(Key(centre), out string? why) ? why : null;

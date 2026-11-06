@@ -49,6 +49,24 @@ public class SiteApproachTests
         Assert.All(plan.Points, p => Assert.True(p.magnitude >= 15.9f));
     }
 
+    /// <summary>A place that paints past the ground it shapes (Arrival under Radius) is approached to its arrival edge, as the
+    /// final check holds it: the re-aim is not refused for the paint it only stands in.</summary>
+    [Fact]
+    public void ReaimsAtAPlaceThatPaintsPastItsShapedGround()
+    {
+        RoadSpatialGrid.Clear();
+        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(), 20f, 16f) });
+        using var grade = GradeCap.At(0.35f);
+        try
+        {
+            var world = new Hillside(); var original = Route();
+            var better = Improve(original, world);
+            Assert.NotSame(original, better);
+            Assert.True(Mathf.Abs(better[better.Count - 1].y) > 5f);
+        }
+        finally { RoadSiteProtection.Reset(); }
+    }
+
     private sealed class PlatformSlope : WorldGenerator
     {
         public override float GetHeight(float x, float z) => 52f + Mathf.Max(0, -z) * 0.5f;

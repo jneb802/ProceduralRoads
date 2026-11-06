@@ -93,7 +93,7 @@ public static class RoadSiteApproach
                 // must not cut through the location or sneak across water.
                 if (requireClear && Vector2.Distance(point, centre) < radius - 0.1f) return Reject("spline enters footprint");
                 Vector2 previous = plan.Points[Math.Max(0, i - 1)];
-                if (requireClear && RoadSiteProtection.BlocksSegment(previous, point, RoadSiteProtection.Clearance(width), null, null))
+                if (requireClear && RoadSiteProtection.BlocksRoad(previous, point, width, tail[0], tail[tail.Count - 1]))
                     return Reject("spline enters protected clearance");
                 world.GetRiverWeight(point.x, point.y, out float river, out _);
                 if (!RoadWater.BuiltDry(Ground(point), river))
@@ -204,7 +204,7 @@ public static class RoadSiteApproach
                     if (nextRadius < radius+margin || nextRadius > maxRadius) continue;
                     float t=Mathf.Clamp01(((centre.x-here.x)*delta.x+(centre.y-here.y)*delta.y)/delta.sqrMagnitude);
                     if (Vector2.Distance(here+delta*t,centre) < radius+margin ||
-                        RoadSiteProtection.BlocksSegment(here,there,RoadSiteProtection.Clearance(width)+margin,null,null)) continue;
+                        RoadSiteProtection.BlocksFinalSegment(here,there,RoadSiteProtection.Clearance(width)+margin,anchor,there,out _)) continue;
                     float nextHeight=Ground(there), middleHeight=Ground((here+there)*0.5f);
                     if (float.IsNaN(nextHeight) || float.IsInfinity(nextHeight) ||
                         float.IsNaN(middleHeight) || float.IsInfinity(middleHeight) || !RoadWater.BuiltDry(nextHeight)) continue;

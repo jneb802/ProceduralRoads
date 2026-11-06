@@ -952,15 +952,13 @@ public static class RoadTerrainModifier
     /// <summary>
     /// The height a road's earthwork leaves at a vertex outside every footprint, from
     /// <paramref name="baseHeight"/>: what <see cref="ModifyVertexHeights"/> writes there
-    /// on a zone no player has dug and no staircase cuts. For a ground rebuilt before its
-    /// zone loads (<see cref="PlacedSiteGround"/>). Any thread: reads only its arguments.
+    /// on a zone no player has dug and no staircase cuts (the writer's own <see cref="RoadDelta"/>, with no cuts).
+    /// Any thread: reads only its arguments.
     /// </summary>
     internal static float ModelledHeight(List<RoadSpatialGrid.RoadPoint> roadPoints, Vector2 vertex, float baseHeight, float[]? fillExtra)
     {
-        BlendResult blend = CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
-        if (blend.InfluencingPoints == 0) return baseHeight;
-        float delta = Clamped(RoadTarget(blend, vertex, baseHeight) - baseHeight);
-        return Writes(delta, blend.MaxBlend) ? baseHeight + delta : baseHeight;
+        var none = new List<RoadSpatialGrid.RoadPoint>();
+        return RoadDelta(vertex, baseHeight, baseHeight, false, roadPoints, fillExtra, none, none, out _) is float delta ? baseHeight + delta : baseHeight;
     }
 
     private struct BlendResult

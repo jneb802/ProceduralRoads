@@ -201,6 +201,11 @@ public static class RoadConstants
     public const float HeightFitRidgeMetres = 0.02f;
     public const float HeightFitMaxGradient = 1.5f;
     
+    /// <summary>The radius of the land the world generates: where the island scan stops and a typed point is refused.</summary>
+    public const float WorldRadius = 10000f;
+    /// <summary>The edge of the game's world, past <see cref="WorldRadius"/>: how far out a saved crossing's point may lie.</summary>
+    public const float WorldEdge = 10500f;
+
     public const float SpatialGridSize = ZoneSize;
     public const float DefaultRoadWidth = 4f;
     public const float EdgeFalloffStart = 0.6f;

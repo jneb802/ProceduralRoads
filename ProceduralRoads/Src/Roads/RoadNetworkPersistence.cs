@@ -795,9 +795,6 @@ public static class RoadNetworkPersistence
     /// <summary>The crossings record's number for the retired plain wooden kit (formats 3 and 4); it names no kit since.</summary>
     internal const int RetiredWoodKit = 1;
 
-    /// <summary>How far from the world's centre a saved crossing's points may lie: the edge of the game's world.</summary>
-    private const float CrossingWorldEdge = 10500f;
-
     /// <summary>The longest crossing a network holds, bank to bank: a bridge's jump (MaxBridgeCrossingCells) with a
     /// swamp bridge's banks walked out over the shelf at both ends (SwampBridgeDryReach).</summary>
     internal const float MaxCrossingSpan = RoadConstants.MaxBridgeSpan + 2f * RoadConstants.SwampBridgeDryReach;
@@ -813,7 +810,7 @@ public static class RoadNetworkPersistence
         float fairwayWidth, CrossingKind kind, FordStyle style, int flags, int version)
     {
         static bool Finite(float x) => !float.IsNaN(x) && !float.IsInfinity(x);
-        static bool InWorld(Vector2 p) => Finite(p.x) && Finite(p.y) && p.magnitude <= CrossingWorldEdge;
+        static bool InWorld(Vector2 p) => Finite(p.x) && Finite(p.y) && p.magnitude <= RoadConstants.WorldEdge;
         if (!InWorld(fromBank) || !InWorld(toBank) || !InWorld(fairwayCenter)) return "a point outside the world";
         if (!Finite(riverbed) || !Finite(fairwayWidth)) return "a height or width that is not a number";
         float span = Vector2.Distance(fromBank, toBank);

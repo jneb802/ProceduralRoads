@@ -193,8 +193,8 @@ public static class RoadRockProbe
                 int worst = 0;
                 foreach (var (point, surface) in at)
                     worst = Mathf.Max(worst, BlockedSlots(root, point, surface, points));
-                if (RoadRockPolicy.KeepPartial(worst, Slots))
-                    hits[root] = new Hit(h.Name, $"keep: blocks under half the road ({worst} of {Slots} slots at worst)", h.Size, h.Listed);
+                if (RoadRockPolicy.KeepPartial(worst, RoadRockPolicy.Slots))
+                    hits[root] = new Hit(h.Name, $"keep: blocks under half the road ({worst} of {RoadRockPolicy.Slots} slots at worst)", h.Size, h.Listed);
             }
 
         string outcome = Apply(hits, onDeck, apply, carve, deferCarves, centre, radius, lines, out clearedCount);
@@ -497,21 +497,16 @@ public static class RoadRockProbe
     // clearing has no console.
     private static void Log(string line) => ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(line);
 
-    public const int Slots = RoadRockPolicy.Slots;
-
-    internal static Vector2 Heading(RoadSpatialGrid.RoadPoint point, List<RoadSpatialGrid.RoadPoint> all) =>
-        RoadRockPolicy.Heading(point, all);
-
-    /// <summary>How many of <see cref="Slots"/> narrow capsules across the road
+    /// <summary>How many of <see cref="RoadRockPolicy.Slots"/> narrow capsules across the road
     /// at this point the rock's colliders touch.</summary>
     private static int BlockedSlots(GameObject root, RoadSpatialGrid.RoadPoint point, float surface, List<RoadSpatialGrid.RoadPoint> all)
     {
-        var dir = Heading(point, all);
+        var dir = RoadRockPolicy.Heading(point, all);
         var across = new Vector2(-dir.y, dir.x);
         int blocked = 0;
-        for (int k = 0; k < Slots; k++)
+        for (int k = 0; k < RoadRockPolicy.Slots; k++)
         {
-            var (off, r) = RoadRockPolicy.Slot(k, Slots, point.w);
+            var (off, r) = RoadRockPolicy.Slot(k, RoadRockPolicy.Slots, point.w);
             var c = point.p + across * off;
             var bottom = new Vector3(c.x, surface + r, c.y);
             var top = bottom + Vector3.up * Mathf.Max(0f, 2.5f - 2f * r);

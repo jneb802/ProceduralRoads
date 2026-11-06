@@ -859,6 +859,10 @@ public sealed class GenerationProgressTests : IDisposable
             // Cancel and return to menu: workers still stopping, the run not over, yet nothing will be built.
             Assert.True(RoadLifecycleManager.RequestCancel(RoadLifecycleManager.Progress.RunId));
             Assert.True(RoadLifecycleManager.IsGenerating); Assert.Equal("Stopping",RoadLifecycleManager.Progress.Phase);
+            // The world is still held while the workers stop (HoldsTheWorld): a peer joining now would get no zones.
+            Assert.NotNull(JoinHold.Reason);
+            Assert.Equal(ZNet.ConnectionStatus.ErrorFull,Join(202));
+            world.Release.Set(); RoadLifecycleManager.CancelAndDrain();
         }
         else { RoadLifecycleManager.CancelAndDrain(); Assert.Equal("Cancelled",RoadLifecycleManager.Progress.Phase); }
         Assert.Null(JoinHold.Reason);

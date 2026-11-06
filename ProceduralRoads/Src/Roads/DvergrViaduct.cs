@@ -1675,7 +1675,7 @@ public static class DvergrViaduct
             }
             // The railing down these steps: a stepped black marble parapet on both sides, by the staircases' railing
             // rules (StairRailing.LayParapet), held as an ornament is (Hold): never ruined, as the steps.
-            foreach (StructurePiece p in StairRailing.LayParapet(end, 2f * BridgeLayout.DeckHalfWidth, (x, z) => finished(new Vector2(x, z))))
+            foreach (StructurePiece p in StairRailing.LayParapet(end, BridgeLayout.EndStairsWidth, (x, z) => finished(new Vector2(x, z))))
             {
                 p.Kind = StructurePieceKind.ViaductParapet;
                 p.HealthFraction = 1f;
@@ -1710,7 +1710,7 @@ public static class DvergrViaduct
     {
         var sides = new List<List<StructurePiece>>();
         float Finished(int x, int z) => finished(new Vector2(x, z));
-        foreach (var (outward, laid) in StairRailing.LayBankParapet(end, 2f * BridgeLayout.DeckHalfWidth, Finished))
+        foreach (var (outward, laid) in StairRailing.LayBankParapet(end, BridgeLayout.EndStairsWidth, Finished))
         {
             Vector2 at = end.Edge + outward * 2.5f;
             if (!WhollyBuried(Arch, at, dir, side, end.Height + ArchRise, finished))

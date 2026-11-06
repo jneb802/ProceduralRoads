@@ -35,6 +35,8 @@ public static partial class BridgeLayout
     public const float PostSegment = 2f;      // vertical metres per pole
     public const float LaneOffset = 1f;       // the two lanes' centres, either side of the crossing line
     public const float DeckHalfWidth = 2f;    // two 2 m plates side by side: a 4 m deck, the road's width
+    /// <summary>The end stairs' width: their two lanes, 4 m (the end cuts and the parapets beside them).</summary>
+    public const float EndStairsWidth = 2f * DeckHalfWidth;
     public const int MaxStairSteps = 12;      // a stair marches outward until its foot is in the dirt, at most this far
     public const float StairRise = StairLayout.PieceRise;   // read only by the offline maps overlay (vs-overlay Program.cs)
     public const float StairHalfRun = StairLayout.PieceRun / 2f;     // origin at the foot: its LOW snaps are this far OUTWARD

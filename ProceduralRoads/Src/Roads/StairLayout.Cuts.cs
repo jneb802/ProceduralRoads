@@ -33,8 +33,10 @@ public static partial class StairLayout
 
     internal const float SurfaceSpacing = CutSpacing / 2f;
 
-    /// <summary>The walking height <paramref name="along"/> metres on from a piece's back edge: a stair rises along it.</summary>
-    internal static float WalkHeight(bool stair, float height, float along) => height + (stair ? PieceRise * along / PieceRun : 0f);
+    /// <summary>The walking height <paramref name="along"/> metres on from a piece's back edge (a stair rises along it), less
+    /// <paramref name="below"/>. One expression, rounded once: the game's Mono works floats wider than float and rounds at the
+    /// store, so taking <paramref name="below"/> off a rounded walk height can move the last bit.</summary>
+    internal static float WalkHeight(bool stair, float height, float along, float below = 0f) => height + (stair ? PieceRise * along / PieceRun : 0f) - below;
 
     private static Vector3 WalkPoint(bool stair, Vector2 back, Vector2 dir, Vector2 right, float height, float along, float side)
     {

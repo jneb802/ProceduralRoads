@@ -314,7 +314,9 @@ public static class StructureEnds
         if (!natural.IsStructure) return null;
         Vector2 outward = -natural.Up;
         float reach = Vector2.Distance(natural.Edge, bank) + natural.Steps * StairLayout.PieceRun + ApronLength * 1.5f
-            + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap)) + 2f * PadLength;
+            // The ease at the cap written inline, not RoadGrade.EaseLength: the game's Mono keeps the sum wider than float and
+            // rounds once at the store, as this line always has.
+            + RoadNetworkGenerator.Shaped(cap) / RoadGrade.Floored + 2f * PadLength;
         var path = new List<Vector2> { bank };
         for (float d = RoadPathfinder.CellSize; d <= reach + RoadPathfinder.CellSize; d += RoadPathfinder.CellSize)
             path.Add(bank + outward * d);
@@ -717,7 +719,8 @@ public static class StructureEnds
         Func<Vector2, float> ground, float cap, bool overWater, out float earthwork)
     {
         earthwork = 0f;
-        float reach = natural.Steps * StairLayout.PieceRun + ApronLength * 1.5f + RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap));
+        // The ease inline, not RoadGrade.EaseLength: one rounding of the whole sum, as on the game's Mono.
+        float reach = natural.Steps * StairLayout.PieceRun + ApronLength * 1.5f + RoadNetworkGenerator.Shaped(cap) / RoadGrade.Floored;
         var points = new List<Vector2> { way[0] };
         void To(Vector2 b)
         {

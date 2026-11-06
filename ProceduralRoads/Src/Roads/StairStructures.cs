@@ -195,7 +195,7 @@ public sealed class StairStructures : IStructureSource
                     Vector2 off = new Vector2(x, z) - back;
                     float along = Vector2.Dot(off, dir), side = Vector2.Dot(off, right);
                     if (along < 0f || along > depth || Mathf.Abs(side) > across / 2f) continue;
-                    float floor = StairLayout.WalkHeight(stair, height, along) - StairLayout.CutBelowSurface;
+                    float floor = StairLayout.WalkHeight(stair, height, along, StairLayout.CutBelowSurface);
                     into.AddOrUpdate((x, z), (floor, run.Island), (_, was) => floor < was.floor ? (floor, run.Island) : was);
                 }
         }

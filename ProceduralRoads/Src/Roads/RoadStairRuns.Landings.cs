@@ -151,7 +151,7 @@ public static partial class RoadStairRuns
     /// (RoadConstants.DryRoadFloor) is filled to it as an ordinary road's is, the cap judged from there.
     /// </summary>
     private static bool Earthwork(float height, float ground, float cap, bool overWater) =>
-        RoadWater.BuiltDry(ground) ? Mathf.Abs(height - ground) <= cap
+        RoadWater.BuiltDry(ground) ? !RoadNetworkGenerator.PastTerrainLimit(height, ground, cap)
         : overWater && RoadWater.AtLeastDryFloor(height) - ground <= cap;
 
     /// <summary>How far apart two points of one stored road may stand and be walked from one to the other

@@ -101,3 +101,18 @@ public class EarthworkLimitReadingTests
         Assert.Equal(RoadConstants.TerrainDeltaMax, RoadNetworkGenerator.ShapedLimit);
     }
 }
+
+public class PastTerrainLimitTests
+{
+    [Theory]
+    [InlineData(38f, 30f, 8f)]
+    [InlineData(38.0001f, 30f, 8f)]
+    [InlineData(22f, 30f, 8f)]
+    [InlineData(21.999f, 30f, 8f)]
+    [InlineData(30f, 30f, 0f)]
+    [InlineData(500f, 30f, float.PositiveInfinity)]
+    public void TheHeightAgainstTheGroundIsOneComparison(float height, float ground, float cap)
+    {
+        Assert.Equal(Mathf.Abs(height - ground) > cap, RoadNetworkGenerator.PastTerrainLimit(height, ground, cap));
+    }
+}

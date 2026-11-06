@@ -3555,7 +3555,10 @@ public static partial class RoadNetworkGenerator
     /// of earthwork: the one reading of a point against the cap (<see cref="PastTerrainLimit(List{RoadSpatialGrid.PlannedPath}, float, List{Vector2})"/>,
     /// and a point known before its road is planned, RoadStairRuns.RoadOnto).</summary>
     internal static bool PastTerrainLimit(Vector2 p, float height, float cap, WorldGenerator? world = null) =>
-        Mathf.Abs(height - BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world ?? GenerationWorld)) > cap;
+        PastTerrainLimit(height, BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world ?? GenerationWorld), cap);
+
+    /// <summary>Whether ground cut or filled to <paramref name="height"/> from <paramref name="ground"/> is past <paramref name="cap"/>.</summary>
+    internal static bool PastTerrainLimit(float height, float ground, float cap) => Mathf.Abs(height - ground) > cap;
 
     /// <summary>Points of the plans (not wades) cut or filled past <paramref name="cap"/>, listed in <paramref name="where"/>.</summary>
     internal static int PastTerrainLimit(List<RoadSpatialGrid.PlannedPath> plans, float cap, List<Vector2> where)

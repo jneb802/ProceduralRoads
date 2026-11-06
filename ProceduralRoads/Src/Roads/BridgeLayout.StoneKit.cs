@@ -623,7 +623,7 @@ public static partial class BridgeLayout
         public Vector2 At(float along, float across) => From + Dir * along + Side * across;
 
         /// <summary>The courses a pier bay stands: from the top one, level with the arches, down to the first whose foot is
-        /// in the lowest ground under the bay's 2 x 4 m.</summary>
+        /// sunk <see cref="StairSupport.Bury"/> under the lowest ground under the bay's 2 x 4 m, as a staircase's wall is.</summary>
         public int PierCourses(int bay)
         {
             float low = float.PositiveInfinity;
@@ -632,17 +632,17 @@ public static partial class BridgeLayout
                     low = Mathf.Min(low, m_ground(At(bay * DeckSpan + a, s * DeckHalfWidth)));
             float top = DeckH - StoneFloorDepth;
             int courses = 1;
-            while (top - courses > low + SupportGraph.Reach && courses < 256) courses++;
+            while (top - courses > low - StairSupport.Bury && courses < 256) courses++;
             return courses;
         }
 
         /// <summary>The pillars of a step's footing at <paramref name="p"/>: from the step's <paramref name="foot"/> down to
-        /// the first whose foot is in the ground.</summary>
+        /// the first whose foot is sunk <see cref="StairSupport.Bury"/> under the ground, as a staircase's wall is.</summary>
         public int FootingPillars(Vector2 p, float foot)
         {
             float ground = m_ground(p);
             int pillars = 1;
-            while (foot - StonePillarHeight * pillars > ground + SupportGraph.Reach && pillars < 256) pillars++;
+            while (foot - StonePillarHeight * pillars > ground - StairSupport.Bury && pillars < 256) pillars++;
             return pillars;
         }
 

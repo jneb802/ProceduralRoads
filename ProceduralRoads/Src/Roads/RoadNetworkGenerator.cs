@@ -519,7 +519,7 @@ public static partial class RoadNetworkGenerator
         if (world == null) return null;
         if (!(name != null ? IsCustomPlace(name) : m_customPlaces.ContainsKey(PlaceKey(centre)))) return null;
         levelled = true;
-        if (PlacedSites.TryGetReady(centre, out PlacedSite site)) return site.Ground(site.Shape.Landing.x, site.Shape.Landing.y);
+        if (PlacedSites.TryGetReady(centre, out PlacedSite site)) return site.LandingHeight;
         float root = LocationLevelling.CentreHeight(centre, world);
         float? flat = LocationLevelling.ApproachHeight(root, LocationLevelling.OpsAt(centre));
         levelled = flat.HasValue;
@@ -958,7 +958,7 @@ public static partial class RoadNetworkGenerator
         {
             at = placed.Shape.Landing;
             reach = LandingReach;
-            height = placed.Ground(at.x, at.y);
+            height = placed.LandingHeight;
         }
         else
         {
@@ -1004,7 +1004,7 @@ public static partial class RoadNetworkGenerator
     /// (<see cref="NetworkNear"/>, as every other place: without a height guard network 20-45 m under a landing counted
     /// it reached).</summary>
     internal static bool LandingReached(PlacedSite site) =>
-        PlacedSites.Landed(site.Centre) || NetworkNear(site.Shape.Landing, LandingReach, site.Ground(site.Shape.Landing.x, site.Shape.Landing.y));
+        PlacedSites.Landed(site.Centre) || NetworkNear(site.Shape.Landing, LandingReach, site.LandingHeight);
 
     /// <summary>
     /// The height the network arriving at the place at <paramref name="centre"/> (exterior <paramref name="radius"/>, as asked)
@@ -1021,7 +1021,7 @@ public static partial class RoadNetworkGenerator
     /// </summary>
     internal static float? ArrivalHeight(Vector2 centre, float radius, Vector2 from)
     {
-        if (PlacedSites.TryGetReady(centre, out PlacedSite site)) return site.Ground(site.Shape.Landing.x, site.Shape.Landing.y);
+        if (PlacedSites.TryGetReady(centre, out PlacedSite site)) return site.LandingHeight;
         var world = GenerationWorld;
         if (world == null || radius <= 0f) return null;
         float root = LocationLevelling.CentreHeight(centre, world);

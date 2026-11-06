@@ -60,7 +60,7 @@ public static partial class RoadNetworkGenerator
             Vector2 toward = site.Shape.Landing - site.Centre;
             if (toward.sqrMagnitude < 1e-4f) toward = site.Shape.Front;
             bearing = Mathf.Atan2(toward.x, toward.y) * Mathf.Rad2Deg;
-            level = site.Ground(site.Shape.Landing.x, site.Shape.Landing.y);
+            level = site.LandingHeight;
         }
         else level = float.NaN;
         int count = Mathf.RoundToInt(360f / PlacedSites.AimStep);

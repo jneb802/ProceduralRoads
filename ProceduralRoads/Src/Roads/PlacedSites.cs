@@ -44,6 +44,8 @@ public sealed class PlacedSite
     /// <summary>The ground the placed place leaves (<see cref="PlacedSiteGround"/>).</summary>
     public Func<float, float, float> Ground = (_, _) => 0f;
     public PlacedSiteShape Shape = null!;
+    /// <summary>The ground a placed place leaves at its landing: its level.</summary>
+    public float LandingHeight => Ground(Shape.Landing.x, Shape.Landing.y);
 }
 
 /// <summary>

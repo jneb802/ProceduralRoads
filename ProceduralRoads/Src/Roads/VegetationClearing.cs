@@ -546,12 +546,17 @@ public static class VegetationClearing
         foreach (Area area in areas)
         {
             if (leftToRockClearing && area.LeavesRocks) continue;
-            if (point.x > area.Centre.x - area.Radius && point.x < area.Centre.x + area.Radius &&
-                point.y > area.Centre.y - area.Radius && point.y < area.Centre.y + area.Radius)
+            if (InSquare(point.x, point.y, area.Centre.x, area.Centre.y, area.Radius))
                 return true;
         }
         return false;
     }
+
+    /// <summary>The game's clear-area square (ZoneSystem.InsideClearArea), the one owner of it for generation and the server:
+    /// (<paramref name="px"/>, <paramref name="pz"/>) strictly inside the square <paramref name="r"/> each way from
+    /// (<paramref name="cx"/>, <paramref name="cz"/>).</summary>
+    public static bool InSquare(float px, float pz, float cx, float cz, float r) =>
+        px > cx - r && px < cx + r && pz > cz - r && pz < cz + r;
 
     /// <summary>
     /// Whether an existing object is one generation would not have placed on

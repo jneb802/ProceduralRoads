@@ -147,6 +147,32 @@ public class RoadEdgesAndVegetationTests
         Assert.False(VegetationClearing.ShouldRemove(Tree, new Vector2(13f, 10f), false, Vegetation, Areas, NoLocations, NoPlayerGround));
     }
 
+    /// <summary>Generation's clear-area test and the server's answer alike as the game's strict square (ZoneSystem.InsideClearArea,
+    /// written out here once): on and either side of every edge, at corners, on negative coordinates, at radius zero and for
+    /// a NaN point.</summary>
+    [Fact]
+    public void GenerationAndTheServerTestTheGamesSquareAlike()
+    {
+        static bool Game(float px, float pz, float cx, float cz, float r) =>
+            px > cx - r && px < cx + r && pz > cz - r && pz < cz + r;
+        var centres = new[] { new Vector2(10f, 10f), new Vector2(-37.3f, -1234.56f), new Vector2(0f, 0f), new Vector2(8191.7f, -8191.3f) };
+        foreach (Vector2 c in centres)
+            foreach (float r in new[] { 0f, 0.45f, 1.8f, 2.4f, 3.5f })
+            {
+                var server = new List<VegetationClearing.Area> { new(c, r) };
+                var generation = new List<ZoneSystem.ClearArea> { new(new Vector3(c.x, 0f, c.y), r) };
+                foreach (float dx in new[] { -r - 1e-3f, -r, -r + 1e-3f, 0f, r - 1e-3f, r, r + 1e-3f, float.NaN })
+                    foreach (float dz in new[] { -r, 0f, r - 1e-4f, r, float.NaN })
+                    {
+                        float px = c.x + dx, pz = c.y + dz;
+                        bool game = Game(px, pz, c.x, c.y, r);
+                        Assert.Equal(game, VegetationClearing.InsideClearArea(server, new Vector2(px, pz)));
+                        Assert.Equal(game, RoadClearAreaManager.InsideClearArea(generation, 1, 1, new Vector3(px, 0f, pz), "Beech1",
+                            RockClearingMode.Carve, _ => Heightmap.Biome.Meadows));
+                    }
+            }
+    }
+
     [Fact]
     public void TheClearAreaIsTheGamesStrictSquare()
     {

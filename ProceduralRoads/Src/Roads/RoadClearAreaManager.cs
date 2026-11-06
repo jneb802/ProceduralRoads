@@ -122,8 +122,7 @@ public static class RoadClearAreaManager
             if (rockKeepsRoad && i >= roadStart && i < leftEnd)
                 continue;
             ZoneSystem.ClearArea area = areas[i];
-            if (point.x > area.m_center.x - area.m_radius && point.x < area.m_center.x + area.m_radius &&
-                point.z > area.m_center.z - area.m_radius && point.z < area.m_center.z + area.m_radius)
+            if (VegetationClearing.InSquare(point.x, point.z, area.m_center.x, area.m_center.z, area.m_radius))
                 return true;
         }
         return false;

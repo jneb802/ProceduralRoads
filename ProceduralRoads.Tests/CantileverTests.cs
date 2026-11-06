@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using Xunit;
 using Xunit.Abstractions;
+using Valheim.Testing;
 using Valheim.Testing.Doubles;
 
 namespace ProceduralRoads.Tests;
@@ -701,5 +702,46 @@ public class CantileverTests
         Assert.Equal(2, walked.Count);
         Assert.Equal(low!.Value.y, walked[0], 2);
         Assert.Equal(low.Value.y + StairLayout.PieceRise, walked[1], 2);
+    }
+    /// <summary>A foot 1.12 m over its road's ground 5 m back (-5353.5,2896.1). The road ends there on its level landing
+    /// (6 m at 5 %, RoadPitches.ClimbToFoot), climbing 0.25 m over those 5 m, not 1.75 m at the cap: one stair more down
+    /// from the foot toward the road. Read climbing at the cap, the foot was left as it was and its road's landing stood on
+    /// 1.2 m of fill. On plain roads (no landing) the cap line still says the road climbs to it.</summary>
+    private static float Shoulder(float x, float z) => z < -5f ? 0f : z < 0f ? 0.224f * (z + 5f) : 1.12f + 0.5f * z;
+
+    [Fact]
+    public void AFootOverItsRoadsLandingIsLowered()
+    {
+        StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Shoulder, arriving: 0f, sunkFoot: true);
+        StairPlan plain = Lay();
+        Assert.True(plain.Reached, plain.Reason);
+        Assert.Equal(1.12f, plain.Foot!.Value.y, 2);
+        Assert.Null(StairLayout.LowerFoot(plain, Shoulder, 2f, 0f, 5f, 0.35f));
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        StairPlan plan = Lay();
+        Vector3? foot = StairLayout.LowerFoot(plan, Shoulder, 2f, 0f, 5f, 0.35f);
+        Assert.NotNull(foot);
+        Assert.Equal(1, plan.FootLowered);
+        Assert.Equal(0.12f, foot!.Value.y, 2);
+        Assert.Equal(-2f, foot.Value.z, 2);
+    }
+
+    /// <summary>A foot whose road's ground rises 0.15 m per metre behind it: within what a road climbs at the cap, but its
+    /// road ends there on its level landing (RoadPitches.ClimbToFoot), so the ground 4 m back stands 0.4 m over the landing
+    /// and more than a step over the foot: a bank, and an apron is cut behind the foot. On plain roads (no landing) the cap
+    /// line climbs over it and none is cut.</summary>
+    [Fact]
+    public void AFootWhoseRoadLandsBelowItsGroundGetsAnApron()
+    {
+        float Rising(float x, float z) => 40f + Mathf.Max(0f, -x) * 0.5f + Mathf.Max(0f, x) * 0.15f;
+        StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Rising, sunkFoot: true);
+        StairPlan plain = Lay();
+        Assert.True(plain.Reached, plain.Reason);
+        Assert.Equal(0, StairLayout.CutFootApron(plain, Rising, 2f));
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        StairPlan banked = Lay();
+        Assert.True(StairLayout.CutFootApron(banked, Rising, 2f) > 0, "no apron where the road's landing meets rising ground");
     }
 }

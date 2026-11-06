@@ -21,8 +21,8 @@ public static partial class RoadStairRuns
     public static int FeetStartedLower;
 
     /// <summary>
-    /// How far the road's ground back along its approach may lie under the line climbing to its staircase's foot at the grade
-    /// cap. Further, and the road held to the foot's height stands on an embankment there: the grade limiter keeps it on that
+    /// How far the road's ground back along its approach may lie under the line climbing to its staircase's foot as its road
+    /// is built to climb there (RoadPitches.ClimbToFoot: its level landing, then the grade cap). Further, and the road held to the foot's height stands on an embankment there: the grade limiter keeps it on that
     /// line all the way down, over the ground at the bottom of the climb (a road climbing to a staircase's foot at
     /// -4764.9,1737.7 stood 6 m over a gully, the ground lower on both sides).
     /// </summary>
@@ -34,8 +34,9 @@ public static partial class RoadStairRuns
 
     /// <summary>
     /// How far the ground of the road arriving at path[<paramref name="foot"/>], walked from it by <paramref name="step"/>
-    /// (+1 or -1) no further than index <paramref name="stop"/>, lies under the line climbing at <paramref name="cap"/> to the
-    /// foot's ground: the most fill the road held to the foot stands on. Read every metre up to <see cref="ApproachReach"/>.
+    /// (+1 or -1) no further than index <paramref name="stop"/>, lies under the line climbing to the foot's ground as the road
+    /// is built to climb there (RoadPitches.ClimbToFoot: its level landing, then <paramref name="cap"/>): the most fill the
+    /// road held to the foot stands on. Read every metre up to <see cref="ApproachReach"/>.
     /// </summary>
     internal static float ApproachUnder(List<Vector2> path, int foot, int step, int stop, Func<Vector2, float> ground, float cap)
     {
@@ -49,7 +50,7 @@ public static partial class RoadStairRuns
             {
                 float d = walked + run * k / samples;
                 if (d > ApproachReach) return under;
-                under = Mathf.Max(under, top - cap * d - ground(Vector2.Lerp(a, b, (float)k / samples)));
+                under = Mathf.Max(under, top - RoadPitches.ClimbToFoot(d, cap) - ground(Vector2.Lerp(a, b, (float)k / samples)));
             }
             walked += run;
         }
@@ -58,7 +59,7 @@ public static partial class RoadStairRuns
 
     /// <summary>
     /// A stair stretch of <paramref name="path"/> started lower, the staircase taking the height its road cannot: where the
-    /// road arriving at its foot (its lower end) cannot climb to it following its ground within the grade cap (its ground more
+    /// road arriving at its foot (its lower end) cannot climb to it following its ground as it is built to (its ground more
     /// than <see cref="ApproachFill"/> under the line to the foot, <see cref="ApproachUnder"/>), the foot moves back along the
     /// road to the nearest path point whose own approach is within it. More stairs and a lower foot instead of a road on an
     /// embankment. Not onto the path's ends, past a crossing, nor within <see cref="StoneGap"/> of the stretch before
@@ -156,8 +157,8 @@ public static partial class RoadStairRuns
     /// <summary>
     /// The index of the nearest point of <paramref name="path"/> back from its end at a placed place (its start where
     /// <paramref name="atStart"/>) that the road climbs to on its ground, as <see cref="StartLower"/> moves a road staircase's
-    /// foot: its ground back along the road within <see cref="ApproachFill"/> of the line climbing to it at the grade cap
-    /// (<see cref="ApproachUnder"/>). Not past the road's nearest structure (<paramref name="structures"/>: a staircase's or
+    /// foot: its ground back along the road within <see cref="ApproachFill"/> of the line climbing to it as the road is built
+    /// to (<see cref="ApproachUnder"/>). Not past the road's nearest structure (<paramref name="structures"/>: a staircase's or
     /// crossing's index nearest that end, -1 for none) nor within <see cref="StoneGap"/> of it, onto the path's other end, nor
     /// further along the road than <paramref name="reach"/>. -1 where no such point is, or the end is one already.
     /// </summary>

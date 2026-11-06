@@ -72,14 +72,16 @@ public static partial class StairLayout
     /// them (at the foot at -9308.1,690.3 the bottom of the stairs was not walkable, the earthworks too steep for a player
     /// to use to get up to the bottom stair; the road climbed 2.3 m in 5 m to it).
     /// <paramref name="back"/>: the road's ground a few metres back from the foot, <paramref name="run"/> metres away;
-    /// <paramref name="cap"/> the road's grade cap. Returns the new foot (low edge, height) or null; null too at a foot the
+    /// <paramref name="cap"/> the road's grade cap. What the road climbs to the foot over them is what it is built to climb
+    /// there (RoadPitches.ClimbToFoot): its level landing, not the cap (a foot 1.1 m over its road's ground 5 m back was left
+    /// as it was, read as climbed at the cap, and its road's landing stood on 1.2 m of fill). Returns the new foot (low edge, height) or null; null too at a foot the
     /// road was carried on to (<see cref="StairPlan.FootFloorsTrimmed"/>), which starts on its kept floor row with no sunk
     /// step: the road there was judged ending where it is.
     /// </summary>
     public static Vector3? LowerFoot(StairPlan plan, Func<float, float, float> ground, float width, float back, float run, float cap)
     {
         if (plan.Foot is not Vector3 foot || plan.SunkPieces <= 0 || plan.FootLowered > 0) return null;
-        float over = foot.y - back - cap * run;
+        float over = foot.y - back - RoadPitches.ClimbToFoot(run, cap);
         if (over <= StepUp) return null;
         int steps = Mathf.Min(MostLowered, Mathf.CeilToInt((over - StepUp) / PieceRise));
         return AddFootStairs(plan, ground, width, steps);
@@ -347,7 +349,8 @@ public static partial class StairLayout
 
     /// <summary>
     /// Where the ground a walker comes onto a staircase's foot from rises into a bank (straight back from its first stair and
-    /// 45 degrees either side, more than a step over the foot plus what a road climbs per metre), a small level apron cut
+    /// 45 degrees either side, more than a step over the foot plus what its road climbs to it there, RoadPitches.ClimbToFoot:
+    /// its level landing), a small level apron cut
     /// there at the foot's height by the road's earthwork: <see cref="ApronDepth"/> back and the foot's width plus a metre
     /// either side, blended into the bank, and only where no cut is deeper than <see cref="RoadNetworkGenerator.ShapedLimit"/> (foot
     /// at -8018,-660 against a bank: minor earthworks give it space). Returns the
@@ -357,7 +360,7 @@ public static partial class StairLayout
     {
         if (plan.Foot is not Vector3 foot || !plan.Reached) return 0;
         Vector2 at = new Vector2(foot.x, foot.z), back = Forward(Wrap(plan.StartHeading + 180f)), across = Right(plan.StartHeading);
-        float height = foot.y;
+        float height = foot.y, cap = RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured : RoadConstants.DefaultMaxRoadGrade;
         bool bank = false;
         foreach (float side in new[] { -45f, 0f, 45f })
         {
@@ -365,7 +368,7 @@ public static partial class StairLayout
             foreach (float d in new[] { 1f, 2f, 4f })
             {
                 Vector2 p = at + dir * d;
-                if (ground(p.x, p.y) > height + StepUp + ApronBankGrade * d) bank = true;
+                if (ground(p.x, p.y) > height + StepUp + RoadPitches.ClimbToFoot(d, cap)) bank = true;
             }
         }
         if (!bank) return 0;
@@ -389,7 +392,4 @@ public static partial class StairLayout
 
     /// <summary>How far back from a foot its apron is cut (<see cref="CutFootApron"/>).</summary>
     public const float ApronDepth = 3f;
-
-    /// <summary>What a road climbs per metre off a foot (the default grade cap): ground behind it steeper than this over a step is a bank.</summary>
-    public const float ApronBankGrade = RoadConstants.DefaultMaxRoadGrade;
 }

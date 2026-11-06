@@ -210,7 +210,11 @@ public sealed class StairKit
     /// a guess from the line it is expected to take (its road, or its ends); the kit it is built in is the one its own
     /// pieces stand in (<see cref="ForPlan"/>).
     /// </summary>
-    public static StairKit ForLine(IReadOnlyList<Vector2> line, Func<float, float, Heightmap.Biome> biomeAt)
+    public static StairKit ForLine(IReadOnlyList<Vector2> line, Func<float, float, Heightmap.Biome> biomeAt) =>
+        ForPlaces(Samples(line), biomeAt);
+
+    /// <summary><paramref name="line"/> sampled every 2 m.</summary>
+    public static List<Vector2> Samples(IReadOnlyList<Vector2> line)
     {
         var samples = new List<Vector2>();
         for (int i = 0; i < line.Count; i++)
@@ -220,7 +224,7 @@ public sealed class StairKit
             for (int k = 0; k < n; k++) samples.Add(Vector2.Lerp(a, b, k / (float)n));
             if (i + 1 >= line.Count) break;
         }
-        return ForPlaces(samples, biomeAt);
+        return samples;
     }
 
     /// <summary>
@@ -241,11 +245,16 @@ public sealed class StairKit
 
     /// <summary>The one rule: black marble where at least <see cref="MistlandsShare"/> of <paramref name="places"/> are in
     /// the Mistlands, stone otherwise (and for none).</summary>
-    private static StairKit ForPlaces(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt)
+    private static StairKit ForPlaces(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt) =>
+        InMistlands(places, biomeAt) ? BlackMarble : Stone;
+
+    /// <summary>The one owner of "this structure is Mistlands": at least <see cref="MistlandsShare"/> of
+    /// <paramref name="places"/> (a staircase's walked pieces, a bridge's length) are in the Mistlands; none are not.</summary>
+    public static bool InMistlands(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt)
     {
         int mist = 0;
         foreach (Vector2 p in places)
             if (biomeAt(p.x, p.y) == Heightmap.Biome.Mistlands) mist++;
-        return places.Count > 0 && mist >= MistlandsShare * places.Count ? BlackMarble : Stone;
+        return places.Count > 0 && mist >= MistlandsShare * places.Count;
     }
 }

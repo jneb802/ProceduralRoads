@@ -194,15 +194,22 @@ public sealed class BridgeStructures : IStructureSource
     /// Meadows and the Mistlands) where it fits (<see cref="BridgeLayout.StoneFits"/>).</summary>
     public static bool Fits(Kit kit, RoadCrossing crossing, WorldGenerator world)
     {
-        Heightmap.Biome biome = world.GetBiome(crossing.Center.x, crossing.Center.y);
+        bool mistlands = InMistlands(crossing, world);
         return kit switch
         {
-            Kit.DvergrWood => biome == Heightmap.Biome.Mistlands,
-            Kit.WoodRail or Kit.WoodBraced => biome != Heightmap.Biome.Mistlands,
-            Kit.Stone => biome != Heightmap.Biome.Mistlands && biome != Heightmap.Biome.Meadows && BridgeLayout.StoneFits(crossing, world),
+            Kit.DvergrWood => mistlands,
+            Kit.WoodRail or Kit.WoodBraced => !mistlands,
+            Kit.Stone => !mistlands && world.GetBiome(crossing.Center.x, crossing.Center.y) != Heightmap.Biome.Meadows
+                && BridgeLayout.StoneFits(crossing, world),
             _ => false,
         };
     }
+
+    /// <summary>Whether a crossing is a Mistlands one, as a staircase is (<see cref="StairKit.InMistlands"/>: at least
+    /// <see cref="StairKit.MistlandsShare"/> of it in the Mistlands), over its length from bank to bank (its pieces are chosen
+    /// by the answer, so they cannot be what it counts). The one owner for the kit, the viaduct's refusal and the deck's width.</summary>
+    public static bool InMistlands(RoadCrossing crossing, WorldGenerator world) =>
+        StairKit.InMistlands(StairKit.Samples(new[] { crossing.FromBank, crossing.ToBank }), (x, z) => world.GetBiome(x, z));
 
     /// <summary>
     /// The pieces of one crossing, in its kit (<see cref="KitFor"/>), none without one. The one place the pieces are chosen:

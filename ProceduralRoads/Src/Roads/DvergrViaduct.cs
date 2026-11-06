@@ -437,7 +437,7 @@ public static class DvergrViaduct
     {
         if (crossing == null || world == null) return "no crossing";
         if (crossing.Kind != CrossingKind.Bridge) return "a ford";
-        if (world.GetBiome(crossing.Center.x, crossing.Center.y) != Heightmap.Biome.Mistlands) return "not in the Mistlands";
+        if (!BridgeStructures.InMistlands(crossing, world)) return "not in the Mistlands";
         return DeckRefusal(crossing, world, ceiling, AtGrade(crossing, world));
     }
 

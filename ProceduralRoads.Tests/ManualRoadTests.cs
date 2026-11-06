@@ -59,6 +59,35 @@ public class ManualRoadTests : IDisposable
         Assert.Equal("road_path -120.5,450.25 0,-80", d.Command);
         Assert.Equal(d.Points, ManualRoadDraft.ParsePath(d.Command.Split(' ').Skip(1)));
     }
+    /// <summary>A command given a point as its first two words (road_regen_island, road_bridge_repairs) reads it as every typed
+    /// coordinate is read (ManualRoadDraft.ParsePoint). Read in the current culture, "120.5" on a de-DE system was 1205 ('.' is
+    /// its group separator), and NaN or a point outside the world went through.</summary>
+    [Fact] public void ACommandsTypedPointIsReadAsEveryTypedCoordinate()
+    {
+        using var overrides = StaticOverride.Keep(() => CultureInfo.CurrentCulture);
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+        var console = new Terminal();
+        Vector2? Typed(string line, out bool ok)
+        {
+            ok = ManualRoadCommands.TryTypedPoint(new Terminal.ConsoleEventArgs(line, console), "Usage: road_regen_island <x> <z>", out Vector2? point);
+            return point;
+        }
+        Assert.Equal(new Vector2(120.5f, -40.25f), Typed("road_regen_island 120.5 -40.25", out bool ok));
+        Assert.True(ok);
+        Assert.Equal(new Vector2(120.5f, -40.25f), Typed("road_regen_island 120.5 -40.25 force", out ok));
+        Assert.True(ok);
+        // No point given: the command acts where the player stands.
+        Assert.Null(Typed("road_regen_island", out ok)); Assert.True(ok);
+        Assert.Null(Typed("road_regen_island force", out ok)); Assert.True(ok);
+        foreach (string line in new[] { "road_regen_island NaN 0", "road_regen_island 20000 0", "road_regen_island 120,5 0" })
+        {
+            int from = console.Output.Count;
+            Assert.Null(Typed(line, out ok));
+            Assert.False(ok);
+            Assert.Equal(new[] { "Usage: road_regen_island <x> <z>: Coordinates must be finite X,Z values inside the playable world." },
+                console.Output.Skip(from));
+        }
+    }
     [Theory]
     [InlineData("NaN", "0")][InlineData("Infinity", "2")][InlineData("10000", "0")][InlineData("2,3", "4")][InlineData("a", "b")]
     public void InvalidCoordinatesAreRefused(string x, string z) => Assert.Throws<ArgumentException>(() => ManualRoadDraft.ParsePoint(x,z));

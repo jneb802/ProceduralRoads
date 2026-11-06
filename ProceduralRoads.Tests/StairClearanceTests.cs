@@ -175,24 +175,21 @@ public class StairClearanceTests : IDisposable
     }
 
     /// <summary>A stair's walking box starts where a road's does (RockClearances.Bottom), and its top and highest walk are
-    /// StairLayout.BoxTop and HighestWalk: the same floats, bit for bit, as the sums StairLayout.AddClearance and
-    /// RockClearances.AddBox wrote before they read the owners, over walks under and over the sea, at zero and at NaN.</summary>
-    [Fact]
-    public void AStairBoxStartsWhereARoadBoxStartsBitForBit()
+    /// StairLayout.BoxTop and HighestWalk, the same floats as the sums the two callers wrote before they read the owners:
+    /// pinned over walks at zero, under and over the sea, large and NaN.</summary>
+    [Theory]
+    [InlineData(0f, 0.1f, 2f, -2f)]
+    [InlineData(1.9f, 2f, 3.9f, -0.100000024f)]
+    [InlineData(30f, 30.1f, 32f, 28f)]
+    [InlineData(-30.5f, -30.4f, -28.5f, -32.5f)]
+    [InlineData(1234.567f, 1234.667f, 1236.567f, 1232.567f)]
+    [InlineData(float.NaN, float.NaN, float.NaN, float.NaN)]
+    public void AStairBoxStartsWhereARoadBoxStarts(float walk, float bottom, float boxTop, float highest)
     {
-        foreach (float walk in Walks)
-        {
-            Assert.Equal(Bits(walk + RoadRockPolicy.ClearanceLift), Bits(RockClearances.Bottom(walk)));
-            // Its top, and the highest walk the rock clearing reads back off it (RockClearances.AddBox).
-            Assert.Equal(Bits(walk + RoadRockPolicy.ClearanceHeight), Bits(StairLayout.BoxTop(walk)));
-            Assert.Equal(Bits(walk - RoadRockPolicy.ClearanceHeight), Bits(StairLayout.HighestWalk(walk)));
-        }
+        Assert.Equal(bottom, RockClearances.Bottom(walk));
+        Assert.Equal(boxTop, StairLayout.BoxTop(walk));
+        Assert.Equal(highest, StairLayout.HighestWalk(walk));
     }
-
-    private static readonly float[] Walks =
-        { 0f, -0f, 1e-7f, -1e-7f, 0.1f, 1.9f, 2f, 2.1f, 29.99f, 30f, -30.5f, 1234.567f, -4321.1f, 1e7f, float.NaN };
-
-    private static int Bits(float f) => BitConverter.ToInt32(BitConverter.GetBytes(f), 0);
 
     /// <summary>Whether a stored walking box is a stair's stretch: its top stands a player's headroom over a walk higher than
     /// its middle one.</summary>

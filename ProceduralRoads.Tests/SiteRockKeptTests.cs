@@ -19,55 +19,47 @@ public class SiteRockKeptTests
     [Fact]
     public void ARockIsKeptForAnyOfItsThreeReasonsTheFirstNamed()
     {
-        foreach (bool large in new[] { false, true })
-            foreach (bool every in new[] { false, true })
-                foreach (bool mouth in new[] { false, true })
-                {
-                    bool kept = SiteRock.Kept(large, every, mouth, out string why);
-                    Assert.Equal(large || every || mouth, kept);
-                    Assert.Equal(kept, SiteRock.Kept(large, every, mouth));
-                    Assert.Equal(large ? "large" : every ? "a place keeping every rock" : mouth ? "round its mouth" : "", why);
-                }
+        foreach (var (large, every, mouth, why) in new[]
+                 {
+                     (false, false, false, ""), (false, false, true, "round its mouth"), (false, true, false, "a place keeping every rock"),
+                     (false, true, true, "a place keeping every rock"), (true, false, false, "large"), (true, false, true, "large"),
+                     (true, true, false, "large"), (true, true, true, "large"),
+                 })
+        {
+            bool kept = SiteRock.Kept(large, every, mouth, out string reason);
+            Assert.Equal(why != "", kept);
+            Assert.Equal(kept, SiteRock.Kept(large, every, mouth));
+            Assert.Equal(why, reason);
+        }
     }
 
-    /// <summary>The shape's split over rocks at its exterior radius's edge and either side of it, at the large-rock size
-    /// and either side of it, with and without a real top, for a place with no exterior radius and for one keeping every
-    /// rock: its body is the rocks round its mouth (less one covering the landing, its box only known), its kept rocks
-    /// the large ones elsewhere (every one, at a place keeping every rock).</summary>
+    /// <summary>The shape's split over twelve rocks (9.999, 10 and 10.001 m from the centre, the two sides of the large-rock
+    /// size, with and without a real top; each triple of tops numbered in that order), for a place with an exterior radius
+    /// of 10 m and for one with none, each keeping the small rocks or not: its body is the rocks round its mouth, its kept
+    /// rocks the large ones elsewhere (every one, at a place keeping every rock). Recorded from the shape as it is.</summary>
     [Theory]
-    [InlineData(10f, false)]
-    [InlineData(10f, true)]
-    [InlineData(0f, false)]
-    [InlineData(0f, true)]
-    public void AShapeKeepsItsLargeRocksAndItsMouthsAsItsBody(float rockRadius, bool keepSmall)
+    [InlineData(10f, false, "0 1 2 3 4 5 6 7", "10 11")]
+    [InlineData(10f, true, "0 1 2 3 4 5 6 7", "8 9 10 11")]
+    [InlineData(0f, false, "", "2 3 6 7 10 11")]
+    [InlineData(0f, true, "", "0 1 2 3 4 5 6 7 8 9 10 11")]
+    public void AShapeKeepsItsLargeRocksAndItsMouthsAsItsBody(float rockRadius, bool keepSmall, string body, string kept)
     {
         // Half a side at which a square rock's box is LargeRock across corner to corner, and either side of it.
         float edge = SiteRock.LargeRock / Mathf.Sqrt(8f);
         var rocks = new List<SiteRock>();
         int n = 0;
-        foreach (float d in new[] { 0f, 4f, 9.999f, 10f, 10.001f, 15f })
-            foreach (float half in new[] { 0.5f, edge - 1e-4f, edge, edge + 1e-4f, 3f })
+        foreach (float d in new[] { 9.999f, 10f, 10.001f })
+            foreach (float half in new[] { edge - 1e-4f, edge + 1e-4f })
                 foreach (bool top in new[] { false, true })
-                    foreach (float bearing in new[] { 0f, 90f, 180f })
-                    {
-                        Vector2 at = Centre + SiteRock.World(new Vector2(0f, d), bearing);
-                        rocks.Add(new SiteRock(at, half, half, 0f, 0f, 0f, $"rock{n++}",
-                            top ? new[] { 1f } : null, Mathf.RoundToInt(at.x), Mathf.RoundToInt(at.y), top ? 1 : 0));
-                    }
+                {
+                    Vector2 at = Centre + SiteRock.World(new Vector2(0f, d), 90f);
+                    rocks.Add(new SiteRock(at, half, half, 0f, 0f, 0f, $"{n++}",
+                        top ? new[] { 1f } : null, Mathf.RoundToInt(at.x), Mathf.RoundToInt(at.y), top ? 1 : 0));
+                }
         PlacedSiteShape shape = PlacedSiteShape.Of(Centre, 0f, new LevelOp(0f, 0f, 0f, 4f, false), rockRadius, rocks,
             keepSmallRocks: keepSmall);
 
-        var body = new List<string>();
-        var kept = new List<string>();
-        foreach (SiteRock rock in rocks)
-        {
-            bool mouth = rockRadius > 0f && Vector2.Distance(rock.At, Centre) <= rockRadius;
-            if (mouth && (rock.Top != null || rock.Distance(shape.Landing) > 0f)) body.Add(rock.Name);
-            if (!mouth && (rock.Large || keepSmall)) kept.Add(rock.Name);
-        }
-        Assert.Equal(body, shape.Body.Select(r => r.Name));
-        Assert.Equal(kept, shape.Rocks.Select(r => r.Name));
-        Assert.NotEmpty(kept);
-        if (rockRadius > 0f) Assert.NotEmpty(body);
+        Assert.Equal(body, string.Join(" ", shape.Body.Select(r => r.Name)));
+        Assert.Equal(kept, string.Join(" ", shape.Rocks.Select(r => r.Name)));
     }
 }

@@ -934,11 +934,8 @@ public static class StairSupport
     }
 
     /// <summary>Whether a point lies within a walking piece's footprint, seen from above.</summary>
-    private static bool Over(Walk w, Vector2 point)
-    {
-        float along = Vector2.Dot(point - w.Back, w.Dir), across = Vector2.Dot(point - w.Back, w.Right);
-        return along >= -0.01f && along <= w.Depth + 0.01f && Mathf.Abs(across) <= w.Across / 2f + 0.01f;
-    }
+    private static bool Over(Walk w, Vector2 point) =>
+        StairLayout.OnFootprint(w.Back, w.Dir, w.Right, w.Depth, w.Across, point, 0.01f);
 
     /// <summary>A staircase piece's centre of mass on its own axes (WearNTear.m_comOffset, read off the game's prefabs): a
     /// stair's half a metre over its foot, stone's arch 0.6 m toward its tall end; every other piece's at its transform.</summary>

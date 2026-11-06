@@ -152,8 +152,8 @@ public static class StairEnds
         public (float along, float side) Local(Vector2 q) { Vector2 d = q - Back; return (Vector2.Dot(d, Dir), Vector2.Dot(d, Right)); }
         public bool Covers(Vector2 q, float height)
         {
-            var (a, s) = Local(q);
-            return a >= 0f && a <= Depth && Mathf.Abs(s) <= Across / 2f && Mathf.Abs(Walk(a) - height) <= StairLayout.TopFloorBand;
+            return StairLayout.OnFootprint(Back, Dir, Right, Depth, Across, q, 0f)
+                && Mathf.Abs(Walk(Local(q).along) - height) <= StairLayout.TopFloorBand;
         }
         /// <summary>Three points along an edge (0 front, 1 back, 2 left, 3 right), its way out, the walking heights there and
         /// its length.</summary>

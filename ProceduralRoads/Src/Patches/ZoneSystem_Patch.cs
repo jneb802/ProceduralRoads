@@ -25,13 +25,9 @@ public static class ZoneSystem_Patch
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.PlaceVegetation))]
     public static class ZoneSystem_PlaceVegetation_Patch
     {
-        /// <summary>Index of the first clear area the roads added to the zone being generated; the game's come before it.</summary>
-        private static int s_firstRoadArea = int.MaxValue;
-        /// <summary>Index of the first structure clear area (staircases, then bridges); the roads' come before it.</summary>
-        private static int s_firstStructureArea = int.MaxValue;
-        /// <summary>Index of the first structure clear area that keeps every rock out (a bridge's); the staircases' before it
-        /// leave a rock the rock clearing takes to it, as the roads' do.</summary>
-        private static int s_firstRockKeepingArea = int.MaxValue;
+        /// <summary>Where the roads' clear areas start in the zone being generated, and the structures' after them (the game's
+        /// own come first); none before the prefix, and none while no roads are available: every area is then the game's.</summary>
+        private static int s_firstRoadArea = int.MaxValue, s_firstStructureArea = int.MaxValue, s_firstRockKeepingArea = int.MaxValue;
         private static readonly List<VegetationClearing.RoadCentre> NoRoad = new();
         /// <summary>The road points the zone being generated tests its grown trees against.</summary>
         private static List<VegetationClearing.RoadCentre> s_road = NoRoad;
@@ -39,26 +35,21 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static void Prefix(Vector2s zoneID, List<ZoneSystem.ClearArea> clearAreas)
         {
-            s_firstRoadArea = clearAreas.Count;
+            s_firstRoadArea = int.MaxValue;
             s_firstStructureArea = int.MaxValue;
             s_firstRockKeepingArea = int.MaxValue;
             s_road = NoRoad;
             if (!RoadNetworkGenerator.RoadsAvailable)
                 return;
             s_road = RoadClearAreaManager.GetOrCreateRoadCentres(zoneID);
-
-            List<ZoneSystem.ClearArea> roadClearAreas = RoadClearAreaManager.GetOrCreateClearAreas(zoneID);
-            clearAreas.AddRange(roadClearAreas);
-            s_firstStructureArea = clearAreas.Count;
-            List<ZoneSystem.ClearArea> stairClearAreas = StructurePlacement.GetClearAreas(zoneID, staircases: true);
-            clearAreas.AddRange(stairClearAreas);
-            s_firstRockKeepingArea = clearAreas.Count;
-            List<ZoneSystem.ClearArea> bridgeClearAreas = StructurePlacement.GetClearAreas(zoneID, staircases: false);
-            clearAreas.AddRange(bridgeClearAreas);
+            VegetationClearing.ZoneAreas areas = RoadClearAreaManager.AddRoadAreas(zoneID, clearAreas);
+            s_firstRoadArea = areas.FirstRoad;
+            s_firstStructureArea = areas.FirstStructure;
+            s_firstRockKeepingArea = areas.FirstRockKeeping ?? areas.FirstStructure;
 
             // Generated with the road's clear areas: its vegetation matches the
             // network from the start, and the server never clears it later.
-            if (roadClearAreas.Count > 0 || stairClearAreas.Count > 0 || bridgeClearAreas.Count > 0 || s_road.Count > 0)
+            if (areas.AnyRoadOrStructure || s_road.Count > 0)
                 VegetationClearing.MarkCleared(zoneID, RoadSpatialGrid.RoadNetworkVersion);
         }
 
@@ -158,9 +149,9 @@ public static class ZoneSystem_Patch
         /// entry's m_groundOffset after the test.</summary>
         public static bool InsideClearArea(ZoneSystem zones, List<ZoneSystem.ClearArea> areas, Vector3 point, ZoneSystem.ZoneVegetation veg, float scale,
             ref float yaw, float tiltX, float tiltZ) =>
-            RoadClearAreaManager.OnRoad(areas, s_firstRoadArea, s_firstStructureArea, s_road, point, veg.m_prefab.name, scale,
-                BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset), turns: s_yawFound,
-                firstRockKeepingArea: s_firstRockKeepingArea);
+            RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(areas, s_firstRoadArea, s_firstStructureArea, s_firstRockKeepingArea),
+                s_road, point, veg.m_prefab.name, scale, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset),
+                turns: s_yawFound);
 
         private static Heightmap.Biome BiomeAt(Vector3 point) => WorldGenerator.instance.GetBiome(point);
 

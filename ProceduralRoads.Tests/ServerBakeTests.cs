@@ -146,17 +146,17 @@ public class ServerBakeTests
     public void AnExistingStumpOnTheRoadIsRemovedAndALogAcrossItTurnedWhileOneClearIsLeft()
     {
         var road = Enumerable.Range(-60, 121).Select(x => new VegetationClearing.RoadCentre(new Vector2(x, 0f), 2f)).ToList();
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         int stump = "stubbe".GetStableHashCode(), log = "FirTree_oldLog".GetStableHashCode();
         var vegetation = new HashSet<int> { stump, log };
         Assert.True(VegetationClearing.IsLying(stump) && VegetationClearing.IsLying(log));
         Assert.Equal(VegetationClearing.Lying.Remove, VegetationClearing.Decide(stump, new Vector2(10f, 0.5f), false, vegetation, none, nobody, nobody,
-            road, 1f, null, null, 90f, out _));
+            road, 1f, null, 90f, out _));
         Assert.Equal(VegetationClearing.Lying.Turned, VegetationClearing.Decide(log, new Vector2(0f, 5f), false, vegetation, none, nobody, nobody,
-            road, 1f, null, null, 0f, out _));
+            road, 1f, null, 0f, out _));
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(log, new Vector2(0f, 30f), false, vegetation, none, nobody, nobody,
-            road, 1f, null, null, 0f, out _));
+            road, 1f, null, 0f, out _));
     }
 
     /// <summary>The road onto a Black Forest crypt's door, at the points the network lays it 0 to 6 m from a stump and a log the
@@ -171,16 +171,16 @@ public class ServerBakeTests
     /// <summary>
     /// A stump and a fallen log the game grew on a crypt's road inside the crypt's exterior radius (18 m; the crypt clears no
     /// area, so the game grows vegetation there), in a zone the game generated before the road: neither is one of the
-    /// crypt's own parts, so neither is left to the crypt. Each stands on the road whichever way it is turned, and any turn
-    /// lies on the crypt's ground, so both are removed. Where the crypt's parts are not known, or one stands at a part's
-    /// spot, it is left to the crypt as before.
+    /// crypt's own parts, so each is judged as generation judges it. Each stands on the road whichever way it is turned, so
+    /// both are removed. Where the crypt's parts are not known, or one stands at a part's spot, the bake cannot tell it from
+    /// the crypt and leaves it.
     /// </summary>
     [Fact]
     public void AStumpAndALogOnACryptsRoadThatAreNotTheCryptsOwnAreJudgedAsAnywhere()
     {
         int stump = "stubbe".GetStableHashCode(), log = "FirTree_oldLog".GetStableHashCode();
         var vegetation = new HashSet<int> { stump, log };
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         var stumpAt = new Vector2(3920.108f, -4710.460f);
         var logAt = new Vector2(3920.145f, -4712.148f);
@@ -189,7 +189,7 @@ public class ServerBakeTests
         List<VegetationClearing.Footprint> Crypt(System.Func<Vector3, bool?>? partAt) =>
             new() { new(new Vector2(3914.0f, -4726.4f), 18f, partAt) };
         VegetationClearing.Lying Judge(int prefab, Vector2 at, float yaw, VegetationClearing.Lean laid, List<VegetationClearing.Footprint> crypt) =>
-            VegetationClearing.Decide(prefab, at, false, vegetation, none, crypt, nobody, CryptRoad, 1f, null, null, yaw, out _, laid);
+            VegetationClearing.Decide(prefab, at, false, vegetation, none, crypt, nobody, CryptRoad, 1f, null, yaw, out _, laid);
 
         var notItsOwn = Crypt(_ => false);
         Assert.Equal(VegetationClearing.Lying.Remove, Judge(stump, stumpAt, 0f, stumpLaid, notItsOwn));
@@ -199,6 +199,102 @@ public class ServerBakeTests
         Assert.Equal(VegetationClearing.Lying.Clear, Judge(stump, stumpAt, 0f, stumpLaid, Crypt(_ => null)));
         Assert.Equal(VegetationClearing.Lying.Clear, Judge(log, logAt, 223f, logLaid,
             Crypt(p => Vector3.Distance(p, new Vector3(logAt.x, 72.328f, logAt.y)) < 0.1f)));
+    }
+
+    /// <summary>
+    /// The same vegetation the game grew by a place's road, judged by generation (RoadClearAreaManager.OnRoad, the candidate
+    /// PlaceVegetation draws) and by the bake (VegetationClearing.Decide, the saved object in a zone generated before its
+    /// roads), with the clear areas each builds for the zone (the place's own first, then the roads'), the same road points
+    /// and the same spot: a stump and a fallen log on the road (live numbers by a crypt's door), a bush on the road, a swamp
+    /// tree whose trunk reaches it, a boulder the rock clearing takes there, a rock it leaves, and a bush, a tree and a log
+    /// inside the place's footprint but off the road. Once by a crypt, which clears no area, once by a place that does.
+    /// The verdicts are the same (removed, turned to the same yaw, or left). Off the road nothing is cleared by the bake;
+    /// generation keeps the place's own clear area empty only by the game's own test, as without the mod.
+    /// </summary>
+    [Fact]
+    public void TheBakeJudgesVegetationByAPlacesRoadAsGenerationDoes()
+    {
+        const Heightmap.Biome swamp = Heightmap.Biome.Swamp;
+        System.Func<Vector3, Heightmap.Biome> biomeAt = _ => swamp;
+        var centre = new Vector2(3914.0f, -4726.4f);
+        const float radius = 18f;
+        var entries = new (string prefab, Vector2 at, float yaw, VegetationClearing.Lean laid, bool onRoad)[]
+        {
+            ("stubbe", new Vector2(3920.108f, -4710.460f), 0f, new VegetationClearing.Lean(0f, 0f, 72.097f), true),
+            ("FirTree_oldLog", new Vector2(3920.145f, -4712.148f), 223f, new VegetationClearing.Lean(340.8f, 2.6f, 72.328f), true),
+            ("Bush01_0", new Vector2(3919.2f, -4713.9f), 40f, new VegetationClearing.Lean(0f, 0f, 71.7f), true),
+            ("SwampTree1", new Vector2(3917.07f, -4711.98f), 10f, new VegetationClearing.Lean(0f, 0f, 71.7f), true),
+            ("rock4_forest", new Vector2(3918.8f, -4714.85f), 0f, new VegetationClearing.Lean(0f, 0f, 71.7f), true),
+            ("rock_mistlands1", new Vector2(3918.8f, -4714.85f), 0f, new VegetationClearing.Lean(0f, 0f, 71.7f), true),
+            // A fallen log across the road inside the crypt's radius, which a turn takes off it.
+            ("FirTree_oldLog", new Vector2(3913f, -4715f), 90f, new VegetationClearing.Lean(0f, 0f, 71.7f), true),
+            ("Bush01_0", new Vector2(3908.0f, -4730.0f), 0f, new VegetationClearing.Lean(0f, 0f, 70f), false),
+            ("SwampTree1", new Vector2(3906.0f, -4722.0f), 0f, new VegetationClearing.Lean(0f, 0f, 70f), false),
+            ("FirTree_oldLog", new Vector2(3910.0f, -4734.0f), 90f, new VegetationClearing.Lean(0f, 0f, 70f), false),
+        };
+        Assert.True(RoadRockPolicy.ClearingTakes("rock4_forest", swamp));
+        Assert.False(RoadRockPolicy.ClearingTakes("rock_mistlands1", swamp));
+        var vegetation = new HashSet<int>(entries.Select(e => e.prefab.GetStableHashCode()));
+        var nobody = new List<VegetationClearing.Footprint>();
+        // The place's parts are known, and none of these is one.
+        var place = new List<VegetationClearing.Footprint> { new(centre, radius, _ => false) };
+        foreach (bool clearsArea in new[] { false, true })
+        {
+            // As ZoneSystem.PlaceLocations adds it, then the roads' as RoadClearAreaManager builds them.
+            VegetationClearing.ZoneAreas Areas()
+            {
+                var areas = new List<ZoneSystem.ClearArea>();
+                if (clearsArea) areas.Add(new ZoneSystem.ClearArea(new Vector3(centre.x, 70f, centre.y), radius));
+                int firstRoad = areas.Count;
+                foreach (VegetationClearing.RoadCentre point in CryptRoad)
+                    areas.Add(new ZoneSystem.ClearArea(new Vector3(point.Centre.x, 0f, point.Centre.y),
+                        2f * point.HalfWidth * RoadConstants.VegetationClearMultiplier));
+                return new VegetationClearing.ZoneAreas(areas, firstRoad, areas.Count);
+            }
+            foreach (var (prefab, at, yaw, laid, onRoad) in entries)
+            {
+                string where = $"{prefab} at ({at.x}, {at.y}), place clears its area {clearsArea}";
+                Assert.True((at - centre).magnitude < radius, where);
+                float generated = yaw;
+                bool notPlaced = RoadClearAreaManager.OnRoad(Areas(), CryptRoad, new Vector3(at.x, laid.Origin, at.y), prefab, 1f, biomeAt,
+                    ref generated, laid);
+                VegetationClearing.Lying baked = VegetationClearing.Decide(prefab.GetStableHashCode(), at, false, vegetation, Areas(), place,
+                    nobody, CryptRoad, 1f, biomeAt, yaw, out float turned, laid);
+                // The road's verdict, by the one rule both ask.
+                VegetationClearing.Lying road = VegetationClearing.Judge(prefab.GetStableHashCode(), new Vector3(at.x, laid.Origin, at.y), 1f,
+                    yaw, laid, Areas(), CryptRoad, biomeAt, out float judged);
+                Assert.Equal(road, baked);
+                Assert.Equal(judged, turned, 3);
+                if (!onRoad)
+                {
+                    // Off the road the bake clears nothing, by a crypt or by a place that clears its area.
+                    Assert.True(baked == VegetationClearing.Lying.Clear, where);
+                    // Generation places it by a crypt; by a place that clears its area the game's own test keeps it out.
+                    Assert.True(notPlaced == clearsArea, where);
+                    Assert.True(clearsArea || generated == yaw, where);
+                    continue;
+                }
+                // On the road generation leaves out what the bake removes, and turns what it turns; inside a place's own clear
+                // area the game keeps everything out besides (a rock the rock clearing takes there is left to it by the bake).
+                bool gameKeepsOut = clearsArea && VegetationClearing.InGameArea(Areas(), at);
+                Assert.True(notPlaced == (gameKeepsOut || baked == VegetationClearing.Lying.Remove), $"{where}: generation {notPlaced}, bake {baked}");
+                if (!notPlaced) Assert.True(Mathf.Abs(generated - turned) < 0.001f, $"{where}: generation yaw {generated}, bake {turned}");
+            }
+        }
+        // What each is, by the road (by the crypt): the stump, the log, the bush on the road, the tree reaching it and the rock
+        // the rock clearing leaves go; the rock it takes is its own; the second log is turned off the road, as generation
+        // turns it (its turns may lie on the crypt's ground, which clears no area: generation keeps none there); the rest stay.
+        var expected = new[]
+        {
+            VegetationClearing.Lying.Remove, VegetationClearing.Lying.Remove, VegetationClearing.Lying.Remove, VegetationClearing.Lying.Remove,
+            VegetationClearing.Lying.Clear, VegetationClearing.Lying.Remove, VegetationClearing.Lying.Turned,
+            VegetationClearing.Lying.Clear, VegetationClearing.Lying.Clear, VegetationClearing.Lying.Clear,
+        };
+        var crypt = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>(CryptRoad.Select(point =>
+            new ZoneSystem.ClearArea(new Vector3(point.Centre.x, 0f, point.Centre.y), 2f * point.HalfWidth * RoadConstants.VegetationClearMultiplier))));
+        for (int i = 0; i < entries.Length; i++)
+            Assert.True(expected[i] == VegetationClearing.Decide(entries[i].prefab.GetStableHashCode(), entries[i].at, false, vegetation, crypt,
+                place, nobody, CryptRoad, 1f, biomeAt, entries[i].yaw, out _, entries[i].laid), $"{entries[i].prefab} at {entries[i].at}");
     }
 
     [Theory]

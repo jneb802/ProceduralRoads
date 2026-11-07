@@ -310,22 +310,21 @@ public class StairClearanceTests : IDisposable
             new(new Vector3(-100f, 0f, -100f), 2f),
         };
         Assert.True(RoadRockPolicy.ClearingTakes("rock4_coast", Heightmap.Biome.Meadows));
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", meadows, firstRockKeepingArea: 2));
+        int rock = "rock4_coast".GetStableHashCode(), tree = "Beech1".GetStableHashCode();
+        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 2), at, rock, meadows));
         // Vegetation stays out of it; a bridge's area keeps it out.
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "Beech1", meadows, firstRockKeepingArea: 2));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", meadows, firstRockKeepingArea: 1));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", meadows));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 2), at, tree, meadows));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 1), at, rock, meadows));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), at, rock, meadows));
 
         // The server's clearing of a zone generated before the staircase: the same.
-        var rock = "rock4_coast".GetStableHashCode();
-        var tree = "Beech1".GetStableHashCode();
         var vegetation = new HashSet<int> { rock, tree };
-        var none = new List<VegetationClearing.Area>();
         var p = new Vector2(at.x, at.z);
-        List<VegetationClearing.Area> Structure(bool stair) => new() { new(p, StairLayout.PieceRun * 0.75f, leavesRocks: stair) };
-        bool Removed(int prefab, bool stair) => VegetationClearing.ShouldRemove(prefab, p, false, vegetation, none,
-            new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), structureAreas: Structure(stair),
-            biomeAt: _ => Heightmap.Biome.Meadows);
+        // The staircase's area alone, as a staircase's (rock-leaving) or as a bridge's.
+        VegetationClearing.ZoneAreas Structure(bool stair) =>
+            new(new List<ZoneSystem.ClearArea> { new(at, StairLayout.PieceRun * 0.75f) }, 0, 0, stair ? 1 : 0);
+        bool Removed(int prefab, bool stair) => VegetationClearing.ShouldRemove(prefab, p, false, vegetation, Structure(stair),
+            new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), biomeAt: meadows);
         Assert.False(Removed(rock, stair: true));
         Assert.True(Removed(tree, stair: true));
         Assert.True(Removed(rock, stair: false));

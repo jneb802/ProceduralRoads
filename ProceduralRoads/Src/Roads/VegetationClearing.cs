@@ -14,12 +14,15 @@ namespace ProceduralRoads;
 /// before this network existed -- already has everything it grew, as
 /// persistent objects, and nothing ever takes them away. So the server
 /// removes, once per zone and network, exactly what generation would have left
-/// out: objects of the game's own vegetation prefabs, inside the same clear
-/// areas, tested the way the game tests them (ZoneSystem.InsideClearArea, an
-/// axis-aligned square), and the grown trees whose trunks reach the road
-/// (<see cref="TrunkReachesRoad"/>). Anything that is not a vegetation prefab -- player
+/// off the road, by the same rule (<see cref="Judge"/>) over the same clear areas
+/// (<see cref="ZoneAreas"/>): objects of the game's own vegetation prefabs inside
+/// the roads' and structures' clear areas, tested the way the game tests them
+/// (ZoneSystem.InsideClearArea, an axis-aligned square), the grown trees whose
+/// trunks reach the road (<see cref="TrunkReachesRoad"/>), and what lies across it.
+/// Nothing off the road is touched: a location's own clear area is kept ground, as
+/// in generation. Anything that is not a vegetation prefab -- player
 /// builds, containers, bridge pieces -- is never touched, and objects within a
-/// location's exterior radius that may be its own parts are left to the location. The game's vegetation
+/// location's exterior radius that may be its own parts are not judged. The game's vegetation
 /// list also holds the large rocks; on a road those the rock clearing takes
 /// there belong to it (<see cref="LeftToRockClearing"/>), so the
 /// rock clearing carves them, and a structure's
@@ -30,31 +33,49 @@ namespace ProceduralRoads;
 /// </summary>
 public static class VegetationClearing
 {
-    /// <summary>A clear area as the game tests it: an axis-aligned square of half-size Radius.</summary>
-    public readonly struct Area
+    /// <summary>
+    /// The clear areas a zone's vegetation is judged against, as generation hands them to PlaceVegetation, in its order:
+    /// the game's own first (the zone's location's, where it clears its area: ZoneSystem.PlaceLocations adds a square of its
+    /// exterior radius when it places it), then the roads' from <see cref="FirstRoad"/>, then the staircases' from
+    /// <see cref="FirstStructure"/>, then the bridges' from <see cref="FirstRockKeeping"/> (none given: no staircases'). The
+    /// server builds the same list for a zone generated before its roads (RoadClearAreaManager.AddRoadAreas), so both judge
+    /// alike (<see cref="Judge"/>).
+    /// </summary>
+    public readonly struct ZoneAreas
     {
-        public readonly Vector2 Centre;
-        public readonly float Radius;
-        /// <summary>A staircase's area: it keeps vegetation out, but a rock the rock clearing takes there is left to it, which
-        /// clears only the staircase's walking box (StairLayout.AddClearance) as it clears a road's.</summary>
-        public readonly bool LeavesRocks;
+        public readonly List<ZoneSystem.ClearArea> All;
+        public readonly int FirstRoad, FirstStructure;
+        public readonly int? FirstRockKeeping;
 
-        public Area(Vector2 centre, float radius, bool leavesRocks = false)
+        public ZoneAreas(List<ZoneSystem.ClearArea> all, int firstRoad = 0, int firstStructure = int.MaxValue, int? firstRockKeeping = null)
         {
-            Centre = centre;
-            Radius = radius;
-            LeavesRocks = leavesRocks;
+            All = all;
+            FirstRoad = firstRoad;
+            FirstStructure = firstStructure;
+            FirstRockKeeping = firstRockKeeping;
         }
+
+        /// <summary>Where the roads' start, the structures' start and the rock-keeping structures' (bridges') start, within the list.</summary>
+        internal (int roadStart, int roadEnd, int leftEnd) Bounds()
+        {
+            int count = All.Count, roadStart = Mathf.Min(FirstRoad, count), roadEnd = Mathf.Clamp(FirstStructure, roadStart, count);
+            return (roadStart, roadEnd, Mathf.Clamp(FirstRockKeeping ?? roadEnd, roadEnd, count));
+        }
+
+        /// <summary>Whether the roads or structures added any: the game's own alone owe the server nothing.</summary>
+        public bool AnyRoadOrStructure => All.Count > Mathf.Min(FirstRoad, All.Count);
     }
 
-    /// <summary>A location's footprint: a circle of its exterior radius (a player's ground: a circle round their object).</summary>
+    /// <summary>A location's footprint, for telling its own parts (<see cref="PartAt"/>): a circle of its exterior radius; a
+    /// player's ground: a circle round their object.</summary>
     public readonly struct Footprint
     {
         public readonly Vector2 Centre;
         public readonly float Radius;
         /// <summary>For a location: whether an object standing at a point is one of its own parts
-        /// (LocationPrefabLevelling.IsPart), null where that is not known. Without it, or where it is not known, everything in
-        /// the footprint is taken to be the location's.</summary>
+        /// (LocationPrefabLevelling.IsPart), null where that is not known. Without it, or where it is not known, the server
+        /// cannot tell vegetation from the place within the footprint, and judges nothing there (Decide). Not ground kept
+        /// from the road: a place keeps ground only by its clear area, as in generation (ZoneAreas).</summary>
         public readonly Func<Vector3, bool?>? PartAt;
 
         public Footprint(Vector2 centre, float radius, Func<Vector3, bool?>? partAt = null)
@@ -359,7 +380,7 @@ public static class VegetationClearing
     /// <summary>Whether a lying one at <paramref name="position"/>, drawn at <paramref name="yaw"/> and
     /// <paramref name="scale"/>, stays off <paramref name="road"/> as it is, turned (to <paramref name="turned"/>), or not
     /// at all. A turn is taken only where none of its footprint lies on ground <paramref name="kept"/> says is kept clear
-    /// besides the road (a staircase's or bridge's clear area, a location, a player's ground): turned off the road, a 40 m
+    /// besides the road (a staircase's or bridge's clear area, a location's own clear area, a player's ground: Judge): turned off the road, a 40 m
     /// log could otherwise swing across a staircase's foot. Armour laid at <paramref name="lean"/> is first turned, the
     /// least turn first, so the road runs through its opening (<see cref="RunsThrough"/>), and only then beside the road;
     /// with no lean known it is only turned beside it.</summary>
@@ -545,13 +566,43 @@ public static class VegetationClearing
     public static bool LeftToRockClearing(int prefab, Heightmap.Biome biome) =>
         s_rockClearingRocks.TryGetValue(prefab, out string? name) && RoadRockPolicy.ClearingTakes(name, biome);
 
-    /// <summary>ZoneSystem.InsideClearArea, the test PlaceVegetation uses: strict, and square. The one owner of vegetation clearing and lying logs (docs/OWNERS.md).</summary>
-    public static bool InsideClearArea(IReadOnlyList<Area> areas, Vector2 point, bool leftToRockClearing = false)
+    /// <summary>
+    /// The roads' and structures' clear areas of <paramref name="areas"/> over <paramref name="point"/>, tested as the game
+    /// tests a clear area (ZoneSystem.InsideClearArea: strict, and square). The roads' keep vegetation out, but not a large
+    /// rock the rock clearing takes there (<see cref="LeftToRockClearing"/>, in the biome <paramref name="biomeAt"/> gives):
+    /// that one is left to the rock clearing, which carves it. A rock the rock clearing would leave is kept off the road as
+    /// vegetation is. The staircases' leave such a rock to the rock clearing as the roads' do: it clears a staircase's
+    /// walking box (StairLayout.AddClearance), and a rock its supports or handrails stand in stays. The bridges' keep every
+    /// rock out. The game's own areas are not the road's: see <see cref="InGameArea"/>.
+    /// The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
+    /// </summary>
+    public static bool InsideClearArea(ZoneAreas areas, Vector3 point, int prefab, Func<Vector3, Heightmap.Biome>? biomeAt)
     {
-        foreach (Area area in areas)
+        var (roadStart, roadEnd, leftEnd) = areas.Bounds();
+        int count = areas.All.Count;
+        if (roadStart >= count) return false;
+        bool leftToRocks = roadStart < leftEnd && IsRock(prefab) &&
+            LeftToRockClearing(prefab, biomeAt?.Invoke(point) ?? Heightmap.Biome.None);
+        for (int i = roadStart; i < count; i++)
         {
-            if (leftToRockClearing && area.LeavesRocks) continue;
-            if (InSquare(point.x, point.y, area.Centre.x, area.Centre.y, area.Radius))
+            if (leftToRocks && i < leftEnd) continue;
+            ZoneSystem.ClearArea area = areas.All[i];
+            if (InSquare(point.x, point.z, area.m_center.x, area.m_center.z, area.m_radius))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>Whether <paramref name="position"/> is inside one of the game's own clear areas of <paramref name="areas"/> (a
+    /// location's, before the roads'): ZoneSystem.InsideClearArea as the game asks it without the mod. Generation keeps
+    /// everything out of it, as the game does; to the road's clearing it is kept ground (<see cref="Judge"/>), never cleared.</summary>
+    public static bool InGameArea(ZoneAreas areas, Vector2 position)
+    {
+        int roadStart = areas.Bounds().roadStart;
+        for (int i = 0; i < roadStart; i++)
+        {
+            ZoneSystem.ClearArea area = areas.All[i];
+            if (InSquare(position.x, position.y, area.m_center.x, area.m_center.z, area.m_radius))
                 return true;
         }
         return false;
@@ -562,6 +613,42 @@ public static class VegetationClearing
     /// (<paramref name="cx"/>, <paramref name="cz"/>). The one owner of vegetation clearing and lying logs (docs/OWNERS.md).</summary>
     public static bool InSquare(float px, float pz, float cx, float cz, float r) =>
         px > cx - r && px < cx + r && pz > cz - r && pz < cz + r;
+
+    /// <summary>
+    /// What the road makes of one piece of vegetation at <paramref name="point"/> (its x and z; the biome is asked there):
+    /// removed (inside the roads' or structures' clear areas, <see cref="InsideClearArea"/>; a grown tree whose trunk reaches
+    /// <paramref name="road"/>; one lying across it whichever way it lies), turned off it or so the road runs through it (to
+    /// <paramref name="turned"/>), or left. A turn may not lie on kept ground: the game's own clear areas and the
+    /// structures', and whatever <paramref name="alsoKept"/> says (the server's: ground a player built on). Generation asks
+    /// it of every candidate PlaceVegetation draws (RoadClearAreaManager.OnRoad), and the server of every saved piece of
+    /// vegetation in a zone generated before its roads (<see cref="Decide"/>), with the same <paramref name="areas"/> and
+    /// <paramref name="road"/>. Nothing off the road is cleared: the game's own clear areas are kept, not cleared.
+    /// The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
+    /// </summary>
+    public static Lying Judge(int prefab, Vector3 point, float scale, float yaw, Lean? lean, ZoneAreas areas,
+        IReadOnlyList<RoadCentre> road, Func<Vector3, Heightmap.Biome>? biomeAt, out float turned, Func<Vector2, bool>? alsoKept = null)
+    {
+        turned = yaw;
+        var at = new Vector2(point.x, point.z);
+        if (InsideClearArea(areas, point, prefab, biomeAt)) return Lying.Remove;
+        Lying lying = Lie(prefab, at, yaw, scale, road, out turned, IsLying(prefab) ? KeptBy(areas, alsoKept) : null, lean);
+        if (lying != Lying.NotLying) return lying;
+        return IsGrownTree(prefab, out float trunkReach) && TrunkReachesRoad(road, at, trunkReach, scale) ? Lying.Remove : Lying.Clear;
+    }
+
+    /// <summary>The kept ground of a turn (<see cref="Judge"/>): the game's own clear areas and the structures', not the
+    /// roads'; and <paramref name="alsoKept"/>.</summary>
+    private static Func<Vector2, bool> KeptBy(ZoneAreas areas, Func<Vector2, bool>? alsoKept) => p =>
+    {
+        var (roadStart, roadEnd, _) = areas.Bounds();
+        for (int i = 0; i < areas.All.Count; i++)
+        {
+            if (i >= roadStart && i < roadEnd) continue;
+            ZoneSystem.ClearArea area = areas.All[i];
+            if (InSquare(p.x, p.y, area.m_center.x, area.m_center.z, area.m_radius)) return true;
+        }
+        return alsoKept != null && alsoKept(p);
+    };
 
     /// <summary>
     /// Whether an existing object is one generation would not have placed on
@@ -578,48 +665,45 @@ public static class VegetationClearing
     /// a creator is somebody's, and vegetation standing on ground a player has
     /// built on is treated as theirs (PlayerGroundRadius). A grown tree alone
     /// on the road in a zone that predates the network is still taken.
-    /// The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
     /// </summary>
     /// <param name="road">the road points near the object, for a grown tree (<see cref="TrunkReachesRoad"/>)</param>
     /// <param name="scale">the object's scale</param>
-    /// <param name="structureAreas">the structures' clear areas (bridges, staircases): a bridge's keeps every rock out as well, a
-    /// staircase's (<see cref="Area.LeavesRocks"/>) leaves a rock the rock clearing takes to it</param>
     /// <param name="biomeAt">the biome at a position, asked for a large rock only (<see cref="LeftToRockClearing"/>)</param>
     public static bool ShouldRemove(int prefab, Vector2 position, bool playerCreated,
-        ICollection<int> vegetationPrefabs, IReadOnlyList<Area> clearAreas,
+        ICollection<int> vegetationPrefabs, ZoneAreas areas,
         IReadOnlyList<Footprint> locations, IReadOnlyList<Footprint> playerGround,
-        IReadOnlyList<RoadCentre>? road = null, float scale = 1f, IReadOnlyList<Area>? structureAreas = null,
-        Func<Vector2, Heightmap.Biome>? biomeAt = null, float yaw = 0f,
+        IReadOnlyList<RoadCentre>? road = null, float scale = 1f,
+        Func<Vector3, Heightmap.Biome>? biomeAt = null, float yaw = 0f,
         Lean? lean = null) =>
-        Decide(prefab, position, playerCreated, vegetationPrefabs, clearAreas, locations, playerGround, road, scale, structureAreas,
+        Decide(prefab, position, playerCreated, vegetationPrefabs, areas, locations, playerGround, road, scale,
             biomeAt, yaw, out _, lean) == Lying.Remove;
 
     /// <summary>
-    /// <see cref="ShouldRemove"/>, and for one lying along the ground at <paramref name="yaw"/> and <paramref name="lean"/>
-    /// (<see cref="Lie"/>), whether it is turned off the road, or so the road runs through it, instead (to
-    /// <paramref name="turned"/>). Anything else is <see cref="Lying.Clear"/> or <see cref="Lying.Remove"/>.
-    /// The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
+    /// The server's judgement of a saved object in a zone generated before its roads: <see cref="Judge"/>, the rule
+    /// generation applies, with the same clear areas (<paramref name="areas"/>, ZoneAreas) and road points, and two facts
+    /// only the server has. (a) A location's own networked parts are not vegetation to judge: generation places them
+    /// through the location, never through PlaceVegetation (<see cref="MayBePart"/>). (b) Ground a player built on
+    /// (<paramref name="playerGround"/>) is theirs: vegetation there is left, and no turn lies on it. Anything not of the
+    /// game's vegetation prefabs, or carrying a creator, is somebody's and never judged. For one lying along the ground at
+    /// <paramref name="yaw"/> and <paramref name="lean"/> (<see cref="Lie"/>), whether it is turned off the road, or so the
+    /// road runs through it, instead (to <paramref name="turned"/>). Anything else is <see cref="Lying.Clear"/> or
+    /// <see cref="Lying.Remove"/>. The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
     /// </summary>
     public static Lying Decide(int prefab, Vector2 position, bool playerCreated,
-        ICollection<int> vegetationPrefabs, IReadOnlyList<Area> clearAreas,
+        ICollection<int> vegetationPrefabs, ZoneAreas areas,
         IReadOnlyList<Footprint> locations, IReadOnlyList<Footprint> playerGround,
-        IReadOnlyList<RoadCentre>? road, float scale, IReadOnlyList<Area>? structureAreas,
-        Func<Vector2, Heightmap.Biome>? biomeAt, float yaw, out float turned, Lean? lean = null)
+        IReadOnlyList<RoadCentre>? road, float scale,
+        Func<Vector3, Heightmap.Biome>? biomeAt, float yaw, out float turned, Lean? lean = null)
     {
         turned = yaw;
         // Somebody's own object, whatever it is: never ours to take.
         if (playerCreated || !vegetationPrefabs.Contains(prefab))
             return Lying.Clear;
-        bool leftToRocks = IsRock(prefab) && LeftToRockClearing(prefab, biomeAt?.Invoke(position) ?? Heightmap.Biome.None);
-        // A staircase's area (Area.LeavesRocks) leaves such a rock to the rock clearing, as a road's does.
-        bool inside = structureAreas != null && InsideClearArea(structureAreas, position, leftToRocks) ||
-            InsideClearArea(clearAreas, position) && !leftToRocks;
-        Lying verdict = OnRoad(inside, prefab, scale, road ?? Array.Empty<RoadCentre>(), position, yaw, out turned,
-            IsLying(prefab) ? KeptBy(structureAreas, locations, playerGround) : null, lean);
-        // Left to the location, and left to the player who built there. Within a location's footprint only what may be one of
-        // its own parts is left to it: the game grows vegetation there too where the location clears no area (a crypt), and a
-        // zone placed before its roads (SitesFirstLoad) has had it judged by nothing else.
-        if (verdict != Lying.Clear && (LocationKeeps(locations, position, lean) || Inside(playerGround, position)))
+        var point = new Vector3(position.x, lean is Lean laid ? laid.Origin : 0f, position.y);
+        Lying verdict = Judge(prefab, point, scale, yaw, lean, areas, road ?? Array.Empty<RoadCentre>(), biomeAt, out turned,
+            IsLying(prefab) && playerGround.Count > 0 ? OnPlayerGround(playerGround) : null);
+        // Asked only of what the road would take: a location's parts are read from its prefab.
+        if (verdict != Lying.Clear && (MayBePart(locations, position, lean) || Inside(playerGround, position)))
         {
             turned = yaw;
             return Lying.Clear;
@@ -627,28 +711,16 @@ public static class VegetationClearing
         return verdict;
     }
 
-    /// <summary>What both clearings make of a piece of vegetation: off the road (an object inside a clear area, a grown
-    /// tree whose trunk reaches the road, or one lying across it whichever way it lies), turned off it or so the road runs
-    /// through it, or left.</summary>
-    public static Lying OnRoad(bool insideClearArea, int prefab, float scale, IReadOnlyList<RoadCentre> road, Vector2 position,
-        float yaw, out float turned, Func<Vector2, bool>? kept = null, Lean? lean = null)
-    {
-        turned = yaw;
-        if (insideClearArea) return Lying.Remove;
-        Lying lying = Lie(prefab, position, yaw, scale, road, out turned, kept, lean);
-        if (lying != Lying.NotLying) return lying;
-        return IsGrownTree(prefab, out float trunkReach) && TrunkReachesRoad(road, position, trunkReach, scale) ? Lying.Remove : Lying.Clear;
-    }
+    /// <summary>Ground a player built on, as a turn's kept ground; its own method, so a candidate that does not lie along the
+    /// ground allocates nothing.</summary>
+    private static Func<Vector2, bool> OnPlayerGround(IReadOnlyList<Footprint> playerGround) => p => Inside(playerGround, p);
 
-    /// <summary>The server's kept ground for a turn: a structure's clear area, a location, a player's ground.</summary>
-    private static Func<Vector2, bool> KeptBy(IReadOnlyList<Area>? structureAreas, IReadOnlyList<Footprint> locations,
-        IReadOnlyList<Footprint> playerGround) =>
-        p => structureAreas != null && InsideClearArea(structureAreas, p) || Inside(locations, p) || Inside(playerGround, p);
-
-    /// <summary>Whether the object at <paramref name="position"/>, its origin at <paramref name="lean"/>'s height, stands in a
-    /// location's footprint and may be one of its parts: kept unless the location's parts are known and it is none of them
-    /// (<see cref="Footprint.PartAt"/>).</summary>
-    private static bool LocationKeeps(IReadOnlyList<Footprint> locations, Vector2 position, Lean? lean)
+    /// <summary>Whether the object at <paramref name="position"/>, its origin at <paramref name="lean"/>'s height, may be one of
+    /// a location's own parts (<see cref="Footprint.PartAt"/>, LocationPrefabLevelling.IsPart). Where the parts cannot be
+    /// known (no test, no height, or the test does not know), the server cannot tell vegetation from the place within its
+    /// exterior radius, and takes it to be the place's: this is not ground kept from the road, only an object it cannot
+    /// judge.</summary>
+    private static bool MayBePart(IReadOnlyList<Footprint> locations, Vector2 position, Lean? lean)
     {
         foreach (Footprint location in locations)
         {

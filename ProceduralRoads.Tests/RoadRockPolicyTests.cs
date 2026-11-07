@@ -63,7 +63,7 @@ public class RoadRockPolicyTests
     /// <summary>
     /// A zone generated with the road: PlaceVegetation asks the clear areas per vegetation entry. The road's keep trees
     /// and small stones off it, but a large rock the rock clearing takes there is placed as in a world without roads (the
-    /// rock clearing then carves it). A location's own clear area, which comes first, still keeps it out.
+    /// rock clearing then carves it). A location's own clear area, which comes first, still keeps it out, as the game's own test (VegetationClearing.InGameArea).
     /// </summary>
     [Fact]
     public void AZoneGeneratedWithTheRoadKeepsItsLargeRocksForTheRockClearing()
@@ -75,16 +75,18 @@ public class RoadRockPolicyTests
         var inLocation = new UnityEngine.Vector3(1f, 0f, 1f);
         System.Func<UnityEngine.Vector3, Heightmap.Biome> mountain = _ => Heightmap.Biome.Mountain;
         System.Func<UnityEngine.Vector3, Heightmap.Biome> mistlands = _ => Heightmap.Biome.Mistlands;
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, "Beech1", mountain));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, "Pickable_Stone", mountain));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 1, 2), onRoad, "Beech1".GetStableHashCode(), mountain));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 1, 2), onRoad, "Pickable_Stone".GetStableHashCode(), mountain));
         foreach (string rock in RoadRockPolicy.KnownRocks)
         {
             var biome = RoadRockPolicy.IsNaturalBoulder(rock) ? mountain : mistlands;
-            Assert.False(RoadClearAreaManager.InsideClearArea(areas, 1, 2, onRoad, rock, biome), rock);
-            Assert.True(RoadClearAreaManager.InsideClearArea(areas, 1, 2, inLocation, rock, biome), rock);
+            Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 1, 2), onRoad, rock.GetStableHashCode(), biome), rock);
+            // A location's own clear area keeps it out at generation, as the game does (and is never the road's to clear).
+            Assert.True(VegetationClearing.InGameArea(new VegetationClearing.ZoneAreas(areas, 1, 2), new UnityEngine.Vector2(inLocation.x, inLocation.z)), rock);
+            Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 1, 2), inLocation, rock.GetStableHashCode(), biome), rock);
         }
         // Before the roads add theirs, every area is the game's.
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, int.MaxValue, int.MaxValue, onRoad, "rock1_mountain", mountain));
+        Assert.True(VegetationClearing.InGameArea(new VegetationClearing.ZoneAreas(areas, int.MaxValue, int.MaxValue), new UnityEngine.Vector2(onRoad.x, onRoad.z)));
     }
 
     /// <summary>
@@ -99,12 +101,12 @@ public class RoadRockPolicyTests
         var areas = new System.Collections.Generic.List<ZoneSystem.ClearArea> { road };
         var onRoad = new UnityEngine.Vector3(20f, 0f, 0.5f);
         System.Func<UnityEngine.Vector3, Heightmap.Biome> In(Heightmap.Biome b) => _ => b;
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock1_mountain", In(Heightmap.Biome.Mountain)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", In(Heightmap.Biome.AshLands)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", In(Heightmap.Biome.DeepNorth)));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock_mistlands1", In(Heightmap.Biome.Plains)));
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "rock4_coast", In(Heightmap.Biome.Meadows)));
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onRoad, "cliff_mistlands1", In(Heightmap.Biome.Mistlands)));
+        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onRoad, "rock1_mountain".GetStableHashCode(), In(Heightmap.Biome.Mountain)));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onRoad, "rock4_coast".GetStableHashCode(), In(Heightmap.Biome.AshLands)));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onRoad, "rock4_coast".GetStableHashCode(), In(Heightmap.Biome.DeepNorth)));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onRoad, "rock_mistlands1".GetStableHashCode(), In(Heightmap.Biome.Plains)));
+        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onRoad, "rock4_coast".GetStableHashCode(), In(Heightmap.Biome.Meadows)));
+        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onRoad, "cliff_mistlands1".GetStableHashCode(), In(Heightmap.Biome.Mistlands)));
     }
 
     /// <summary>
@@ -119,7 +121,7 @@ public class RoadRockPolicyTests
         var areas = new System.Collections.Generic.List<ZoneSystem.ClearArea> { road, stair };
         var onStair = new UnityEngine.Vector3(40f, 0f, 1f);
         foreach (string rock in RoadRockPolicy.KnownRocks)
-            Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, onStair, rock,
+            Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), onStair, rock.GetStableHashCode(),
                 _ => RoadRockPolicy.IsNaturalBoulder(rock) ? Heightmap.Biome.Mountain : Heightmap.Biome.Mistlands), rock);
     }
 

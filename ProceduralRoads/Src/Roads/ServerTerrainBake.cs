@@ -1118,11 +1118,10 @@ public static class ServerTerrainBake
             return Outcome.Done;
         }
         int since = VegetationClearing.OwedSince(zone);
-        List<VegetationClearing.Area> areas = ClearAreasFor(zone, since);
-        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        VegetationClearing.ZoneAreas areas = AreasFor(zone, since);
         List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone, since);
         bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere);
-        if (areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 || rocks)
+        if (areas.AnyRoadOrStructure || road.Count > 0 || rocks)
         {
             if (AnyPeerNear(zone))
             {
@@ -1145,7 +1144,7 @@ public static class ServerTerrainBake
                 savedRocks.Clear();
             }
             var vegetationClock = Stopwatch.StartNew();
-            int removed = areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 ? RemoveVegetation(zone, areas, structureAreas, road) : 0;
+            int removed = areas.AnyRoadOrStructure || road.Count > 0 ? RemoveVegetation(zone, areas, road) : 0;
             s_step.Vegetation = vegetationClock.Elapsed.TotalMilliseconds;
             if (removed > 0)
             {
@@ -1181,17 +1180,16 @@ public static class ServerTerrainBake
     /// stump and fallen log is judged by the one rule (VegetationClearing.Decide) and turned off the road or removed.</summary>
     private static Outcome ProcessLyingVegetation(Vector2s zone)
     {
-        List<VegetationClearing.Area> areas = ClearAreasFor(zone);
-        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        VegetationClearing.ZoneAreas areas = AreasFor(zone);
         List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
-        if (areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0)
+        if (areas.AnyRoadOrStructure || road.Count > 0)
         {
             if (AnyPeerNear(zone))
             {
                 s_ghostRepair.Defer(zone, Time.time, RetryDelaySeconds);
                 return Outcome.Waiting;
             }
-            int removed = RemoveVegetation(zone, areas, structureAreas, road, lyingOnly: true);
+            int removed = RemoveVegetation(zone, areas, road, lyingOnly: true);
             if (removed > 0)
             {
                 s_counts.VegetationZones++;
@@ -1204,30 +1202,24 @@ public static class ServerTerrainBake
         return Outcome.Done;
     }
 
-    /// <summary>The road clear areas generation hands PlaceVegetation for this zone. A zone cleared for the roads up to
-    /// <paramref name="sinceAppend"/> appends owes only the later roads' (-1: every road's).</summary>
-    private static List<VegetationClearing.Area> ClearAreasFor(Vector2s zone, int sinceAppend = -1) =>
-        ToAreas(sinceAppend >= 0 ? RoadClearAreaManager.ClearAreasSince(zone, sinceAppend) : RoadClearAreaManager.GetOrCreateClearAreas(zone));
-
-    /// <summary>The structures' clear areas (bridges, staircases) generation hands PlaceVegetation for this zone: a staircase's
-    /// leaves a rock the rock clearing takes to it (VegetationClearing.Area.LeavesRocks), as generation does.</summary>
-    private static List<VegetationClearing.Area> StructureClearAreasFor(Vector2s zone)
+    /// <summary>
+    /// The clear areas generation handed PlaceVegetation for this zone, built the same way
+    /// (RoadClearAreaManager.AddRoadAreas): the game's own first, the zone's location's where it clears its area
+    /// (ZoneSystem.PlaceLocations adds a square of its exterior radius as it places it, so only a placed location's), then the
+    /// roads', the staircases' and the bridges'. A zone cleared for the roads up to <paramref name="sinceAppend"/> appends
+    /// owes only the later roads' (-1: every road's).
+    /// </summary>
+    private static VegetationClearing.ZoneAreas AreasFor(Vector2s zone, int sinceAppend = -1)
     {
-        List<VegetationClearing.Area> areas = ToAreas(StructurePlacement.GetClearAreas(zone, staircases: false));
-        areas.AddRange(ToAreas(StructurePlacement.GetClearAreas(zone, staircases: true), leavesRocks: true));
-        return areas;
-    }
-
-    private static List<VegetationClearing.Area> ToAreas(List<ZoneSystem.ClearArea> clearAreas, bool leavesRocks = false)
-    {
-        var areas = new List<VegetationClearing.Area>();
-        foreach (ZoneSystem.ClearArea area in clearAreas)
-            areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius, leavesRocks));
-        return areas;
+        var areas = new List<ZoneSystem.ClearArea>();
+        if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance location) &&
+            location.m_placed && location.m_location != null && location.m_location.m_clearArea)
+            areas.Add(new ZoneSystem.ClearArea(location.m_position, location.m_location.m_exteriorRadius));
+        return RoadClearAreaManager.AddRoadAreas(zone, areas, sinceAppend);
     }
 
     /// <summary>The biome at a saved object's position, as generation saw it.</summary>
-    private static Heightmap.Biome BiomeAt(Vector2 position) => WorldGenerator.instance.GetBiome(position.x, position.y);
+    private static Heightmap.Biome BiomeAt(Vector3 position) => WorldGenerator.instance.GetBiome(position);
 
     /// <summary>The road points generation tests this zone's grown trees against (RoadClearAreaManager.GetOrCreateRoadCentres),
     /// or those of the roads after <paramref name="sinceAppend"/> appends.</summary>
@@ -1258,10 +1250,9 @@ public static class ServerTerrainBake
     /// <summary>road_bake zone: what RemoveVegetation would take from the zone now, without taking it.</summary>
     internal static int CountVegetationOnRoad(Vector2s zone)
     {
-        List<VegetationClearing.Area> areas = ClearAreasFor(zone);
-        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        VegetationClearing.ZoneAreas areas = AreasFor(zone);
         List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
-        if (areas.Count == 0 && structureAreas.Count == 0 && road.Count == 0)
+        if (!areas.AnyRoadOrStructure && road.Count == 0)
             return 0;
         HashSet<int> vegetation = VegetationPrefabs();
         List<VegetationClearing.Footprint> locations = LocationsNear(zone);
@@ -1276,7 +1267,7 @@ public static class ServerTerrainBake
             Vector3 position = zdo.GetPosition();
             if (VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
                     PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                    structureAreas, BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
+                    BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
                 count++;
         }
         return count;
@@ -1365,7 +1356,7 @@ public static class ServerTerrainBake
         return new VegetationClearing.Lean(euler.x, euler.z, zdo.GetPosition().y);
     }
 
-    private static int RemoveVegetation(Vector2s zone, List<VegetationClearing.Area> areas, List<VegetationClearing.Area> structureAreas,
+    private static int RemoveVegetation(Vector2s zone, VegetationClearing.ZoneAreas areas,
         List<VegetationClearing.RoadCentre> road, bool lyingOnly = false)
     {
         HashSet<int> vegetation = VegetationPrefabs();
@@ -1382,7 +1373,7 @@ public static class ServerTerrainBake
             Vector3 euler = zdo.GetRotation().eulerAngles;
             VegetationClearing.Lying verdict = VegetationClearing.Decide(zdo.GetPrefab(), new Vector2(position.x, position.z),
                 PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                structureAreas, BiomeAt, euler.y, out float turned, LeanOf(zdo));
+                BiomeAt, euler.y, out float turned, LeanOf(zdo));
             VegetationClearing.Note(zdo.GetPrefab(), new Vector2(position.x, position.z), verdict, euler.y, turned);
             ZNetView instance = ZNetScene.instance.FindInstance(zdo);
             if (verdict == VegetationClearing.Lying.Turned || verdict == VegetationClearing.Lying.Through)

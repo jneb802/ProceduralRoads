@@ -17,7 +17,7 @@ public class StairSupportTests
     private static readonly StairKit Stone = StairKit.Stone, Marble = StairKit.BlackMarble;
 
     /// <summary>A stair climbing +z (heading 0) from (0, 0) with its underside at <paramref name="base_"/>.</summary>
-    private static StairSupport.Walk Stair(float base_, float z = 0f) => new(new Vector2(0f, z), 0f, 2f, 2f, base_, true);
+    private static StairSupport.Walk Stair(float base_, float z = 0f) => new(new Vector2(0f, z), 0f, 2f, 2f, base_, true, 0f);
 
     /// <summary>Ground rising to the west (-x, the left of a stair climbing +z): flat at <paramref name="low"/> east of
     /// <paramref name="wallAt"/>, a face rising <paramref name="grade"/> a metre westward from it.</summary>
@@ -178,11 +178,26 @@ public class StairSupportTests
         {
             StairSupport.Choose(Stone, Stair(20f), cliff);
             StairSupport.Choose(Marble, Stair(20f), cliff);
-            StairSupport.Choose(Marble, new StairSupport.Walk(new Vector2(0f, 0f), 0f, 2f, 2f, 20f, false), cliff);
+            StairSupport.Choose(Marble, new StairSupport.Walk(new Vector2(0f, 0f), 0f, 2f, 2f, 20f, false, Marble.FloorThickness), cliff);
             foreach (FillerPiece f in StairFiller.Around(0f, 2, 2f, false, Stone.Fillers)) StairFiller.At(f, new Vector2(i, 0f));
         }
         Assert.Equal(0L, GC.GetAllocatedBytesForCurrentThread() - before);
 #endif
+    }
+
+    /// <summary>A walk's surface is one formula (Walk.Surface by a kit, Walk.Walking by the piece's own thickness): a floor's
+    /// stands a thickness over its underside, a stair's rises its metre over its run whatever the thickness, and a floor
+    /// asked by another kit's thickness reads that kit's (a rail laid in a kit judges by it).</summary>
+    [Fact]
+    public void AWalksSurfaceIsOneFormulaByTheThicknessAsked()
+    {
+        var floor = new StairSupport.Walk(new Vector2(0f, 0f), 0f, 2f, 2f, 10f, false, Stone.FloorThickness);
+        var stair = new StairSupport.Walk(new Vector2(0f, 0f), 0f, 2f, 2f, 10f, true, 0f);
+        Assert.Equal(10f + Stone.FloorThickness, floor.Walking(1f));
+        Assert.Equal(floor.Walking(1f), floor.Surface(1f, Stone));
+        Assert.Equal(10f + Marble.FloorThickness, floor.Surface(1f, Marble));
+        Assert.Equal(10.5f, stair.Walking(1f));
+        Assert.Equal(stair.Walking(1f), stair.Surface(1f, Marble));
     }
 
     [Fact]

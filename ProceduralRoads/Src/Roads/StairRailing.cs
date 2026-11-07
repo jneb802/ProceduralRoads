@@ -88,7 +88,7 @@ public static class StairRailing
         for (int k = 0; k < end.Steps; k++)
         {
             walks.Add(new StairSupport.Walk(StructureEnds.StepJoint(end.Edge, end.Up, k + 1), heading, StairLayout.PieceRun, across,
-                StructureEnds.StepBase(end.Height, k), true));
+                StructureEnds.StepBase(end.Height, k), true, 0f));
             railed.Add(true);
         }
         // The road meets the flight at its foot.
@@ -288,9 +288,9 @@ public static class StairRailing
         float heading = StairLayout.Wrap(BridgeLayout.YawDegrees(end.Up));
         // The bank's first module past the edge, and the first step's walk a module further out.
         var bank = new StairSupport.Walk(StructureEnds.StepJoint(end.Edge, end.Up, 1), heading, StairLayout.PieceRun, across,
-            end.Height - StairKit.BlackMarble.FloorThickness, false);
+            end.Height - StairKit.BlackMarble.FloorThickness, false, StairKit.BlackMarble.FloorThickness);
         var step = new StairSupport.Walk(StructureEnds.StepJoint(end.Edge, end.Up, 2), heading, StairLayout.PieceRun, across,
-            StructureEnds.StepBase(end.Height, 0), true);
+            StructureEnds.StepBase(end.Height, 0), true, 0f);
         float yaw = StairLayout.Wrap(heading + 90f), half = across / 2f;
         foreach (int side in new[] { -1, 1 })
         {

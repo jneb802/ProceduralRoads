@@ -133,22 +133,26 @@ public static class StairSupport
     {
         public readonly Vector2 Back;
         public readonly float Heading, Depth, Across, Underside;
-        /// <summary>How thick the piece is under its walking surface (a stair's none: its slope is its walking surface).</summary>
+        /// <summary>How thick the piece is under its walking surface (a stair's none, 0: its slope is its walking surface).</summary>
         public readonly float Thickness;
         public readonly bool Stair;
         /// <summary>Its heading's forward and right, worked out once: <see cref="Choose"/> asks for a point on it a few dozen
         /// times a piece the search tries, each a sine and a cosine when worked out afresh.</summary>
         public readonly Vector2 Dir, Right;
-        public Walk(Vector2 back, float heading, float depth, float across, float underside, bool stair, float thickness = 0f)
+        public Walk(Vector2 back, float heading, float depth, float across, float underside, bool stair, float thickness)
         {
             Thickness = thickness; Back = back; Heading = heading; Depth = depth; Across = across; Underside = underside; Stair = stair;
             Dir = StairLayout.Forward(heading); Right = StairLayout.Right(heading);
         }
         public Vector2 At(float along, float across) => Back + Dir * along + Right * across;
-        /// <summary>The walking surface <paramref name="along"/> it: a stair's rises its metre over its run.</summary>
-        /// <summary>The walking surface <paramref name="along"/> it by its own kit's thickness (<see cref="Surface"/> by the kit asked).</summary>
-        public float Walking(float along) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + Thickness;
-        public float Surface(float along, StairKit kit) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + kit.FloorThickness;
+        /// <summary>The walking surface <paramref name="along"/> it: a stair's rises its metre over its run; a floor's stands a
+        /// thickness over its underside, by <paramref name="thickness"/>. The one formula of a walk's surface.</summary>
+        private float SurfaceBy(float along, float thickness) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + thickness;
+        /// <summary>The walking surface <paramref name="along"/> it by the piece's own thickness (<see cref="Thickness"/>).</summary>
+        public float Walking(float along) => SurfaceBy(along, Thickness);
+        /// <summary>The walking surface <paramref name="along"/> it by the thickness of <paramref name="kit"/>'s floors: where a
+        /// rail or a support is judged by the kit it is laid in, not the piece's own.</summary>
+        public float Surface(float along, StairKit kit) => SurfaceBy(along, kit.FloorThickness);
     }
 
     /// <summary>The walking pieces of a staircase's layout as footprints, null for any other piece.</summary>
@@ -162,7 +166,7 @@ public static class StairSupport
                 // Origin at its foot's height, centred; it climbs toward its local -z (StairLayout.AddPiece).
                 float heading = StairLayout.Wrap(piece.YawDegrees + 180f);
                 return new Walk(at - StairLayout.Forward(heading) * (StairLayout.PieceRun / 2f), heading, StairLayout.PieceRun,
-                    StairLayout.PieceRun, piece.Position.y, true);
+                    StairLayout.PieceRun, piece.Position.y, true, 0f);
             }
             case StructurePieceKind.StairFloor:
             case StructurePieceKind.StairFiller:

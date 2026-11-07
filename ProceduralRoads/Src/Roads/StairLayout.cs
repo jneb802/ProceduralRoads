@@ -1486,7 +1486,7 @@ public static partial class StairLayout
     private static StairSupport.Walk PieceWalk(StairKit kit, string prefab, Vector2 back, float heading, float baseHeight, float across, float depth)
     {
         bool stair = prefab == kit.Stair;
-        return new StairSupport.Walk(back, heading, depth, across, stair ? baseHeight : baseHeight - kit.FloorThickness, stair);
+        return new StairSupport.Walk(back, heading, depth, across, stair ? baseHeight : baseHeight - kit.FloorThickness, stair, stair ? 0f : kit.FloorThickness);
     }
 
     /// <summary>One row of pieces across the stair.</summary>

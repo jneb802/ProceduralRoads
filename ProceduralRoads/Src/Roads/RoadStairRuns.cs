@@ -716,7 +716,7 @@ public static partial class RoadStairRuns
                     kit = kits.TryGetValue(k, out StairKit? mergedKit) ? mergedKit : StairKit.ForLine(line, Biome);
                     if (crestOf != null)
                     {
-                        if (DownFromCrest(crestOf, kit, Ground, out bool floored) is StairContinuation crestRow)
+                        if (DownFromCrest(crestOf, Ground, out bool floored) is StairContinuation crestRow)
                         {
                             if (floored) { a = crestRow.Edge; meet = a; }
                             StairPlan down = StairLayout.BuildDown(crestRow, b, Ground, Width, kit, GenerationExpansions, GenerationTotalExpansions, GenerationStall, corridor: line);
@@ -833,7 +833,7 @@ public static partial class RoadStairRuns
                 // Whether the first's top is a floor on the crest. A staircase an earlier road built (Existing) is met as it is,
                 // never edited: no floor is carried onto it nor flag set on its plan, which is the network's.
                 bool crestFloored = false;
-                if (meet != null && DownFromCrest(spans[spans.Count - 1], kit, Ground, out crestFloored) is StairContinuation crestOn)
+                if (meet != null && DownFromCrest(spans[spans.Count - 1], Ground, out crestFloored) is StairContinuation crestOn)
                 {
                     crestRow = crestOn;
                     if (crestFloored) { a = crestOn.Edge; meet = a; }

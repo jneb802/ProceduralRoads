@@ -1176,4 +1176,47 @@ public class RoadStairTests : IDisposable
         float Deep(float x, float z) => x < 4f ? 41.5f - x * 1.75f : x < 8f ? 34.5f : Mathf.Min(46f, 34.5f + (x - 8f) * 1.2f);
         Assert.NotNull(RoadStairRuns.Turn(new Vector2(0f, 0f), new Vector2(20f, 0f), Deep));
     }
+
+    /// <summary>A sharp ridge (x = 0, 24 m over the flats, faces of 1) whose west side is rock (the stone kit) and whose east side
+    /// is the Mistlands (black marble), the east face coming down in two steps with a shallow, long run between them.</summary>
+    private sealed class MixedKitRidgeWorld : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
+            if (wx <= 0f) return 40f + Mathf.Clamp(24f + wx, 0f, 24f);
+            if (wx <= 8f) return 64f - wx;
+            if (wx <= 16f) return 56f - 0.35f * (wx - 8f);
+            return 53.2f - Mathf.Min(wx - 16f, 21.2f);
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
+            wx < 0f ? Heightmap.Biome.Mountain : Heightmap.Biome.Mistlands;
+        public override int GetSeed() => 77;
+    }
+
+    /// <summary>Two stretches that merge over a ridge: the first staircase (stone) is edited with its own kit. The east face's two
+    /// stretches are laid as one in the kit their line guesses (black marble), and the crest's 2x2 carried on from the first's
+    /// top stays stone, the first's own, not the merged kit's (RoadStairRuns.DownFromCrest).</summary>
+    [Fact]
+    public void ACrestFloorOverAMergedRidgeTakesTheFirstStaircasesOwnKit()
+    {
+        var world = new MixedKitRidgeWorld();
+        _scope.WithWorld(world);
+        var path = new List<Vector2>();
+        for (float x = -48f; x <= 48.01f; x += 8f) path.Add(new Vector2(x, 0f));
+        var steps = new List<(Vector2 from, Vector2 to)>();
+        for (int i = 1; i < path.Count; i++)
+            if (Mathf.Abs(world.GetHeight(path[i].x, 0f) - world.GetHeight(path[i - 1].x, 0f)) / 8f > 0.5f) steps.Add((path[i - 1], path[i]));
+        List<RoadStairSpan>? spans = RoadStairRuns.Lay(path, steps, new List<RoadCrossing>(), world);
+        string laid = spans == null ? "not laid" : string.Join(" | ", spans.Select(s => FormattableString.Invariant(
+            $"{s.FromIndex}..{s.ToIndex} {s.Kit.Name} {s.FromHeight:F2}->{s.ToHeight:F2}")));
+        Assert.True(spans != null && spans.Count == 2, laid);
+        // The east face's two stretches merged into one staircase, in the kit their line guesses; the first stays stone.
+        Assert.Equal(StairKit.Stone, spans![0].Kit);
+        Assert.Equal(StairKit.BlackMarble, spans[1].Kit);
+        Assert.True(spans[1].ToIndex - spans[1].FromIndex > 3, laid);
+        var floors = spans[0].Plan.Pieces.Where(p => p.Kind == StairPieceKind.Landing).ToList();
+        Assert.Contains(floors, p => Mathf.Abs(p.Position.y + StairKit.Stone.FloorTop - 64f) < 0.05f);
+        Assert.All(floors, p => Assert.Equal(StairKit.Stone.Floor, p.Prefab));
+    }
 }

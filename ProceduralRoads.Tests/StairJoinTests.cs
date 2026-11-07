@@ -140,7 +140,7 @@ public class StairJoinTests : IDisposable
         Assert.Equal(StairPieceKind.Stair, laid.LastRowKind);
         RoadStairSpan up = Span(laid);
         Vector2 topEdge = up.ToPoint;
-        StairContinuation row = RoadStairRuns.DownFromCrest(up, StairKit.Stone, Ground, out bool floored)!.Value;
+        StairContinuation row = RoadStairRuns.DownFromCrest(up, Ground, out bool floored)!.Value;
         Assert.True(floored);
         Assert.True(laid.CrestFloored);
         Assert.Equal(StairPieceKind.Landing, row.Kind);
@@ -149,7 +149,7 @@ public class StairJoinTests : IDisposable
 
         // A floor already: used as it is.
         RoadStairSpan again = Span(laid);
-        Assert.Equal(again.ToPoint, RoadStairRuns.DownFromCrest(again, StairKit.Stone, Ground, out bool kept)!.Value.Edge);
+        Assert.Equal(again.ToPoint, RoadStairRuns.DownFromCrest(again, Ground, out bool kept)!.Value.Edge);
         Assert.True(kept);
 
         // An earlier road's: met at its top stair, no floor carried.
@@ -157,7 +157,7 @@ public class StairJoinTests : IDisposable
         RoadStairSpan existing = Span(theirs);
         existing.Existing = true;
         Vector2 theirTop = existing.ToPoint;
-        StairContinuation back = RoadStairRuns.DownFromCrest(existing, StairKit.Stone, Ground, out bool carried)!.Value;
+        StairContinuation back = RoadStairRuns.DownFromCrest(existing, Ground, out bool carried)!.Value;
         Assert.False(carried);
         Assert.False(theirs.CrestFloored);
         Assert.Equal(theirTop, back.Edge);

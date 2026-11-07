@@ -157,7 +157,7 @@ public static partial class RoadStairRuns
     /// stair, back to back, never edited. Where there is a floor, <paramref name="up"/> ends on it (its point and height move to the
     /// floor's far edge), and <paramref name="floored"/> says so; else the row is its top stair's edge.
     /// </summary>
-    internal static StairContinuation? DownFromCrest(RoadStairSpan up, StairKit kit, Func<float, float, float> ground, out bool floored)
+    internal static StairContinuation? DownFromCrest(RoadStairSpan up, Func<float, float, float> ground, out bool floored)
     {
         floored = false;
         StairPlan first = up.Plan;
@@ -169,7 +169,7 @@ public static partial class RoadStairRuns
         // A 2x2 at the crest between the two top stairs (a ridge always has at least one 2x2 between the up and down stairs): a floor
         // on from the first's top stair, the second from its far edge.
         if (!floored && !up.Existing
-            && StairLayout.CarryTopTo(first, up.ToPoint + StairLayout.Forward(first.EndHeading) * StairLayout.PieceRun, up.ToHeight, ground, Width, kit))
+            && StairLayout.CarryTopTo(first, up.ToPoint + StairLayout.Forward(first.EndHeading) * StairLayout.PieceRun, up.ToHeight, ground, Width, up.Kit))
             floored = first.CrestFloored = true;
         if (floored) { up.ToPoint = new Vector2(first.End.x, first.End.z); up.ToHeight = first.End.y; }
         return new StairContinuation(up.ToPoint, first.EndHeading, up.ToHeight, floored ? StairPieceKind.Landing : StairPieceKind.Stair);
@@ -200,7 +200,7 @@ public static partial class RoadStairRuns
             StairPlan down = StairLayout.BuildDown(row, b, ground, Width, kit, GenerationExpansions, GenerationTotalExpansions, GenerationStall, corridor: corridor);
             if (!down.Reached || !Usable(down, path, start, to, world, spans, row.Edge)) continue;
             // A second floor on is the first's: never on a staircase an earlier road built.
-            if (second && (up.Existing || !StairLayout.CarryTopTo(first, row.Edge, crest.Height, ground, Width, kit))) continue;
+            if (second && (up.Existing || !StairLayout.CarryTopTo(first, row.Edge, crest.Height, ground, Width, up.Kit))) continue;
             up.ToPoint = row.Edge;
             a = row.Edge;
             meet = row.Edge;

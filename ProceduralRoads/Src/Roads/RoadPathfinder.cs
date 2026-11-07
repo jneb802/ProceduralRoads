@@ -1347,7 +1347,8 @@ public class RoadPathfinder
 
     private (Vector2i landing, float cost)? ViaductOverTerrain(Vector2i from, Vector2Int step)
     {
-        if (m_terrain.Biome(from) != Heightmap.Biome.Mistlands) return null;
+        // No biome test here: whether the valley is Mistlands is the viaduct's own share rule (ValleyCrossing, through
+        // DvergrViaduct's refusal), so a valley whose near rim is just outside the Mistlands is still offered.
         float rim = m_terrain.Height(from);
         // A valley starts here: the next cell on is well below the rim.
         if (m_terrain.Height(new Vector2i(from.x + step.x, from.y + step.y)) > rim - ViaductRimDrop) return null;

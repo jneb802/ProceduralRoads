@@ -202,11 +202,11 @@ public sealed class StairKit
     public static StairKit ForSite(Heightmap.Biome biome) => biome == Heightmap.Biome.Mistlands ? BlackMarble : Stone;
 
     /// <summary>Share of a staircase in the Mistlands from which it is black marble.</summary>
-    public const float MistlandsShare = 0.4f;
+    public const float BiomeShare = 0.4f;
 
     /// <summary>
     /// The kit for a staircase over <paramref name="line"/>, sampled every 2 m: black marble where at
-    /// least <see cref="MistlandsShare"/> of it is in the Mistlands, stone otherwise. Before a staircase is laid this is
+    /// least <see cref="BiomeShare"/> of it is in the Mistlands, stone otherwise. Before a staircase is laid this is
     /// a guess from the line it is expected to take (its road, or its ends); the kit it is built in is the one its own
     /// pieces stand in (<see cref="ForPlan"/>).
     /// </summary>
@@ -243,18 +243,24 @@ public sealed class StairKit
         return ForPlaces(walked, biomeAt);
     }
 
-    /// <summary>The one rule: black marble where at least <see cref="MistlandsShare"/> of <paramref name="places"/> are in
+    /// <summary>The one rule: black marble where at least <see cref="BiomeShare"/> of <paramref name="places"/> are in
     /// the Mistlands, stone otherwise (and for none).</summary>
     private static StairKit ForPlaces(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt) =>
         InMistlands(places, biomeAt) ? BlackMarble : Stone;
 
-    /// <summary>The one owner of "this structure is Mistlands": at least <see cref="MistlandsShare"/> of
+    /// <summary>The one owner of "this structure is Mistlands": at least <see cref="BiomeShare"/> of
     /// <paramref name="places"/> (a staircase's walked pieces, a bridge's length) are in the Mistlands; none are not. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
-    public static bool InMistlands(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt)
+    public static bool InMistlands(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt) =>
+        LeansTo(places, biomeAt, b => b == Heightmap.Biome.Mistlands);
+
+    /// <summary>The one rule for a structure across a biome edge: it takes the more advanced kit where at least
+    /// <see cref="BiomeShare"/> of <paramref name="places"/> stand where that kit belongs (<paramref name="advanced"/>), so a
+    /// structure on a boundary leans to the more advanced kit (black marble over stone, stone over wood).</summary>
+    public static bool LeansTo(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt, Func<Heightmap.Biome, bool> advanced)
     {
-        int mist = 0;
+        int count = 0;
         foreach (Vector2 p in places)
-            if (biomeAt(p.x, p.y) == Heightmap.Biome.Mistlands) mist++;
-        return places.Count > 0 && mist >= MistlandsShare * places.Count;
+            if (advanced(biomeAt(p.x, p.y))) count++;
+        return places.Count > 0 && count >= BiomeShare * places.Count;
     }
 }

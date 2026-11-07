@@ -9,8 +9,23 @@ namespace ProceduralRoads.Tests;
 /// over its length from bank to bank, not the biome at its centre (assistant-written, 6 Nov 2026): a bridge whose first
 /// 40 % is in the Mistlands takes the Mistlands kit though its middle is not, and one with less takes the wooden kits.
 /// </summary>
-public sealed class BridgeMistlandsShareTests : System.IDisposable
+public sealed class BridgeBiomeShareTests : System.IDisposable
 {
+    /// <summary>A structure across a biome edge leans to the more advanced kit: it takes it where at least the share
+    /// (StairKit.BiomeShare, 40 %) stands where that kit belongs. Half in the Meadows, a bridge may be stone; mostly Meadows,
+    /// it may not.</summary>
+    [Theory]
+    [InlineData(5, true)]
+    [InlineData(6, true)]
+    [InlineData(7, false)]
+    public void ABoundaryLeansToTheMoreAdvancedKit(int meadowsOfTen, bool stone)
+    {
+        var places = new System.Collections.Generic.List<Vector2>();
+        for (int i = 0; i < 10; i++) places.Add(new Vector2(i, 0f));
+        Heightmap.Biome At(float x, float z) => x < meadowsOfTen ? Heightmap.Biome.Meadows : Heightmap.Biome.BlackForest;
+        Assert.Equal(stone, StairKit.LeansTo(places, At, b => b != Heightmap.Biome.Meadows));
+    }
+
     private readonly ValheimWorldScope _scope = new();
     public void Dispose() => _scope.Dispose();
 

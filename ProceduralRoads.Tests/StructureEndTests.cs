@@ -500,6 +500,22 @@ public sealed class StructureEndTests : IDisposable
         public override int GetSeed() => 62;
     }
 
+    /// <summary>A structure's foot under the road's floor (30.5) is met where it stands while under it by less than half a rise
+    /// (StairLayout.StairFitsFrom): the road stays on its floor and the bottom stair clips into it, its slope coming up out of
+    /// the road. 0.3 m under (the owner's L12 demo, 6 Nov 2026) is met, two steps kept, not a row up on a landing of fill;
+    /// 0.6 m under is not.</summary>
+    [Theory]
+    [InlineData(30.4f, true)]
+    [InlineData(30.2f, true)]
+    [InlineData(30.0f, true)]
+    [InlineData(29.9f, false)]
+    public void AFootUnderTheRoadsFloorByLessThanHalfARiseIsMetWhereItStands(float foot, bool met)
+    {
+        var end = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), foot + 2f * StairLayout.PieceRise, 2);
+        Assert.Equal(foot, end.MeetHeight, 3);
+        Assert.Equal(met, StructureEnds.OverTheFloor(end));
+    }
+
     /// <summary>
     /// The earthwork meet (StructureEnds.MeetEnds): a bridge over a swamp channel whose end stairs march down the bank to a
     /// foot under the floor every road on land is built up to. The road, standing on its floor there, never meets that foot,

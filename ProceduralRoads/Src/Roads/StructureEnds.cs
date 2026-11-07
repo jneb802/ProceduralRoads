@@ -165,11 +165,12 @@ public static class StructureEnds
         return new End(edge, up, height, best);
     }
 
-    /// <summary>Whether a road can be laid at <paramref name="end"/>'s meeting height: no more than a step's height
-    /// (<see cref="StairLayout.StepUp"/>, a dryness margin, not a walk) under the floor every road on land is built up to
-    /// (RoadConstants.DryRoadFloor). A foot further under it, down a bank into shallow water, is never met by the road, which
-    /// stands on its floor there.</summary>
-    public static bool OverTheFloor(End end) => end.MeetHeight >= RoadConstants.DryRoadFloor - StairLayout.StepUp;
+    /// <summary>Whether a road can be laid at <paramref name="end"/>'s meeting height: under the floor every road on land is
+    /// built up to (RoadConstants.DryRoadFloor) by less than half a rise (<see cref="StairLayout.StairFitsFrom"/>). The road
+    /// stands on its floor there, so the end's bottom stair clips into it by up to that, its slope coming up out of the road
+    /// (the flex a staircase's foot has onto a road), rather than the end being met a row up on a landing of fill. A foot
+    /// further under it, down a bank into shallow water, is never met by the road.</summary>
+    public static bool OverTheFloor(End end) => end.MeetHeight >= RoadConstants.DryRoadFloor - StairLayout.StairFitsFrom;
 
     /// <summary>
     /// A crossing's two ends as the road meets them, near (from-bank) end first: those decided and saved with it
@@ -557,7 +558,7 @@ public static class StructureEnds
                 var f = new End(far.Edge, far.Up, far.Height, rf);
                 var m = new End(near.Edge, near.Up, near.Height, rn);
                 float step = Mathf.Abs(f.MeetHeight - m.MeetHeight), height = LandingHeight(f.MeetHeight, m.MeetHeight);
-                if (!SharesLanding(f.MeetHeight, m.MeetHeight) || height < RoadConstants.DryRoadFloor - StairLayout.StepUp) continue;
+                if (!SharesLanding(f.MeetHeight, m.MeetHeight) || height < RoadConstants.DryRoadFloor - StairLayout.StairFitsFrom) continue;
                 Vector2 across = m.Meet - f.Meet;
                 float length = across.magnitude;
                 if (length < SharedLandingLength) continue;

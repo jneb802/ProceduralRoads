@@ -1156,7 +1156,7 @@ public static partial class RoadStairRuns
                     StairPlan trial = plan.Copy();
                     lowered = StairLayout.LowerFoot(trial, Ground, Width, Ground(backAt.x, backAt.y),
                         Vector2.Distance(backAt, plan.RingStart.HasValue ? RoadEndAt(plan, footAt) : footAt),
-                        RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured : 1f);
+                        RoadGrade.CapOr(1f));
                     if (lowered is Vector3 low && !KeepsItsRingLowered(trial, low)) lowered = null;
                     if (lowered != null) { plan = trial; tally.FeetLowered++; }
                 }
@@ -1164,7 +1164,7 @@ public static partial class RoadStairRuns
             }
             // Its foot against a bank: a small level apron cut there for the road to meet (outside any place's footprint:
             // the commit skips cuts inside one), once per plan.
-            if (existing == null && meet == null && !valleyFirst && plan.FootApron == 0 && StairLayout.CutFootApron(plan, Ground, Width) > 0)
+            if (existing == null && meet == null && !valleyFirst && plan.FootApron == 0 && StairLayout.CutFootApron(plan, Ground, Width, RoadGrade.CapOr(1f)) > 0)
                 tally.FootAprons++;
             // Where the road ends at its foot (RoadEndRing): the centre of the ring it set off from, moved with the foot where
             // that was moved since (RoadEndAt); at a foot the staircase decided (searched down from a crest), a ring's radius out

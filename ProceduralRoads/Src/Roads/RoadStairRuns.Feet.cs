@@ -210,7 +210,7 @@ public static partial class RoadStairRuns
     internal static (int index, StructureEnds.End end)? EndUnderFoot(List<Vector2> path, Vector2 foot, int footIndex, int step,
         IReadOnlyList<RoadCrossing> crossings, WorldGenerator world, float footHeight)
     {
-        float cap = RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured : float.PositiveInfinity;
+        float cap = RoadGrade.CapOr(float.PositiveInfinity);
         // What the road between climbs past a walker's step (StairLayout.Walkable): none on a stub, the grade cap past its apron.
         float Climbs(float run) => run < StructureEnds.StubLength ? 0f : Mathf.Max(0f, cap * (run - StructureEnds.ApronLength));
         bool Over(float end, float run) => footHeight - end > Climbs(run) && footHeight > end && !StairLayout.Walkable(footHeight, end);

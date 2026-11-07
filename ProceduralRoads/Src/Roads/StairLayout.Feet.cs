@@ -401,11 +401,11 @@ public static partial class StairLayout
     /// at -8018,-660 against a bank: minor earthworks give it space). Returns the
     /// cut points added; none for a foot that opens onto flat ground.
     /// </summary>
-    public static int CutFootApron(StairPlan plan, Func<float, float, float> ground, float width)
+    public static int CutFootApron(StairPlan plan, Func<float, float, float> ground, float width, float cap)
     {
         if (plan.Foot is not Vector3 foot || !plan.Reached) return 0;
         Vector2 at = new Vector2(foot.x, foot.z), back = Forward(Wrap(plan.StartHeading + 180f)), across = Right(plan.StartHeading);
-        float height = foot.y, cap = RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured : RoadConstants.DefaultMaxRoadGrade;
+        float height = foot.y;
         bool bank = false;
         foreach (float side in new[] { -45f, 0f, 45f })
         {

@@ -77,6 +77,10 @@ public static class RoadGrade
     /// <summary>A cap at or below zero is no cap at all.</summary>
     public static bool Capped(float maxGrade) => maxGrade > 0f;
 
+    /// <summary>The cap in force, or <paramref name="uncapped"/> where there is none (a test with the cap at 0). The one place a
+    /// caller that needs a number without a cap picks it; at the default settings every caller reads <see cref="Configured"/>.</summary>
+    public static float CapOr(float uncapped) => Capped(Configured) ? Configured : uncapped;
+
     /// <summary>
     /// The steepest step in a profile, as rise over run. Steps shorter than a
     /// millimetre are skipped: two coincident dense points would otherwise

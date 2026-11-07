@@ -287,7 +287,7 @@ public class StairEndsTests : IDisposable
         Assert.Equal(RoadStairRuns.FootOverTheGround, RoadStairRuns.FootLeftOver(new[] { span }, none, out _, bank));
         span.Plan.Foot = low;
         span.Plan.StartHeading = heading;
-        Assert.True(StairLayout.CutFootApron(span.Plan, bank, RoadStairRuns.Width) > 0, "no apron cut against the bank");
+        Assert.True(StairLayout.CutFootApron(span.Plan, bank, RoadStairRuns.Width, RoadGrade.Configured) > 0, "no apron cut against the bank");
         Assert.Null(RoadStairRuns.FootLeftOver(new[] { span }, none, out _, bank));
     }
 

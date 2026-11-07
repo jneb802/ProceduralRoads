@@ -425,12 +425,12 @@ public class CantileverTests
         StairPlan banked = StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Corner, sunkFoot: true);
         Assert.True(banked.Reached, banked.Reason);
         int before = banked.Cuts.Count;
-        Assert.True(StairLayout.CutFootApron(banked, Corner, 2f) > 0, "no apron against the bank");
+        Assert.True(StairLayout.CutFootApron(banked, Corner, 2f, RoadGrade.Configured) > 0, "no apron against the bank");
         Vector3 foot = banked.Foot!.Value;
         Assert.All(banked.Cuts.Skip(before), c => Assert.Equal(foot.y - StairLayout.CutBelowSurface, c.y, 3));
         Assert.All(banked.Cuts.Skip(before), c => Assert.True(Vector2.Distance(new Vector2(c.x, c.z), new Vector2(foot.x, foot.z)) <= StairLayout.ApronDepth + 2.5f));
         StairPlan flat = StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Flat, sunkFoot: true);
-        Assert.Equal(0, StairLayout.CutFootApron(flat, Flat, 2f));
+        Assert.Equal(0, StairLayout.CutFootApron(flat, Flat, 2f, RoadGrade.Configured));
     }
 
     /// <summary>No switchback in a staircase's first five stairs from its foot (Hildir_cave 1664,768): up a narrow gully, the first
@@ -808,10 +808,25 @@ public class CantileverTests
         StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Rising, sunkFoot: true);
         StairPlan plain = Lay();
         Assert.True(plain.Reached, plain.Reason);
-        Assert.Equal(0, StairLayout.CutFootApron(plain, Rising, 2f));
+        Assert.Equal(0, StairLayout.CutFootApron(plain, Rising, 2f, RoadGrade.Configured));
         using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
         RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
         StairPlan banked = Lay();
-        Assert.True(StairLayout.CutFootApron(banked, Rising, 2f) > 0, "no apron where the road's landing meets rising ground");
+        Assert.True(StairLayout.CutFootApron(banked, Rising, 2f, RoadGrade.Configured) > 0, "no apron where the road's landing meets rising ground");
+    }
+
+    /// <summary>A foot's apron reads the cap its caller gives it, as LowerFoot does (no fallback of its own), and a road with no
+    /// cap (0) is built to climb nothing to a foot (RoadPitches.ClimbToFoot): the bank over it is judged against that.</summary>
+    [Fact]
+    public void AnApronReadsTheCapItsCallerGives()
+    {
+        float Rising(float x, float z) => 40f + Mathf.Max(0f, -x) * 0.5f + Mathf.Max(0f, x) * 0.15f;
+        StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Rising, sunkFoot: true);
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        Assert.Equal(0f, RoadPitches.ClimbToFoot(10f, 0f));
+        RoadPitches.JunctionLanding = 0f;
+        Assert.Equal(0, StairLayout.CutFootApron(Lay(), Rising, 2f, RoadConstants.DefaultMaxRoadGrade));
+        Assert.True(StairLayout.CutFootApron(Lay(), Rising, 2f, 0f) > 0, "a road with no cap climbs nothing to the foot: the bank stands");
     }
 }

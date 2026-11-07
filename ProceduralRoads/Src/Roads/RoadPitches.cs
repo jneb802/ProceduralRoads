@@ -71,7 +71,7 @@ public static class RoadPitches
     /// </summary>
     public static float ClimbToFoot(float run, float cap)
     {
-        if (JunctionLanding <= 0f) return cap * run;
+        if (JunctionLanding <= 0f || !RoadGrade.Capped(cap)) return cap * run;
         float landing = Mathf.Min(run, JunctionLanding);
         return JunctionLandingGrade * landing + cap * (run - landing);
     }

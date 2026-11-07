@@ -45,6 +45,7 @@ public static class StairRailing
     /// <summary>Two 26 degree rails crossed (they read as two 26 degree pieces crossed).</summary>
     public const string CrossedRailPrefab = "wood_wall_roof_top";
 
+    /// <summary>The one owner of railings and parapets (docs/OWNERS.md).</summary>
     /// <param name="beside">The walking pieces of the staircases meeting this one end to end
     /// (<see cref="StairStructures.MetAtEnds"/>): walked on across, never railed here.</param>
     public static List<StructurePiece> Lay(StairKit kit, IReadOnlyList<StructurePiece> walking, IReadOnlyList<StairEnd> ends,
@@ -71,6 +72,7 @@ public static class StairRailing
     /// where it meets the road. The flight is railed on both sides right down to the road, which comes onto its
     /// foot; an end step in the ground has none, and on up from it while the next is in the ground too; a piece wholly in
     /// the ground is left out. None where the road meets the end level (no steps).
+    /// The one owner of railings and parapets (docs/OWNERS.md).
     /// </summary>
     /// <param name="end">The end as the road meets it (StructureEnds.Of), its <see cref="StructureEnds.End.Steps"/> the
     /// steps laid down from its edge.</param>
@@ -369,6 +371,7 @@ public static class StairRailing
     /// Every edge is, but where the walk goes on across it: not on an end step in the ground (<see cref="Ways.Bare"/>); not
     /// onto another walking piece (<see cref="Open"/>); not where what the staircase ends on takes the walk over
     /// (<see cref="TakenOver"/>).
+    /// The one owner of railings and parapets (docs/OWNERS.md).
     /// </summary>
     private static bool Railed(List<StairSupport.Walk> walks, Ways ways, int i, Vector2 a, Vector2 b, Vector2 outward, float height)
     {
@@ -403,7 +406,7 @@ public static class StairRailing
     /// <summary>How far the finished ground just outside a floor's edge may stand under its walking surface and the walk still
     /// carry on onto it, at walking height: a metre, a step down a player takes (1.5 m before: a cave's approach's last floor
     /// stood on its landing 0.4-0.7 m over the ground beside it; maybe if the drop is over 1 m it is railed). Deeper, the edge
-    /// is over the ledge.</summary>
+    /// is over the ledge. The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float LedgeDrop = 1f;
 
     /// <summary>How far the finished ground at <paramref name="outside"/> (half a metre out from an edge's middle) stands under
@@ -907,7 +910,7 @@ public static class StairRailing
 
     /// <summary>Whether a walk at <paramref name="height"/> carries on onto <paramref name="w"/> at <paramref name="p"/> (the
     /// one test, for every edge read): <see cref="StairEnds.Walks"/>, the stair-end rule, its walking surface within
-    /// <see cref="StairLayout.TopFloorBand"/>. A floor beside a higher or lower piece is railed, as against a wall.</summary>
+    /// <see cref="StairLayout.TopFloorBand"/>. A floor beside a higher or lower piece is railed, as against a wall. The one owner of is this edge walked across (rails, stair ends) (docs/OWNERS.md).</summary>
     private static bool WalkedOn(StairSupport.Walk w, Vector2 p, float height, float margin = 0.05f) =>
         StairEnds.Walks(w.Back, w.Dir, w.Right, w.Depth, w.Across, w.Walking(0f), w.Stair, p, height, margin);
 

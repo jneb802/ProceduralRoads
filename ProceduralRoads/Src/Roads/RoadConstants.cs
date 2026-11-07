@@ -8,7 +8,7 @@ public static class RoadConstants
 {
     public const float ZoneSize = 64f;
     public const float HalfZoneSize = ZoneSize / 2f;
-    /// <summary>The zone a world coordinate falls in along one axis: the game's ZoneSystem.GetZone.</summary>
+    /// <summary>The zone a world coordinate falls in along one axis: the game's ZoneSystem.GetZone. The one owner of Zone, grid and cell arithmetic (docs/OWNERS.md).</summary>
     public static int ZoneIndex(float coordinate) => Mathf.FloorToInt((coordinate + HalfZoneSize) / ZoneSize);
     public const float SeaLevel = 30f;
     /// <summary>No road on land (and no raised shallow ford) stands lower than this: a cut into
@@ -56,7 +56,7 @@ public static class RoadConstants
     // detours to share it when the detour costs less than the saving and
     // makes its own crossing beyond that.
     public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
-    /// <summary>The longest ford jump, in metres.</summary>
+    /// <summary>The longest ford jump, in metres. The one owner of the longest ford and bridge span (docs/OWNERS.md).</summary>
     public const float MaxFordSpan = MaxRiverCrossingCells * PathfindingCellSize;
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;
@@ -82,7 +82,7 @@ public static class RoadConstants
     // defaults make a 100 m bridge worth roughly 1 km of rough detour; a
     // bridge appears where the way around is long or there is none.
     public const int MaxBridgeCrossingCells = 16; // 16 * 8 m = 128 m, dry cell to dry cell
-    /// <summary>The longest bridge jump, in metres.</summary>
+    /// <summary>The longest bridge jump, in metres. The one owner of the longest ford and bridge span (docs/OWNERS.md).</summary>
     public const float MaxBridgeSpan = MaxBridgeCrossingCells * PathfindingCellSize;
     public const float MaxBridgeBankDelta = 2.5f;
     public const float DefaultBridgeCostFixed = 60000f;

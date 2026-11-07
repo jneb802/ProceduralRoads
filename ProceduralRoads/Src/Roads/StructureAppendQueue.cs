@@ -29,7 +29,7 @@ public static class StructureAppendQueue
         p.Position.x, p.Position.y, p.Position.z, p.PitchDegrees, p.YawDegrees, p.RollDegrees }.Select(x => x.ToString("R", CultureInfo.InvariantCulture)));
 
     /// <summary>A manual road's bridges, built now through the queue: each site's pieces saved as its first zone is built
-    /// (<see cref="BridgeStructures.Build"/>).</summary>
+    /// (<see cref="BridgeStructures.Build"/>). The one owner of placing pieces into zones, and whether a zone's structure is started (docs/OWNERS.md).</summary>
     internal static Dictionary<Vector2s, List<StructurePiece>> Prepare(IEnumerable<RoadCrossing> crossings) =>
         Prepare(BridgeLayout.DistinctSites(crossings.ToList())
             .SelectMany(crossing => BridgeStructures.Build(crossing, WorldGenerator.instance, WorldGenerator.instance.GetSeed())));

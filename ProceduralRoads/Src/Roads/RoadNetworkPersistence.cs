@@ -204,6 +204,7 @@ public static class RoadNetworkPersistence
 
     /// <summary>
     /// Save the entire road network to a dedicated ZDO for persistence across world reloads.
+    /// The one owner of the saved network (docs/OWNERS.md).
     /// </summary>
     public static void SaveGlobalRoadData(
         IReadOnlyList<(Vector2 position, string label)> roadStartPoints,
@@ -348,6 +349,7 @@ public static class RoadNetworkPersistence
 
     /// <summary>
     /// Try to load the entire road network from persisted ZDO.
+    /// The one owner of the saved network (docs/OWNERS.md).
     /// </summary>
     /// <param name="roadStartPoints">List to populate with loaded start points</param>
     /// <returns>True if road data was found and loaded</returns>

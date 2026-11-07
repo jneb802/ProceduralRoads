@@ -405,6 +405,7 @@ public static partial class StairLayout
     /// <paramref name="fits"/> says the plan may stand so (an approach: out of its place's pit and rock); the climb is kept where
     /// it fits whatever follows it (<paramref name="climbed"/>). Returns the finish laid, if any; with none the plan is as it
     /// was but for a kept climb.
+    /// The one owner of staircase ends (docs/OWNERS.md).
     /// </summary>
     public static TopFinish FinishTop(StairPlan plan, Func<float, float, float> ground, float width, float cover, Func<StairPlan, bool> fits,
         out bool climbed, bool down = false)

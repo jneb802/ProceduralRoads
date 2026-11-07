@@ -44,7 +44,7 @@ public sealed class PlacedSite
     /// <summary>The ground the placed place leaves (<see cref="PlacedSiteGround"/>).</summary>
     public Func<float, float, float> Ground = (_, _) => 0f;
     public PlacedSiteShape Shape = null!;
-    /// <summary>The ground a placed place leaves at its landing: its level.</summary>
+    /// <summary>The ground a placed place leaves at its landing: its level. The one owner of A place's landing, flat and ground as it will leave it (docs/OWNERS.md).</summary>
     public float LandingHeight => Ground(Shape.Landing.x, Shape.Landing.y);
 }
 
@@ -163,7 +163,7 @@ public static class PlacedSites
     /// <summary>The ground a place placed before its roads leaves at <paramref name="p"/> in its footprint (its preload,
     /// <see cref="PlacedSite.Ground"/>): the one reader for the terrain writer (<see cref="RoadTerrainModifier.PlacedBaseAt"/>)
     /// and the finished-ground predictor (<see cref="RoadTerrainModifier.FinishedGround"/>). Null outside a footprint or
-    /// where the place was not placed first.</summary>
+    /// where the place was not placed first. The one owner of A place's landing, flat and ground as it will leave it (docs/OWNERS.md).</summary>
     public static float? GroundAt(Vector2 p) =>
         RoadSiteProtection.NearestFootprint(p, 0f, out RoadSiteProtection.Footprint f) && TryGetReady(f.Centre, out PlacedSite site)
             ? site.Ground(p.x, p.y) : null;
@@ -387,7 +387,7 @@ public static class PlacedSites
         !TryGetReady(centre, out _) && TryGet(centre, out PlacedSiteRecord record) && FlatFor(record.Prefab, record.Ops) == null;
 
     /// <summary>The flat a placed place is shaped round: the one it levels, else (a place with a door) the door's flat
-    /// (<see cref="PlacedSiteShape.DoorFlat"/>); null where it has neither.</summary>
+    /// (<see cref="PlacedSiteShape.DoorFlat"/>); null where it has neither. The one owner of A place's landing, flat and ground as it will leave it (docs/OWNERS.md).</summary>
     public static LevelOp? FlatFor(string prefab, IReadOnlyList<LevelOp> ops) =>
         RoadStairRuns.FlatOf(ops) ?? (PlacedSiteShape.HasDoor(prefab) ? PlacedSiteShape.DoorFlat : null);
 

@@ -67,7 +67,7 @@ public static partial class StairLayout
 
     /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise
     /// (<see cref="HalfRise"/>) the foot stays (the road's landing is filled up to it); from half a rise up, a stair drops
-    /// (<see cref="LowerFoot"/>, <see cref="LowerFootTo"/>). Half rounds up, not to even.</summary>
+    /// (<see cref="LowerFoot"/>, <see cref="LowerFootTo"/>). Half rounds up, not to even. The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).</summary>
     private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + 0.5f);
 
     /// <summary>
@@ -82,6 +82,7 @@ public static partial class StairLayout
     /// as it was, read as climbed at the cap, and its road's landing stood on 1.2 m of fill). Returns the new foot (low edge, height) or null; null too at a foot the
     /// road was carried on to (<see cref="StairPlan.FootFloorsTrimmed"/>), which starts on its kept floor row with no sunk
     /// step: the road there was judged ending where it is.
+    /// The one owner of staircase starts (docs/OWNERS.md).
     /// </summary>
     public static Vector3? LowerFoot(StairPlan plan, Func<float, float, float> ground, float width, float back, float run, float cap)
     {
@@ -96,6 +97,7 @@ public static partial class StairLayout
     /// becoming the first of them (a staircase whose foot is a short stretch of road from a crossing's end, the road there
     /// level at the end's height). Returns the new foot (low edge, height), or null where the foot is within half a rise
     /// already, has none, or something within reach would not hold a stair up (<see cref="RowHeld"/>).
+    /// The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).
     /// </summary>
     public static Vector3? LowerFootTo(StairPlan plan, Func<float, float, float> ground, float width, float height)
     {

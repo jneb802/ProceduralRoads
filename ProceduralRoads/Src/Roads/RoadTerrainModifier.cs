@@ -89,6 +89,7 @@ public static class RoadTerrainModifier
     /// is alive (the roads are queued or written when it comes alive) and no
     /// write is still pending for it. Before that the ground under a road is
     /// the ungraded ground, so anything judged against it is judged wrongly.
+    /// The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).
     /// </summary>
     internal static bool TerrainSettled(Vector3 zonePos)
     {
@@ -675,6 +676,7 @@ public static class RoadTerrainModifier
     /// <see cref="PlacedGround"/> runs on the main thread only.</summary>
     internal static float? PlacedBaseAt(Vector2 p) => PlacedSites.GroundAt(p) ?? PlacedGround?.Invoke(p);
 
+    /// <summary>The one owner of what the terrain writer does: cuts, batter and the ground after a staircase's cuts (docs/OWNERS.md).</summary>
     /// <param name="only">Write only the vertices these points reach (an incremental write of
     /// appended points); null for every vertex any point reaches. Heights always come from all
     /// of <paramref name="roadPoints"/>.</param>
@@ -850,6 +852,7 @@ public static class RoadTerrainModifier
     /// staircases' cuts, exactly as <see cref="ModifyVertexHeights"/> writes them from the zone's points. NaN inside
     /// any other place's footprint, whose own levelling is not known until it spawns. Cached per vertex and per
     /// zone; one caller at a time (built for a pass after generation, or an append on the main thread).
+    /// The one owner of ground readers (docs/OWNERS.md).
     /// </summary>
     internal static System.Func<int, int, float> FinishedGround(System.Func<int, int, float> natural)
     {
@@ -893,7 +896,7 @@ public static class RoadTerrainModifier
     /// <summary>The height the staircases' cuts take the ground to at this vertex (infinity for none): the lowest any cut within
     /// reach asks for (<see cref="LowestCut"/>), but never below a walk over it: under a walked piece no lower than just under
     /// its walking surface (StairStructures.CutFloor). A cut uncovers a walk and the headroom over it; the ground under a
-    /// flight, which its supports stand in, stays.</summary>
+    /// flight, which its supports stand in, stays. The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     internal static float CutAt(List<RoadSpatialGrid.RoadPoint> cuts, Vector2 vertex)
     {
         float cut = LowestCut(cuts, vertex);
@@ -916,7 +919,7 @@ public static class RoadTerrainModifier
 
     /// <summary>The height one cut at <paramref name="at"/>, <paramref name="height"/> high within <paramref name="reach"/>, asks of
     /// <paramref name="vertex"/>: its own height within its reach, climbing on the batter beyond it, infinity past that
-    /// (<see cref="CutBatterReach"/>). The one formula of a cut's ground, for the writer and for what predicts it.</summary>
+    /// (<see cref="CutBatterReach"/>). The one formula of a cut's ground, for the writer and for what predicts it. The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     private static float CutHeightAt(Vector2 at, float height, float reach, Vector2 vertex)
     {
         float d = (at - vertex).magnitude;
@@ -925,7 +928,7 @@ public static class RoadTerrainModifier
     }
 
     /// <summary>How far from a staircase's cut its ground is changed: the cut's own reach and its batter (the writer's reach,
-    /// <see cref="LowestCut"/>).</summary>
+    /// <see cref="LowestCut"/>). The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     internal const float StairCutReach = StairLayout.CutRadius + CutBatterReach;
 
     /// <summary>
@@ -933,6 +936,7 @@ public static class RoadTerrainModifier
     /// not yet written staircase cuts <paramref name="cuts"/> (a plan's, each a point and its height, at the staircase cut's
     /// radius): lowered to the lowest cut within reach, climbing back on the batter, as <see cref="RoadDelta"/> does. Read-only,
     /// for what predicts the writer (the walking floor a built staircase holds the cut above is not read: nothing stands yet).
+    /// The one owner of what the terrain writer does (docs/OWNERS.md).
     /// </summary>
     internal static float GroundAfterCuts(float ground, IReadOnlyList<Vector3> cuts, float x, float z)
     {
@@ -1025,7 +1029,7 @@ public static class RoadTerrainModifier
     /// <summary>How much the batter widens the release for a given divergence:
     /// nothing at all until <see cref="BatterThreshold"/>, then
     /// <see cref="BatterPerMetre"/> per metre beyond it, never more than
-    /// <see cref="BatterMaxExtra"/>.</summary>
+    /// <see cref="BatterMaxExtra"/>. The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     internal static float BatterExtra(float divergence) =>
         Mathf.Min(BatterMaxExtra, BatterPerMetre * Mathf.Max(0f, divergence - BatterThreshold));
 
@@ -1253,7 +1257,7 @@ public static class RoadTerrainModifier
         return false;
     }
 
-    /// <summary>Paint the road into the compiler; returns how many of its texels were written.</summary>
+    /// <summary>Paint the road into the compiler; returns how many of its texels were written. The one owner of the painted edge and footprint of a road (docs/OWNERS.md).</summary>
     /// <param name="roadDeltas">Per vertex, the level delta the road's own earthwork asks for
     /// (<see cref="ModificationStats.RoadDeltas"/>).</param>
     private static int ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells,

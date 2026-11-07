@@ -16,7 +16,7 @@ public static class RoadParallel
     /// <summary>How many islands may be built at once. Islands are isolated
     /// networks -- no road on one can join a road on another, and the network
     /// hash is computed in canonical order -- so building them together gives
-    /// the same roads as building them in turn.</summary>
+    /// the same roads as building them in turn. The one owner of server work (docs/OWNERS.md).</summary>
     public static int IslandWorkers =>
         Configured > 0 ? Configured : System.Math.Max(1, System.Environment.ProcessorCount - 1);
 

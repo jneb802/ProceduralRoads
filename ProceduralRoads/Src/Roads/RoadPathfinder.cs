@@ -273,6 +273,7 @@ public class RoadPathfinder
     internal RoadIslandActivity.Token? Activity;
     public bool AlreadyOnNetwork { get; private set; }
 
+    /// <summary>The one owner of where a road may go (docs/OWNERS.md).</summary>
     public List<Vector2>? FindPath(Vector2 start, Vector2 end) => FindPath(start, end, null);
 
     public List<Vector2>? FindPath(Vector2 start, Vector2 end, int? iterationLimit)
@@ -296,6 +297,7 @@ public class RoadPathfinder
     /// <see cref="LastStartIndex"/> and <see cref="LastEndIndex"/> say which. <paramref name="exemptStart"/> and
     /// <paramref name="exemptEnd"/>: the points whose footprints and cut-off zones the search may cross, as a search's own
     /// ends' are (RoadSiteProtection.BlocksSegment, NetworkCutoff.AvoidsSegment).
+    /// The one owner of where a road may go (docs/OWNERS.md).
     /// </summary>
     public List<Vector2>? FindPathBetween(IReadOnlyList<(Vector2 at, float cost)> starts, IReadOnlyList<(Vector2 at, float cost)> ends,
         Vector2? exemptStart, Vector2? exemptEnd)
@@ -500,7 +502,7 @@ public class RoadPathfinder
     /// <paramref name="served"/>: whether the place the search starts from is already served by the network
     /// (RoadNetworkGenerator.Reached), the caller's own test of it, asked first in place of a junction at the first cell
     /// (AlreadyOnNetwork). Not served, a junction at the first cell is one the search finds like any other: a path from the
-    /// start to it.</summary>
+    /// start to it. The one owner of where a road may go (docs/OWNERS.md).</summary>
     public List<Vector2>? FindPathToNetwork(Vector2 start, float reach, IReadOnlyList<Vector2>? hints = null, System.Func<Vector2, bool>? targetAllowed = null,
         System.Func<bool>? served = null)
     {
@@ -850,7 +852,7 @@ public class RoadPathfinder
     }
 
     /// <summary>The world position of a search cell: the one place cell indices become metres (the shared per-cell
-    /// height cache is valid only while every reader agrees).</summary>
+    /// height cache is valid only while every reader agrees). The one owner of Zone, grid and cell arithmetic (docs/OWNERS.md).</summary>
     internal static Vector2 CellCentre(Vector2i grid) => new(grid.x * CellSize, grid.y * CellSize);
 
     private float Heuristic(Vector2i from, Vector2i to)
@@ -917,7 +919,7 @@ public class RoadPathfinder
     }
 
     /// <summary>How much a biome's roads wander: open country most, none where
-    /// the ground already bends every road.</summary>
+    /// the ground already bends every road. The one owner of sway and meander (docs/OWNERS.md).</summary>
     internal static float MeanderBiome(Heightmap.Biome biome) => biome switch
     {
         Heightmap.Biome.Meadows => 1f,
@@ -969,7 +971,7 @@ public class RoadPathfinder
     private static float Lattice(int x, int y) => (HashCell(x, y) & 0xFFFFFF) / (float)0xFFFFFF;
 
     /// <summary>The one integer hash of a cell: the lattice values of <see cref="ValueNoise"/>, and a ford's style
-    /// (RoadCrossing.SiteHash).</summary>
+    /// (RoadCrossing.SiteHash). The one owner of seeded hashing of cells (docs/OWNERS.md).</summary>
     internal static uint HashCell(int x, int y)
     {
         unchecked

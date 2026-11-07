@@ -20,6 +20,7 @@ public static class StairWear
     /// <summary>The role a black marble cornice column's vine curtain is rolled by (StairSupport's vines).</summary>
     internal const uint RoleVine = 3;
 
+    /// <summary>The one owner of weathering and ruin of stairs and bridges (docs/OWNERS.md).</summary>
     public static void Weather(List<StructurePiece> pieces, Vector2 from, Vector2 to)
     {
         uint seed = Mix(Mix(Mix(Mix(0x5EEDu, Key(from.x)), Key(from.y)), Key(to.x)), Key(to.y));

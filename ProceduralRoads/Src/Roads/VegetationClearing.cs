@@ -540,7 +540,7 @@ public static class VegetationClearing
     public static bool LeftToRockClearing(int prefab, Heightmap.Biome biome) =>
         s_rockClearingRocks.TryGetValue(prefab, out string? name) && RoadRockPolicy.ClearingTakes(name, biome);
 
-    /// <summary>ZoneSystem.InsideClearArea, the test PlaceVegetation uses: strict, and square.</summary>
+    /// <summary>ZoneSystem.InsideClearArea, the test PlaceVegetation uses: strict, and square. The one owner of vegetation clearing and lying logs (docs/OWNERS.md).</summary>
     public static bool InsideClearArea(IReadOnlyList<Area> areas, Vector2 point, bool leftToRockClearing = false)
     {
         foreach (Area area in areas)
@@ -554,7 +554,7 @@ public static class VegetationClearing
 
     /// <summary>The game's clear-area square (ZoneSystem.InsideClearArea), the one owner of it for generation and the server:
     /// (<paramref name="px"/>, <paramref name="pz"/>) strictly inside the square <paramref name="r"/> each way from
-    /// (<paramref name="cx"/>, <paramref name="cz"/>).</summary>
+    /// (<paramref name="cx"/>, <paramref name="cz"/>). The one owner of vegetation clearing and lying logs (docs/OWNERS.md).</summary>
     public static bool InSquare(float px, float pz, float cx, float cz, float r) =>
         px > cx - r && px < cx + r && pz > cz - r && pz < cz + r;
 
@@ -573,6 +573,7 @@ public static class VegetationClearing
     /// a creator is somebody's, and vegetation standing on ground a player has
     /// built on is treated as theirs (PlayerGroundRadius). A grown tree alone
     /// on the road in a zone that predates the network is still taken.
+    /// The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
     /// </summary>
     /// <param name="road">the road points near the object, for a grown tree (<see cref="TrunkReachesRoad"/>)</param>
     /// <param name="scale">the object's scale</param>
@@ -592,6 +593,7 @@ public static class VegetationClearing
     /// <see cref="ShouldRemove"/>, and for one lying along the ground at <paramref name="yaw"/> and <paramref name="lean"/>
     /// (<see cref="Lie"/>), whether it is turned off the road, or so the road runs through it, instead (to
     /// <paramref name="turned"/>). Anything else is <see cref="Lying.Clear"/> or <see cref="Lying.Remove"/>.
+    /// The one owner of vegetation clearing and lying logs (docs/OWNERS.md).
     /// </summary>
     public static Lying Decide(int prefab, Vector2 position, bool playerCreated,
         ICollection<int> vegetationPrefabs, IReadOnlyList<Area> clearAreas,

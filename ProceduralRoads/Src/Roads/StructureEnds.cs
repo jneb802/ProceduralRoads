@@ -45,20 +45,20 @@ public static class StructureEnds
     public const float JoinOverlap = 2f;
 
     /// <summary>How far the road where it meets an end may stand off the end's height for a player to walk on: one step, the
-    /// staircase step (<see cref="StairLayout.StepUp"/>), the one height a step is read at everywhere.</summary>
+    /// staircase step (<see cref="StairLayout.StepUp"/>), the one height a step is read at everywhere. The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float StepTolerance = StairLayout.StepUp;
 
-    /// <summary>The middle of the end's step <paramref name="k"/> (0 at the edge): its origin, a half run out from the joint above it.</summary>
+    /// <summary>The middle of the end's step <paramref name="k"/> (0 at the edge): its origin, a half run out from the joint above it. The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).</summary>
     public static Vector2 StepCentre(Vector2 edge, Vector2 up, int k) => edge - up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun);
 
-    /// <summary>The joint <paramref name="steps"/> steps out from the edge: the foot of that many steps (0 is the edge).</summary>
+    /// <summary>The joint <paramref name="steps"/> steps out from the edge: the foot of that many steps (0 is the edge). The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).</summary>
     public static Vector2 StepJoint(Vector2 edge, Vector2 up, int steps) => edge - up * (StairLayout.PieceRun * steps);
 
     /// <summary>The base of the end's step <paramref name="k"/>, <paramref name="height"/> being the walking surface at the edge:
-    /// k + 1 rises under it.</summary>
+    /// k + 1 rises under it. The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).</summary>
     public static float StepBase(float height, int k) => height - StairLayout.PieceRise * (k + 1);
 
-    /// <summary>The base of a step <paramref name="k"/> as the bridge kits lay it: one rise off the deck, then k more.</summary>
+    /// <summary>The base of a step <paramref name="k"/> as the bridge kits lay it: one rise off the deck, then k more. The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).</summary>
     public static float StepFoot(float deckHeight, int k) => deckHeight - StairLayout.PieceRise - k * StairLayout.PieceRise;
 
     /// <summary>One end of a structure as it meets the road.</summary>
@@ -213,6 +213,7 @@ public static class StructureEnds
     /// whose ways the road reaches, the path then as it was at that crossing; null where every end is met. A raised viaduct
     /// (DvergrViaduct.RaisedSteps) with an end no way reaches is lowered a step and every end met again from the road as it
     /// came, down to the deck at grade, so a raise never changes whether a viaduct is built.
+    /// The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).
     /// </summary>
     public static RoadCrossing? MeetEnds(List<Vector2> path, List<RoadCrossing> crossings, WorldGenerator world, float cap,
         Func<Vector2, Vector2, bool>? isStep)
@@ -804,7 +805,7 @@ public static class StructureEnds
 
     /// <summary>Whether two structure ends at <paramref name="a"/> and <paramref name="b"/> may share one level landing: structures
     /// stand in whole rises, so within half a rise (<see cref="StairLayout.HalfRise"/>), not a walker's step. The one rule for
-    /// <see cref="Share"/> and for levelling that landing (RoadSpatialGrid.LevelledOn).</summary>
+    /// <see cref="Share"/> and for levelling that landing (RoadSpatialGrid.LevelledOn). The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).</summary>
     public static bool SharesLanding(float a, float b) => Mathf.Abs(a - b) <= StairLayout.HalfRise + 1e-3f;
 
     /// <summary>Whether a player walks from road at <paramref name="roadHeight"/> where the road meets

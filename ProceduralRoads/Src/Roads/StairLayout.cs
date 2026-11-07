@@ -262,15 +262,18 @@ public static partial class StairLayout
     /// road where the road can be carried over them (RoadStairRuns.CarryRoadOntoStairs). 6: an approach's foot on a place's
     /// landing gets a floor laid out onto the place's ground on its side facing the place where the step off it is not level
     /// but such a floor lands level (AddPlaceFloor).</para>
+    /// The one owner of the saved network (docs/OWNERS.md).
     /// </summary>
     public const int LayoutVersion = 6;
 
+    /// <summary>The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float PieceRun = 2f;
+    /// <summary>The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float PieceRise = 1f;
 
     /// <summary>Half a rise. Staircases and structure ends stand in whole rises, so two of them meet within half a rise: the
     /// rounding of a foot to its road (<see cref="WholeStairsOver"/>) and two structures sharing a landing
-    /// (StructureEnds.Share). A walker's step is <see cref="StepUp"/>.</summary>
+    /// (StructureEnds.Share). A walker's step is <see cref="StepUp"/>. The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float HalfRise = PieceRise * 0.5f;
     public const float HeadingStep = 22.5f;
     /// <summary>
@@ -1455,7 +1458,7 @@ public static partial class StairLayout
 
     /// <summary>Highest a walking surface may stand over the ground a player walks onto it from:
     /// the player has no step-up, so a stair's top over a clearing is climbed only by a jump. 0.2 m (0.3 m before: a top
-    /// floor 0.26 m over a stone tower's landing at 186.31 was within it, and wanted flatter).</summary>
+    /// floor 0.26 m over a stone tower's landing at 186.31 was within it, and wanted flatter). The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float StepUp = 0.2f;
 
     /// <summary>
@@ -1558,13 +1561,13 @@ public static partial class StairLayout
 
     /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a road's
     /// (<see cref="RockClearances.Top"/>), a player's headroom (<see cref="RoadRockPolicy.ClearanceHeight"/>) over the lift
-    /// (<see cref="RoadRockPolicy.ClearanceLift"/>) over the walk.</summary>
+    /// (<see cref="RoadRockPolicy.ClearanceLift"/>) over the walk. The one owner of headroom (docs/OWNERS.md).</summary>
     internal static float BoxTop(float highest) => RockClearances.Top(highest);
 
     /// <summary>A stored walking box's highest walk (centre <paramref name="centre"/>, half extents <paramref name="half"/>, middle
     /// walk <paramref name="surface"/>): its middle walk stands under its highest as far as its lowest (the box's bottom less
     /// the lift) stands under it. Read from the bottom and surface, stored the same way by every build, so a box saved before
-    /// the headroom became the road's is read as it was laid.</summary>
+    /// the headroom became the road's is read as it was laid. The one owner of headroom (docs/OWNERS.md).</summary>
     internal static float HighestWalk(Vector3 centre, Vector3 half, float surface) =>
         2f * surface - (centre.y - half.y - RoadRockPolicy.ClearanceLift);
 

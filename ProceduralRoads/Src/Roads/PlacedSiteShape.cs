@@ -112,7 +112,7 @@ public readonly struct SiteRock
     /// the rock its own way): a <paramref name="large"/> one (<see cref="LargeRock"/> or more across), any at a place that
     /// keeps every rock (<paramref name="keepsEveryRock"/>, <see cref="KeepsEveryRock"/>), or any
     /// <paramref name="roundItsMouth"/> (inside its exterior radius). <paramref name="why"/>: the first of these that holds,
-    /// in that order ("" when none does).</summary>
+    /// in that order ("" when none does). The one owner of which rocks a place keeps (docs/OWNERS.md).</summary>
     public static bool Kept(bool large, bool keepsEveryRock, bool roundItsMouth, out string why)
     {
         why = large ? "large" : keepsEveryRock ? "a place keeping every rock" : roundItsMouth ? "round its mouth" : "";
@@ -126,6 +126,7 @@ public readonly struct SiteRock
     /// Whether this rock is kept on an approach to the place at <paramref name="centre"/> (<see cref="Kept(bool, bool, bool, out string)"/>):
     /// the one question planning (the shape, the reader) and the rock clearing's probe both ask, of the same box: its oriented
     /// size (<see cref="Large"/>) and its middle (<see cref="RoundItsMouth"/>).
+    /// The one owner of which rocks a place keeps (docs/OWNERS.md).
     /// </summary>
     public bool KeptAt(Vector2 centre, float rockRadius, bool keepsEveryRock, out string why) =>
         Kept(Large, keepsEveryRock, RoundItsMouth(centre, rockRadius), out why);
@@ -347,7 +348,7 @@ public sealed class PlacedSiteShape
         "Mistlands_DvergrTownEntrance2",
     };
 
-    /// <summary>Whether <paramref name="prefab"/> is entered only from its front (<see cref="FrontOnlyPlaces"/>).</summary>
+    /// <summary>Whether <paramref name="prefab"/> is entered only from its front (<see cref="FrontOnlyPlaces"/>). The one owner of places that are entered from the front only (docs/OWNERS.md).</summary>
     public static bool FrontOnly(string? prefab) => prefab != null && s_frontOnly.Contains(prefab);
 
     /// <summary>Whether network at <paramref name="p"/> is on the side the place is entered from: anywhere for most places;
@@ -409,7 +410,7 @@ public sealed class PlacedSiteShape
     }
 
     /// <summary>The landing's aim for an approach that keeps <paramref name="clearance"/> off the pit:
-    /// <see cref="Landing"/>, or further out in front where that is not enough.</summary>
+    /// <see cref="Landing"/>, or further out in front where that is not enough. The one owner of A place's landing, flat and ground as it will leave it (docs/OWNERS.md).</summary>
     public Vector2 LandingFor(float clearance) =>
         Door is Vector2 door ? door : _found is Vector2 found ? found : Pit > 0f ? FlatCentre + Front * (Pit + Mathf.Max(RoadStairRuns.LandingOut, clearance)) : FlatCentre + Front * Edge;
 

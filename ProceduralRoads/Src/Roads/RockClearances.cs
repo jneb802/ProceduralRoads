@@ -47,7 +47,7 @@ public static class RockClearances
     /// <paramref name="generating"/>: a zone generated for a remote peer, whose ground may not be there to read (a road
     /// point is then probed at its own stored height). <paramref name="groundMisses"/>: road points skipped for want of
     /// ground; <paramref name="roadHeightPoints"/>: those probed at the road's own height. <paramref name="ground"/>: the
-    /// finished ground (the game's ZoneSystem.GetGroundHeight).</summary>
+    /// finished ground (the game's ZoneSystem.GetGroundHeight). The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     public static List<RockClearance> Near(Vector3 centre, float radius, bool generating, GroundAt ground, out List<RoadSpatialGrid.RoadPoint> line,
         out int groundMisses, out int roadHeightPoints)
     {
@@ -73,13 +73,13 @@ public static class RockClearances
     }
 
     /// <summary>The lowest a walker's box stands over its walking surface <paramref name="surface"/>: a rock reaching no higher
-    /// is under the walk (<see cref="RoadRockPolicy.ClearanceLift"/> over it).</summary>
+    /// is under the walk (<see cref="RoadRockPolicy.ClearanceLift"/> over it). The one owner of headroom (docs/OWNERS.md).</summary>
     public static float Bottom(float surface) => surface + RoadRockPolicy.ClearanceLift;
 
     /// <summary>The highest a road's box stands over its walking surface <paramref name="surface"/>
     /// (<see cref="RoadRockPolicy.ClearanceHeight"/> over <see cref="Bottom"/>): a rock standing wholly over it is over the
     /// walker's head. A place's rocks are judged in the way of its approach and landing by the same heights
-    /// (<see cref="SiteRock.InTheWay"/>).</summary>
+    /// (<see cref="SiteRock.InTheWay"/>). The one owner of headroom (docs/OWNERS.md).</summary>
     public static float Top(float surface) => Bottom(surface) + RoadRockPolicy.ClearanceHeight;
 
     /// <summary>The ground under a point, if any answers there.</summary>
@@ -95,7 +95,7 @@ public static class RockClearances
     /// <summary>A road's (or a deck's) clearance at a point: a box turned to the road's heading, as wide as the solid paint,
     /// from <see cref="RoadRockPolicy.ClearanceLift"/> over the surface <paramref name="height"/> tall, its own roof: a rock
     /// arching over the road over that stays (the carve took what hung over it up to 4 m). It was a capsule as wide as the road; a capsule is never
-    /// shorter than its width, so on a 4 m road it was a 4 m ball, reaching 4 m up and leaving arches.</summary>
+    /// shorter than its width, so on a 4 m road it was a 4 m ball, reaching 4 m up and leaving arches. The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     internal static RockClearance Road(RoadSpatialGrid.RoadPoint point, float surface, List<RoadSpatialGrid.RoadPoint> line, float height,
         bool wholeOnly, bool keepsSiteRocks)
     {

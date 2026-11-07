@@ -109,6 +109,7 @@ public static partial class BridgeLayout
     /// bays the widest of 16, 14 and 12 m that carry the deck (<see cref="DvergrViaduct.BaySpacings"/>; never so close that
     /// two piers' tops overlap, past that the middle of a bay walked on iron; a river viaduct in game). A world explored
     /// partly under layout 15 keeps the pieces it has.</para>
+    /// The one owner of the saved network (docs/OWNERS.md).
     /// </summary>
     public const int LayoutVersion = 16;
     public const float DeckFreeboard = 0.5f;  // deck at least this far above the water
@@ -131,7 +132,7 @@ public static partial class BridgeLayout
 
     /// <summary>The base curve's survival at a point of a span: <see cref="BankSurvival"/> at the banks, falling to
     /// <see cref="MidSurvival"/> at mid-span. <paramref name="midCloseness"/> is 0 at a bank and 1 at mid-span. Each part
-    /// takes its share of the losses this leaves (<see cref="RuinProfile.Survives"/>).</summary>
+    /// takes its share of the losses this leaves (<see cref="RuinProfile.Survives"/>). The one owner of weathering and ruin of stairs and bridges (docs/OWNERS.md).</summary>
     public static float SpanSurvival(float midCloseness) => BridgeRuin.Span(midCloseness);
 
     /// <summary>A column's survival where the base curve's is <paramref name="survival"/>: columns outlive the deck.</summary>
@@ -145,7 +146,7 @@ public static partial class BridgeLayout
     public const float LocationDamageMin = 0.1f, LocationDamageMax = 0.6f;
 
     /// <summary>A piece's location-wear health for a <paramref name="roll"/> in [0, 1): <see cref="LocationDamageMin"/> to
-    /// <see cref="LocationDamageMax"/>.</summary>
+    /// <see cref="LocationDamageMax"/>. The one owner of weathering and ruin of stairs and bridges (docs/OWNERS.md).</summary>
     public static float LocationHealth(float roll) => LocationDamageMin + roll * (LocationDamageMax - LocationDamageMin);
 
     /// <summary>
@@ -300,6 +301,7 @@ public static partial class BridgeLayout
     /// exempt from it: the trim never lowers the deck back under the ceiling,
     /// so a pier that could not stand still cannot, and the span is what gets
     /// built instead.</para>
+    /// The one owner of bridge and viaduct structure (docs/OWNERS.md).
     /// </summary>
     public static bool IsFreeSpan(RoadCrossing crossing, WorldGenerator world)
     {
@@ -343,6 +345,7 @@ public static partial class BridgeLayout
     /// DeckEndHeights has already lifted both to the water plus a freeboard,
     /// so the deck clears the water by construction, and the lower bank's
     /// stair run walks off the difference.
+    /// The one owner of bridge and viaduct structure (docs/OWNERS.md).
     /// </summary>
     public static float DeckHeight(RoadCrossing crossing, WorldGenerator world)
     {

@@ -31,6 +31,7 @@ public static class RoadGrade
     /// holds the stored profile to it. They were briefly two - the grid read
     /// the pathfinder's copy - which is a coupling with nothing to say for
     /// itself and two values to get out of step.
+    /// The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).
     /// </summary>
     public static float Configured = RoadConstants.DefaultMaxRoadGrade;
 
@@ -114,6 +115,7 @@ public static class RoadGrade
     /// clamping one by the others keeps it there, so the three-way clamp is
     /// inside the cap too - and it equals the end heights at the ends, because
     /// there the two cones meet.
+    /// The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).
     /// </summary>
     public static bool Limit(IReadOnlyList<Vector2> points, IList<float> heights, float maxGrade, IReadOnlyList<float>? edgeGrades = null)
     {

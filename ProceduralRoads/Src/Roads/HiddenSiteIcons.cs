@@ -26,7 +26,7 @@ public static class HiddenSiteIcons
 
     public static int Count { get { lock (s_gate) return s_hidden.Count; } }
 
-    /// <summary>Leave the place at <paramref name="position"/> (its location's position) off the map until a player comes near.</summary>
+    /// <summary>Leave the place at <paramref name="position"/> (its location's position) off the map until a player comes near. The one owner of hidden place pins (docs/OWNERS.md).</summary>
     public static void Hide(Vector3 position) { lock (s_gate) s_hidden[Key(position)] = position; }
 
     public static bool IsHidden(Vector3 position) { lock (s_gate) return s_hidden.ContainsKey(Key(position)); }

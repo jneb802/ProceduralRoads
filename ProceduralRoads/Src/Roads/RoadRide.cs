@@ -24,7 +24,7 @@ namespace ProceduralRoads;
 public static class RoadRide
 {
     /// <summary>Centrelines within this of each other are one road: the road's width, the Roads/RoadWidth setting (two roads
-    /// nearer than it overlap).</summary>
+    /// nearer than it overlap). The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
     public static float Reach => RoadNetworkGenerator.RoadWidth;
     /// <summary>Headings within this many degrees (either way along) are the same corridor.</summary>
     public const float Angle = 25f;
@@ -269,7 +269,7 @@ public static class RoadRide
         }
     }
 
-    /// <summary>The network's lines near <paramref name="points"/>, within <paramref name="reach"/> of any.</summary>
+    /// <summary>The network's lines near <paramref name="points"/>, within <paramref name="reach"/> of any. The one owner of A road riding or lying beside another (docs/OWNERS.md).</summary>
     public static Lines Around(IReadOnlyList<Vector2> points, float reach) => new(points, reach);
 
     /// <summary>A route's own heading at its point <paramref name="i"/>, from its points either side.</summary>

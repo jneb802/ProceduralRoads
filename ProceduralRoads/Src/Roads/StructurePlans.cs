@@ -104,7 +104,7 @@ public static class StructurePlans
 
     /// <summary>Whether the zone's structure is started: recorded as spawned, owed pieces by an append
     /// (<see cref="StructureAppendQueue"/>), or holding live pieces (<see cref="ZoneHasLivePieces"/>). The one owner of the
-    /// three facts, for <see cref="StructureSites.KeepFirstBuilt"/> and a manual road's append.</summary>
+    /// three facts, for <see cref="StructureSites.KeepFirstBuilt"/> and a manual road's append. The one owner of placing pieces into zones, and whether a zone's structure is started (docs/OWNERS.md).</summary>
     public static bool Started(Vector2s zone, ICollection<ZDOID>? condemned = null) =>
         IsSpawned(zone) || StructureAppendQueue.ForZone(zone) != null || ZoneHasLivePieces(zone, condemned);
 

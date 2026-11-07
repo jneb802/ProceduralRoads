@@ -418,7 +418,7 @@ public static class DvergrViaduct
 
     /// <summary>Whether a crossing saved before kits were recorded (format 1-2) was laid as a viaduct, by the rule it was laid
     /// under: the former pier ceiling (<see cref="FormerPierCeiling"/>) and its centre's biome, not today's Mistlands share
-    /// (BridgeStructures.InMistlands). A saved network is read as it was laid, never re-decided.</summary>
+    /// (BridgeStructures.InMistlands). A saved network is read as it was laid, never re-decided. The one owner of bridge and viaduct structure (docs/OWNERS.md).</summary>
     public static bool AppliedFormerly(RoadCrossing crossing, WorldGenerator world) =>
         Refusal(crossing, world, FormerPierCeiling, formerBiome: true) == null;
 

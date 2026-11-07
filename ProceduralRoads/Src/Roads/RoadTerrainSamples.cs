@@ -366,7 +366,7 @@ internal static class SharedTerrain
 {
     private const int TileCells = 64;
 
-    /// <summary>The tile a cell index falls in: <paramref name="i"/> over <paramref name="size"/>, rounded down.</summary>
+    /// <summary>The tile a cell index falls in: <paramref name="i"/> over <paramref name="size"/>, rounded down. The one owner of Zone, grid and cell arithmetic (docs/OWNERS.md).</summary>
     internal static int FloorDiv(int i, int size) => i >= 0 ? i / size : (i + 1) / size - 1;
     private sealed class Tile
     {

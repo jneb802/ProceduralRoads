@@ -121,7 +121,7 @@ public static class RoadRockClearing
     /// no rebuild queued, and the road's terrain at <paramref name="zonePos"/> is written
     /// (<see cref="RoadTerrainModifier.TerrainSettled"/>) or, <paramref name="orRoadless"/>, <paramref name="zone"/> has no
     /// road point for it to write. The pass asks it without (and waits for the zone's objects too); the carve's fragment
-    /// ground with it.</summary>
+    /// ground with it. The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).</summary>
     internal static bool TerrainWritten(Heightmap map, Vector3 zonePos, Vector2s zone, bool orRoadless) =>
         !map.HaveQueuedRebuild() &&
         (RoadTerrainModifier.TerrainSettled(zonePos) || orRoadless && RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);

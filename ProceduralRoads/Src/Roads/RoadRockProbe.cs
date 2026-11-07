@@ -20,6 +20,7 @@ public static class RoadRockProbe
     /// <see cref="RoadRockPolicy.PassClearsMistlandsCliffs"/> say, each rock carved
     /// (<see cref="RoadRockCarve"/>), an ore deposit like any other. The client's pass (RoadRockClearing) and the server's bake (ServerTerrainBake)
     /// both run it. <paramref name="deferCarves"/> and <paramref name="clearedCount"/>: as <see cref="Run"/>.
+    /// The one owner of which rocks a road clears or carves (docs/OWNERS.md).
     /// </summary>
     public static List<string> RunPass(Vector3 centre, float radius, List<PendingCarve>? deferCarves, out int clearedCount) =>
         Run(centre, radius, apply: true, sites: false, mist: RoadRockPolicy.PassClearsMistlandsRocks, cliffs: RoadRockPolicy.PassClearsMistlandsCliffs,

@@ -114,7 +114,7 @@ public static class PlacedSiteReader
             && SiteRock.KeepsEveryRock(instance.m_location.m_prefab.Name);
     }
 
-    /// <summary>The place's exterior radius: its rock, for leading a staircase round it.</summary>
+    /// <summary>The place's exterior radius: its rock, for leading a staircase round it. The one owner of which rocks a place keeps (docs/OWNERS.md).</summary>
     internal static float RockRadius(Vector2 centre)
     {
         Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));

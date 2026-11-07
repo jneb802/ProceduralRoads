@@ -16,6 +16,7 @@ public static class RoadIslandDetector
     /// <summary>The smallest island, in square metres, that road generation counts.</summary>
     public const float MinIslandArea = 163840;
 
+    /// <summary>The one owner of island detection (docs/OWNERS.md).</summary>
     public static List<Island> Detect(WorldGenerator wg, float minArea = MinIslandArea, float worldRadius = RoadConstants.WorldRadius,
         RoadNetworkOptions? options = null)
     {

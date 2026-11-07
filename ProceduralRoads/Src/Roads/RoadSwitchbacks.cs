@@ -54,6 +54,7 @@ public static class RoadSwitchbacks
     /// 45% of the legs beside it. Without it a contouring road reads as a
     /// series of 8 m straights with corners. Settable for tests; 0 is no
     /// rounding.
+    /// The one owner of tight turns and bend radius (docs/OWNERS.md).
     /// </summary>
     internal static float BendRadius = 24f;
 
@@ -151,6 +152,7 @@ public static class RoadSwitchbacks
     /// generator searches that stretch again with stairs open.</summary>
     [ThreadStatic] public static Vector2? LastRefusalAt;
 
+    /// <summary>The one owner of tight turns and bend radius (docs/OWNERS.md).</summary>
     public static bool Shape(List<Vector2> input, float width,
         out List<Vector2>? shaped, out List<bool>? landing, Func<Vector2, float>? heightAt = null, bool? stair = null, float? bend = null, bool? tight = null,
         Func<Vector2, bool>? held = null, Func<Vector2, bool>? onRoad = null, float? minRadius = null,

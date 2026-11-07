@@ -9,7 +9,7 @@ public static class RoadRockPolicy
     /// <summary>How far past a rock's footprint a road's or a structure's walking box can reach it: the widest of the road (the
     /// Roads/RoadWidth setting, 4 m at its default, as the carve always reached) and the decks that do not follow the setting, a
     /// viaduct's (<see cref="DvergrViaduct.HalfWidth"/>) and a Dvergr wood deck's (half its <see cref="DvergrWoodBridge.BeamLength"/>).
-    /// A narrow road setting no longer shrinks the reach under a deck's edge.</summary>
+    /// A narrow road setting no longer shrinks the reach under a deck's edge. The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     public static float CarveReach =>
         UnityEngine.Mathf.Max(RoadNetworkGenerator.RoadWidth, UnityEngine.Mathf.Max(DvergrViaduct.HalfWidth, DvergrWoodBridge.BeamLength / 2f));
 
@@ -57,6 +57,7 @@ public static class RoadRockPolicy
     /// Whether a rock standing here may be carved or removed at all: never in
     /// a zone explored before the road network reached the world
     /// (NetworkCutoff), where the rocks are the players' landscape.
+    /// The one owner of which rocks a road clears or carves (docs/OWNERS.md).
     /// </summary>
     public static bool MayTouch(UnityEngine.Vector3 position) => !NetworkCutoff.Excludes(ZoneSystem.GetZone(position));
 
@@ -378,7 +379,7 @@ public static class RoadRockPolicy
         return reach;
     }
 
-    /// <summary>Whether any clearing rule could take this prefab (every rock in <see cref="KnownRocks"/>).</summary>
+    /// <summary>Whether any clearing rule could take this prefab (every rock in <see cref="KnownRocks"/>). The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     public static bool IsClearableRock(string name) => IsNaturalBoulder(name) || IsMistlandsRock(name, true, true);
 
     /// <summary><see cref="IsClearableRock(string)"/> for a rock or the fractured copy a carve or a pickaxe left of one
@@ -411,6 +412,7 @@ public static class RoadRockPolicy
     /// standing on a road in <paramref name="biome"/>: the rule of <see cref="CanClear"/> and
     /// <see cref="CanClearMistlands"/> for a rock no player or location holds. A rock it would not take is kept off the
     /// road with the vegetation instead.
+    /// The one owner of which rocks a road clears or carves (docs/OWNERS.md).
     /// </summary>
     public static bool ClearingTakes(string name, Heightmap.Biome biome) =>
         BoulderInBiome(name, biome) || MistlandsRockInBiome(name, PassClearsMistlandsRocks, PassClearsMistlandsCliffs, biome);

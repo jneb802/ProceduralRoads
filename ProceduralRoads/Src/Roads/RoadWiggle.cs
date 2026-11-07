@@ -72,7 +72,7 @@ public static class RoadWiggle
 
     private static readonly (float wave, float weight)[] Octaves = { (97f, 0.5f), (41f, 0.33f), (17f, 0.17f) };
 
-    /// <summary>The sway in [-1,1] at a distance along a road with this phase.</summary>
+    /// <summary>The sway in [-1,1] at a distance along a road with this phase. The one owner of sway and meander (docs/OWNERS.md).</summary>
     internal static float Sway(float along, float phase)
     {
         float sum = 0f;
@@ -92,6 +92,7 @@ public static class RoadWiggle
     /// sideways; the ends stay where they are, and so do the waypoints in
     /// <paramref name="keep"/> (a structure end's stair foot and apron), the
     /// sway held round each as round a point in <see cref="HeldAt"/>.
+    /// The one owner of sway and meander (docs/OWNERS.md).
     /// </summary>
     public static List<Vector2> Apply(List<Vector2> path, Func<Vector2, float> ground, Func<Vector2, bool> wet,
         Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad = null, List<Vector2>? keep = null)

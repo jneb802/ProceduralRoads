@@ -123,6 +123,7 @@ public static partial class RoadNetworkGenerator
     /// <paramref name="allowed"/> admits; where that road is refused or not found, to the next junction the search finds away
     /// from it, up to <see cref="JoinRetries"/> more times. True where one is built, or where the network already serves it
     /// (<paramref name="served"/>, or within the search's reach of a road where none is given).
+    /// The one owner of joining a network (docs/OWNERS.md).
     /// </summary>
     internal static bool JoinTo(RoadPathfinder finder, Vector2 from, IReadOnlyList<Vector2> hints, string name,
         Vector3 position, float radius, System.Func<Vector2, bool>? allowed, System.Func<bool>? served, List<Vector2>? networkHints)

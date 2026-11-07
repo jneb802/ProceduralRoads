@@ -30,6 +30,7 @@ public static class StructurePlacement
     /// with a plan and no pieces yet gets them now: as ZDOs only under ghost
     /// generation, the way the game generates its own zones, otherwise as
     /// live objects.
+    /// The one owner of placing pieces into zones, and whether a zone's structure is started (docs/OWNERS.md).
     /// </summary>
     public static int OnZoneSpawned(Vector2s zoneID, ZoneSystem.SpawnMode mode) =>
         SpawnInZone(zoneID, mode == ZoneSystem.SpawnMode.Ghost);
@@ -114,6 +115,7 @@ public static class StructurePlacement
         return zones;
     }
 
+    /// <summary>The one owner of placing pieces into zones, and whether a zone's structure is started (docs/OWNERS.md).</summary>
     private static int SpawnInZone(Vector2s zoneID, bool ghost, ICollection<ZDOID>? condemned = null)
     {
         if (!RoadLifecycleManager.HoldsTheNetwork || ZNetScene.instance == null || ZDOMan.instance == null)

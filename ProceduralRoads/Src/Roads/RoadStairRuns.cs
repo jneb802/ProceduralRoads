@@ -258,6 +258,7 @@ public static partial class RoadStairRuns
     /// piece near the wall's height was arched where the search had priced a wall (or the other way round), and one it had
     /// refused could be laid hanging: a way onto a landing was searched on the place's own grid, the lattice's metres, out to
     /// the grid's edge, and dressed on the continuous ground past its footprint's.
+    /// The one owner of ground readers (docs/OWNERS.md).
     /// </summary>
     internal static Func<float, float, float> PlanningGround((Vector2 Centre, float Ground)? expectedPlace, WorldGenerator world)
     {
@@ -276,6 +277,7 @@ public static partial class RoadStairRuns
     /// to leave (<see cref="PlanningGround(StairRun, WorldGenerator)"/>, which its layout was searched on), the one source
     /// for both. Unknown there, an approach's last flight across its place's smoothing was left unwalled where that ground
     /// falls away under its downhill edge.
+    /// The one owner of ground readers (docs/OWNERS.md).
     /// </summary>
     internal static Func<int, int, float> FinishedGround(StairRun run, WorldGenerator world)
     {

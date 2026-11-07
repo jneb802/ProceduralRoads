@@ -41,6 +41,7 @@ public static class BiomeBlendedHeight
     /// <summary>
     /// Get terrain height with biome blending that matches rendered terrain.
     /// This replicates HeightmapBuilder.Build()'s biome blending logic exactly.
+    /// The one owner of ground readers (docs/OWNERS.md).
     /// </summary>
     public static float GetBlendedHeight(float wx, float wy, WorldGenerator worldGen) => GetBlendedHeight(wx, wy, worldGen, null);
 

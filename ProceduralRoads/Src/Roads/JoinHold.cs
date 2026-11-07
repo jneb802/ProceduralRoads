@@ -14,7 +14,7 @@ internal static class JoinHold
 
     /// <summary>Why joins are held, with how far generation is; null when nothing holds them. They are held while the world is
     /// (<see cref="RoadLifecycleManager.HoldsTheWorld"/>): a generation building or stopping, or the host being asked about an
-    /// explored world's first network. A zone streamed meanwhile would have no roads.</summary>
+    /// explored world's first network. A zone streamed meanwhile would have no roads. The one owner of joining a network (docs/OWNERS.md).</summary>
     internal static string? Reason
     {
         get

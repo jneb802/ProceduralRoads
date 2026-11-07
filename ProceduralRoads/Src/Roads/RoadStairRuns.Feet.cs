@@ -693,6 +693,7 @@ public static partial class RoadStairRuns
     /// (a staircase met by the next one on a shared floor has no road there), and none of it lies in water, on another
     /// road at another height or on another staircase's flight; its points inside a place's footprint are left out (the
     /// terrain writer leaves a place's ground alone). Each refusal is counted by why (<see cref="PadsRefused"/>).
+    /// The one owner of staircase starts (docs/OWNERS.md).
     /// </summary>
     internal static List<RoadSpatialGrid.PlannedPath> StartPads(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, IReadOnlyList<RoadStairSpan> stairs,
         WorldGenerator? world, string? label = null)

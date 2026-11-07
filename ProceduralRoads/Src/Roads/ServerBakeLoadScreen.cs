@@ -30,6 +30,7 @@ public sealed class ServerBakeLoadScreen
     public static string Text(int written, int total) =>
         total > 0 ? $"Writing road terrain: {written:N0} / {total:N0} zones" : "Writing road terrain…";
 
+    /// <summary>The one owner of server work (docs/OWNERS.md).</summary>
     public static float Fraction(int written, int total) =>
         total > 0 ? System.Math.Min(1f, System.Math.Max(0f, (float)written / total)) : 0f;
 

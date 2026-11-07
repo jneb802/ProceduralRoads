@@ -56,7 +56,7 @@ public static class StairSupport
     /// another way (StairCorniceDepthTests).
     /// </summary>
     public const int MostHungCourses = 6;
-    /// <summary>A wall's courses go on until the lowest is sunk this far into the ground at every corner (as columns were).</summary>
+    /// <summary>A wall's courses go on until the lowest is sunk this far into the ground at every corner (as columns were). The one owner of Supports, foundations and burial (docs/OWNERS.md).</summary>
     public const float Bury = 0.25f;
     /// <summary>Most courses a wall cell stands: a wall's height of air under its piece (<see cref="WallHeight"/>) and the
     /// deepest a road's earthwork lowers the ground under it (<see cref="RoadConstants.TerrainDeltaMin"/>), and some.
@@ -182,6 +182,7 @@ public static class StairSupport
     /// the downhill side the other. Black marble is priced by its deepest cornice course whether the piece turns out a square
     /// turn's corner or not (which the pieces after it decide): a corner's column of outcorners, stepping back from its
     /// open end too, goes down to its own block in the ground (CornerCourse), about as deep.
+    /// The one owner of Supports, foundations and burial (docs/OWNERS.md).
     /// </summary>
     public static Choice Choose(StairKit kit, Walk w, Func<float, float, float> ground)
     {

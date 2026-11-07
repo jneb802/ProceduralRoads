@@ -124,7 +124,7 @@ public readonly struct RoadEndRing
     /// hammer's sixteen headings that leaves the circle outward (within <see cref="MostSkew"/> of the arc point's radial: a
     /// flight does not set off across the front of the ring), whose first piece of <paramref name="width"/> keeps out of
     /// the circle and the lane and whose foot is not walked off across the road (<see cref="WalksOffAcross"/>), cheapest
-    /// first.</summary>
+    /// first. The one owner of staircase starts (docs/OWNERS.md).</summary>
     public List<Start> Starts(float width)
     {
         var starts = new List<Start>();
@@ -148,7 +148,7 @@ public readonly struct RoadEndRing
     /// <summary>Whether a first piece of <paramref name="width"/> may set off from <paramref name="at"/> on the circle on
     /// <paramref name="heading"/>, as <see cref="Starts"/> takes a start: not from a cut arc, within <see cref="MostSkew"/> of
     /// its arc point's radial, its footprint out of the circle and the lane, not walked off across the road. For a start the
-    /// ring did not lay out itself (RoadStairRuns.CarryRoadOntoStairs: a ring put a radius behind a staircase's first stair).</summary>
+    /// ring did not lay out itself (RoadStairRuns.CarryRoadOntoStairs: a ring put a radius behind a staircase's first stair). The one owner of staircase starts (docs/OWNERS.md).</summary>
     public bool Allows(Vector2 at, float heading, float width)
     {
         if (Mathf.Abs(Vector2.Distance(at, Centre) - Radius) > 0.05f) return false;

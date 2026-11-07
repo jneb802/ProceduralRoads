@@ -184,6 +184,7 @@ public static partial class RoadNetworkGenerator
 
     #endregion
 
+    /// <summary>The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
     public static float RoadWidth = RoadConstants.DefaultRoadWidth;
     /// <summary>The shipped Roads.IslandRoadPercentage.</summary>
     public const int DefaultIslandRoadPercentage = 33;
@@ -279,7 +280,7 @@ public static partial class RoadNetworkGenerator
     /// none on a crossing and none on a staircase, since a join aimed at one built a second bridge out to a waypoint in
     /// mid-river, and there is no road on a staircase to join. Generation adds its hints as it builds, from the road's own
     /// path; a stored network has no paths, so these are its points within half a road width of a crossing's banks or a
-    /// staircase's ends, bank to bank and end to end, dropped.</summary>
+    /// staircase's ends, bank to bank and end to end, dropped. The one owner of joining a network (docs/OWNERS.md).</summary>
     internal static List<Vector2> JoinTargets(Func<Vector2, bool> allowed)
     {
         var spans = new List<(Vector2 a, Vector2 b)>();
@@ -376,7 +377,7 @@ public static partial class RoadNetworkGenerator
         return served;
     }
 
-    /// <summary><see cref="Reached(Vector2, float, string?)"/> for a place's world position.</summary>
+    /// <summary><see cref="Reached(Vector2, float, string?)"/> for a place's world position. The one owner of what counts as reached (docs/OWNERS.md).</summary>
     internal static bool Reached(Vector3 centre, float radius, string? name = null) => Reached(new Vector2(centre.x, centre.z), radius, name);
 
     /// <summary>How far past a place's keep-out edge (<see cref="KeepOutEdge"/>) the network may run and still reach
@@ -928,7 +929,7 @@ public static partial class RoadNetworkGenerator
     /// <summary>Whether a road's end at the place at <paramref name="centre"/> (exterior <paramref name="radius"/>, as
     /// asked) is already reached by other network, so the road's own stub there may be dropped (<see cref="DropStubs"/>):
     /// the one reached test (<see cref="Reached"/>), with the place's name, so a boss's entrance not placed first keeps its
-    /// own stub. An end with no place (radius 0) is a junction on the network.</summary>
+    /// own stub. An end with no place (radius 0) is a junction on the network. The one owner of what counts as reached (docs/OWNERS.md).</summary>
     internal static bool EndReached(Vector2 centre, float radius) =>
         radius <= 0f || RoadSpatialGrid.IsInitialized && Reached(centre, radius, PrefabAt(centre));
 
@@ -1029,7 +1030,7 @@ public static partial class RoadNetworkGenerator
     /// onto it (<see cref="PlacedSites.MarkLanded"/>: laid to its landing's level ground, <see cref="PlacedSiteShape.Aims"/>),
     /// or road or a staircase's walked piece is near the shape's landing point, level with the ground there
     /// (<see cref="NetworkNear"/>, as every other place: without a height guard network 20-45 m under a landing counted
-    /// it reached).</summary>
+    /// it reached). The one owner of what counts as reached (docs/OWNERS.md).</summary>
     internal static bool LandingReached(PlacedSite site) =>
         PlacedSites.Landed(site.Centre) || NetworkNear(site.Shape.Landing, LandingReach, site.LandingHeight);
 
@@ -2112,6 +2113,7 @@ public static partial class RoadNetworkGenerator
     /// paints the road is carried on, stored into the site so it levels and paints there only along
     /// itself (<see cref="RoadSpatialGrid.Commit"/>). A place placed first keeps its whole footprint: its road is
     /// carried on onto its landing by its own owner (<see cref="PlanEntry"/>).
+    /// The one owner of A place's ring, doors and keep-out edge (docs/OWNERS.md).
     /// </summary>
     internal static float KeepOutEdge(Vector2 centre, float radius, float width) =>
         KeepOutEdge(centre, radius, width, PlacedSites.TryGetReady(centre, out _));
@@ -3427,7 +3429,7 @@ public static partial class RoadNetworkGenerator
     /// <summary>The terrain limit a planned road is held to, metres of cut or
     /// fill (vanilla TerrainComp clamps level deltas to +/-8 m). A road still
     /// past it after the re-route retries is refused. Settable for tests; 0 is
-    /// off.</summary>
+    /// off. The one owner of the earthwork cap (docs/OWNERS.md).</summary>
     internal static float EarthworkCap = DefaultEarthworkCap;
 
     /// <summary>The cap a game runs with: the level-delta clamp the game itself applies (<see cref="RoadConstants.TerrainDeltaMax"/>).</summary>
@@ -3446,14 +3448,14 @@ public static partial class RoadNetworkGenerator
     /// <summary>Whether a cap is set (<see cref="EarthworkCap"/>): the searches that keep a road within it run only then.</summary>
     internal static bool EarthworkCapped => EarthworkCap > 0f;
 
-    /// <summary>The limit a road, a landing or an end is judged by: <see cref="EarthworkCap"/>, or none (infinity) without one.</summary>
+    /// <summary>The limit a road, a landing or an end is judged by: <see cref="EarthworkCap"/>, or none (infinity) without one. The one owner of the earthwork cap (docs/OWNERS.md).</summary>
     internal static float EarthworkLimit => EarthworkCap > 0f ? EarthworkCap : float.PositiveInfinity;
 
     /// <summary>How far ground is shaped within <paramref name="limit"/>: never past what the terrain moves
     /// (<see cref="RoadConstants.TerrainDeltaMax"/>).</summary>
     internal static float Shaped(float limit) => Mathf.Min(limit, RoadConstants.TerrainDeltaMax);
 
-    /// <summary><see cref="Shaped(float)"/> of <see cref="EarthworkLimit"/>: the cap, or without one the terrain's own limit.</summary>
+    /// <summary><see cref="Shaped(float)"/> of <see cref="EarthworkLimit"/>: the cap, or without one the terrain's own limit. The one owner of the earthwork cap (docs/OWNERS.md).</summary>
     internal static float ShapedLimit => Shaped(EarthworkLimit);
 
     /// <summary>Crossings that may not be built, counted into the earthwork re-route so the search goes round them:
@@ -3586,12 +3588,12 @@ public static partial class RoadNetworkGenerator
     private static int m_offLandEnds;
     internal static (int reroutes, int unavoided) EarthworkCounts => (m_earthworkReroutes, m_earthworkUnavoided);
 
-    /// <summary>Why a road past the earthwork cap is refused (<see cref="BuiltRoadRefusal"/>).</summary>
+    /// <summary>Why a road past the earthwork cap is refused (<see cref="BuiltRoadRefusal"/>). The one owner of where a road may go (docs/OWNERS.md).</summary>
     internal static string EarthworkRefusal => $"earthwork past the {EarthworkCap:F0} m terrain limit";
 
     /// <summary>Whether a road point at <paramref name="p"/> stored at <paramref name="height"/> is past <paramref name="cap"/>
     /// of earthwork: the one reading of a point against the cap (<see cref="PastTerrainLimit(List{RoadSpatialGrid.PlannedPath}, float, List{Vector2})"/>,
-    /// and a point known before its road is planned, RoadStairRuns.RoadOnto).</summary>
+    /// and a point known before its road is planned, RoadStairRuns.RoadOnto). The one owner of the earthwork cap (docs/OWNERS.md).</summary>
     internal static bool PastTerrainLimit(Vector2 p, float height, float cap, WorldGenerator? world = null) =>
         PastTerrainLimit(height, BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world ?? GenerationWorld), cap);
 
@@ -3599,7 +3601,7 @@ public static partial class RoadNetworkGenerator
     internal static bool PastTerrainLimit(float height, float ground, float cap) => Mathf.Abs(height - ground) > cap;
 
     /// <summary>Whether ground cut or filled to <paramref name="height"/> from <paramref name="ground"/> stays within <paramref name="cap"/>.
-    /// Not <c>!PastTerrainLimit</c>: an unknown (NaN) height or ground is neither.</summary>
+    /// Not <c>!PastTerrainLimit</c>: an unknown (NaN) height or ground is neither. The one owner of the earthwork cap (docs/OWNERS.md).</summary>
     internal static bool WithinTerrainLimit(float height, float ground, float cap) => Mathf.Abs(height - ground) <= cap;
 
     /// <summary>Points of the plans (not wades) cut or filled past <paramref name="cap"/>, listed in <paramref name="where"/>.</summary>
@@ -3634,7 +3636,7 @@ public static partial class RoadNetworkGenerator
     public const float JunctionFillLimit = 4f;
 
     /// <summary>Stretches of <paramref name="plans"/> held to a road already laid on more than
-    /// <see cref="JunctionFillLimit"/> of fill; each one's worst point goes in <paramref name="where"/>.</summary>
+    /// <see cref="JunctionFillLimit"/> of fill; each one's worst point goes in <paramref name="where"/>. The one owner of trench and ridge (docs/OWNERS.md).</summary>
     private static int HeldRidges(List<RoadSpatialGrid.PlannedPath> plans, List<Vector2>? where) =>
         CountJunctions(plans, j => j.Earth > JunctionFillLimit, where);
 
@@ -3938,6 +3940,7 @@ public static partial class RoadNetworkGenerator
     /// staircase is laid. <paramref name="fromMeet"/> and <paramref name="toMeet"/>: where the road meets each end, where that is
     /// not the end recorded (a road's own staircase, recorded at the path points it climbs: its span's ends);
     /// <paramref name="expectedPlace"/>: an approach's place, laid out over the ground it is expected to leave.
+    /// The one owner of joining a network (docs/OWNERS.md).
     /// </summary>
     private static void JoinNetwork(Vector2 from, Vector2 to, StairPlan plan, StairKit kit, bool atPlace, Vector2? fromMeet = null, Vector2? toMeet = null,
         (Vector2 Centre, float Ground)? expectedPlace = null)

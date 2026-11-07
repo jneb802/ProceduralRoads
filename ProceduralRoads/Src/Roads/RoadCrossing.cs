@@ -910,6 +910,7 @@ public static class RoadCrossingDetector
     /// swamp, a bed down to the deep line with no sailable stretch a boat's length long; elsewhere, a bed at wading depth
     /// with nothing sailable. Anything else is a bridge. <paramref name="riverbed"/> and <paramref name="fairwayWidth"/>
     /// are the <see cref="Profile"/> of the bank-to-bank line, <paramref name="swamp"/> the biome at its middle.
+    /// The one owner of ford or bridge (docs/OWNERS.md).
     /// </summary>
     internal static bool IsFord(float jumpLength, bool swamp, float riverbed, float fairwayWidth) =>
         WithinFordCap(jumpLength) && (swamp
@@ -921,6 +922,7 @@ public static class RoadCrossingDetector
     /// <see cref="Build"/> measures a path segment: the water's edge on each side (<see cref="Shore"/>), the river along
     /// the line between them at 1 m (<see cref="Profile"/>), the biome at its middle. A jump past the ford cap is a bridge
     /// without reading the water.
+    /// The one owner of ford or bridge (docs/OWNERS.md).
     /// </summary>
     internal static bool IsFordJump(Vector2 a, Vector2 b, WorldGenerator world)
     {

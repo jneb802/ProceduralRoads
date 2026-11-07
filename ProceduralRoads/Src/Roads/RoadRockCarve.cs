@@ -26,7 +26,7 @@ public static class RoadRockCarve
 {
     public enum Outcome { Carved, Removed, Untouched, NotCarvable }
 
-    /// <summary>How far past a rock's footprint a road or structure can touch it (<see cref="RoadRockPolicy.CarveReach"/>).</summary>
+    /// <summary>How far past a rock's footprint a road or structure can touch it (<see cref="RoadRockPolicy.CarveReach"/>). The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
     internal static float WidestRoadHalfWidth => RoadRockPolicy.CarveReach;
 
     /// <summary>Strips across the clearance the way
@@ -59,6 +59,7 @@ public static class RoadRockCarve
     /// game destroys once the zone is populated, leaving only their data.</summary>
     internal static List<GameObject>? GhostSpawned;
 
+    /// <summary>The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     public static Result Carve(GameObject root)
     {
         var result = new Result { outcome = Outcome.NotCarvable, note = "" };

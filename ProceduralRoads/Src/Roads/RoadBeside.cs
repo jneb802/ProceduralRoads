@@ -17,7 +17,7 @@ public static class RoadBeside
     /// <see cref="Current"/>, the Roads/RoadWidth setting's (RoadStairRuns.ParallelReach, a constant, still reads this one).</summary>
     public const float Reach = RoadConstants.DefaultRoadWidth + RoadConstants.TerrainBlendMargin;
 
-    /// <summary>The reach at the Roads/RoadWidth setting: the road's width and its terrain blend.</summary>
+    /// <summary>The reach at the Roads/RoadWidth setting: the road's width and its terrain blend. The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
     public static float Current => RoadNetworkGenerator.RoadWidth + RoadConstants.TerrainBlendMargin;
     /// <summary>Nearer than this a road is on the other road: the trunk the two share, not beside it.</summary>
     public const float OnRoad = 1f;
@@ -39,7 +39,7 @@ public static class RoadBeside
     /// <summary>Whether <paramref name="p"/>, at <paramref name="height"/>, is on a road (within <see cref="OnRoad"/>),
     /// beside one at its height (within <see cref="Current"/> across and <see cref="Height"/> of its surface), or off. The
     /// road is the network's line (<see cref="RoadRide.Lines"/>): a structure in a road's place (a crossing, a staircase)
-    /// is road here, so a road along it is on it or beside it as along any road.</summary>
+    /// is road here, so a road along it is on it or beside it as along any road. The one owner of A road riding or lying beside another (docs/OWNERS.md).</summary>
     public static Place At(RoadRide.Lines lines, Vector2 p, float height)
     {
         if (!lines.Nearest(p, Current, out RoadRide.Hit other)) return Place.Off;

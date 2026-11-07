@@ -67,6 +67,7 @@ public static class RoadPitches
     /// The one prediction of "the road can climb to this foot": a foot's road was read climbing at the cap right up to it,
     /// where its last 6 m rise 0.3 m. A pitch beside the landing is not counted: PlacePitches lays one only where the climb
     /// needs it, and the limiter holds the road at the cap, so counting it predicted more climb than is built.
+    /// The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).
     /// </summary>
     public static float ClimbToFoot(float run, float cap)
     {
@@ -76,7 +77,7 @@ public static class RoadPitches
     }
 
     /// <summary>Hold the edges within <paramref name="length"/> metres of a
-    /// joined end to the landing grade; returns the (possibly new) array.</summary>
+    /// joined end to the landing grade; returns the (possibly new) array. The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).</summary>
     public static float[] ApplyJunctionLanding(IReadOnlyList<Vector2> points, float[]? edgeGrades, float cap,
         bool atStart, bool atEnd, float length)
     {
@@ -101,6 +102,7 @@ public static class RoadPitches
     /// road is left as it was if it keeps within the cap into that end (<see cref="PitchedInto"/>), as a road planned to a
     /// staircase's foot is (RoadSpatialGrid.PlanRoadPathCore); false where a pitch runs into it. For a staircase laid from a
     /// road's end once the road was planned (RoadNetworkGenerator.SiteApproaches).
+    /// The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).
     /// </summary>
     public static bool LandEnd(IReadOnlyList<Vector2> points, IList<float> heights, bool atStart, float cap)
     {
@@ -160,7 +162,7 @@ public static class RoadPitches
     internal static float SpacingNoise(Vector2 at) => RoadEarthworkNoise.Perlin01(at.x * 0.037f + 11.1f, at.y * 0.037f - 7.3f);
 
     /// <summary>Per-edge grade limits with pitches and eases placed, or null
-    /// when no climb takes an ease (the caller's limits stand).</summary>
+    /// when no climb takes an ease (the caller's limits stand). The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).</summary>
     public static float[]? PlacePitches(IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, float cap, float[]? edgeGrades,
         float? pitchGrade = null, float? pitchLength = null, float? everyMin = null, float? everyMax = null,
         float? easeMin = null, float? easeMax = null, float? easeGrade = null, float? minGrade = null,

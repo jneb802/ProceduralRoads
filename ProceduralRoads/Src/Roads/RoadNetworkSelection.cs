@@ -28,7 +28,7 @@ public static class RoadNetworkSelection
     /// <summary>Destinations an island earns: eight, plus four for every two
     /// square kilometres, capped by MaxLocationsPerIsland. One formula and one
     /// cap - the density multiplier this replaced was a third knob that could
-    /// only be set to a value the other two already expressed.</summary>
+    /// only be set to a value the other two already expressed. The one owner of which places get a road and which connect (docs/OWNERS.md).</summary>
     public static int Quota(float area, int cap)
     {
         double requested = (2 + Math.Floor(Math.Max(0, area) / 2000000d)) * 4;

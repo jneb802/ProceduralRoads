@@ -207,7 +207,7 @@ public sealed class BridgeStructures : IStructureSource
 
     /// <summary>Whether a crossing is a Mistlands one, as a staircase is (<see cref="StairKit.InMistlands"/>: at least
     /// <see cref="StairKit.MistlandsShare"/> of it in the Mistlands), over its length from bank to bank (its pieces are chosen
-    /// by the answer, so they cannot be what it counts). The one owner for the kit, the viaduct's refusal and the deck's width.</summary>
+    /// by the answer, so they cannot be what it counts). The one owner for the kit, the viaduct's refusal and the deck's width. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
     public static bool InMistlands(RoadCrossing crossing, WorldGenerator world) =>
         StairKit.InMistlands(StairKit.Samples(new[] { crossing.FromBank, crossing.ToBank }), (x, z) => world.GetBiome(x, z));
 
@@ -216,6 +216,7 @@ public sealed class BridgeStructures : IStructureSource
     /// the plan, the append queue and the counts all come through here.
     /// Every piece carries its crossing and the kit it was solved in (<see cref="StructurePiece.Kit"/>): the kit saved when
     /// the first is built (<see cref="ChooseKits"/>), whatever the kits that fit by then.
+    /// The one owner of bridge and viaduct structure (docs/OWNERS.md).
     /// </summary>
     public static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int seed) =>
         Solve(crossing, world, seed, StructureWear.Bridges);

@@ -50,7 +50,7 @@ public static partial class RoadNetworkGenerator
     internal static readonly int DoorWeight = 3;
 
     /// <summary>The ring a place's doors stand on: where the road's trim leaves it (<see cref="KeepOutEdge(Vector2, float, float, bool)"/>),
-    /// out by <see cref="PlacedSites.AimOut"/>. The record of a place placed first covers it (SitesFirstLoad.Read).</summary>
+    /// out by <see cref="PlacedSites.AimOut"/>. The record of a place placed first covers it (SitesFirstLoad.Read). The one owner of A place's ring, doors and keep-out edge (docs/OWNERS.md).</summary>
     internal static float DoorRing(Vector2 centre, float radius, float width, bool placed) =>
         KeepOutEdge(centre, radius, width, placed) + PlacedSites.AimOut;
 

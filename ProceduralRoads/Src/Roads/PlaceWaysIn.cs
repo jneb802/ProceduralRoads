@@ -77,6 +77,7 @@ public static class PlaceWaysIn
     /// A way into <paramref name="place"/> along <paramref name="points"/> at <paramref name="heights"/>, in either order:
     /// its last <see cref="RoadStairRuns.SiteReach"/> along it to its end nearer the place, outer end first; the whole of it
     /// where it is <paramref name="whole"/> (a staircase). Null where it has no length.
+    /// The one owner of ways into a place, and twin ways (docs/OWNERS.md).
     /// </summary>
     public static Way? Of(IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, Vector2 place, bool whole = false, StairRun? approach = null,
         bool? placeEndIsLast = null)
@@ -145,7 +146,7 @@ public static class PlaceWaysIn
     /// <see cref="SameSideAngle"/> of it toward the place, over its last stretch (outer end to inner) or
     /// as it steps onto the place (<see cref="Way.Arrival"/>), climbing, coming down or level as it does; not where one
     /// carries on from the other (the foot of one at the other's top, within <see cref="RoadStairRuns.MeetReach"/>). Judged by
-    /// the ways themselves, never by where their roads go on from their outer ends.</summary>
+    /// the ways themselves, never by where their roads go on from their outer ends. The one owner of ways into a place, and twin ways (docs/OWNERS.md).</summary>
     public static bool SameWay(Way mine, Way theirs)
     {
         if (mine.Rise != theirs.Rise) return false;
@@ -209,6 +210,7 @@ public static class PlaceWaysIn
     /// test), each pair once, with a line naming the place and both ways by their ends. Read over the network as it stands
     /// (its approach staircases, <see cref="RoadStairRuns.PlaceOf"/>, and the roads recorded arriving as road), whether or
     /// not the rule was on: the invariant beside the staircase-end audit (StairEnds), which a gate holds at none.
+    /// The one owner of ways into a place, and twin ways (docs/OWNERS.md).
     /// </summary>
     public static List<(Vector2 place, Way first, Way second, string line)> Twins()
     {

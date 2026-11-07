@@ -192,7 +192,7 @@ public sealed class StairKit
         _ => null,
     };
 
-    /// <summary>The kit named <paramref name="name"/>; stone for none: the one default every caller reads.</summary>
+    /// <summary>The kit named <paramref name="name"/>; stone for none: the one default every caller reads. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
     public static StairKit Of(string name) => Named(name) ?? Stone;
 
     /// <summary>The kit a piece's prefab names (the part before its first underscore); stone for none.</summary>
@@ -249,7 +249,7 @@ public sealed class StairKit
         InMistlands(places, biomeAt) ? BlackMarble : Stone;
 
     /// <summary>The one owner of "this structure is Mistlands": at least <see cref="MistlandsShare"/> of
-    /// <paramref name="places"/> (a staircase's walked pieces, a bridge's length) are in the Mistlands; none are not.</summary>
+    /// <paramref name="places"/> (a staircase's walked pieces, a bridge's length) are in the Mistlands; none are not. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
     public static bool InMistlands(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt)
     {
         int mist = 0;

@@ -67,7 +67,7 @@ public static class StairEnds
 
     /// <summary>The two far corners of the floor an exit edge at <paramref name="edge"/> (walked out on <paramref name="dir"/>,
     /// <paramref name="width"/> wide) would take: a floor's size out, at either side of its width (a piece's at least).
-    /// The one place the ground off an exit edge is read.</summary>
+    /// The one place the ground off an exit edge is read. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static (Vector2 left, Vector2 right) Corners(Vector2 edge, Vector2 dir, float width)
     {
         Vector2 right = new Vector2(dir.y, -dir.x), far = edge + dir * StairLayout.PieceRun;
@@ -75,7 +75,7 @@ public static class StairEnds
         return (far - right * half, far + right * half);
     }
 
-    /// <summary>The drops at the two far corners (<see cref="Corners"/>) off an exit edge at <paramref name="height"/>: left, right.</summary>
+    /// <summary>The drops at the two far corners (<see cref="Corners"/>) off an exit edge at <paramref name="height"/>: left, right. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static (float left, float right) Drops(Vector2 edge, Vector2 dir, float height, float width, Func<float, float, float> ground)
     {
         var (l, r) = Corners(edge, dir, width);
@@ -83,7 +83,7 @@ public static class StairEnds
     }
 
     /// <summary>The case for two corners' drops (<see cref="Drops"/>): the same case, else a floor where either is within
-    /// a step, else the gentler; <paramref name="disagree"/> where they differ. NaN corners (no ground read) are left out.</summary>
+    /// a step, else the gentler; <paramref name="disagree"/> where they differ. NaN corners (no ground read) are left out. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static Case Choose(float left, float right, out bool disagree)
     {
         disagree = false;
@@ -105,7 +105,7 @@ public static class StairEnds
     /// <summary>How far the ground ahead of an exit edge at <paramref name="edge"/> stands over its walking height
     /// <paramref name="height"/>: read at the two far corners of the floor it would take (<see cref="Corners"/>, a floor out),
     /// the gentler of the two (<see cref="Gentler"/>). The one reading of the ground ahead of a top, for the search's arrival
-    /// and a road top's finish; each keeps its own band.</summary>
+    /// and a road top's finish; each keeps its own band. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static float OverAhead(Vector2 edge, Vector2 dir, float height, float width, Func<float, float, float> ground)
     {
         var (l, r) = Drops(edge, dir, height, width, ground);
@@ -153,7 +153,7 @@ public static class StairEnds
     /// (<paramref name="back"/> edge's middle, <paramref name="dir"/>, <paramref name="right"/>, <paramref name="depth"/> along,
     /// <paramref name="across"/>), <paramref name="margin"/> off it at most, and its walking SURFACE at <paramref name="q"/> (a
     /// stair's rises over its run from <paramref name="surfaceAtBack"/>) stands within <see cref="StairLayout.TopFloorBand"/>
-    /// of <paramref name="height"/>.</summary>
+    /// of <paramref name="height"/>. The one owner of is this edge walked across (rails, stair ends) (docs/OWNERS.md).</summary>
     internal static bool Walks(Vector2 back, Vector2 dir, Vector2 right, float depth, float across, float surfaceAtBack, bool stair,
         Vector2 q, float height, float margin)
     {

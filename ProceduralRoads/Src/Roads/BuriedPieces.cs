@@ -71,6 +71,7 @@ public static class BuriedPieces
     /// wholly under the ground: the lowest of the game's terrain mesh over its footprint grown by
     /// <see cref="SupportGraph.Reach"/> at or above its top. <paramref name="vertex"/>: the ground at a whole-metre vertex
     /// (NaN where not known: then never). A piece tipped off level or of unknown bounds is never buried.
+    /// The one owner of Supports, foundations and burial (docs/OWNERS.md).
     /// </summary>
     public static bool Buried(string prefab, Vector3 position, float yawDegrees, Func<int, int, float> vertex, float pitchDegrees = 0f)
     {

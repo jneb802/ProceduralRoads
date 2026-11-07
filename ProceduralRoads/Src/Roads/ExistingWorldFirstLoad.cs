@@ -49,6 +49,7 @@ public static class ExistingWorldFirstLoad
     /// The one decision. <paramref name="explored"/>: zones the save had generated before this session;
     /// <paramref name="skippedBefore"/>: an earlier first load skipped the roads; <paramref name="playerInWorld"/>:
     /// the host is already in the world, past the loading screen that asks.
+    /// The one owner of the explored-world question at first load (docs/OWNERS.md).
     /// </summary>
     public static Decision Decide(int explored, bool skippedBefore, ExistingWorldRoads setting, bool canAsk, bool playerInWorld)
     {

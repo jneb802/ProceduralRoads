@@ -162,7 +162,7 @@ public static class SupportGraph
         return (float)(Math.Acos(cos) * 180.0 / Math.PI);
     }
 
-    /// <summary>The support each piece settles at, in the order given.</summary>
+    /// <summary>The support each piece settles at, in the order given. The one owner of Supports, foundations and burial (docs/OWNERS.md).</summary>
     public static float[] Settle(IReadOnlyList<Piece> pieces)
     {
         int n = pieces.Count;

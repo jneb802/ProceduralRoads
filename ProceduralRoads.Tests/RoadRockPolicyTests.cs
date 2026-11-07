@@ -141,6 +141,65 @@ public class RoadRockPolicyTests
     }
 
     /// <summary>
+    /// A rock through a bridge's deck goes whole, whatever the biome rule: a 49 m rock4_coast in the Mistlands (no
+    /// clearing biome for a coastal boulder) spanning a deck was kept by the road's rule and stood through the deck. The
+    /// same rock beside a plain road there is kept, as before. The pass (RoadRockProbe) asks these two questions per rock;
+    /// its physics cannot run offline.
+    /// </summary>
+    [Theory]
+    [InlineData("rock4_coast", Heightmap.Biome.Mistlands)]
+    [InlineData("rock4_coast", Heightmap.Biome.AshLands)]
+    [InlineData("rock1_mountain", Heightmap.Biome.DeepNorth)]
+    [InlineData("rock_mistlands1", Heightmap.Biome.Plains)]
+    [InlineData("cliff_mistlands1", Heightmap.Biome.Meadows)]
+    public void ARockThroughADeckGoesWholeInABiomeTheRoadKeepsItIn(string name, Heightmap.Biome biome)
+    {
+        bool mist = RoadRockPolicy.PassClearsMistlandsRocks, cliffs = RoadRockPolicy.PassClearsMistlandsCliffs;
+        bool clears = RoadRockPolicy.CanClear(name, true, biome, false, false, true, true, true) ||
+            RoadRockPolicy.CanClearMistlands(name, mist, cliffs, true, biome, false, false, true, true, true);
+        Assert.False(clears, "the road's rule keeps it");
+        bool deck = RoadRockPolicy.DeckTakes(name, mist, cliffs, false, false, true, true, true);
+        Assert.True(deck, "the deck takes it");
+        Assert.Equal(RoadRockPolicy.Taking.Keep, RoadRockPolicy.HowTaken(clears, deck, onDeck: false, name, 49.4f, networked: true));
+        Assert.Equal(RoadRockPolicy.Taking.RemoveWhole, RoadRockPolicy.HowTaken(clears, deck, onDeck: true, name, 49.4f, networked: true));
+    }
+
+    /// <summary>A rock through a deck in a clearing biome went whole before and still does; beside the road it is carved.
+    /// A deposit through a deck goes whole too (it was kept for its ore), and beside the road is still carved.</summary>
+    [Theory]
+    [InlineData("rock1_mountain", Heightmap.Biome.Mountain)]
+    [InlineData("rock4_copper", Heightmap.Biome.BlackForest)]
+    [InlineData("silvervein", Heightmap.Biome.Mountain)]
+    public void EveryRockThroughADeckGoesWholeADepositToo(string name, Heightmap.Biome biome)
+    {
+        bool clears = RoadRockPolicy.CanClear(name, true, biome, false, false, true, true, true);
+        bool deck = RoadRockPolicy.DeckTakes(name, true, true, false, false, true, true, true);
+        Assert.True(clears && deck);
+        Assert.Equal(RoadRockPolicy.Taking.Carve, RoadRockPolicy.HowTaken(clears, deck, onDeck: false, name, 40f, networked: true));
+        Assert.Equal(RoadRockPolicy.Taking.RemoveWhole, RoadRockPolicy.HowTaken(clears, deck, onDeck: true, name, 40f, networked: true));
+        // A deposit beside the road with nothing to carve stays, ore and all, as before.
+        Assert.Equal(RoadRockPolicy.IsResourceDeposit(name) ? RoadRockPolicy.Taking.Keep : RoadRockPolicy.Taking.RemoveWhole,
+            RoadRockPolicy.HowTaken(clears, deck, onDeck: false, name, 40f, networked: false));
+    }
+
+    /// <summary>What still keeps a rock through a deck: a place holding it (a part of a location, a place's own rock on its
+    /// approach), a player's piece, another peer's (or a not yet valid) rock, and anything the clearing does not know as a rock.</summary>
+    [Fact]
+    public void ADeckKeepsAPlacesAPlayersAndAnotherPeersRock()
+    {
+        const string name = "rock4_coast";
+        bool Deck(bool protectedSite, bool piece, bool valid, bool owned) =>
+            RoadRockPolicy.DeckTakes(name, true, true, protectedSite, piece, true, valid, owned);
+        Assert.False(Deck(protectedSite: true, piece: false, valid: true, owned: true), "a place's own rock");
+        Assert.False(Deck(protectedSite: false, piece: true, valid: true, owned: true), "a player's piece");
+        Assert.False(Deck(protectedSite: false, piece: false, valid: true, owned: false), "another peer's");
+        Assert.False(Deck(protectedSite: false, piece: false, valid: false, owned: false), "not yet valid");
+        foreach (string other in new[] { "MineRock_Tin", "Beech1", "Pickable_Stone", "rock1_mountain_frac" })
+            Assert.False(RoadRockPolicy.DeckTakes(other, true, true, false, false, true, true, true), other);
+        Assert.Equal(RoadRockPolicy.Taking.Keep, RoadRockPolicy.HowTaken(false, false, onDeck: true, name, 49.4f, networked: true));
+    }
+
+    /// <summary>
     /// Copper and silver deposits are carved like boulders (this replaces "resource rocks stay").
     /// Each is a Destructible whose first hit swaps it for a networked fractured MineRock5, which the carve handles
     /// as it does a boulder; tin is a MineRock_Tin with no fractured version and stays.

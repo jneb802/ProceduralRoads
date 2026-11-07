@@ -4348,8 +4348,8 @@ public static partial class RoadNetworkGenerator
             return null;
 
         // Between two structures (a crossing's end and a staircase, or two crossings' ends), no stub of road. A stretch
-        // shorter than StructureEnds.StubLength is one level landing at the joining height: within a step (StepTolerance) of
-        // both it is that; further apart the road is not planned so (the stretch is levelled to the crossing's end all the
+        // shorter than StructureEnds.StubLength is one level landing at the joining height: where both share it
+        // (StructureEnds.SharesLanding) it is that; further apart the road is not planned so (the stretch is levelled to the crossing's end all the
         // way, and a staircase's foot is always at the road's height where it starts). A crossing this road builds is not
         // built with it, and the road is searched again without it (GenerateRoadCore); another road's is met as it stands.
         // Two staircases of one road keep their own meeting (StairChain).

@@ -31,10 +31,6 @@ public readonly struct RoadEndRing
     /// the ring (RoadStairRuns.JoiningStep). Past it the rest of the road is OverRoad's.</summary>
     public const float CorridorLength = RoadStairRuns.JoiningStep;
 
-    /// <summary>At a top, a floor this near the road's height is where the road comes onto it, level (a top landing the road
-    /// meets from any side): not a crossing. Only its flight counts there.</summary>
-    public const float LevelWithRoad = StairLayout.StepUp;
-
     /// <summary>A walked piece's sample this far over the lane's or the inner circle's edge is on it (a piece placed on the
     /// line, not over it).</summary>
     public const float Margin = 0.05f;
@@ -229,7 +225,9 @@ public readonly struct RoadEndRing
             if (p.Kind == StairPieceKind.Support) continue;
             float surface = StairLayout.CentreSurface(p);
             if (Mathf.Abs(surface - Height) > RoadStairRuns.JunctionHeight) continue;
-            if (top && p.Kind != StairPieceKind.Stair && Mathf.Abs(surface - Height) <= LevelWithRoad) continue;
+            // At a top, a floor a walker's step off the road's height (StairLayout.Walkable) is where the road comes onto it,
+            // level (a top landing the road meets from any side): not a crossing. Only its flight counts there.
+            if (top && p.Kind != StairPieceKind.Stair && StairLayout.Walkable(surface, Height)) continue;
             foreach (Vector3 s in StairLayout.WalkingSurface(p))
             {
                 var at = new Vector2(s.x, s.z);
@@ -381,10 +379,10 @@ public readonly struct RoadEndRing
             if (Vector2.Distance(new Vector2(p.Position.x, p.Position.z), end) > reach) break;
             if (stair)
             {
-                if (!top && Mathf.Abs(fp.height - height) <= LevelWithRoad) under.Add((fp.back, fp.heading, fp.across, fp.depth, height));
+                if (!top && StairLayout.Walkable(fp.height, height)) under.Add((fp.back, fp.heading, fp.across, fp.depth, height));
                 break;
             }
-            if (Mathf.Abs(fp.height - height) > LevelWithRoad) break;
+            if (!StairLayout.Walkable(fp.height, height)) break;
             under.Add((fp.back, fp.heading, fp.across, fp.depth, fp.height - PadUnderFloor));
         }
         // A top whose flight goes down straight off the circle: the road's end alone.

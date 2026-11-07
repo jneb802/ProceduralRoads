@@ -20,16 +20,19 @@ public sealed class StructureEndTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
-    /// <summary>A step is one height everywhere: a road meeting an end stands within a staircase step of it (StairLayout.StepUp,
-    /// 0.2 m), not the 0.5 m a second constant used to allow, and a floor reads as level with the road within the same step.</summary>
+    /// <summary>A step is one height everywhere, read by one owner (StairLayout.Walkable): a road meeting an end stands within a
+    /// staircase step of it (StairLayout.StepUp, 0.2 m), either way, not the 0.5 m a second constant used to allow; a player
+    /// can't walk up 0.45 m. NaN is never walkable.</summary>
     [Fact]
     public void AStepIsTheStaircaseStepWhereTheRoadMeetsAnEnd()
     {
         var end = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 10f, 0);
-        Assert.True(StructureEnds.Reachable(10f - StairLayout.StepUp * 0.9f, end));
-        Assert.False(StructureEnds.Reachable(10f - 0.3f, end));
-        Assert.Equal(StairLayout.StepUp, StructureEnds.StepTolerance);
-        Assert.Equal(StairLayout.StepUp, RoadEndRing.LevelWithRoad);
+        Assert.True(StairLayout.Walkable(10f - StairLayout.StepUp * 0.9f, end.MeetHeight));
+        Assert.True(StairLayout.Walkable(end.MeetHeight, 10f + StairLayout.StepUp));
+        Assert.True(StairLayout.Walkable(40.6f, 40.8f), "0.2 m apart in float (0.2000003) is a step");
+        Assert.False(StairLayout.Walkable(10f - 0.3f, end.MeetHeight));
+        Assert.False(StairLayout.Walkable(10.45f, end.MeetHeight));
+        Assert.False(StairLayout.Walkable(float.NaN, end.MeetHeight));
     }
 
     /// <summary>A Mistlands valley along z: the near (west) flat at <see cref="Top"/>, a floor <see cref="Depth"/> under
@@ -239,9 +242,9 @@ public sealed class StructureEndTests : IDisposable
             }
             Vector2 foot = Mean(lowest) + outward * BridgeLayout.StairHalfRun, top = Mean(highest) - outward * BridgeLayout.StairHalfRun;
             string which = near ? "near" : "far";
-            Assert.True(road.Exists(x => Vector2.Distance(x.p, foot) <= 1f && Mathf.Abs(x.h - lowest) <= StructureEnds.StepTolerance),
+            Assert.True(road.Exists(x => Vector2.Distance(x.p, foot) <= 1f && StairLayout.Walkable(x.h, lowest)),
                 $"{site}, {which} end: its {flight.Count / 2} stairs go down to {foot} at {lowest:F1} m, and no road meets their foot");
-            Assert.False(road.Exists(x => Vector2.Distance(x.p, top) <= 1f && Mathf.Abs(x.h - deck) <= StructureEnds.StepTolerance),
+            Assert.False(road.Exists(x => Vector2.Distance(x.p, top) <= 1f && StairLayout.Walkable(x.h, deck)),
                 $"{site}, {which} end: the road leaves from the top of its stairs at {top}, at the deck's height {deck:F1} m");
         }
     }
@@ -324,7 +327,7 @@ public sealed class StructureEndTests : IDisposable
         var atFoot = roads.SelectMany(r => r.Points.Select((p, i) => (p, h: r.Heights[i])))
             .Where(x => Vector2.Dot(x.p - near.Meet, -near.Up) >= -0.25f && Vector2.Distance(x.p, near.Meet) <= 3f).ToList();
         Assert.True(atFoot.Count >= 2, $"only {atFoot.Count} road point(s) within 3 m of the end");
-        Assert.All(atFoot, x => Assert.True(StructureEnds.Reachable(x.h, near), $"the road at {x.p} stands {x.h:F2}, the end {near.MeetHeight:F2}"));
+        Assert.All(atFoot, x => Assert.True(StairLayout.Walkable(x.h, near.MeetHeight), $"the road at {x.p} stands {x.h:F2}, the end {near.MeetHeight:F2}"));
         Assert.True(atFoot.Max(x => x.h - G(x.p)) <= RoadConstants.TerrainDeltaMax);
         Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { c }, world));
         AssertNoStairsLeadingNowhere(c, world, roads, "filled end");
@@ -669,7 +672,7 @@ public sealed class StructureEndTests : IDisposable
         Assert.True(StructureEnds.Low(whole, 37f));
         Assert.Equal(1, met.Steps);
         Assert.Equal(whole.Up, met.Up);
-        Assert.True(StructureEnds.Reachable(37f, met), FormattableString.Invariant($"the step's foot at {met.MeetHeight:F1} m, the road at 37 m"));
+        Assert.True(StairLayout.Walkable(37f, met.MeetHeight), FormattableString.Invariant($"the step's foot at {met.MeetHeight:F1} m, the road at 37 m"));
         Assert.False(c.FromPad || c.FromStands);
     }
 
@@ -816,7 +819,7 @@ public sealed class StructureEndTests : IDisposable
 
         Assert.True(a.ToShared && b.FromShared, "the two facing ends do not share a landing");
         StructureEnds.End left = a.ToEnd!.Value, right = b.FromEnd!.Value;
-        Assert.True(Mathf.Abs(left.MeetHeight - right.MeetHeight) <= StructureEnds.StepTolerance + 1e-3f,
+        Assert.True(StairLayout.Walkable(left.MeetHeight, right.MeetHeight),
             FormattableString.Invariant($"the feet stand at {left.MeetHeight:F2} and {right.MeetHeight:F2} m"));
         Assert.True(Vector2.Distance(left.Meet, right.Meet) >= StructureEnds.SharedLandingLength - 1e-3f, "the feet leave no landing between them");
         Assert.True(left.Steps + right.Steps < aFar.Steps + bNear.Steps, "the shared landing takes away no stairs");
@@ -828,7 +831,7 @@ public sealed class StructureEndTests : IDisposable
         Assert.Equal(left.Steps, BridgeStructures.Ends(a, world).far.Steps);
         Assert.Equal(right.Steps, BridgeStructures.Ends(b, world).near.Steps);
         var landing = new List<RoadSpatialGrid.PlannedPath> { Piece(left.Meet, right.Meet, 0.5f * (left.MeetHeight + right.MeetHeight)) };
-        Assert.True(StructureEnds.Reachable(landing[0].Heights[0], left) && StructureEnds.Reachable(landing[0].Heights[1], right));
+        Assert.True(StairLayout.Walkable(landing[0].Heights[0], left.MeetHeight) && StairLayout.Walkable(landing[0].Heights[1], right.MeetHeight));
     }
 
     // ------------------------------------------------- the final check
@@ -905,7 +908,7 @@ internal static class MetEnds
             var (near, far) = BridgeStructures.Ends(c, world);
             if (!near.IsSet) continue;
             foreach (StructureEnds.End end in new[] { near, far })
-                if (!StructureEnds.BuiltRoadNear(end.Meet, 0.75f, plans).Any(x => StructureEnds.Reachable(x.h, end))) return c;
+                if (!StructureEnds.BuiltRoadNear(end.Meet, 0.75f, plans).Any(x => StairLayout.Walkable(x.h, end.MeetHeight))) return c;
         }
         return null;
     }

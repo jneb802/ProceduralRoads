@@ -60,8 +60,8 @@ public static class StairEnds
 
     /// <summary>The rule's case for one drop (walking height less the ground).</summary>
     public static Case CaseOf(float drop) =>
-        drop < -StairLayout.StepUp ? Case.Short
-        : drop <= StairLayout.StepUp ? Case.Floor
+        StairLayout.Walkable(drop, 0f) ? Case.Floor
+        : drop < 0f ? Case.Short
         : drop <= StairRailing.LedgeDrop ? Case.Reverse
         : Case.StepBack;
 
@@ -92,7 +92,7 @@ public static class StairEnds
         Case a = CaseOf(left), b = CaseOf(right);
         if (a == b) return a;
         disagree = true;
-        if (Mathf.Abs(left) <= StairLayout.StepUp || Mathf.Abs(right) <= StairLayout.StepUp) return Case.Floor;
+        if (StairLayout.Walkable(left, 0f) || StairLayout.Walkable(right, 0f)) return Case.Floor;
         return CaseOf(Gentler(left, right));
     }
 
@@ -387,7 +387,7 @@ public static class StairEnds
     /// <summary>Whether a road's surface stands at <paramref name="at"/> (within its half width) within a step of
     /// <paramref name="height"/>.</summary>
     private static bool OnRoadLevel(Vector2 at, float height) =>
-        RoadAt(at, out float road) && Mathf.Abs(road - height) <= StairLayout.StepUp;
+        RoadAt(at, out float road) && StairLayout.Walkable(road, height);
 
     /// <summary>
     /// The steepest grade a walker stepping onto a road's surface at <paramref name="at"/> climbs or falls at along it over a

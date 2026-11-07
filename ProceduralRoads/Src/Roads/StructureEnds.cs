@@ -44,10 +44,6 @@ public static class StructureEnds
     /// </summary>
     public const float JoinOverlap = 2f;
 
-    /// <summary>How far the road where it meets an end may stand off the end's height for a player to walk on: one step, the
-    /// staircase step (<see cref="StairLayout.StepUp"/>), the one height a step is read at everywhere. The one owner of step and stair geometry (docs/OWNERS.md).</summary>
-    public const float StepTolerance = StairLayout.StepUp;
-
     /// <summary>The middle of the end's step <paramref name="k"/> (0 at the edge): its origin, a half run out from the joint above it. The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).</summary>
     public static Vector2 StepCentre(Vector2 edge, Vector2 up, int k) => edge - up * (BridgeLayout.StairHalfRun + k * StairLayout.PieceRun);
 
@@ -169,10 +165,11 @@ public static class StructureEnds
         return new End(edge, up, height, best);
     }
 
-    /// <summary>Whether a road can be laid at <paramref name="end"/>'s meeting height: within a step over the floor every
-    /// road on land is built up to (RoadConstants.DryRoadFloor). A foot further under it, down a bank into shallow water,
-    /// is never met by the road, which stands on its floor there.</summary>
-    public static bool OverTheFloor(End end) => end.MeetHeight >= RoadConstants.DryRoadFloor - StepTolerance;
+    /// <summary>Whether a road can be laid at <paramref name="end"/>'s meeting height: no more than a step's height
+    /// (<see cref="StairLayout.StepUp"/>, a dryness margin, not a walk) under the floor every road on land is built up to
+    /// (RoadConstants.DryRoadFloor). A foot further under it, down a bank into shallow water, is never met by the road, which
+    /// stands on its floor there.</summary>
+    public static bool OverTheFloor(End end) => end.MeetHeight >= RoadConstants.DryRoadFloor - StairLayout.StepUp;
 
     /// <summary>
     /// A crossing's two ends as the road meets them, near (from-bank) end first: those decided and saved with it
@@ -454,13 +451,13 @@ public static class StructureEnds
     public const float LowFlushPrice = 2f;
 
     /// <summary>Whether an end the bank takes as <paramref name="natural"/> is low: it has stairs, and its deck stands
-    /// within <see cref="LowDeckRise"/> over <paramref name="arrival"/> (and not under it by more than
-    /// <see cref="StepTolerance"/>), the lower of the bank under the end (the ground along its line over an apron,
+    /// within <see cref="LowDeckRise"/> over <paramref name="arrival"/> (and not under it by more than a step's height,
+    /// <see cref="StairLayout.StepUp"/>), the lower of the bank under the end (the ground along its line over an apron,
     /// <see cref="Arrival"/>) and the road arriving (<see cref="ArrivalOnPath"/>): a road coming down a slope to a deck
     /// lying low on its bank comes to a low structure. A low bridge or a ford's span looks best met by a step or two up
     /// onto it.</summary>
     public static bool Low(End natural, float arrival) =>
-        natural.Steps >= 1 && natural.Height - arrival <= LowDeckRise && natural.Height - arrival >= -StepTolerance;
+        natural.Steps >= 1 && natural.Height - arrival <= LowDeckRise && natural.Height - arrival >= -StairLayout.StepUp;
 
     /// <summary>
     /// The price of meeting an end one way, the one rule every way is chosen by (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>,
@@ -560,7 +557,7 @@ public static class StructureEnds
                 var f = new End(far.Edge, far.Up, far.Height, rf);
                 var m = new End(near.Edge, near.Up, near.Height, rn);
                 float step = Mathf.Abs(f.MeetHeight - m.MeetHeight), height = 0.5f * (f.MeetHeight + m.MeetHeight);
-                if (!SharesLanding(f.MeetHeight, m.MeetHeight) || height < RoadConstants.DryRoadFloor - StepTolerance) continue;
+                if (!SharesLanding(f.MeetHeight, m.MeetHeight) || height < RoadConstants.DryRoadFloor - StairLayout.StepUp) continue;
                 Vector2 across = m.Meet - f.Meet;
                 float length = across.magnitude;
                 if (length < SharedLandingLength) continue;
@@ -617,7 +614,7 @@ public static class StructureEnds
         }
         // Past the whole run only where its foot stands on the ground: the next row's ground is cut down under the road
         // (End.UnderTheJoint), the run's own steps stand as the bank takes them.
-        bool footDown = ground(natural.Meet) <= natural.MeetHeight + StepTolerance;
+        bool footDown = ground(natural.Meet) <= natural.MeetHeight + StairLayout.StepUp;
         for (int row = natural.Steps + 1; low && footDown && row <= LowSteps; row++)
         {
             var cut = new End(natural.Edge, natural.Up, natural.Height, row);
@@ -808,9 +805,6 @@ public static class StructureEnds
     /// <see cref="Share"/> and for levelling that landing (RoadSpatialGrid.LevelledOn). The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).</summary>
     public static bool SharesLanding(float a, float b) => Mathf.Abs(a - b) <= StairLayout.HalfRise + 1e-3f;
 
-    /// <summary>Whether a player walks from road at <paramref name="roadHeight"/> where the road meets
-    /// <paramref name="end"/> onto it.</summary>
-    public static bool Reachable(float roadHeight, End end) => Mathf.Abs(roadHeight - end.MeetHeight) <= StepTolerance;
     // ------------------------------------------------------- the built road
 
     /// <summary>
@@ -848,7 +842,8 @@ public static class StructureEnds
     /// Whether road at <paramref name="p"/>, its surface at <paramref name="h"/> and <paramref name="w"/> wide, lies under
     /// a deck at <paramref name="deck"/> between the ends <paramref name="near"/> and <paramref name="far"/>, out to
     /// <paramref name="halfWidth"/> either side of its line: lower than the deck, and not the road run on under a joining
-    /// piece at its meeting height.
+    /// piece at its meeting height (a walker's step of it, <see cref="StairLayout.Walkable"/>: the road a shared landing levels
+    /// at its ends' common height is that).
     /// </summary>
     public static bool UnderTheDeck(Vector2 p, float h, float w, End near, End far, float deck, float halfWidth)
     {
@@ -862,7 +857,7 @@ public static class StructureEnds
         if (Mathf.Abs(Vector2.Dot(p - near.Edge, side)) > halfWidth + w * 0.5f) return false;
         if (h >= deck - 0.1f) return false;
         foreach (End end in new[] { near, far })
-            if (end.UnderTheJoint(p, halfWidth + w * 0.5f) && Mathf.Abs(h - end.MeetHeight) <= StepTolerance) return false;
+            if (end.UnderTheJoint(p, halfWidth + w * 0.5f) && StairLayout.Walkable(h, end.MeetHeight)) return false;
         return true;
     }
 }

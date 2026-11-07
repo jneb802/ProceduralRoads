@@ -113,7 +113,7 @@ public class OwnerLiteralTests
     private static readonly Regex NotCode = new(@"/\*.*?\*/|//[^\n]*|@""(?:[^""]|"""")*""|""(?:[^""\\\n]|\\.)*""|'(?:[^'\\\n]|\\.)*'",
         RegexOptions.Compiled | RegexOptions.Singleline);
 
-    private static string Code(string text) => NotCode.Replace(text, m => new string('\n', m.Value.Count(c => c == '\n')));
+    internal static string Code(string text) => NotCode.Replace(text, m => new string('\n', m.Value.Count(c => c == '\n')));
 
     private static List<(Rule rule, string file, int line, string text)> Hits()
     {

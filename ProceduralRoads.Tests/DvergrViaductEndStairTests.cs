@@ -246,7 +246,7 @@ public sealed class DvergrViaductEndStairTests : IDisposable
             Assert.True(ToRoad(at) <= 1f, $"{s:F1} m out from the foot the road is {ToRoad(at):F1} m off the flight's line");
         }
         var (plan, k) = roads.SelectMany(r => new[] { (r, 0), (r, r.Points.Count - 1) }).OrderBy(x => Vector2.Distance(x.r.Points[x.Item2], stairs.Meet)).First();
-        Assert.True(StructureEnds.Reachable(plan.Heights[k], stairs), $"the road at the foot stands {plan.Heights[k]:F2}, the foot {stairs.MeetHeight:F2}");
+        Assert.True(StairLayout.Walkable(plan.Heights[k], stairs.MeetHeight), $"the road at the foot stands {plan.Heights[k]:F2}, the foot {stairs.MeetHeight:F2}");
         for (int i = 0; i < plan.Points.Count; i++)
             if (Vector2.Distance(plan.Points[i], stairs.Meet) <= StructureEnds.ApronLength)
                 Assert.True(Mathf.Abs(plan.Heights[i] - stairs.MeetHeight) <= 0.05f, $"apron at {plan.Points[i]} stands {plan.Heights[i]:F2}, not level at {stairs.MeetHeight:F2}");

@@ -176,7 +176,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
                 for (float s = 0f; s <= StructureEnds.ApronLength; s += 0.5f)
                     Assert.True(ToRoad(stairs.Meet - stairs.Up * s) <= 1f, $"seed {seed}: {s:F1} m out from the foot the road is off the flight's line");
                 var (plan, i) = roads.SelectMany(r => new[] { (r, 0), (r, r.Points.Count - 1) }).OrderBy(x => Vector2.Distance(x.r.Points[x.Item2], stairs.Meet)).First();
-                Assert.True(StructureEnds.Reachable(plan.Heights[i], stairs), $"seed {seed}: the road at the foot stands {plan.Heights[i]:F2}, the foot {stairs.MeetHeight:F2}");
+                Assert.True(StairLayout.Walkable(plan.Heights[i], stairs.MeetHeight), $"seed {seed}: the road at the foot stands {plan.Heights[i]:F2}, the foot {stairs.MeetHeight:F2}");
             }
             Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { viaduct }, world));
             List<StructurePiece> pieces = BridgeStructures.Solve(viaduct, world, world.GetSeed());

@@ -1461,6 +1461,13 @@ public static partial class StairLayout
     /// floor 0.26 m over a stone tower's landing at 186.31 was within it, and wanted flatter). The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float StepUp = 0.2f;
 
+    /// <summary>Whether a player walks between walking surfaces at <paramref name="a"/> and <paramref name="b"/>: no more than a
+    /// step (<see cref="StepUp"/>) apart, either way (a thousandth over it for float rounding). The one rule for every height a
+    /// player walks between a road (or a shared landing) and a staircase, floor, structure end or walkable block, and between a
+    /// staircase's walked pieces and the ground they step off onto. NaN is never walkable. The one owner of a walker's step
+    /// (docs/OWNERS.md).</summary>
+    public static bool Walkable(float a, float b) => Mathf.Abs(a - b) <= StepUp + 1e-3f;
+
     /// <summary>
     /// Whether something within reach holds up every piece of a row <see cref="AddRow"/> would lay (StairSupport.Choose, as
     /// the kit lays it at first build). The search refuses a piece nothing holds; what is added after it (a top's floor,

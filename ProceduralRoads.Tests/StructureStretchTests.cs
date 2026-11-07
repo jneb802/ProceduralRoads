@@ -58,6 +58,23 @@ public sealed class StructureStretchTests : IDisposable
         finally { RoadSpatialGrid.LevelledEnds = null; }
     }
 
+    /// <summary>The road a shared landing is levelled at (its ends' common height) runs on under a viaduct's joining piece at a
+    /// flush end: within a step of the deck (StairLayout.Walkable), so it is the deck's own joint road, not road under the deck.
+    /// The landing between ends 0.4 m apart stands 0.2 m (0.2000008 in float) under the deck; 0.45 m apart, 0.225 m: not a step.</summary>
+    [Theory]
+    [InlineData(40.6f, false)]
+    [InlineData(40.55f, true)]
+    public void TheJointRoadOfASharedLandingAtAFlushDeckEndIsNotUnderTheDeck(float other, bool under)
+    {
+        var world = new Level();
+        _scope.WithWorld(world);
+        Vector2 b = new(12f, 0f);
+        var near = new StructureEnds.End(b, new Vector2(1f, 0f), 41f, 0);
+        var far = new StructureEnds.End(b + new Vector2(20f, 0f), new Vector2(-1f, 0f), 41f, 0);
+        float landing = 0.5f * (other + 41f);
+        Assert.Equal(under, StructureEnds.UnderTheDeck(b + near.Up * 1f, landing, 4f, near, far, 41f, 3f));
+    }
+
     private static void SetPathfinder(RoadPathfinder? pathfinder) =>
         typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, pathfinder);
 
@@ -333,7 +350,7 @@ public sealed class StructureStretchTests : IDisposable
             foreach (var r in plans)
                 for (int i = 0; i < r.Points.Count; i++)
                     if (Vector2.Distance(r.Points[i], foot) <= 0.75f)
-                        Assert.True(Mathf.Abs(r.Heights[i] - footHeight) <= StructureEnds.StepTolerance,
+                        Assert.True(StairLayout.Walkable(r.Heights[i], footHeight),
                             $"the staircase's foot at {foot} stands at {footHeight:F2}, the road under it at {r.Heights[i]:F2}");
         Assert.True(plans == null, "a stub of road between the crossing's end and the staircase 4.4 m over it was planned");
         Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
@@ -489,7 +506,7 @@ public sealed class StructureStretchTests : IDisposable
         var stairs = new List<RoadStairSpan> { new() { FromIndex = 1, ToIndex = 2, FromPoint = path[1], ToPoint = stairTop, FromHeight = world.Top, ToHeight = world.Top } };
         var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing>(), 4f, null, null, stairs);
         Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
-        bool Near(Vector2 at) => plans!.Any(r => r.Points.Select((p, i) => (p, i)).Any(x => Vector2.Distance(x.p, at) <= 0.75f && Mathf.Abs(r.Heights[x.i] - world.Top) <= StructureEnds.StepTolerance));
+        bool Near(Vector2 at) => plans!.Any(r => r.Points.Select((p, i) => (p, i)).Any(x => Vector2.Distance(x.p, at) <= 0.75f && StairLayout.Walkable(r.Heights[x.i], world.Top)));
         Assert.True(Near(stairTop), $"no road at the staircase's end {stairTop}: its top stops short of the road it joins");
         Assert.True(Near(path[2]), "no road from the staircase's end to the junction");
     }
@@ -537,7 +554,7 @@ public sealed class StructureStretchTests : IDisposable
         {
             var at = roads.SelectMany(r => r.Points.Select((p, i) => (p, h: r.Heights[i]))).OrderBy(x => Vector2.Distance(x.p, end.Meet)).First();
             Assert.True(Vector2.Distance(at.p, end.Meet) <= 0.75f, $"{which} end: no road at its foot {end.Meet} (nearest {at.p})");
-            Assert.True(StructureEnds.Reachable(at.h, end), $"{which} end: the road at its foot stands {at.h:F2}, the foot {end.MeetHeight:F2}");
+            Assert.True(StairLayout.Walkable(at.h, end.MeetHeight), $"{which} end: the road at its foot stands {at.h:F2}, the foot {end.MeetHeight:F2}");
         }
         AssertNoStairsLeadingNowhere(c, world, roads, "wooden bridge");
         Assert.Equal(0, RoadNetworkGenerator.BridgeEndsUnmet);

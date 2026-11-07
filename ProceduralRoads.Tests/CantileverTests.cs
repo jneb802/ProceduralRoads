@@ -759,6 +759,20 @@ public class CantileverTests
         Assert.DoesNotContain(plan.Pieces.Skip(plan.SunkPieces), p => p.Sunk);
     }
 
+    /// <summary>A staircase's own sunk step (Emit's, laid along its first heading whichever way its road comes) is not a
+    /// meeting with a road 0.5 m under its foot: nothing checked it lies over that road. Only the stair FootToRoad sank for
+    /// that road is (a foot turned off its road would meet it side on, over a lip a player can't walk up).</summary>
+    [Fact]
+    public void AStaircasesOwnSunkStepAloneDoesNotMeetARoadUnderItsFoot()
+    {
+        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
+        Assert.True(plan.Reached && plan.SunkPieces > 0 && plan.Foot.HasValue, plan.Reason);
+        float foot = plan.Foot!.Value.y;
+        Assert.Null(plan.SunkStairMeets);
+        Assert.False(StairLayout.FootMeets(plan, foot, foot - 0.5f));
+        Assert.True(StairLayout.FootMeets(plan, foot, foot - 0.15f));
+    }
+
     /// <summary>A foot 1.12 m over its road's ground 5 m back (-5353.5,2896.1). The road ends there on its level landing
     /// (6 m at 5 %, RoadPitches.ClimbToFoot), climbing 0.25 m over those 5 m, not 1.75 m at the cap: one stair more down
     /// from the foot toward the road. Read climbing at the cap, the foot was left as it was and its road's landing stood on

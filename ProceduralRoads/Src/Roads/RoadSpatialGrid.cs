@@ -551,7 +551,8 @@ public static partial class RoadSpatialGrid
     /// two held ends (StructureEnds.Share) is levelled at their common height all along, as the landing was laid, not at the
     /// end levelled last: levelled at both ends whose levelled stretches overlap, or at one end with the whole piece within
     /// its stretch and its other end held (<paramref name="startGround"/>, <paramref name="endGround"/>: a staircase's foot,
-    /// a place's ground, a join), where the two share it (StructureEnds.SharesLanding, each within a walker's step of it).
+    /// a place's ground, a join), where the two share it (StructureEnds.SharesLanding, each within a walker's step of it) and
+    /// the held end is more than a step off the structure's (within a step the stretch stays at the structure's end's height).
     /// Further apart each keeps its own height, and the piece is refused (<see cref="LevelledOverHeldEnd"/>).</summary>
     private static List<(bool atStart, float height)> LevelledOn(List<(Vector2 at, float height)> ends, List<Vector2> points, float total,
         float? startGround, float? endGround)
@@ -573,7 +574,8 @@ public static partial class RoadSpatialGrid
         else if ((s >= 0) != (e >= 0) && total <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f)
         {
             int k = s >= 0 ? s : e;
-            if ((on[k].atStart ? endGround : startGround) is float held && StructureEnds.SharesLanding(on[k].height, held))
+            if ((on[k].atStart ? endGround : startGround) is float held && !StairLayout.Walkable(on[k].height, held)
+                && StructureEnds.SharesLanding(on[k].height, held))
                 on[k] = (on[k].atStart, StructureEnds.LandingHeight(on[k].height, held));
         }
         return on;

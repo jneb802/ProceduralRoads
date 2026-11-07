@@ -414,6 +414,10 @@ public sealed class StructureStretchTests : IDisposable
             var level = RoadSpatialGrid.PlanRoadPath(new List<Vector2>(piece), 4f, world, world.Top, world.Top + 0.3f);
             Assert.True(level != null, RoadSpatialGrid.LastRefusal);
             Assert.All(level!.Heights, h => Assert.Equal(world.Top + 0.15f, h, 2));
+            // Within a step already (0.15 m): levelled at the structure's end, as before, not moved to the common height.
+            var within = RoadSpatialGrid.PlanRoadPath(new List<Vector2>(piece), 4f, world, world.Top, world.Top + 0.15f);
+            Assert.True(within != null, RoadSpatialGrid.LastRefusal);
+            Assert.All(within!.Heights, h => Assert.Equal(world.Top, h, 2));
         }
         finally { RoadSpatialGrid.LevelledEnds = null; }
     }

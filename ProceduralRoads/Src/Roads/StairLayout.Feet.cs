@@ -115,14 +115,18 @@ public static partial class StairLayout
         if (!sink) return (at, at.y, false, false);
         bool laid = plan.SunkPieces <= 0;
         if (laid) SinkStep(plan, StairKit.Of(plan.Kit), new Vector2(at.x, at.z), plan.StartHeading, at.y, Lanes(width), ground);
-        return FootMeets(plan, at.y, road) ? (at, road, true, laid) : null;
+        if (!(at.y > road && at.y - road < PieceRise)) return null;
+        plan.SunkStairMeets = road;
+        return (at, road, true, laid);
     }
 
     /// <summary>Whether a staircase's foot at <paramref name="foot"/> (its lowest walked stair's low edge) meets a road at
-    /// <paramref name="road"/>: within a walker's step (<see cref="Walkable"/>), or over it by less than a rise with a stair
-    /// sunk under it (<see cref="StairPlan.SunkPieces"/>), whose slope comes up out of the road (<see cref="FootToRoad"/>).</summary>
+    /// <paramref name="road"/>: within a walker's step (<see cref="Walkable"/>), or over it by less than a rise on the stair
+    /// <see cref="FootToRoad"/> sank for that road (<see cref="StairPlan.SunkStairMeets"/>), whose slope comes up out of it. A
+    /// staircase's own sunk step alone is not that: nothing checked it lies over this road.</summary>
     public static bool FootMeets(StairPlan plan, float foot, float road) =>
-        Walkable(foot, road) || plan.SunkPieces > 0 && foot > road && foot - road < PieceRise;
+        Walkable(foot, road)
+        || plan.SunkPieces > 0 && plan.SunkStairMeets is float met && Walkable(met, road) && foot > road && foot - road < PieceRise;
 
     /// <summary>The stair sunk under a foot at <paramref name="foot"/> (<paramref name="height"/>, its low edge), the one way one
     /// is laid: a whole stair a rise down, out from the foot back along <paramref name="heading"/> (the first stair's), its top at

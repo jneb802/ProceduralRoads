@@ -1146,7 +1146,8 @@ public static partial class RoadStairRuns
                 return !there.Intrudes(moved);
             }
             // The plan is this road's own (PlanCache hands out copies), so it is edited without a lock.
-            if (existing == null && roadPast && !valleyFirst && meet == null)
+            // A foot met on a stair sunk into the road at a crossing's end is met: never lowered again past it.
+            if (existing == null && roadPast && !valleyFirst && meet == null && !sunkAtEnd)
             {
                 Vector3? lowered = plan.FootLowered > 0 ? plan.Foot : null;
                 if (lowered == null)
@@ -1159,7 +1160,7 @@ public static partial class RoadStairRuns
                     if (lowered is Vector3 low && !KeepsItsRingLowered(trial, low)) lowered = null;
                     if (lowered != null) { plan = trial; tally.FeetLowered++; }
                 }
-                if (lowered is Vector3 f) { footAt = new Vector2(f.x, f.z); if (!sunkAtEnd) footHeight = f.y; }
+                if (lowered is Vector3 f) { footAt = new Vector2(f.x, f.z); footHeight = f.y; }
             }
             // Its foot against a bank: a small level apron cut there for the road to meet (outside any place's footprint:
             // the commit skips cuts inside one), once per plan.

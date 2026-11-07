@@ -169,6 +169,9 @@ public sealed class StairPlan
     public Vector2? PlaceMeet;
     /// <summary>The sunk step under its foot: its pieces and clearances, first in the lists (0 when there is none).</summary>
     public int SunkPieces, SunkClearances;
+    /// <summary>The height of the road its foot is met at on a stair sunk under it (StairLayout.FootToRoad, a foot carried to
+    /// a crossing's end); null where its foot meets its road within a step.</summary>
+    public float? SunkStairMeets;
     /// <summary>Where its first step's low edge is (its foot), when it has a sunk step under it.</summary>
     public Vector3? Foot;
     /// <summary>Stairs added down from its foot to its road (<see cref="StairLayout.LowerFoot"/>).</summary>

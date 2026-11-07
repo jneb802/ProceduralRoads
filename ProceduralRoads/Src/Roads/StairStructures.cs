@@ -613,9 +613,7 @@ public sealed class StairStructures : IStructureSource
     /// ground it stands on (<see cref="GroundPin"/>); then where the road meets each end (<see cref="StairRun.FromMeet"/>,
     /// <see cref="StairRun.ToMeet"/>); then an approach's place (<see cref="StairRun.ExpectedPlace"/>). A number no earlier
     /// build wrote, so an earlier build refuses the record
-    /// whole instead of misreading it. Records 1 (without the kept-rocks flag), 2 (without the kit and the cantilever flag)
-    /// 3 (without the ground), 4 (without the layout, read as layout 0), 5 (without the meeting points, read as the ends
-    /// themselves) and 6 (without an approach's place, its kit choosing on the place's own ground) are read as before.</summary>
+    /// whole instead of misreading it. No other record is read.</summary>
     private const int FormatVersion = 7;
 
     public static byte[] Serialize()
@@ -689,7 +687,7 @@ public sealed class StairStructures : IStructureSource
             using var stream = new MemoryStream(bytes);
             using var reader = new BinaryReader(stream);
             int version = reader.ReadInt32();
-            if (version < 1 || version > FormatVersion) throw new InvalidDataException("Unknown stair run data version.");
+            if (version != FormatVersion) throw new InvalidDataException("Unknown stair run data version.");
             int runs = reader.ReadInt32();
             if (runs < 0 || runs > 10000) throw new InvalidDataException("Invalid stair run count.");
             int total = 0;
@@ -700,11 +698,11 @@ public sealed class StairStructures : IStructureSource
                     From = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
                     To = new Vector2(reader.ReadSingle(), reader.ReadSingle()),
                     Width = reader.ReadSingle(),
-                    KeepsSiteRocks = version >= 2 && reader.ReadBoolean(),
+                    KeepsSiteRocks = reader.ReadBoolean(),
                 };
-                string kit = version >= 3 ? reader.ReadString() : "";
+                string kit = reader.ReadString();
                 if (kit.Length > 0) run.Kit = StairKit.Named(kit) ?? throw new InvalidDataException("Unknown stair kit.");
-                run.Layout = version >= 5 ? reader.ReadInt32() : 0;
+                run.Layout = reader.ReadInt32();
                 if (run.Layout < 0) throw new InvalidDataException("Invalid stair layout.");
                 int pieces = reader.ReadInt32();
                 if (pieces < 0 || (total += pieces) > 500000) throw new InvalidDataException("Invalid stair piece count.");
@@ -714,7 +712,7 @@ public sealed class StairStructures : IStructureSource
                     string prefab = reader.ReadString();
                     var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     float yaw = reader.ReadSingle();
-                    bool cantilevered = version >= 3 && reader.ReadBoolean();
+                    bool cantilevered = reader.ReadBoolean();
                     if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !Enum.IsDefined(typeof(StructurePieceKind), kind) ||
                         !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) || !ManualRoadDraft.IsFinite(pos.y) || !ManualRoadDraft.IsFinite(yaw))
                         throw new InvalidDataException("Invalid stair piece.");
@@ -733,15 +731,12 @@ public sealed class StairStructures : IStructureSource
                         throw new InvalidDataException("Invalid stair clearance.");
                     run.Clearances.Add(new StairClearance(centre, half, yaw, surface));
                 }
-                if (version >= 4) GroundPin.ReadAll(reader, run.Ground);
-                if (version >= 6)
-                {
-                    run.FromMeet = new Vector2(reader.ReadSingle(), reader.ReadSingle());
-                    run.ToMeet = new Vector2(reader.ReadSingle(), reader.ReadSingle());
-                    if (!ManualRoadDraft.ValidPoint(run.FromMeet.Value) || !ManualRoadDraft.ValidPoint(run.ToMeet.Value))
-                        throw new InvalidDataException("Invalid stair meeting point.");
-                }
-                if (version >= 7 && reader.ReadBoolean())
+                GroundPin.ReadAll(reader, run.Ground);
+                run.FromMeet = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                run.ToMeet = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                if (!ManualRoadDraft.ValidPoint(run.FromMeet.Value) || !ManualRoadDraft.ValidPoint(run.ToMeet.Value))
+                    throw new InvalidDataException("Invalid stair meeting point.");
+                if (reader.ReadBoolean())
                 {
                     var centre = new Vector2(reader.ReadSingle(), reader.ReadSingle());
                     float ground = reader.ReadSingle();

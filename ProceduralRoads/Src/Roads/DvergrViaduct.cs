@@ -125,9 +125,6 @@ public static class DvergrViaduct
     /// the corbels' tips are weaker, and 22 m piers on 16 m bays dropped their deck.)
     /// </summary>
     public const float PierCeiling = 22f;
-    /// <summary>The pier ceiling the crossings saved without their kind (records of format 2 and older) were laid under: a
-    /// crossing read from one is a viaduct where it was then (RoadNetworkPersistence.DeserializeRoadCrossings).</summary>
-    public const float FormerPierCeiling = 20f;
     /// <summary>The navigation bay over a river: two vanilla bays (32 m) centred on its navigation channel, the pier on that
     /// line left out (a boat found a 16 m bay too tight, so the gap over a river is
     /// wider if possible).</summary>
@@ -416,12 +413,6 @@ public static class DvergrViaduct
     /// </summary>
     public static bool Applies(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world) == null;
 
-    /// <summary>Whether a crossing saved before kits were recorded (format 1-2) was laid as a viaduct, by the rule it was laid
-    /// under: the former pier ceiling (<see cref="FormerPierCeiling"/>) and its centre's biome, not today's Mistlands share
-    /// (BridgeStructures.InMistlands). A saved network is read as it was laid, never re-decided. The one owner of bridge and viaduct structure (docs/OWNERS.md).</summary>
-    public static bool AppliedFormerly(RoadCrossing crossing, WorldGenerator world) =>
-        Refusal(crossing, world, FormerPierCeiling, formerBiome: true) == null;
-
     /// <summary>Whether a crossing stands under the viaduct's floor: its deck under <see cref="MinClearance"/> over the
     /// ground or water, or its tallest pier under <see cref="MinViaductPier"/>, the same two tests <see cref="Refusal"/>
     /// makes, in its order, at grade as it makes them. Where a low Mistlands bridge gets the Dvergr pier's wood
@@ -436,14 +427,11 @@ public static class DvergrViaduct
     /// raise (<see cref="RaisedSteps"/>) is decided after it and keeps within it, so it never changes the answer.</summary>
     public static string? Refusal(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world, PierCeiling);
 
-    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling, bool formerBiome = false)
+    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling)
     {
         if (crossing == null || world == null) return "no crossing";
         if (crossing.Kind != CrossingKind.Bridge) return "a ford";
-        bool mistlands = formerBiome
-            ? world.GetBiome(crossing.Center.x, crossing.Center.y) == Heightmap.Biome.Mistlands
-            : BridgeStructures.InMistlands(crossing, world);
-        if (!mistlands) return "not in the Mistlands";
+        if (!BridgeStructures.InMistlands(crossing, world)) return "not in the Mistlands";
         return DeckRefusal(crossing, world, ceiling, AtGrade(crossing, world));
     }
 

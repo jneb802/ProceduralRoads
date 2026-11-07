@@ -162,36 +162,6 @@ public sealed class StairSiteTests : IDisposable
         Assert.Equal(Expected(dressed), LiveIn(zones));
     }
 
-    /// <summary>A staircase saved with its pieces in the network (record 4, before late kits) loads and lays exactly those
-    /// pieces, and its first build saves them.</summary>
-    [Fact] public void AStaircaseOfARecordFourWorldLaysExactlyItsSavedPieces()
-    {
-        StairRun run = AddStaircase(WorldGenerator.instance!, -100f);
-        byte[] v7 = StairStructures.Serialize();
-        Assert.Equal(7, BitConverter.ToInt32(v7, 0));
-        // Format 4: format 7 without an approach's place's flag and the meeting points (at the run's end) and the run's
-        // layout (after its ends, width, kept-rocks flag and kit name "stone").
-        var v4 = new List<byte>(v7);
-        v4.RemoveRange(v4.Count - 17, 17);
-        v4.RemoveRange(4 + 4 + 16 + 4 + 1 + 1 + 5, 4);
-        v4.RemoveRange(0, 4);
-        v4.InsertRange(0, BitConverter.GetBytes(4));
-        StairStructures.Load(v4.ToArray());
-        StairRun loaded = Assert.Single(StairStructures.Runs);
-        Assert.Equal(0, loaded.Layout);
-        Assert.Empty(BuiltStairs.Sites);
-
-        // Its saved walking pieces exactly, and what today's kit holds them up with (StairSupport): supports an older
-        // layout saved are left out for the kit's own.
-        List<StructurePiece> dressed = StairStructures.Dresser(loaded, WorldGenerator.instance!);
-        List<Vector2s> zones = ZonesOf(loaded);
-        foreach (Vector2s zone in zones) StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full);
-        List<StructurePiece> site = Assert.Single(BuiltStairs.Sites).Pieces;
-        Assert.Equal(Keys(run.Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport)), Keys(site.Where(p => StairStructures.IsLayoutKind(p.Kind) && p.Kind != StructurePieceKind.StairSupport)));
-        Assert.Equal(Keys(dressed), Keys(site));
-        Assert.Equal(Expected(dressed), LiveIn(zones));
-    }
-
     /// <summary>A full respawn (road_bridges) builds the staircases again from their layouts: the saved pieces go with the
     /// old pieces. A saved staircase survives a save, and its record reads back as it was written.</summary>
     [Fact] public void ASavedStaircaseSurvivesASaveAndAFullRespawnForgetsIt()

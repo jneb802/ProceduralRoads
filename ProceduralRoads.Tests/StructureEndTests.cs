@@ -572,8 +572,7 @@ public sealed class StructureEndTests : IDisposable
     }
 
     /// <summary>A crossing's ends are saved with it (RoadNetworkPersistence) and read back as they were: one met level,
-    /// one landed on a row, a road's end, none; the bridge respawned from the record lays the stairs they say. A record
-    /// from before the ends were saved reads back with none: each end as the bank takes it.</summary>
+    /// one landed on a row, a road's end, none; the bridge respawned from the record lays the stairs they say.</summary>
     [Fact]
     public void ACrossingsEndsAreSavedWithIt()
     {
@@ -591,14 +590,6 @@ public sealed class StructureEndTests : IDisposable
         Assert.Equal((ford.FromEnd, (StructureEnds.End?)null), (loaded[1].FromEnd, loaded[1].ToEnd));
         Assert.True(loaded[1].FromEnd!.Value.Road);
         Assert.Null(loaded[2].FromEnd ?? loaded[2].ToEnd);
-
-        // Format 3: no ends.
-        byte[] v4 = RoadNetworkPersistence.SerializeRoadCrossings(new[] { none });
-        var v3 = new List<byte>(BitConverter.GetBytes(3));
-        v3.AddRange(v4.Skip(4).Take(4 + 12 * 4));
-        loaded.Clear();
-        Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(v3.ToArray(), loaded));
-        Assert.Null(Assert.Single(loaded).FromEnd);
     }
 
     // ------------------------------------------------- the price of a way

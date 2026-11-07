@@ -277,9 +277,9 @@ public sealed class BridgeLifecycleTests : IDisposable
         Assert.Equal(planned, Assert.IsType<BuiltBridge>(BuiltBridges.Of(site)).Pieces.Select(StructureAppendQueue.Key).OrderBy(k => k));
     }
 
-    /// <summary>A site is saved with the layout that solved it, which a save and reload keep; a record 1 site (written
-    /// before sites carried it) reads as layout 0.</summary>
-    [Fact] public void ASavedSiteKeepsItsLayoutAndRecordOneStillReads()
+    /// <summary>A site is saved with the layout that solved it, which a save and reload keep. A record of another
+    /// version is refused, for bridges and for staircases.</summary>
+    [Fact] public void ASavedSiteKeepsItsLayoutAndAnotherVersionIsRefused()
     {
         BuiltBridges.Reset();
         List<Vector2s> zones = GeneratedPlanZones();
@@ -291,15 +291,13 @@ public sealed class BridgeLifecycleTests : IDisposable
 
         byte[] v2 = BuiltBridges.Serialize();
         Assert.Equal(2, BitConverter.ToInt32(v2, 0));
-        // Format 1: format 2 without the site's layout (after its banks and kit).
-        var v1 = new List<byte>(v2);
-        v1.RemoveRange(4 + 4 + 16 + 4, 4);
-        v1.RemoveRange(0, 4);
-        v1.InsertRange(0, BitConverter.GetBytes(1));
-        BuiltBridge one = Assert.Single(BuiltBridges.Parse(v1.ToArray()));
-        Assert.Equal(0, one.Layout);
-        Assert.Equal(saved.Pieces.Count, one.Pieces.Count);
-        Assert.Equal(saved.Ground, one.Ground);
+        foreach (int other in new[] { 0, 1, 3 })
+        {
+            byte[] changed = (byte[])v2.Clone();
+            BitConverter.GetBytes(other).CopyTo(changed, 0);
+            Assert.Throws<System.IO.InvalidDataException>(() => BuiltBridges.Parse(changed));
+            Assert.Throws<System.IO.InvalidDataException>(() => BuiltStairs.Parse(changed));
+        }
     }
 
     /// <summary>road_bridges respawn older solves again only the sites an older layout built, replacing their saved pieces

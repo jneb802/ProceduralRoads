@@ -14,8 +14,7 @@ public abstract class BuiltSite
     public Vector2 To;
     /// <summary>The kit the pieces were laid in, by its record number (0 for none): the site's own kind reads it.</summary>
     public int KitNumber;
-    /// <summary>The version of the laying that built the pieces (the build stamp); 0 for a site read from a record without
-    /// it.</summary>
+    /// <summary>The version of the laying that built the pieces (the build stamp).</summary>
     public int Layout;
     public readonly List<StructurePiece> Pieces = new();
     public readonly List<GroundPin> Ground = new();
@@ -145,7 +144,7 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
 
     /// <summary>The format the record is written in, 2: per site its ends, kit (0 none, else its record number) and the
     /// laying that built it; per piece its kind, prefab, position, pitch, yaw, roll and health; then the ground it stands on
-    /// (<see cref="GroundPin"/>). Record 1 (without the laying) is read as before, its sites as laying 0.</summary>
+    /// (<see cref="GroundPin"/>). No other record is read.</summary>
     private const int FormatVersion = 2;
 
     public byte[] Serialize()
@@ -194,7 +193,7 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
         using var stream = new MemoryStream(bytes);
         using var reader = new BinaryReader(stream);
         int version = reader.ReadInt32();
-        if (version < 1 || version > FormatVersion) throw new InvalidDataException($"Unknown {_what} data version.");
+        if (version != FormatVersion) throw new InvalidDataException($"Unknown {_what} data version.");
         int sites = reader.ReadInt32();
         if (sites < 0 || sites > 10000) throw new InvalidDataException($"Invalid {_what} count.");
         int total = 0;
@@ -208,7 +207,7 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
             int kit = reader.ReadInt32();
             if (kit != 0 && !_knownKit(kit)) throw new InvalidDataException($"Unknown {_what} kit.");
             site.KitNumber = kit;
-            site.Layout = version >= 2 ? reader.ReadInt32() : 0;
+            site.Layout = reader.ReadInt32();
             if (site.Layout < 0) throw new InvalidDataException($"Invalid {_what} layout.");
             if (!ManualRoadDraft.ValidPoint(site.From) || !ManualRoadDraft.ValidPoint(site.To))
                 throw new InvalidDataException($"Invalid {_what} ends.");

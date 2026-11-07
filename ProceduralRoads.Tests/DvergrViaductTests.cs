@@ -46,12 +46,10 @@ public sealed class DvergrViaductTests : IDisposable
         /// <summary>How fast the ground falls away west of the near bank (x = -31), to 6 m under it.</summary>
         public float NearFall;
         public Heightmap.Biome Biome = Heightmap.Biome.Mistlands;
-        /// <summary>Where set, <see cref="Biome"/> only within this of x = 0 (the channel's middle), Meadows beyond.</summary>
-        public float? BiomeWithin;
         public override float GetHeight(float wx, float wy) =>
             Mathf.Abs(wx) <= Half ? Bed : wx < -Half - 1f ? Bank - Mathf.Min(NearFall * (-Half - 1f - wx), 6f) : Bank;
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
-            BiomeWithin is float within && Mathf.Abs(wx) > within ? Heightmap.Biome.Meadows : Biome;
+            Biome;
         public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
         {
             weight = Mathf.Abs(wx) < Half ? 1f : 0f;

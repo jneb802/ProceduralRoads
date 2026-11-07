@@ -629,7 +629,7 @@ public static class RoadNetworkPersistence
     {
         roadCrossings.Clear();
         if (data == null || data.Length == 0) return;
-        if (!DeserializeRoadCrossings(data, roadCrossings, WorldGenerator.instance)) throw new InvalidDataException("unreadable river crossings");
+        if (!DeserializeRoadCrossings(data, roadCrossings)) throw new InvalidDataException("unreadable river crossings");
     }
 
     /// <summary>
@@ -639,9 +639,7 @@ public static class RoadNetworkPersistence
     /// is 0 for none (the rest then 0), 1 a structure's end, 2 an end where the crossing is road.
     /// flags: bit 0, a Mistlands viaduct the search bought over a dry valley (<see cref="RoadCrossing.ValleyJump"/>),
     /// not a river's bridge. An undecided kit is a deck's whose kit is chosen when it is first built
-    /// (<see cref="BridgeStructures.ChooseKit"/>). Versions 1 (no flags), 2 (no kit, chosen as an undecided one is),
-    /// 3 (no ends, each then as the bank takes it; the ends it recorded in its flags are not read) and 4 (no undecided kit:
-    /// every kit it stored is the crossing's, chosen) are read too. The rest of a crossing is derived
+    /// (<see cref="BridgeStructures.ChooseKit"/>). Any other version is refused. The rest of a crossing is derived
     /// from its banks on load.
     /// </summary>
     internal static byte[] SerializeRoadCrossings(IReadOnlyList<RoadCrossing> roadCrossings)
@@ -699,7 +697,7 @@ public static class RoadNetworkPersistence
         }
     }
 
-    /// <summary>Read the spawned-zone record. A record written by an older bridge layout keeps its zones marked
+    /// <summary>Read the spawned-zone record. Only the current format is read. A record written by an older bridge layout keeps its zones marked
     /// spawned: a layout change reaches only zones that have no pieces yet, and a world's standing bridges are never
     /// rebuilt.</summary>
     private static void ReadBridgeZones(byte[]? data, HashSet<Vector2s> bridgeZones)
@@ -710,20 +708,9 @@ public static class RoadNetworkPersistence
         using var ms = new MemoryStream(data);
         using var reader = new BinaryReader(ms);
         int version = reader.ReadInt32();
-        int layout;
-        if (version == 1)
-        {
-            // Written before the record carried a layout id: the narrow,
-            // single-lane bridges. Every zone recorded here holds pieces of
-            // a shape this build no longer makes.
-            layout = 1;
-        }
-        else if (version == BridgeZonesFormat)
-        {
-            layout = reader.ReadInt32();
-        }
-        else
+        if (version != BridgeZonesFormat)
             throw new InvalidDataException($"unknown bridge zone data version {version}");
+        int layout = reader.ReadInt32();
         List<Vector2s> zones = ReadZones(reader, "bridge zone");
         if (layout != BridgeLayout.LayoutVersion)
         {
@@ -736,8 +723,7 @@ public static class RoadNetworkPersistence
 
     /// <summary>
     /// Format: [version=2][layout][count] then [x][y] per zone, each a 32-bit
-    /// int. Version 1 had no layout id and is read as layout 1, the narrow
-    /// bridges. Valheim 1.0 made a zone id a pair of shorts; the casts here
+    /// int. Valheim 1.0 made a zone id a pair of shorts; the casts here
     /// keep the saved bytes as they were, so worlds written before 1.0 still
     /// read.
     /// </summary>
@@ -751,7 +737,7 @@ public static class RoadNetworkPersistence
         return ms.ToArray();
     }
 
-    /// <summary>The bridge-zones record's format: 2 adds the layout id; 1 is read too.</summary>
+    /// <summary>The bridge-zones record's format (the layout id leads the zones); no other is read.</summary>
     private const int BridgeZonesFormat = 2;
 
     /// <summary>The cleared-zones record's formats: 1, and 2 when some zone is owed only the roads appended since.</summary>
@@ -786,16 +772,13 @@ public static class RoadNetworkPersistence
         return zones;
     }
 
-    /// <summary>The crossings record's format: 2 carries each crossing's flags (a valley viaduct's
-    /// <see cref="RoadCrossing.ValleyJump"/>, which the load puts its keep-out back from), 3 its kit, 4 its ends, 5 a kit
-    /// not chosen yet (<see cref="UndecidedKit"/>). 1 is read too.</summary>
+    /// <summary>The crossings record's format: each crossing carries its flags (a valley viaduct's
+    /// <see cref="RoadCrossing.ValleyJump"/>, which the load puts its keep-out back from), its kit (one not chosen yet is
+    /// <see cref="UndecidedKit"/>) and its ends. No other format is read.</summary>
     internal const int CrossingsFormat = 5;
 
-    /// <summary>The crossings record's number for <see cref="BridgeStructures.Kit.Undecided"/> (format 5 on).</summary>
+    /// <summary>The crossings record's number for <see cref="BridgeStructures.Kit.Undecided"/>.</summary>
     internal const int UndecidedKit = -1;
-
-    /// <summary>The crossings record's number for the retired plain wooden kit (formats 3 and 4); it names no kit since.</summary>
-    internal const int RetiredWoodKit = 1;
 
     /// <summary>The longest crossing a network holds, bank to bank: a bridge's jump (MaxBridgeCrossingCells) with a
     /// swamp bridge's banks walked out over the shelf at both ends (SwampBridgeDryReach).</summary>
@@ -804,12 +787,11 @@ public static class RoadNetworkPersistence
     /// <summary>
     /// Why a saved crossing is not one this build ever makes, or null when it is: every number finite, its points in
     /// the world, its span within <see cref="MaxCrossingSpan"/> (a valley viaduct's within DvergrViaduct's), a kind and
-    /// style that exist and go together, and no flag but the valley's (a record before format 4 may carry its ends in
-    /// the flags too, which are not read). Checked before anything is planned from it: a
+    /// style that exist and go together, and no flag but the valley's. Checked before anything is planned from it: a
     /// bridge's layout is sized by its span.
     /// </summary>
     private static string? CrossingFault(Vector2 fromBank, Vector2 toBank, float riverbed, Vector2 fairwayCenter,
-        float fairwayWidth, CrossingKind kind, FordStyle style, int flags, int version)
+        float fairwayWidth, CrossingKind kind, FordStyle style, int flags)
     {
         static bool Finite(float x) => !float.IsNaN(x) && !float.IsInfinity(x);
         static bool InWorld(Vector2 p) => Finite(p.x) && Finite(p.y) && p.magnitude <= RoadConstants.WorldEdge;
@@ -820,7 +802,7 @@ public static class RoadNetworkPersistence
         if (fairwayWidth < 0f || fairwayWidth > MaxCrossingSpan) return $"a fairway of {fairwayWidth} m";
         if (!Enum.IsDefined(typeof(CrossingKind), kind) || !Enum.IsDefined(typeof(FordStyle), style)) return $"kind {(int)kind}, style {(int)style}";
         if (kind == CrossingKind.Bridge && style != FordStyle.None) return $"a bridge with ford style {style}";
-        if ((flags & ~(version >= 4 ? 1 : 0x7FFF)) != 0) return $"flags {flags}";
+        if ((flags & ~1) != 0) return $"flags {flags}";
         bool valley = (flags & 1) != 0;
         if (valley && (kind != CrossingKind.Bridge || span < DvergrViaduct.MinValleySpan - 1f || span > DvergrViaduct.MaxValleySpan + 1f))
             return $"a valley viaduct {kind} of {span} m";
@@ -901,14 +883,9 @@ public static class RoadNetworkPersistence
     }
 
     /// <summary>
-    /// The crossings of a record (<see cref="SerializeRoadCrossings"/>). A record before format 5 is read as it was laid: the
-    /// retired plain wooden kit (stored 1, formats 3 and 4) names a deck whose kit is chosen when it is first built
-    /// (<see cref="BridgeStructures.Kit.Undecided"/>), as does a deck it stored with no kit, which it laid as no viaduct; a
-    /// deck of a record that stored no kind (formats 1 and 2) is a viaduct where it was under the ceiling it was laid under
-    /// (<see cref="DvergrViaduct.FormerPierCeiling"/>), read on <paramref name="world"/>, else undecided; without a world
-    /// its kind is left to be asked.
+    /// The crossings of a record (<see cref="SerializeRoadCrossings"/>); a record of any other format is refused.
     /// </summary>
-    internal static bool DeserializeRoadCrossings(byte[] data, List<RoadCrossing> roadCrossings, WorldGenerator? world = null)
+    internal static bool DeserializeRoadCrossings(byte[] data, List<RoadCrossing> roadCrossings)
     {
         try
         {
@@ -916,7 +893,7 @@ public static class RoadNetworkPersistence
             using var reader = new BinaryReader(ms);
 
             int version = reader.ReadInt32();
-            if (version < 1 || version > CrossingsFormat)
+            if (version != CrossingsFormat)
             {
                 Log.LogWarning($"Unknown river crossing data version: {version}");
                 return false;
@@ -939,31 +916,20 @@ public static class RoadNetworkPersistence
                 float fairwayWidth = reader.ReadSingle();
                 CrossingKind kind = (CrossingKind)reader.ReadInt32();
                 FordStyle style = (FordStyle)reader.ReadInt32();
-                int flags = version >= 2 ? reader.ReadInt32() : 0;
-                int kit = version >= 3 ? reader.ReadInt32() : 0;
-                bool undecided = kit == UndecidedKit && version >= 5;
-                if (version < 5 && kit == RetiredWoodKit) { kit = 0; undecided = true; }
+                int flags = reader.ReadInt32();
+                int kit = reader.ReadInt32();
+                bool undecided = kit == UndecidedKit;
                 if (!undecided && (kit < 0 || (kit > 0 && !Enum.IsDefined(typeof(BridgeStructures.Kit), kit - 1))))
                 { Log.LogWarning($"Invalid crossing kit: {kit}"); return false; }
-                string? fault = CrossingFault(fromBank, toBank, riverbed, fairwayCenter, fairwayWidth, kind, style, flags, version);
+                string? fault = CrossingFault(fromBank, toBank, riverbed, fairwayCenter, fairwayWidth, kind, style, flags);
                 if (fault != null) { Log.LogWarning($"Invalid river crossing {i}: {fault}"); return false; }
                 RoadCrossing crossing = RoadCrossing.Between(fromBank, toBank, riverbed, fairwayCenter, fairwayWidth, kind, style);
                 crossing.ValleyJump = (flags & 1) != 0;
                 if (undecided) crossing.Kit = BridgeStructures.Kit.Undecided;
                 else if (kit > 0) crossing.Kit = (BridgeStructures.Kit)(kit - 1);
-                if (version < 5 && crossing.Kit == null && BridgeStructures.HasDeck(crossing))
-                {
-                    if (version >= 3) crossing.Kit = BridgeStructures.Kit.Undecided;
-                    else if (world != null)
-                        crossing.Kit = DvergrViaduct.AppliedFormerly(crossing, world)
-                            ? BridgeStructures.Kit.DvergrViaduct : BridgeStructures.Kit.Undecided;
-                }
-                if (version >= 4)
-                {
-                    StructureEnds.End? from = ReadEnd(reader, crossing, out string? endFault), to = endFault == null ? ReadEnd(reader, crossing, out endFault) : null;
-                    if (endFault != null) { Log.LogWarning($"Invalid river crossing {i}: {endFault}"); return false; }
-                    (crossing.FromEnd, crossing.ToEnd) = (from, to);
-                }
+                StructureEnds.End? from = ReadEnd(reader, crossing, out string? endFault), to = endFault == null ? ReadEnd(reader, crossing, out endFault) : null;
+                if (endFault != null) { Log.LogWarning($"Invalid river crossing {i}: {endFault}"); return false; }
+                (crossing.FromEnd, crossing.ToEnd) = (from, to);
                 roadCrossings.Add(crossing);
             }
             if (ms.Position != ms.Length)

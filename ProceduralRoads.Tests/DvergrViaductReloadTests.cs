@@ -88,24 +88,20 @@ public sealed class DvergrViaductReloadTests : IDisposable
         Assert.Equal(record, RoadNetworkPersistence.SerializeRoadCrossings(RoadNetworkGenerator.GetRoadCrossings()));
     }
 
-    [Fact]
-    public void AVersionOneCrossingsRecordStillReads()
+    /// <summary>The crossings record reads only its current format: any other version number is refused.</summary>
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    [InlineData(6)]
+    public void ACrossingsRecordOfAnotherVersionIsRefused(int version)
     {
-        // Written before the flags: [1][count] and ten fields a crossing.
-        using var ms = new System.IO.MemoryStream();
-        using (var w = new System.IO.BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
-        {
-            w.Write(1); w.Write(1);
-            foreach (float f in new[] { -24f, 0f, 24f, 0f, 46f, 0f, 0f, 0f }) w.Write(f);
-            w.Write((int)CrossingKind.Bridge); w.Write((int)FordStyle.None);
-        }
-        var loaded = new List<RoadCrossing>();
-        Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(ms.ToArray(), loaded));
-        RoadCrossing c = Assert.Single(loaded);
-        Assert.False(c.ValleyJump);
-        Assert.Equal(new Vector2(24f, 0f), c.ToBank);
-        Assert.Equal(RoadNetworkPersistence.CrossingsFormat, BitConverter.ToInt32(RoadNetworkPersistence.SerializeRoadCrossings(loaded), 0));
-        Assert.Null(c.Kit);
+        var c = RoadCrossing.Between(new Vector2(-24f, 0f), new Vector2(24f, 0f), 30f, new Vector2(0f, 0f), 0f, CrossingKind.Bridge);
+        byte[] bytes = RoadNetworkPersistence.SerializeRoadCrossings(new[] { c });
+        BitConverter.GetBytes(version).CopyTo(bytes, 0);
+        Assert.False(RoadNetworkPersistence.DeserializeRoadCrossings(bytes, new List<RoadCrossing>()));
     }
 
     /// <summary>A crossing keeps the kit it was stored with: saved with it, and read back, it is not decided again when the
@@ -126,100 +122,6 @@ public sealed class DvergrViaductReloadTests : IDisposable
             Assert.Equal(BridgeStructures.Kit.DvergrViaduct, BridgeStructures.KitFor(back, new FlatWorldForKit()));
         }
         finally { DvergrViaduct.MinViaductPier = was; }
-    }
-
-    /// <summary>One bridge in a record before format 5: version, its banks and bed, and (format 3 and on) the kit stored
-    /// as its number and one; format 4 adds its ends, none here.</summary>
-    private static byte[] OldRecord(int version, float bank, int kit)
-    {
-        using var ms = new System.IO.MemoryStream();
-        using (var w = new System.IO.BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
-        {
-            w.Write(version); w.Write(1);
-            foreach (float f in new[] { -31f, 0f, 31f, 0f, 26f, -6f, 0f, 20f }) w.Write(f);
-            w.Write((int)CrossingKind.Bridge); w.Write((int)FordStyle.None);
-            if (version >= 2) w.Write(0);
-            if (version >= 3) w.Write(kit);
-            if (version >= 4) for (int end = 0; end < 2; end++) for (int f = 0; f < 7; f++) w.Write(0);
-        }
-        return ms.ToArray();
-    }
-
-    /// <summary>A record of format 3 or 4 that stored the retired plain wooden kit still reads: the bridge's kit is chosen
-    /// when it is first built, its other crossings kept.</summary>
-    [Theory]
-    [InlineData(3)]
-    [InlineData(4)]
-    public void ARecordWithTheRetiredWoodenKitReadsAsUndecided(int version)
-    {
-        var loaded = new List<RoadCrossing>();
-        Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(OldRecord(version, 45f, RoadNetworkPersistence.RetiredWoodKit), loaded));
-        Assert.Equal(BridgeStructures.Kit.Undecided, Assert.Single(loaded).Kit);
-        // Format 5 never stored it: still refused there.
-        byte[] five = RoadNetworkPersistence.SerializeRoadCrossings(loaded);
-        BitConverter.GetBytes(RoadNetworkPersistence.RetiredWoodKit).CopyTo(five, 8 + 11 * 4);
-        Assert.False(RoadNetworkPersistence.DeserializeRoadCrossings(five, new List<RoadCrossing>()));
-    }
-
-    /// <summary>A Mistlands bridge a record before format 5 laid as no viaduct, whose tallest pier stands between the
-    /// former 20 m ceiling and today's, stays no viaduct: a record that stored its kind (formats 3 and 4, no kit) is read by
-    /// what it stored, one that did not (formats 1 and 2) by the ceiling it was laid under.</summary>
-    [Fact]
-    public void AnOldRecordKeepsTheViaductsItLaid()
-    {
-        var world = new DvergrViaductTests.MistRiver();
-        RoadCrossing probe = DvergrViaductTests.River();
-        float? between = null, under = null;
-        for (float bank = 30f; bank <= 70f && (between == null || under == null); bank += 0.5f)
-        {
-            world.Bank = bank;
-            if (!DvergrViaduct.Applies(probe, world)) continue;
-            if (DvergrViaduct.AppliedFormerly(probe, world)) under ??= bank;
-            else between ??= bank;
-        }
-        Assert.True(between.HasValue && under.HasValue, "no river whose viaduct the ceiling's raise decides");
-        world.Bank = between!.Value;
-        foreach (int version in new[] { 1, 2, 3, 4 })
-        {
-            var loaded = new List<RoadCrossing>();
-            Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(OldRecord(version, world.Bank, 0), loaded, world));
-            Assert.False(BridgeStructures.IsViaduct(Assert.Single(loaded), world), $"format {version}");
-            Assert.Equal(BridgeStructures.Kit.Undecided, loaded[0].Kit);
-        }
-        world.Bank = under!.Value;
-        foreach (int version in new[] { 1, 2 })
-        {
-            var loaded = new List<RoadCrossing>();
-            Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(OldRecord(version, world.Bank, 0), loaded, world));
-            Assert.Equal(BridgeStructures.Kit.DvergrViaduct, Assert.Single(loaded).Kit);
-        }
-    }
-
-    /// <summary>A record from before kits were stored (formats 1 and 2) is read by the biome rule it was laid under, its
-    /// centre's biome, not today's Mistlands share: a bridge whose middle is Mistlands but under the share of its length still
-    /// loads as the viaduct it was laid as.</summary>
-    [Fact]
-    public void AnOldRecordKeepsTheBiomeRuleItWasLaidUnder()
-    {
-        var world = new DvergrViaductTests.MistRiver();
-        RoadCrossing probe = DvergrViaductTests.River();
-        float? laid = null;
-        for (float bank = 30f; bank <= 70f && laid == null; bank += 0.5f)
-        {
-            world.Bank = bank;
-            if (DvergrViaduct.AppliedFormerly(probe, world)) laid = bank;
-        }
-        Assert.True(laid.HasValue, "no river laid as a viaduct under the former rule");
-        world.Bank = laid!.Value;
-        world.BiomeWithin = 5f;
-        Assert.False(DvergrViaduct.Applies(probe, world), "today's share rule would not lay it");
-        Assert.True(DvergrViaduct.AppliedFormerly(probe, world), "its centre is Mistlands");
-        foreach (int version in new[] { 1, 2 })
-        {
-            var loaded = new List<RoadCrossing>();
-            Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(OldRecord(version, world.Bank, 0), loaded, world));
-            Assert.Equal(BridgeStructures.Kit.DvergrViaduct, Assert.Single(loaded).Kit);
-        }
     }
 
     private sealed class FlatWorldForKit : WorldGenerator
@@ -255,7 +157,7 @@ public sealed class DvergrViaductReloadTests : IDisposable
             c.FromEnd = StructureEnds.Decide(nearEdge, c.Direction, atGrade, Ground);
             c.ToEnd = StructureEnds.Decide(farEdge, -c.Direction, atGrade, Ground);
             var loaded = new List<RoadCrossing>();
-            Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(RoadNetworkPersistence.SerializeRoadCrossings(new[] { c }), loaded, world));
+            Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(RoadNetworkPersistence.SerializeRoadCrossings(new[] { c }), loaded));
             RoadCrossing saved = Assert.Single(loaded);
 
             Assert.Equal(atGrade, DvergrViaduct.DeckHeight(saved, world), 3);

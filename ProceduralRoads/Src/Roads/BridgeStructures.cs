@@ -200,7 +200,7 @@ public sealed class BridgeStructures : IStructureSource
             Kit.DvergrWood => mistlands,
             Kit.WoodRail or Kit.WoodBraced => !mistlands,
             // Stone over wood wherever at least the share stands outside the Meadows (a boundary leans to the stone).
-            Kit.Stone => !mistlands && LeansTo(crossing, world, b => b != Heightmap.Biome.Meadows) && BridgeLayout.StoneFits(crossing, world),
+            Kit.Stone => !mistlands && LeansTo(crossing, world, StairKit.StoneOverWoodBelongs) && BridgeLayout.StoneFits(crossing, world),
             _ => false,
         };
     }
@@ -208,7 +208,7 @@ public sealed class BridgeStructures : IStructureSource
     /// <summary>Whether a crossing is a Mistlands one, as a staircase is (<see cref="StairKit.InMistlands"/>: at least
     /// <see cref="StairKit.BiomeShare"/> of it in the Mistlands), over its length from bank to bank (its pieces are chosen
     /// by the answer, so they cannot be what it counts). The one owner for the kit, the viaduct's refusal and the deck's width. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
-    public static bool InMistlands(RoadCrossing crossing, WorldGenerator world) => LeansTo(crossing, world, b => b == Heightmap.Biome.Mistlands);
+    public static bool InMistlands(RoadCrossing crossing, WorldGenerator world) => LeansTo(crossing, world, StairKit.MistlandsKitBelongs);
 
     /// <summary>Whether a crossing leans to the more advanced kit (<see cref="StairKit.LeansTo"/>) over its length from bank to bank.</summary>
     public static bool LeansTo(RoadCrossing crossing, WorldGenerator world, System.Func<Heightmap.Biome, bool> advanced) =>

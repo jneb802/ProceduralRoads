@@ -198,8 +198,16 @@ public sealed class StairKit
     /// <summary>The kit a piece's prefab names (the part before its first underscore); stone for none.</summary>
     public static StairKit OfPrefab(string prefab) => Of(prefab.Split('_')[0]);
 
-    /// <summary>The kit for a staircase in <paramref name="biome"/>: black marble in the Mistlands, stone everywhere else.</summary>
-    public static StairKit ForSite(Heightmap.Biome biome) => biome == Heightmap.Biome.Mistlands ? BlackMarble : Stone;
+    /// <summary>Where the black-marble and Dvergr kits belong: the Mistlands. Read by the share rule (<see cref="LeansTo"/>)
+    /// for staircases and bridges, and by <see cref="ForSite"/>.</summary>
+    public static bool MistlandsKitBelongs(Heightmap.Biome biome) => biome == Heightmap.Biome.Mistlands;
+
+    /// <summary>Where a stone bridge belongs over a wooden one: outside the Meadows (<see cref="LeansTo"/>).</summary>
+    public static bool StoneOverWoodBelongs(Heightmap.Biome biome) => biome != Heightmap.Biome.Meadows;
+
+    /// <summary>The kit for a staircase at one place in <paramref name="biome"/> (the search's per-cell prediction, before a
+    /// staircase has places to share): the share rule over that one place.</summary>
+    public static StairKit ForSite(Heightmap.Biome biome) => MistlandsKitBelongs(biome) ? BlackMarble : Stone;
 
     /// <summary>Share of a staircase in the Mistlands from which it is black marble.</summary>
     public const float BiomeShare = 0.4f;
@@ -251,7 +259,7 @@ public sealed class StairKit
     /// <summary>The one owner of "this structure is Mistlands": at least <see cref="BiomeShare"/> of
     /// <paramref name="places"/> (a staircase's walked pieces, a bridge's length) are in the Mistlands; none are not. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
     public static bool InMistlands(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt) =>
-        LeansTo(places, biomeAt, b => b == Heightmap.Biome.Mistlands);
+        LeansTo(places, biomeAt, MistlandsKitBelongs);
 
     /// <summary>The one rule for a structure across a biome edge: it takes the more advanced kit where at least
     /// <see cref="BiomeShare"/> of <paramref name="places"/> stand where that kit belongs (<paramref name="advanced"/>), so a

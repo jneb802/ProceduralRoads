@@ -23,7 +23,7 @@ public sealed class BridgeBiomeShareTests : System.IDisposable
         var places = new System.Collections.Generic.List<Vector2>();
         for (int i = 0; i < 10; i++) places.Add(new Vector2(i, 0f));
         Heightmap.Biome At(float x, float z) => x < meadowsOfTen ? Heightmap.Biome.Meadows : Heightmap.Biome.BlackForest;
-        Assert.Equal(stone, StairKit.LeansTo(places, At, b => b != Heightmap.Biome.Meadows));
+        Assert.Equal(stone, StairKit.LeansTo(places, At, StairKit.StoneOverWoodBelongs));
     }
 
     private readonly ValheimWorldScope _scope = new();

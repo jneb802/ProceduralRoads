@@ -113,7 +113,7 @@ public class StairDescentTests
         Assert.Empty(plan.Pieces);
         // Nor on down from a foot to a road below it.
         plan = new StairPlan { Kit = StairKit.Stone.Name, Reached = true, StartHeading = 0f, Foot = new Vector3(0f, 20f, 0f) };
-        Assert.Null(StairLayout.LowerFootTo(plan, (x, z) => 0f, 2f, 17f));
+        Assert.Null(StairLayout.FootToRoad(plan, (x, z) => 0f, 2f, 17f));
         Assert.Empty(plan.Pieces);
         Assert.Equal(new Vector3(0f, 20f, 0f), plan.Foot);
     }

@@ -311,7 +311,7 @@ public static partial class RoadStairRuns
         s_laid.Clear();
         StairLayout.ResetSupportRefusals();
         StairSupport.ResetCounts();
-        Crests = ClimbedOn = RoadTopsCrested = TopFloors = FeetLowered = FeetLoweredToEnds = FeetFacedFreely = RidgesBridged = RidgesSnapped = TopsBeside = ValleysMet = FootAprons = RingEndsThrough = RidgesSnappedOffCrest = CrestStubs = ValleysSpanned = RidgesJoinedLow = BackTracksJoined = BackTracksMerged = BackTracksRefused = LedgeUnpriced = FlightLandings = FeetStartedLower = RidgesToFeet = KitsRelaid = ApproachesNotFacingIn = ApproachFacingReruns = AimsBuried = LaidBesideTheirAim = BareTopsKept = 0;
+        Crests = ClimbedOn = RoadTopsCrested = TopFloors = FeetLowered = FeetLoweredToEnds = FeetSunkAtEnds = SunkStairsLaid = FeetFacedFreely = RidgesBridged = RidgesSnapped = TopsBeside = ValleysMet = FootAprons = RingEndsThrough = RidgesSnappedOffCrest = CrestStubs = ValleysSpanned = RidgesJoinedLow = BackTracksJoined = BackTracksMerged = BackTracksRefused = LedgeUnpriced = FlightLandings = FeetStartedLower = RidgesToFeet = KitsRelaid = ApproachesNotFacingIn = ApproachFacingReruns = AimsBuried = LaidBesideTheirAim = BareTopsKept = 0;
         RoadFeetAcross = MergedFeetAcross = RoadTopsAcross = ApproachStartsAcross = ApproachLayoutsAcross = SiteChecksAcross = 0;
         Array.Clear(RingEnds, 0, RingEnds.Length);
         PadsAtFeet = PadsAtTops = PadsPartial = 0;
@@ -517,6 +517,8 @@ public static partial class RoadStairRuns
                     System.Threading.Interlocked.Add(ref FeetStartedLower, lowered.Count);
                     System.Threading.Interlocked.Add(ref FeetLowered, tally.FeetLowered);
                     System.Threading.Interlocked.Add(ref FeetLoweredToEnds, tally.FeetLoweredToEnds);
+                    System.Threading.Interlocked.Add(ref FeetSunkAtEnds, tally.FeetSunkAtEnds);
+                    System.Threading.Interlocked.Add(ref SunkStairsLaid, tally.SunkStairsLaid);
                     System.Threading.Interlocked.Add(ref FootAprons, tally.FootAprons);
                 }
                 // Only a stretch whose layouts paid the ledge price at a foot is laid again without it: a second lay of any other failure cost a whole allowance for nothing.
@@ -578,7 +580,7 @@ public static partial class RoadStairRuns
     /// (<see cref="FeetLowered"/>, <see cref="FeetLoweredToEnds"/>, <see cref="FootAprons"/>) only for the lay kept.</summary>
     private sealed class LayTally
     {
-        public int FeetLowered, FeetLoweredToEnds, FootAprons;
+        public int FeetLowered, FeetLoweredToEnds, FeetSunkAtEnds, SunkStairsLaid, FootAprons;
     }
 
     /// <summary>
@@ -1076,32 +1078,55 @@ public static partial class RoadStairRuns
             // along its line, and the stretch they then stand on is theirs; else the staircase is laid again from its foot at
             // the end's height, on the ground the road levels there. Where neither is laid, the road is not planned with that
             // stretch (RoadNetworkGenerator.PlanPieces: no stub of road between two structures).
+            // A foot met on a stair sunk into the road at a crossing's end: the road meets it at the end's height, not at the foot.
+            bool sunkAtEnd = false;
             if (existing == null && !valleyFirst && meet == null && plan.FootFloorsTrimmed == 0
                 && EndUnderFoot(path, footAt, plan.Reversed ? to : start, plan.Reversed ? 1 : -1, crossings, world, footHeight) is (int endIndex, StructureEnds.End under))
             {
                 Vector2 outward = -under.Up, across = new(-outward.y, outward.x);
                 float wasOut = Vector2.Dot(footAt - under.Meet, outward);
                 StairPlan toEnd = plan.Copy();
-                if (StairLayout.LowerFootTo(toEnd, Ground, Width, under.MeetHeight) is Vector3 lowest
-                    && Vector2.Dot(new Vector2(lowest.x, lowest.z) - under.Meet, outward) is float nowOut && nowOut >= 0f && nowOut < wasOut
-                    && Mathf.Abs(Vector2.Dot(new Vector2(lowest.x, lowest.z) - under.Meet, across)) <= RoadNetworkGenerator.RoadWidth / 2f
-                    && !InExcludedZone(toEnd) && KeepsItsRingLowered(toEnd, lowest)
-                    // Close enough to share the landing to the end (two structures, StructureEnds.SharesLanding); else the foot is
-                    // laid from the end's height instead (FromTheEndsHeight, below).
-                    && StructureEnds.SharesLanding(lowest.y, under.MeetHeight))
+                // The foot carried on down toward the end's height by whole stairs, on the end's line, nearer the end than it
+                // was (the same where only a stair is sunk under it); a sunk stair's slope comes up out of the road outward of
+                // the end's foot, clear of the structure's joining piece.
+                var toRoad = StairLayout.FootToRoad(toEnd, Ground, Width, under.MeetHeight);
+                bool Fits(Vector3 foot, bool sunk)
+                {
+                    Vector2 there = new(foot.x, foot.z);
+                    float nowOut = Vector2.Dot(there - under.Meet, outward);
+                    float clear = sunk ? (foot.y - under.MeetHeight) / StairLayout.PieceRise * StairLayout.PieceRun : 0f;
+                    return nowOut >= clear && (nowOut < wasOut || sunk && nowOut <= wasOut + 1e-3f)
+                        && Mathf.Abs(Vector2.Dot(there - under.Meet, across)) <= RoadNetworkGenerator.RoadWidth / 2f
+                        && !InExcludedZone(toEnd) && KeepsItsRingLowered(toEnd, foot);
+                }
+                void Carry(Vector3 foot, float meets)
                 {
                     plan = toEnd;
-                    (footAt, footHeight) = (new Vector2(lowest.x, lowest.z), lowest.y);
+                    float nowOut = Vector2.Dot(new Vector2(foot.x, foot.z) - under.Meet, outward);
+                    (footAt, footHeight) = (new Vector2(foot.x, foot.z), meets);
                     if (plan.Reversed) { while (to < endIndex && Vector2.Dot(path[to] - under.Meet, outward) > nowOut) to++; }
                     else { while (start > endIndex && Vector2.Dot(path[start] - under.Meet, outward) > nowOut) start--; }
                     tally.FeetLoweredToEnds++;
                 }
+                // Carried down to within a walker's step of the end (StairLayout.Walkable: the road between is levelled at the
+                // end's height, so the step is the road's onto the foot); else laid again from the end's height
+                // (FromTheEndsHeight); else, the foot more than a step off the end, a stair sunk into the road under it, the walk
+                // meeting the road on its slope (StairLayout.FootToRoad); else the road is not planned with that stretch.
+                if (toRoad is (Vector3 within, float meetsAt, false, _) && Fits(within, false))
+                    Carry(within, meetsAt);
                 else if (FromTheEndsHeight(path, start, to, kit, Ground, under, footAt, world, spans) is StairPlan again)
                 {
                     plan = again;
                     footHeight = under.MeetHeight;
                     if (plan.Foot is Vector3 f) footAt = new Vector2(f.x, f.z);
                     tally.FeetLoweredToEnds++;
+                }
+                else if (toRoad is (Vector3 over, float road, true, bool laid) && Fits(over, true))
+                {
+                    Carry(over, road);
+                    sunkAtEnd = true;
+                    tally.FeetSunkAtEnds++;
+                    if (laid) tally.SunkStairsLaid++;
                 }
             }
             int beyond = plan.Reversed ? to + 1 : start - 1;
@@ -1134,7 +1159,7 @@ public static partial class RoadStairRuns
                     if (lowered is Vector3 low && !KeepsItsRingLowered(trial, low)) lowered = null;
                     if (lowered != null) { plan = trial; tally.FeetLowered++; }
                 }
-                if (lowered is Vector3 f) { footAt = new Vector2(f.x, f.z); footHeight = f.y; }
+                if (lowered is Vector3 f) { footAt = new Vector2(f.x, f.z); if (!sunkAtEnd) footHeight = f.y; }
             }
             // Its foot against a bank: a small level apron cut there for the road to meet (outside any place's footprint:
             // the commit skips cuts inside one), once per plan.

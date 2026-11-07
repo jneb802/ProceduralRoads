@@ -703,7 +703,7 @@ public class CantileverTests
         Assert.Equal(low!.Value.y, walked[0], 2);
         Assert.Equal(low.Value.y + StairLayout.PieceRise, walked[1], 2);
     }
-    /// <summary>A foot lowers to the nearest whole stair, as a foot carried to a crossing's end does (StairLayout.LowerFootTo): over
+    /// <summary>A foot lowers to the nearest whole stair, as a foot carried to a crossing's end does (StairLayout.FootToRoad): over
     /// its road by less than half a rise it stays (the road's landing is filled up to it), and from half a rise up one stair
     /// drops. The mound's foot stands 2.3 m up, the plain road 5 m back climbing at the cap.</summary>
     [Theory]
@@ -718,6 +718,45 @@ public class CantileverTests
         Vector3? foot = StairLayout.LowerFoot(plan, Mound, 2f, 0f, 5f, cap);
         Assert.Equal(stairs, plan.FootLowered);
         Assert.Equal(stairs > 0, foot.HasValue);
+    }
+
+    /// <summary>A foot carried to a road held at a height (a crossing's end, StairLayout.FootToRoad) by whole stairs: left
+    /// within a walker's step it meets the road there (1.15 m over: one stair, 0.15 over). Left 0.45 m over it (a step a player
+    /// can't walk up), one stair more is sunk into the road under the foot, uncut, its top at the foot, so the walk meets the
+    /// road on its slope; left 0.3 m under it (1.7 m over: two stairs would bury the foot), one stair is carried, a stair sunk under it
+    /// (the one the foot was laid with goes with the stairs added), the foot 0.7 m over the road. Never further over than under a rise.</summary>
+    [Theory]
+    [InlineData(1.15f, 1, false, false)]
+    [InlineData(1.45f, 1, true, true)]
+    [InlineData(1.7f, 1, true, true)]
+    public void AFootOverARoadHeldAtAHeightStandsOnAStairSunkIntoIt(float over, int lowered, bool sunk, bool laid)
+    {
+        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
+        Assert.True(plan.Reached && plan.SunkPieces > 0 && plan.Foot.HasValue, plan.Reason);
+        float road = plan.Foot!.Value.y - over;
+        var met = StairLayout.FootToRoad(plan, Mound, 2f, road);
+        Assert.True(met.HasValue, "the foot does not meet the road");
+        var (foot, meets, onSunk, laidHere) = met!.Value;
+        Assert.Equal(lowered, plan.FootLowered);
+        Assert.Equal((sunk, laid), (onSunk, laidHere));
+        Assert.True(StairLayout.FootMeets(plan, foot.y, road));
+        Assert.True(foot.y - road < StairLayout.PieceRise);
+        if (!sunk)
+        {
+            Assert.True(StairLayout.Walkable(foot.y, road));
+            Assert.Equal(foot.y, meets, 3);
+            return;
+        }
+        Assert.Equal(road, meets, 3);
+        Assert.False(StairLayout.Walkable(foot.y, road));
+        // The sunk stair: first in the plan's pieces, marked sunk, its base a rise under the foot, a run out from it.
+        Assert.True(plan.SunkPieces > 0);
+        for (int i = 0; i < plan.SunkPieces; i++)
+        {
+            Assert.True(plan.Pieces[i].Sunk && plan.Pieces[i].Kind == StairPieceKind.Stair);
+            Assert.Equal(foot.y - StairLayout.PieceRise, plan.Pieces[i].Position.y, 3);
+        }
+        Assert.DoesNotContain(plan.Pieces.Skip(plan.SunkPieces), p => p.Sunk);
     }
 
     /// <summary>A foot 1.12 m over its road's ground 5 m back (-5353.5,2896.1). The road ends there on its level landing

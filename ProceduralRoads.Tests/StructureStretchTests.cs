@@ -409,12 +409,56 @@ public sealed class StructureStretchTests : IDisposable
     /// The same ford's end as laid (RoadStairRuns.Lay): the road search bought its stair step a few metres past the end,
     /// where the ground has already climbed metres over the end's foot. The two ends meet: the staircase is carried on
     /// down toward the end to its height, on its line, and the road between is one level landing at that height, the
-    /// staircase's first step on it.
+    /// staircase's first step on it. Carried by whole stairs a foot is left up to half a rise off the end (on this world, the
+    /// hill's foot 1 m on, 0.25 m under it). Not within a walker's step, and not laid again from the end's height (that layout
+    /// lies on its road), it stands on a stair sunk into the road under it (StairLayout.FootToRoad), one stair less carried
+    /// down so the foot stands 0.75 m over the road: the sunk stair's slope comes up out of the road, and the road meets the
+    /// staircase at the end's height.
     /// </summary>
     [Fact]
     public void AStaircaseAShortStretchFromACrossingsEndIsCarriedDownToIt()
     {
-        var world = new BankThenHill();
+        var (far, span, plans) = CarriedToACrossingsEnd(1f);
+        AssertMetOnASunkStair(far, span, 0.75f);
+        AssertTheRoadMeetsTheFoot(span, plans);
+    }
+
+    /// <summary>A foot carried down to a crossing's end by whole stairs is left up to half a rise off it (the hill's foot
+    /// <paramref name="rise"/> metres on: +0.25, -0.45, +0.45, +0.35 m over the end). Never a lip a player can't walk up
+    /// (0.45 m): within a walker's step of the end it meets the road there; else it is laid again from the end's height
+    /// (+0.45, +0.35: <paramref name="over"/> 0); else it stands on a stair sunk into the road under it, the foot
+    /// <paramref name="over"/> the road, under a rise (+0.25 where no layout from the end's height fits; -0.45 one stair less
+    /// carried down, so 0.55 over).</summary>
+    [Theory]
+    [InlineData(0f, 0.25f)]
+    [InlineData(1.4f, 0.55f)]
+    [InlineData(1.6f, 0f)]
+    [InlineData(1.8f, 0f)]
+    public void AFootCarriedToACrossingsEndIsMetWithinAStep(float rise, float over)
+    {
+        var (far, span, plans) = CarriedToACrossingsEnd(rise);
+        if (over > 0f) AssertMetOnASunkStair(far, span, over);
+        else Assert.Equal(far.MeetHeight, span.FromHeight, 3);
+        AssertTheRoadMeetsTheFoot(span, plans);
+    }
+
+    /// <summary><paramref name="span"/>'s foot stands <paramref name="over"/> over <paramref name="far"/>'s height on a stair sunk
+    /// into the road under it, which meets it at the end's height.</summary>
+    private static void AssertMetOnASunkStair(StructureEnds.End far, RoadStairSpan span, float over)
+    {
+        Assert.True(RoadStairRuns.FeetSunkAtEnds > 0, "the foot was not met on a stair sunk into the road");
+        Assert.True(span.Plan.SunkPieces > 0 && span.Plan.Foot is Vector3, "no stair sunk under the foot");
+        Assert.Equal(far.MeetHeight + over, span.Plan.Foot!.Value.y, 2);
+        Assert.True(StairLayout.FootMeets(span.Plan, span.Plan.Foot.Value.y, far.MeetHeight));
+        Assert.Equal(far.MeetHeight, span.FromHeight, 3);
+    }
+
+    /// <summary>A ford's end, then a staircase a short stretch on whose foot stands over the end: carried down to it
+    /// (RoadStairRuns.Lay) on <see cref="BankThenHill"/> with its hill's foot <paramref name="rise"/> metres on. The end, the
+    /// staircase and the road planned with it.</summary>
+    private (StructureEnds.End far, RoadStairSpan span, List<RoadSpatialGrid.PlannedPath> plans) CarriedToACrossingsEnd(float rise)
+    {
+        var world = new BankThenHill { Rise = rise };
         _scope.WithWorld(world);
         RoadCrossing c = RoadCrossing.Between(new Vector2(-31f, 0f), new Vector2(31f, 0f), 26f, new Vector2(-6f, 0f), 20f, CrossingKind.Ford, FordStyle.Span);
         var (_, far) = BridgeStructures.Ends(c, world);
@@ -431,20 +475,22 @@ public sealed class StructureStretchTests : IDisposable
         var stairs = RoadStairRuns.Lay(path, new List<(Vector2 from, Vector2 to)> { (foot, top) }, crossings, world);
         Assert.True(stairs != null && stairs.Count == 1, "the staircase was not laid");
         RoadStairSpan span = stairs![0];
-        Assert.True(StructureEnds.SharesLanding(span.FromHeight, far.MeetHeight),
-            $"the staircase's foot stands at {span.FromHeight:F2}, the end's at {far.MeetHeight:F2}");
         Assert.True(RoadStairRuns.FeetLoweredToEnds > 0, "the foot was not carried down to the end");
-
         var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, crossings, 4f, null, null, stairs);
         Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        return (far, span, plans!);
+    }
+
+    /// <summary>The road comes to <paramref name="span"/>'s foot within a walker's step of where the road meets it.</summary>
+    private static void AssertTheRoadMeetsTheFoot(RoadStairSpan span, List<RoadSpatialGrid.PlannedPath> plans)
+    {
         bool met = false;
-        foreach (var r in plans!)
+        foreach (var r in plans)
             for (int i = 0; i < r.Points.Count; i++)
                 if (Vector2.Distance(r.Points[i], span.FromPoint) <= 0.75f)
                 {
                     met = true;
-                    // The foot shares the end's landing (two structures, within half a rise), as the road meets it.
-                    Assert.True(StructureEnds.SharesLanding(r.Heights[i], span.FromHeight),
+                    Assert.True(StairLayout.Walkable(r.Heights[i], span.FromHeight),
                         $"the staircase's foot at {span.FromPoint} stands at {span.FromHeight:F2}, the road under it at {r.Heights[i]:F2}");
                 }
         Assert.True(met, $"no road comes to the staircase's foot at {span.FromPoint}");

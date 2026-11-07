@@ -1383,13 +1383,8 @@ public static partial class StairLayout
         if (sunkFoot && steps.Count > 0 && steps[0].Kind == StairPieceKind.Stair)
         {
             Node lowest = steps[0];
-            int below = plan.Pieces.Count;
-            AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, lowest.Start - Forward(lowest.Heading) * PieceRun, lowest.Heading,
-                lowest.Parent!.Height - PieceRise, lanes, ground, mark: false, cut: false);
-            sunkPieces = plan.Pieces.Count;
-            for (int i = below; i < plan.Pieces.Count; i++) plan.Pieces[i].Sunk = true;
-            plan.SunkPieces = sunkPieces; plan.SunkClearances = plan.Clearances.Count;
-            plan.Foot = new Vector3(lowest.Start.x, lowest.Parent!.Height, lowest.Start.y);
+            SinkStep(plan, kit, lowest.Start, lowest.Heading, lowest.Parent!.Height, lanes, ground);
+            sunkPieces = plan.SunkPieces;
         }
         int flight = 0;
         foreach (Node step in steps)

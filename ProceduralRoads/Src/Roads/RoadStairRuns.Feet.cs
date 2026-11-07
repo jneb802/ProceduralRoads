@@ -181,6 +181,10 @@ public static partial class RoadStairRuns
     /// (<see cref="EndUnderFoot"/>).</summary>
     public static int FeetLoweredToEnds;
 
+    /// <summary>Of them, feet met on a stair sunk into the road under them (StairLayout.FootToRoad), and of those the sunk
+    /// stairs laid for it (the rest kept their own).</summary>
+    public static int FeetSunkAtEnds, SunkStairsLaid;
+
     /// <summary>How far back along the road from a foot its ground is read for LowerFoot.</summary>
     public const float FootBackReach = 5f;
 
@@ -591,7 +595,8 @@ public static partial class RoadStairRuns
     /// Why a road with <paramref name="stairs"/> may not be committed for one of their feet, and where; null when none: a
     /// foot laid against its road's end (its ring) where one of the road's own pieces (<paramref name="own"/>) ends, whose
     /// walked pieces there (within the start pad's reach, RoadEndRing.PadReach, but the steps sunk on purpose) all stand more
-    /// than a walker's step (StairLayout.Walkable) over the road's own height at that end (the staircase stands over its road with no way
+    /// than a walker's step over the road's own height at that end, and not met on a stair sunk under the foot
+    /// (StairLayout.FootMeets) (the staircase stands over its road with no way
     /// onto it), or whose lowest stands more than a rise under it (a pit at its foot under the road's bank). Asked before the
     /// commit with the road's other refusals: the road is refused and searched for as any refused road is, never kept with
     /// the staircase hanging (in game a tower's road staircase's foot stood 6.4 m over the road cut under it at -784,-4432,
@@ -638,7 +643,7 @@ public static partial class RoadStairRuns
                 if (Vector2.Distance(new Vector2(p.Position.x, p.Position.z), ring.Centre) > reach) continue;
                 lowest = Mathf.Min(lowest, StairLayout.Footprint(p).height);
             }
-            if (!float.IsPositiveInfinity(lowest) && lowest > height && !StairLayout.Walkable(lowest, height))
+            if (!float.IsPositiveInfinity(lowest) && lowest > height && !StairLayout.FootMeets(plan, lowest, height))
             {
                 at = ring.Centre;
                 return FootOverItsRoad;

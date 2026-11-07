@@ -67,7 +67,7 @@ public static partial class StairLayout
 
     /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise
     /// (<see cref="HalfRise"/>) the foot stays (the road's landing is filled up to it); from half a rise up, a stair drops
-    /// (<see cref="LowerFoot"/>, <see cref="LowerFootTo"/>). Half rounds up, not to even. The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).</summary>
+    /// (<see cref="LowerFoot"/>, <see cref="FootToRoad"/>). Half rounds up, not to even. The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).</summary>
     private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + 0.5f);
 
     /// <summary>
@@ -92,18 +92,54 @@ public static partial class StairLayout
     }
 
     /// <summary>
-    /// A staircase's foot carried on down to the road at <paramref name="height"/>: as many stairs on down from the foot
-    /// along its first heading as bring its low edge to that height within half a rise, the sunk step under the foot
-    /// becoming the first of them (a staircase whose foot is a short stretch of road from a crossing's end, the road there
-    /// level at the end's height). Returns the new foot (low edge, height), or null where the foot is within half a rise
-    /// already, has none, or something within reach would not hold a stair up (<see cref="RowHeld"/>).
-    /// The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).
+    /// The one owner of a staircase's foot meeting a road held at <paramref name="road"/> (the road levelled at a crossing's
+    /// end, RoadStairRuns.Lay), and of the stair sunk into that road where the two stand apart: the foot carried on down
+    /// toward the road by whole stairs (<see cref="WholeStairsOver"/>). Left within a walker's
+    /// step of the road (<see cref="Walkable"/>), it meets it there. Left more than a step over it (or under it: then one stair
+    /// less, so it stands over it), one stair more is sunk into the road under the foot, as a staircase's own sunk step is laid
+    /// (<see cref="SinkStep"/>: an uncut stair a rise down, out along its first heading, buried in the road but for its top):
+    /// its slope comes up out of the road, so the walk meets the road on it with no step, the foot under a rise over the road
+    /// (<see cref="FootMeets"/>). Nothing is sunk where the foot keeps its own sunk step. Returns the foot (its first stair's low
+    /// edge), the height the road meets it at (the foot's, or the road's on the sunk stair), whether it is met on a sunk
+    /// stair and whether that stair was laid here; null where the foot is not over the road, or a stair added would not be held up (<see cref="RowHeld"/>).
     /// </summary>
-    public static Vector3? LowerFootTo(StairPlan plan, Func<float, float, float> ground, float width, float height)
+    public static (Vector3 foot, float meets, bool sunk, bool laid)? FootToRoad(StairPlan plan, Func<float, float, float> ground, float width, float road)
     {
         if (plan.Foot is not Vector3 foot) return null;
-        int steps = WholeStairsOver(foot.y - height);
-        return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
+        int steps = WholeStairsOver(foot.y - road);
+        bool sink = !Walkable(foot.y - steps * PieceRise, road);
+        if (sink && foot.y - steps * PieceRise < road) steps--;
+        if (steps < 0) return null;
+        if (steps > 0 && AddFootStairs(plan, ground, width, steps) is null) return null;
+        Vector3 at = plan.Foot!.Value;
+        if (!sink) return (at, at.y, false, false);
+        bool laid = plan.SunkPieces <= 0;
+        if (laid) SinkStep(plan, StairKit.Of(plan.Kit), new Vector2(at.x, at.z), plan.StartHeading, at.y, Lanes(width), ground);
+        return FootMeets(plan, at.y, road) ? (at, road, true, laid) : null;
+    }
+
+    /// <summary>Whether a staircase's foot at <paramref name="foot"/> (its lowest walked stair's low edge) meets a road at
+    /// <paramref name="road"/>: within a walker's step (<see cref="Walkable"/>), or over it by less than a rise with a stair
+    /// sunk under it (<see cref="StairPlan.SunkPieces"/>), whose slope comes up out of the road (<see cref="FootToRoad"/>).</summary>
+    public static bool FootMeets(StairPlan plan, float foot, float road) =>
+        Walkable(foot, road) || plan.SunkPieces > 0 && foot > road && foot - road < PieceRise;
+
+    /// <summary>The stair sunk under a foot at <paramref name="foot"/> (<paramref name="height"/>, its low edge), the one way one
+    /// is laid: a whole stair a rise down, out from the foot back along <paramref name="heading"/> (the first stair's), its top at
+    /// the foot, so the flight comes up out of the road rather than starting on top of it with a lip (one extra stair clipped
+    /// down into the earth makes it connect better). Buried on purpose: no earthwork uncovers it (uncut, not counted as a stair
+    /// of the flight). First in the plan's lists, as a plan lays its pieces from its foot (<see cref="StairPlan.SunkPieces"/>).</summary>
+    private static void SinkStep(StairPlan plan, StairKit kit, Vector2 foot, float heading, float height, int lanes, Func<float, float, float> ground)
+    {
+        int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
+        AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, foot - Forward(heading) * PieceRun, heading, height - PieceRise, lanes, ground, mark: false, cut: false);
+        for (int i = pieces; i < plan.Pieces.Count; i++) plan.Pieces[i].Sunk = true;
+        int added = plan.Pieces.Count - pieces, addedClearances = plan.Clearances.Count - clearances;
+        FirstInWalkingOrder(plan.Pieces, new List<int> { pieces, plan.Pieces.Count });
+        FirstInWalkingOrder(plan.Clearances, new List<int> { clearances, plan.Clearances.Count });
+        if (plan.LastRowPieces >= 0) { plan.LastRowPieces += added; plan.LastRowClearances += addedClearances; }
+        plan.SunkPieces = added; plan.SunkClearances = addedClearances;
+        plan.Foot = new Vector3(foot.x, height, foot.y);
     }
 
     /// <summary><paramref name="steps"/> stairs added on down from a plan's foot along its first heading, the sunk step

@@ -80,6 +80,17 @@ public class WalkOwnerTests
         Assert.True(Allowed.All(a => a.Reason.Length > 10), "Every Allowed entry needs its reason");
     }
 
+    /// <summary>A stair is sunk into the road under a foot in one place (StairLayout.SinkStep, for a staircase's own sunk step
+    /// and the stair StairLayout.FootToRoad sinks where a foot stands over the road it meets): no other code marks a piece
+    /// sunk.</summary>
+    [Fact]
+    public void AStairIsSunkUnderAFootInOnePlace()
+    {
+        var sinks = Lines(new Regex(@"\.Sunk\s*=\s*true", RegexOptions.Compiled)).ToList();
+        Assert.True(sinks.Count == 1 && sinks[0].file == "Roads/StairLayout.Feet.cs",
+            "A piece is marked sunk outside StairLayout.SinkStep:\n" + string.Join("\n", sinks.Select(h => $"{h.file}:{h.line}: {h.text}")));
+    }
+
     [Fact]
     public void TheStepHasOneName()
     {

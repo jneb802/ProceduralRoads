@@ -59,6 +59,27 @@ public sealed class PlacedSiteLandingEdgeTests
                 $"a landing at ({at.x:F0}, {at.y:F0}) is {Vector2.Distance(at, Centre):F1} m from the camp's centre, inside its {Wall} m wall");
     }
 
+    /// <summary>The camp as it stood in game (1649.6, -6338.7, turned 315), on the game's own vertex-exact ground: the game
+    /// centres the flat on the nearest vertex, half a metre behind the camp's front, so no point past the inner bound has a
+    /// landing's level ground. The road then aims at the flat's edge on its front axis (<see cref="PlacedSiteShape.LandingFor"/>),
+    /// 17 m out, still outside the wall, never inside it.</summary>
+    [Fact]
+    public void TheCampAsItStoodInGameIsMetOutsideItsWall()
+    {
+        var centre = new Vector2(1649.6f, -6338.7f);
+        const int x0 = 1580, z0 = -6400, size = 140;
+        float[] heights = PlacedSiteGround.Build(x0, z0, size, size, centre, Root, 315f, Ops, (_, _) => Root + 3f);
+        Func<float, float, float> grid = PlacedSiteGround.Sampler(heights, x0, z0, size, size);
+        float Ground(float x, float z) => grid(x, z) is float h && h < PlacedSiteGround.OffGrid ? h : Root + 3f;
+        var shape = PlacedSiteShape.Of(centre, 315f, RoadStairRuns.FlatOf(Ops)!.Value, 17f, null, Ground, root: Root, prefab: "Mistlands_Excavation3");
+        float reach = RoadSiteEntry.InsideReach(Width);
+        var landings = shape.Landings(Ground, reach + RoadSiteEntry.EndSlack, RoadSiteEntry.RoadLandingTries,
+            Width * 0.5f + PlacedSiteShape.BodyGap);
+        Assert.Empty(landings);
+        Assert.True(Vector2.Distance(shape.LandingFor(reach + RoadSiteEntry.EndSlack), centre) >= Wall,
+            "the fallback aim lies inside the camp's wall");
+    }
+
     /// <summary>With no level ground past the flat's edge less <see cref="PlacedSiteShape.LevelRadius"/>, the road aims at the
     /// flat's edge on its front axis (<see cref="PlacedSiteShape.LandingFor"/>), not at ground deeper in.</summary>
     [Fact]

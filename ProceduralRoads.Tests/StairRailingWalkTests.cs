@@ -54,4 +54,22 @@ public class StairRailingWalkTests
         var stair = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = new Vector3(96f, Surface, EdgeZ), YawDegrees = yaw };
         Assert.Equal(0, RailsAlongTheSharedEdge(stair));
     }
+
+    [Fact]
+    public void AnEdgeBesideAFlightRisingAlongItGetsItsOwnFlatPair()
+    {
+        // A stone flight running along the shared edge (its side on the edge), its top at this floor's walking surface: the walk
+        // does not carry on across the edge, it climbs along it. The floor's own pair stands beside the flight's sloped rails.
+        float yaw = new[] { 0f, 90f, 180f, 270f }.First(y => Vector2.Dot(StairLayout.Forward(StairLayout.Wrap(y + 180f)), new Vector2(0f, 1f)) > 0.99f);
+        var stair = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = new Vector3(96f, Surface - 1f, EdgeZ), YawDegrees = yaw };
+        var walking = new List<StructurePiece>();
+        for (int k = 0; k < 5; k++) walking.Add(Floor(StairKit.Stone, 94f, Surface, 205f + 2f * k));
+        List<StructurePiece> laid = StairRailing.Lay(StairKit.Stone, walking, Array.Empty<StairEnd>(), (x, z) => Surface - 1f, null, new[] { stair });
+        var pair = laid.Where(p => p.Prefab == StairRailing.LevelRailPrefab && Mathf.Abs(p.Position.x - EdgeX) < 0.01f && Mathf.Abs(p.Position.z - EdgeZ) < 0.01f).ToList();
+        Assert.Equal(2, pair.Count);
+        Assert.Contains(pair, p => Mathf.Abs(p.Position.y - Surface) < 0.01f);
+        Assert.Contains(pair, p => Mathf.Abs(p.Position.y - (Surface + BridgeLayout.RailHeight)) < 0.01f);
+        Assert.All(pair, p => Assert.Equal(pair[0].YawDegrees, p.YawDegrees));
+        Assert.Contains(pair, p => Mathf.Abs(StairLayout.Wrap(p.YawDegrees - 270f)) < 0.01f || Mathf.Abs(StairLayout.Wrap(p.YawDegrees - 90f)) < 0.01f);
+    }
 }

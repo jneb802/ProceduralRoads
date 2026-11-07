@@ -376,7 +376,7 @@ public static class StairRailing
     private static bool Railed(List<StairSupport.Walk> walks, Ways ways, int i, Vector2 a, Vector2 b, Vector2 outward, float height)
     {
         if (ways.Bare.Contains(i)) return false;
-        if (Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, height)) return false;
+        if (Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, height, outward)) return false;
         return !TakenOver(walks, ways, i, (a + b) * 0.5f, outward);
     }
 
@@ -448,7 +448,7 @@ public static class StairRailing
         {
             (Vector2 a, Vector2 b, Vector2 outward) = EdgeOf(w, e);
             outs[e] = outward;
-            on[e] = Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, w.Surface(0f, kit));
+            on[e] = Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, w.Surface(0f, kit), outward);
             if (!on[e]) continue;
             came += outward;
             Across(i, e);
@@ -856,12 +856,14 @@ public static class StairRailing
     /// along the line they share; in game: railed by hand at -1905.5,6609.1 and along -3012.8,-1770.8, which stood open),
     /// nor onto a floor or filler beside it, level with its top at most, a step or more over its foot (in game: a
     /// switchback's join filler beside the stair under it left that stair's side bare, railed by hand at -1868.3,6899.0
-    /// and -1858.1,6911.6).</summary>
-    private static bool Open(List<StairSupport.Walk> walks, int self, Vector2 a, Vector2 b, float height)
+    /// and -1858.1,6911.6).
+    /// Nor onto a flight running along the edge (its side on it): that flight's sloped rails stand on its side and the floor's own
+    /// flat pair on the floor's (in game: a black marble landing's edge beside a flight, which had the flight's rails only).</summary>
+    private static bool Open(List<StairSupport.Walk> walks, int self, Vector2 a, Vector2 b, float height, Vector2 outward)
     {
         if (walks[self].Stair) return false;
-        return Beside(walks, self, Vector2.Lerp(a, b, 0.25f), height) || Beside(walks, self, Vector2.Lerp(a, b, 0.5f), height)
-            || Beside(walks, self, Vector2.Lerp(a, b, 0.75f), height);
+        return Beside(walks, self, Vector2.Lerp(a, b, 0.25f), height, outward) || Beside(walks, self, Vector2.Lerp(a, b, 0.5f), height, outward)
+            || Beside(walks, self, Vector2.Lerp(a, b, 0.75f), height, outward);
     }
 
     /// <summary>
@@ -901,10 +903,15 @@ public static class StairRailing
     }
 
     /// <summary>Whether another walking piece of the staircase covers <paramref name="p"/> near <paramref name="height"/>.</summary>
-    private static bool Beside(List<StairSupport.Walk> walks, int self, Vector2 p, float height)
+    private static bool Beside(List<StairSupport.Walk> walks, int self, Vector2 p, float height, Vector2? outward = null)
     {
         for (int j = 0; j < walks.Count; j++)
-            if (j != self && WalkedOn(walks[j], p, height)) return true;
+        {
+            // A flight running along the edge (rising beside it, outward across its side) is not walked onto from this edge: its
+            // own sloped rails stand on its side, the floor's flat pair on the floor's.
+            if (j == self || outward is Vector2 across && walks[j].Stair && Mathf.Abs(Vector2.Dot(walks[j].Dir, across)) < 0.5f) continue;
+            if (WalkedOn(walks[j], p, height)) return true;
+        }
         return false;
     }
 

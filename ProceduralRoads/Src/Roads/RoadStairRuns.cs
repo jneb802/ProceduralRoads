@@ -1532,7 +1532,7 @@ public static partial class RoadStairRuns
     /// <summary>The walking surface at a walked piece's centre.</summary>
     internal static float Surface(StructurePiece piece)
     {
-        if (piece.Kind == StructurePieceKind.StairStep) return piece.Position.y + StairLayout.PieceRise / 2f;
+        if (piece.Kind == StructurePieceKind.StairStep) return piece.Position.y + StairLayout.StepMiddle;
         return piece.Position.y + StairKit.FloorTopOf(piece.Prefab);
     }
 

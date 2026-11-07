@@ -124,7 +124,7 @@ public static class StairRailing
             {
                 foreach (int side in new[] { -1, 1 })
                 {
-                    float middle = w.Underside + StairLayout.PieceRise / 2f;
+                    float middle = w.Underside + StairLayout.StepMiddle;
                     if (!Railed(walks, ways, i, w.At(0f, side * half), w.At(w.Depth, side * half), w.Right * side, middle)) continue;
                     if (parapet != null) { Parapet(laid, w, side, parapet.Top, finished); continue; }
                     foreach (bool front in new[] { false, true })
@@ -528,7 +528,7 @@ public static class StairRailing
             int i = ends.Dequeue();
             StairSupport.Walk w = walks[i];
             Vector2 middle = w.At(w.Depth / 2f, 0f);
-            if (bare.Contains(i) || !(BuriedPieces.MeshHeight(middle.x, middle.y, finished) >= w.Underside + StairLayout.PieceRise / 2f - 0.01f)) continue;
+            if (bare.Contains(i) || !(BuriedPieces.MeshHeight(middle.x, middle.y, finished) >= w.Underside + StairLayout.StepMiddle - 0.01f)) continue;
             bare.Add(i);
             // The next step on, across either end.
             foreach (bool top in new[] { false, true })
@@ -580,7 +580,7 @@ public static class StairRailing
         {
             if (!railed[i]) continue;
             StairSupport.Walk w = walks[i];
-            float middle = w.Underside + StairLayout.PieceRise / 2f, surface = w.Surface(0f, kit);
+            float middle = w.Underside + StairLayout.StepMiddle, surface = w.Surface(0f, kit);
             foreach (var (at, bottom) in Corners(w, kit))
             {
                 var key = Key(at, bottom);

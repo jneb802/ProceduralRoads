@@ -69,7 +69,7 @@ public static class StairChain
         var all = new List<StairPiece>(first);
         if (second != null) all.AddRange(second);
         // A stair by its middle (its origin is its base), a floor by its walking surface.
-        float Surface(StairPiece p) => p.Kind == StairPieceKind.Stair ? p.Position.y + StairLayout.PieceRise / 2f : p.Position.y + kit.FloorTop;
+        float Surface(StairPiece p) => p.Kind == StairPieceKind.Stair ? p.Position.y + StairLayout.StepMiddle : p.Position.y + kit.FloorTop;
         var floors = all.FindAll(p => p.Kind == StairPieceKind.Landing);
         for (int i = 0; i < floors.Count; i++)
             for (int j = i + 1; j < floors.Count; j++)

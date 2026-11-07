@@ -34,7 +34,7 @@ public static class RoadSwitchbacks
     /// nearly the same height. Settable for tests.
     /// </summary>
     internal static bool StairTurns = true;
-    internal static float StairRadius = 2f;
+    internal static float StairRadius = StairLayout.PieceRun;
 
     /// <summary>
     /// Smallest radius a switchback turn tightens to when its curve and the

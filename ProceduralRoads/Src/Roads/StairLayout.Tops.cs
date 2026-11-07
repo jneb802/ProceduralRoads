@@ -73,7 +73,11 @@ public static partial class StairLayout
 
     /// <summary>The walking surface at the centre of a walked piece: a stair by its middle (its origin is its base), a floor by its top.</summary>
     internal static float CentreSurface(StairPiece piece) =>
-        piece.Position.y + (piece.Kind == StairPieceKind.Stair ? PieceRise / 2f : StairKit.FloorTopOf(piece.Prefab));
+        piece.Position.y + (piece.Kind == StairPieceKind.Stair ? StepMiddle : StairKit.FloorTopOf(piece.Prefab));
+
+    /// <summary>How far over a stair step's base its walking surface is at its middle: half a rise. Add it to a base inline
+    /// (<c>base + StepMiddle</c>, never through a float helper that would round the sum before a further term).</summary>
+    internal const float StepMiddle = PieceRise / 2f;
 
     /// <summary>The top walking surface of a walked piece: a stair rises a step from its base, a floor stands at its top.</summary>
     internal static float TopSurface(StairPiece piece) =>

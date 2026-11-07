@@ -58,6 +58,7 @@ public class OwnerLiteralTests
         new("earthwork cap 8 m", "Roads/RoadConstants.cs", "TerrainDeltaMin = -8f", Why.Owner, "the negative end of the same clamp"),
         new("step 0.2 m", "Roads/StairLayout.cs", "StepUp = 0.2f", Why.Owner, "a walker's step"),
         new("rise 1 m", "Roads/StairLayout.cs", "PieceRise = 1f", Why.Owner, "the rise of one stair piece"),
+        new("half a rise", "Roads/StairLayout.Tops.cs", "StepMiddle = PieceRise / 2f", Why.Owner, "a stair step's walking surface at its middle: the one place half a rise is written for a step"),
         new("headroom 2 m", "Roads/RoadRockPolicy.cs", "ClearanceHeight = 2f", Why.Owner, "the headroom box"),
         new("clearance lift 0.1 m", "Roads/RoadRockPolicy.cs", "ClearanceLift = 0.1f", Why.Owner, "the headroom box's lift over the walk"),
         new("sea level 30", "Roads/RoadConstants.cs", "SeaLevel = 30f", Why.Owner, "the sea level"),
@@ -98,15 +99,6 @@ public class OwnerLiteralTests
         new("half a rise", "Roads/StructureEnds.cs", "off <= StairLayout.PieceRise * 0.5f", Why.Known, "an end's stairs chosen to the nearest whole stair, its own copy of the rounding; should read StairLayout.WholeStairsOver"),
         new("half a rise", "Roads/RoadNetworkGenerator.cs", "ArrivalLevel = StairLayout.PieceRise / 2f", Why.Known, "a named half rise, a road's arrival band; should read the rounding owner (StairLayout.WholeStairsOver)"),
         new("half a rise", "Roads/StairLayout.Chains.cs", "ClipStep = PieceRise / 2f", Why.Known, "a named half rise, a top clip's band; should read the rounding owner (StairLayout.WholeStairsOver)"),
-        new("half a rise", "Roads/RoadStairRuns.cs", "StairLayout.PieceRise / 2f;", Why.Known, "a stair step's walking surface (its middle) restated; StairLayout.CentreSurface is the owner"),
-        new("half a rise", "Roads/StairChain.cs", "StairLayout.PieceRise / 2f : p.Position.y", Why.Known, "a stair piece's surface restated; StairLayout.CentreSurface is the owner"),
-        new("half a rise", "Roads/StairLayout.Tops.cs", "PieceRise / 2f : StairKit.FloorTopOf", Why.Known, "StairLayout.CentreSurface's own body; the middle of a stair step is half a rise over its base"),
-        new("half a rise", "Roads/StairRailing.cs", "float middle = w.Underside + StairLayout.PieceRise / 2f;", Why.Known, "the middle of a stair step, restated (twice in this file); StairLayout.CentreSurface is the owner"),
-        new("half a rise", "Roads/StairRailing.cs", "w.Underside + StairLayout.PieceRise / 2f - 0.01f", Why.Known, "the middle of a stair step, restated; StairLayout.CentreSurface is the owner"),
-        new("half a rise", "Roads/StairRailing.cs", "float middle = w.Underside + StairLayout.PieceRise / 2f, surface", Why.Known, "the middle of a stair step, restated; StairLayout.CentreSurface is the owner"),
-        new("run 2 m", "Roads/StairLayout.cs", "float width = 2f", Why.Known, "a stair's default width is one piece (StairLayout.Build refuses less than PieceRun); should read PieceRun"),
-        new("run 2 m", "Roads/StairLayout.Chains.cs", "float width = 2f", Why.Known, "the same default width, in BuildDown; should read PieceRun"),
-        new("run 2 m", "Roads/RoadSwitchbacks.cs", "StairRadius = 2f", Why.Known, "a stair turn's radius is one piece; should read PieceRun"),
     };
 
     private static readonly Regex NotCode = new(@"/\*.*?\*/|//[^\n]*|@""(?:[^""]|"""")*""|""(?:[^""\\\n]|\\.)*""|'(?:[^'\\\n]|\\.)*'",

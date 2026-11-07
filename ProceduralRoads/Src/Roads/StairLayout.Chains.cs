@@ -21,7 +21,7 @@ public static partial class StairLayout
     /// it is laid as, so it is emitted as any staircase. Over a ridge two staircases met top to top this way share their
     /// crest exactly (at 3377,6425 and -8030,-660: just one stair up and another down). No cantilevers.
     /// </summary>
-    public static StairPlan BuildDown(StairContinuation top, Vector2 foot, Func<float, float, float> ground, float width = 2f, StairKit? kit = null,
+    public static StairPlan BuildDown(StairContinuation top, Vector2 foot, Func<float, float, float> ground, float width = PieceRun, StairKit? kit = null,
         int maxExpansions = MaxExpansions, int totalExpansions = int.MaxValue, int stallExpansions = int.MaxValue,
         float maxBuried = StairCover.RoadStaircase, bool sunkFoot = true, IReadOnlyList<Vector2>? corridor = null)
     {

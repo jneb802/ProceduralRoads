@@ -431,7 +431,7 @@ public static partial class StairLayout
     /// <paramref name="onLanding"/>: the place's landing a top climbing to it arrives on (RoadStairRuns.PlanPlacedSiteApproach):
     /// it is aimed at <paramref name="to"/>, but finishes as soon as it steps onto the landing, however far from its aim
     /// (<see cref="Arrived"/>).
-    public static StairPlan Build(Vector2 from, Vector2 to, Func<float, float, float> ground, float width = 2f, StairKit? kit = null,
+    public static StairPlan Build(Vector2 from, Vector2 to, Func<float, float, float> ground, float width = PieceRun, StairKit? kit = null,
         int maxExpansions = MaxExpansions, float? arriving = null, float? leaving = null, IReadOnlyList<Vector2>? corridor = null,
         int totalExpansions = int.MaxValue, int stallExpansions = int.MaxValue, int topLandings = 0, bool sunkFoot = false,
         float maxBuried = StairCover.RoadStaircase, float? arriveWithin = null, Func<Vector2, bool>? allowed = null, float? footHeight = null,

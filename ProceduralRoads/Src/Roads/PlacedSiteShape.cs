@@ -492,7 +492,9 @@ public sealed class PlacedSiteShape
     /// <see cref="JoinStep"/>), and how steeply it may fall away anywhere within that (drop over distance) for the
     /// edge to be joined to the slope: a few switchbacks arrive there at grade. Steeper, the edge overhangs a drop.
     /// Hildir's shelf: its front falls 2.6 in 1 by 8 m out (the levelling's smoothing hides the cliff
-    /// for the first 4 m), its west edge 2.2; the slope that meets it on the west 0.8.</summary>
+    /// for the first 4 m), its west edge 2.2; the slope that meets it on the east is joined. Its south-west corner, where a
+    /// landing was finished by hand, falls 1.35 in 1 over its first 2 m on the game's ground (two triangles a cell,
+    /// BuriedPieces.BetweenVertices), so it is not joined.</summary>
     public const float JoinReach = 12f, JoinStep = 2f, JoinGrade = 1.25f;
     /// <summary>Most joined edges aimed at, and how far apart.</summary>
     public const int JoinedEdges = 2;
@@ -624,7 +626,7 @@ public sealed class PlacedSiteShape
     /// <see cref="JoinGrade"/> over <see cref="JoinReach"/>, and overhangs where it falls further. Aims: up to
     /// <see cref="JoinedEdges"/> joined edges <see cref="JoinApart"/> apart (out of the water) and the landings that are
     /// themselves joined, nearest <paramref name="from"/> first, then the overhanging landings; at most <paramref name="tries"/>. The face below
-    /// Hildir's shelf took a staircase 24000 steps of stall to climb onto its front; its west edge,
+    /// Hildir's shelf took a staircase 24000 steps of stall to climb onto its front; its east edge,
     /// where the slope meets the shelf, 8000.
     /// </summary>
     public List<(string name, Vector2 at)> Aims(Func<float, float, float> ground, Vector2 from, float clearance, int tries)

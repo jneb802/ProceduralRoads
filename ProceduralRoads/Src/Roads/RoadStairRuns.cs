@@ -151,7 +151,7 @@ public static partial class RoadStairRuns
 
     /// <summary>
     /// The ground as places will leave it (<see cref="PlacedSites.GroundAt(float, float, WorldGenerator)"/>, its one owner)
-    /// on a 1 m lattice, read bilinearly between lattice points as the game draws its terrain mesh (1 m between vertices):
+    /// on a 1 m lattice, read between lattice points as the game's terrain mesh joins its vertices (<see cref="BuriedPieces.BetweenVertices"/>, two triangles a metre cell):
     /// the natural ground, and in the footprint of a place placed before its roads the ground it levels. Each
     /// worker thread keeps its own tiles of <see cref="TileSize"/> metres, plain
     /// arrays filled as they are first read: a layout asks the ground millions of
@@ -201,7 +201,7 @@ public static partial class RoadStairRuns
             h01 = Lattice(x0, z0 + 1, world);
             h11 = Lattice(x0 + 1, z0 + 1, world);
         }
-        return Mathf.Lerp(Mathf.Lerp(h00, h10, fx), Mathf.Lerp(h01, h11, fx), fz);
+        return BuriedPieces.BetweenVertices(fx, fz, h00, h10, h01, h11);
     }
 
     /// <summary>The tile a lattice index falls in (rounded down).</summary>

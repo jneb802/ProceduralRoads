@@ -507,8 +507,8 @@ public sealed class StoneBridgeTests : IDisposable
     // ------------------------------------------------------ the support limit
 
     /// <summary>
-    /// The derived limits (BridgeSupport): nine pier courses, seven footing pillars. With the bed 2 m lower the inner piers
-    /// stand nine courses, each on the one under it to a foot sunk under the ground, and the kit fits; a metre lower they would
+    /// The derived limits (BridgeSupport): nine pier courses, seven footing pillars. With the bed 2.5 m lower the inner piers
+    /// stand nine courses, each on the one under it to a foot sunk under the ground, and the kit fits; at 3 m lower they would
     /// need ten, and the stone kit does not fit: the crossing draws a railed kit, whatever the seed.
     /// </summary>
     [Fact]

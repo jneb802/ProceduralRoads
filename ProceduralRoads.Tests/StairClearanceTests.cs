@@ -186,6 +186,11 @@ public class StairClearanceTests : IDisposable
     {
         Assert.Equal(bottom, RockClearances.Bottom(walk), 3);
         Assert.Equal(boxTop, StairLayout.BoxTop(walk), 3);
+        // Exact floats, as the game stores them: the lift added once (one rounding), the headroom added to that (a second).
+        float exactBottom = walk + 0.1f;
+        float exactTop = exactBottom + 2f;
+        Assert.Equal(exactBottom, RockClearances.Bottom(walk));
+        Assert.Equal(exactTop, StairLayout.BoxTop(walk));
         Assert.Equal(RockClearances.Top(walk), StairLayout.BoxTop(walk));
     }
 

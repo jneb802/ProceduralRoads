@@ -1289,13 +1289,34 @@ public static class ServerTerrainBake
         {
             for (int dx = -1; dx <= 1; dx++)
             {
-                if (ZoneSystem.instance.m_locationInstances.TryGetValue(new Vector2s(zone.x + dx, zone.y + dy),
-                        out ZoneSystem.LocationInstance location) && location.m_location != null)
-                    locations.Add(new VegetationClearing.Footprint(
-                        new Vector2(location.m_position.x, location.m_position.z), location.m_location.m_exteriorRadius));
+                var home = new Vector2s(zone.x + dx, zone.y + dy);
+                if (!ZoneSystem.instance.m_locationInstances.TryGetValue(home, out ZoneSystem.LocationInstance location) ||
+                    location.m_location == null)
+                    continue;
+                var centre = new Vector2(location.m_position.x, location.m_position.z);
+                string prefab = location.m_location.m_prefab.Name;
+                bool placed = location.m_placed;
+                locations.Add(new VegetationClearing.Footprint(centre, location.m_location.m_exteriorRadius,
+                    at => PartOfLocation(home, centre, prefab, placed, at)));
             }
         }
         return locations;
+    }
+
+    /// <summary>Whether an object at <paramref name="at"/> is one of the networked parts of the location at
+    /// <paramref name="centre"/> (LocationPrefabLevelling.IsPart, at its saved placement: its LocationProxy's root and turn).
+    /// A location not placed yet has none in the world. Its parts are read from its prefab once a session
+    /// (PlacedSiteReader.KeptOps, as a place placed before its roads is read); null where they cannot be.</summary>
+    private static bool? PartOfLocation(Vector2s home, Vector2 centre, string prefab, bool placed, Vector3 at)
+    {
+        if (!placed) return false;
+        if (!PlacedSiteReader.Placed(home, centre, out ZDO? proxy)) return null;
+        Vector3 root = proxy!.GetPosition();
+        Quaternion turn = proxy.GetRotation();
+        bool? part = LocationPrefabLevelling.IsPart(prefab, root, turn, at);
+        if (part == null && PlacedSiteReader.KeptOps(centre, proxy) != null)
+            part = LocationPrefabLevelling.IsPart(prefab, root, turn, at);
+        return part;
     }
 
     /// <summary>

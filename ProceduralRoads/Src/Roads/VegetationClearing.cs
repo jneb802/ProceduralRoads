@@ -19,7 +19,7 @@ namespace ProceduralRoads;
 /// axis-aligned square), and the grown trees whose trunks reach the road
 /// (<see cref="TrunkReachesRoad"/>). Anything that is not a vegetation prefab -- player
 /// builds, containers, bridge pieces -- is never touched, and objects within a
-/// location's exterior radius are left to the location. The game's vegetation
+/// location's exterior radius that may be its own parts are left to the location. The game's vegetation
 /// list also holds the large rocks; on a road those the rock clearing takes
 /// there belong to it (<see cref="LeftToRockClearing"/>), so the
 /// rock clearing carves them, and a structure's
@@ -47,16 +47,21 @@ public static class VegetationClearing
         }
     }
 
-    /// <summary>A location's footprint: a circle of its exterior radius.</summary>
+    /// <summary>A location's footprint: a circle of its exterior radius (a player's ground: a circle round their object).</summary>
     public readonly struct Footprint
     {
         public readonly Vector2 Centre;
         public readonly float Radius;
+        /// <summary>For a location: whether an object standing at a point is one of its own parts
+        /// (LocationPrefabLevelling.IsPart), null where that is not known. Without it, or where it is not known, everything in
+        /// the footprint is taken to be the location's.</summary>
+        public readonly Func<Vector3, bool?>? PartAt;
 
-        public Footprint(Vector2 centre, float radius)
+        public Footprint(Vector2 centre, float radius, Func<Vector3, bool?>? partAt = null)
         {
             Centre = centre;
             Radius = radius;
+            PartAt = partAt;
         }
     }
 
@@ -611,8 +616,10 @@ public static class VegetationClearing
             InsideClearArea(clearAreas, position) && !leftToRocks;
         Lying verdict = OnRoad(inside, prefab, scale, road ?? Array.Empty<RoadCentre>(), position, yaw, out turned,
             IsLying(prefab) ? KeptBy(structureAreas, locations, playerGround) : null, lean);
-        // Left to the location, and left to the player who built there.
-        if (verdict != Lying.Clear && (Inside(locations, position) || Inside(playerGround, position)))
+        // Left to the location, and left to the player who built there. Within a location's footprint only what may be one of
+        // its own parts is left to it: the game grows vegetation there too where the location clears no area (a crypt), and a
+        // zone placed before its roads (SitesFirstLoad) has had it judged by nothing else.
+        if (verdict != Lying.Clear && (LocationKeeps(locations, position, lean) || Inside(playerGround, position)))
         {
             turned = yaw;
             return Lying.Clear;
@@ -637,6 +644,20 @@ public static class VegetationClearing
     private static Func<Vector2, bool> KeptBy(IReadOnlyList<Area>? structureAreas, IReadOnlyList<Footprint> locations,
         IReadOnlyList<Footprint> playerGround) =>
         p => structureAreas != null && InsideClearArea(structureAreas, p) || Inside(locations, p) || Inside(playerGround, p);
+
+    /// <summary>Whether the object at <paramref name="position"/>, its origin at <paramref name="lean"/>'s height, stands in a
+    /// location's footprint and may be one of its parts: kept unless the location's parts are known and it is none of them
+    /// (<see cref="Footprint.PartAt"/>).</summary>
+    private static bool LocationKeeps(IReadOnlyList<Footprint> locations, Vector2 position, Lean? lean)
+    {
+        foreach (Footprint location in locations)
+        {
+            if ((position - location.Centre).sqrMagnitude >= location.Radius * location.Radius) continue;
+            if (location.PartAt == null || lean is not Lean laid) return true;
+            if (location.PartAt(new Vector3(position.x, laid.Origin, position.y)) != false) return true;
+        }
+        return false;
+    }
 
     private static bool Inside(IReadOnlyList<Footprint> footprints, Vector2 position)
     {

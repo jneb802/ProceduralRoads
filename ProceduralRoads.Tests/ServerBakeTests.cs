@@ -159,6 +159,48 @@ public class ServerBakeTests
             road, 1f, null, null, 0f, out _));
     }
 
+    /// <summary>The road onto a Black Forest crypt's door, at the points the network lays it 0 to 6 m from a stump and a log the
+    /// game grew there before the road (its zone is placed before its roads), 4 m wide, at the height the game reads.</summary>
+    private static readonly List<VegetationClearing.RoadCentre> CryptRoad = new[]
+    {
+        (3918.40f, -4715.78f), (3918.78f, -4714.85f), (3919.17f, -4713.93f), (3919.55f, -4713.00f), (3919.93f, -4712.08f),
+        (3920.31f, -4711.16f), (3920.70f, -4710.23f), (3921.08f, -4709.31f), (3921.46f, -4708.38f), (3921.84f, -4707.46f),
+        (3922.23f, -4706.54f), (3922.61f, -4705.61f), (3922.99f, -4704.69f),
+    }.Select(p => new VegetationClearing.RoadCentre(new Vector2(p.Item1, p.Item2), 2f, 71.675f)).ToList();
+
+    /// <summary>
+    /// A stump and a fallen log the game grew on a crypt's road inside the crypt's exterior radius (18 m; the crypt clears no
+    /// area, so the game grows vegetation there), in a zone the game generated before the road: neither is one of the
+    /// crypt's own parts, so neither is left to the crypt. Each stands on the road whichever way it is turned, and any turn
+    /// lies on the crypt's ground, so both are removed. Where the crypt's parts are not known, or one stands at a part's
+    /// spot, it is left to the crypt as before.
+    /// </summary>
+    [Fact]
+    public void AStumpAndALogOnACryptsRoadThatAreNotTheCryptsOwnAreJudgedAsAnywhere()
+    {
+        int stump = "stubbe".GetStableHashCode(), log = "FirTree_oldLog".GetStableHashCode();
+        var vegetation = new HashSet<int> { stump, log };
+        var none = new List<VegetationClearing.Area>();
+        var nobody = new List<VegetationClearing.Footprint>();
+        var stumpAt = new Vector2(3920.108f, -4710.460f);
+        var logAt = new Vector2(3920.145f, -4712.148f);
+        var stumpLaid = new VegetationClearing.Lean(0f, 0f, 72.097f);
+        var logLaid = new VegetationClearing.Lean(340.8f, 2.6f, 72.328f);
+        List<VegetationClearing.Footprint> Crypt(System.Func<Vector3, bool?>? partAt) =>
+            new() { new(new Vector2(3914.0f, -4726.4f), 18f, partAt) };
+        VegetationClearing.Lying Judge(int prefab, Vector2 at, float yaw, VegetationClearing.Lean laid, List<VegetationClearing.Footprint> crypt) =>
+            VegetationClearing.Decide(prefab, at, false, vegetation, none, crypt, nobody, CryptRoad, 1f, null, null, yaw, out _, laid);
+
+        var notItsOwn = Crypt(_ => false);
+        Assert.Equal(VegetationClearing.Lying.Remove, Judge(stump, stumpAt, 0f, stumpLaid, notItsOwn));
+        Assert.Equal(VegetationClearing.Lying.Remove, Judge(log, logAt, 223f, logLaid, notItsOwn));
+        // The crypt's parts not known (its prefab unread), or a part standing there: the crypt's.
+        Assert.Equal(VegetationClearing.Lying.Clear, Judge(stump, stumpAt, 0f, stumpLaid, Crypt(null)));
+        Assert.Equal(VegetationClearing.Lying.Clear, Judge(stump, stumpAt, 0f, stumpLaid, Crypt(_ => null)));
+        Assert.Equal(VegetationClearing.Lying.Clear, Judge(log, logAt, 223f, logLaid,
+            Crypt(p => Vector3.Distance(p, new Vector3(logAt.x, 72.328f, logAt.y)) < 0.1f)));
+    }
+
     [Theory]
     [InlineData("rock4_forest", false, true)]
     [InlineData("rock4_forest", true, false)]

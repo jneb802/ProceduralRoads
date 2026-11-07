@@ -64,7 +64,7 @@ public sealed class StructureStretchTests : IDisposable
             }
             Assert.True(plan != null, RoadSpatialGrid.LastRefusal);
             Assert.All(plan!.Heights, h => Assert.Equal(landing, h, 3));
-            Assert.True(StairLayout.Walkable(plan.Heights[0], 40.6f) && StairLayout.Walkable(plan.Heights[^1], other));
+            Assert.True(StairLayout.Walkable(plan.Heights[0], 40.6f) && StairLayout.Walkable(plan.Heights[plan.Heights.Count - 1], other));
         }
         finally { RoadSpatialGrid.LevelledEnds = null; }
     }

@@ -254,11 +254,13 @@ public sealed class StructureEndTests : IDisposable
     /// from the deck's end to rough ground with no road, while the road came from the south, where the bank rises to the
     /// deck's height, and left the deck's end sideways from the stairs' top. Their foot (16 m out, 6 m down) could not be met
     /// (the road, refused, was planned again with its ends as they were, which no check looked at). Here the road comes to
-    /// the west bank from the south: the end is met level (no stairs), the road at the deck's height on its last apron,
-    /// brought onto the end's line from its landing pad a road's width out, and no stairs lead nowhere at either end.
+    /// the west bank from the south: the end is met by one step, not its flight down the line (the east end is met by its
+    /// one step, and the two ends are chosen as a pair, StructureEnds.Pair: both stepped), the road at the step's foot on
+    /// its last apron, brought onto the end's line from its landing pad a road's width out, and no stairs lead nowhere at
+    /// either end.
     /// </summary>
     [Fact]
-    public void TheRoadFromTheSideMeetsAnEndLevelWhereTheBankThereIsAtTheDecksHeight()
+    public void TheRoadFromTheSideMeetsAnEndFromItsPadWhereTheBankThereIsAtTheDecksHeight()
     {
         var world = new BankRisingBeside();
         _scope.WithWorld(world);
@@ -271,16 +273,15 @@ public sealed class StructureEndTests : IDisposable
         var (near, far) = BridgeStructures.Ends(c, world);
         float deck = BridgeStructures.DeckHeight(c, world);
 
-        // The west end: met level from its pad, no stairs laid there.
-        Assert.True(MetEnds.Level(c, world).near);
-        Assert.Equal(0, near.Steps);
+        // The west end: met by one step from its pad, its one step laid there.
+        Assert.Equal(1, near.Steps);
         Assert.True(c.FromPad, "the road from the south does not meet the west end from its pad");
-        Assert.DoesNotContain(BridgeStructures.Solve(c, world, 1), p => p.Kind == StructurePieceKind.Stair && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), c.FromBank) < 20f);
-        // The road on its last apron level with the deck, up to the deck's end.
+        Assert.Equal(2, BridgeStructures.Solve(c, world, 1).Count(p => p.Kind == StructurePieceKind.Stair && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), c.FromBank) < 20f));
+        // The road on its last apron level with the step's foot, up to it.
         var onApron = roads.SelectMany(r => r.Points.Select((p, i) => (p, h: r.Heights[i])))
             .Where(x => Vector2.Dot(x.p - near.Meet, -near.Up) is float along && along >= -0.25f && along <= StructureEnds.ApronLength && Vector2.Distance(x.p, near.Meet) <= StructureEnds.ApronLength + 1f).ToList();
         Assert.True(onApron.Count >= 6, $"only {onApron.Count} road point(s) on the last apron to the west end");
-        Assert.All(onApron, x => Assert.True(Mathf.Abs(x.h - deck) <= 0.1f, $"the road at {x.p} stands {x.h:F2}, the deck {deck:F2}"));
+        Assert.All(onApron, x => Assert.True(Mathf.Abs(x.h - near.MeetHeight) <= 0.1f, $"the road at {x.p} stands {x.h:F2}, the foot {near.MeetHeight:F2}, the deck {deck:F2}"));
         Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { c }, world));
         // The east end, its bank at the deck's height, is low (StructureEnds.Low): met by its one step; neither end leads
         // nowhere.
@@ -296,7 +297,7 @@ public sealed class StructureEndTests : IDisposable
     }
 
     /// <summary>
-    /// The west end of <see cref="TheRoadFromTheSideMeetsAnEndLevelWhereTheBankThereIsAtTheDecksHeight"/> where the ground
+    /// The west end of <see cref="TheRoadFromTheSideMeetsAnEndFromItsPadWhereTheBankThereIsAtTheDecksHeight"/> where the ground
     /// south of the bank rises only half a metre: no level bank beside it (the bank is not at the deck's height), and the
     /// whole run's eight stairs land 6 m under where the road arrives, the deck 1.5 m over it. Priced
     /// (StructureEnds.Price), the flight down to its pad and the road climbing back up from it cost far more than the end
@@ -353,8 +354,9 @@ public sealed class StructureEndTests : IDisposable
     /// <summary>
     /// The choice on its own (StructureEnds.MeetEnds) at the west end where the ground south of the bank stays 2 m under
     /// the deck, the road come straight from the south: no level end at a high bank, and no row it can be brought to the foot
-    /// of down the line, but the landing at the last row fits, the road filled 2 m up to the deck's end, met from its pad a
-    /// road's width out on the line. Under a 1 m cap, or with a place on the bank west and south of the end, no way fits: the end is not met, and the road is searched
+    /// of down the line, but the landing at the first row fits, the road filled a metre up to its one step's foot, met from
+    /// its pad a road's width out on the line (the east end is met by its one step, and the two ends are chosen as a pair,
+    /// StructureEnds.Pair: both stepped, not the road filled 2 m up to the deck's end). Under a 1 m cap, or with a place on the bank west and south of the end, no way fits: the end is not met, and the road is searched
     /// round the crossing.
     /// </summary>
     [Fact]
@@ -368,9 +370,9 @@ public sealed class StructureEndTests : IDisposable
         Assert.True(whole.Steps > 3, "the end as the kit lays it has its stairs down the line");
 
         Assert.Null(Meet(path, c, world, RoadConstants.TerrainDeltaMax));
-        Assert.Equal(new StructureEnds.End(whole.Edge, whole.Up, whole.Height, 0), c.FromEnd);
-        Assert.True(c.FromPad, "the road from the south meets the deck's edge from its pad");
-        Assert.Equal(0, BridgeStructures.Ends(c, world).near.Steps);
+        Assert.Equal(new StructureEnds.End(whole.Edge, whole.Up, whole.Height, 1), c.FromEnd);
+        Assert.True(c.FromPad, "the road from the south meets the first row's foot from its pad");
+        Assert.Equal(1, BridgeStructures.Ends(c, world).near.Steps);
         Assert.Equal(wholeFar, c.ToEnd);
 
         Assert.Same(c, Meet(path, c, world, 1f));
@@ -385,8 +387,8 @@ public sealed class StructureEndTests : IDisposable
     /// <summary>
     /// The west end of <see cref="AnEndIsLandedOnWhereItsFillFitsAndElseTheRoadIsRefused"/> with an older road along the
     /// crossing's line from the west, at the ground's height, where the end's stairs would stand: the landing raises it as
-    /// the staircase landing raises the road at an old foot (RoadStairRuns.Land, RaiseOthers), level with the deck on the
-    /// landing's ground and eased down west at the road grade, within the cap. Laid as the generator lays it, both roads
+    /// the staircase landing raises the road at an old foot (RoadStairRuns.Land, RaiseOthers), level with the landing (the
+    /// first row's foot, a rise under the deck) on the landing's ground and eased down west at the road grade, within the cap. Laid as the generator lays it, both roads
     /// stand level on the landing, and the network and the crossing save and read back so.
     /// </summary>
     [Fact]
@@ -403,27 +405,28 @@ public sealed class StructureEndTests : IDisposable
         float deck = BridgeStructures.DeckHeight(c, world);
         StructureEnds.End whole = BridgeStructures.Ends(c, world).near;
         Assert.Null(Meet(path, c, world, RoadConstants.TerrainDeltaMax));
-        Assert.Equal(new StructureEnds.End(whole.Edge, whole.Up, whole.Height, 0), c.FromEnd);
+        Assert.Equal(new StructureEnds.End(whole.Edge, whole.Up, whole.Height, 1), c.FromEnd);
+        float landing = deck - StairLayout.PieceRise;
         Assert.NotNull(c.FromRaised);
         foreach (var (at, to) in c.FromRaised!)
         {
-            Assert.True(to > at.h && to <= deck + 1e-3f, FormattableString.Invariant($"the older road at {at.p} goes from {at.h:F2} to {to:F2}"));
+            Assert.True(to > at.h && to <= landing + 1e-3f, FormattableString.Invariant($"the older road at {at.p} goes from {at.h:F2} to {to:F2}"));
             Assert.True(to - world.GetHeight(at.p.x, at.p.y) <= RoadConstants.TerrainDeltaMax + 1e-3f);
         }
 
-        // Laid: the road from the south levelled on its apron at the deck, the older road raised with it.
+        // Laid: the road from the south levelled on its apron at the landing, the older road raised with it.
         StructureEnds.End near = BridgeStructures.Ends(c, world).near;
-        RoadSpatialGrid.Commit(Piece(near.Apron, near.Joint, deck));
+        RoadSpatialGrid.Commit(Piece(near.Apron, near.Joint, landing));
         RoadSpatialGrid.SetRoadHeights(c.FromRaised);
         void AssertLevel(string when)
         {
             var onLanding = new[] { near.Apron, near.Joint, new Vector2(-34f, 0f), new Vector2(-36f, 0f) }
                 .SelectMany(q => RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(q.x, 0f, q.y), 0.1f)).Where(rp => rp.IsRoad).ToList();
             Assert.True(onLanding.Count >= 4, $"{when}: only {onLanding.Count} road point(s) on the landing");
-            Assert.All(onLanding, rp => Assert.True(Mathf.Abs(rp.h - deck) < 0.01f, FormattableString.Invariant($"{when}: road at {rp.p} stands {rp.h:F2}, the deck {deck:F2}")));
+            Assert.All(onLanding, rp => Assert.True(Mathf.Abs(rp.h - landing) < 0.01f, FormattableString.Invariant($"{when}: road at {rp.p} stands {rp.h:F2}, the landing {landing:F2}")));
             var west = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(-50f, 0f, 0f), 0.1f).Where(rp => rp.IsRoad).ToList();
             Assert.NotEmpty(west);
-            Assert.All(west, rp => Assert.True(rp.h > world.GetHeight(-50f, 0f) + 0.5f && rp.h < deck, FormattableString.Invariant($"{when}: the older road at {rp.p} stands {rp.h:F2}")));
+            Assert.All(west, rp => Assert.True(rp.h > world.GetHeight(-50f, 0f) + 0.5f && rp.h < landing, FormattableString.Invariant($"{when}: the older road at {rp.p} stands {rp.h:F2}")));
         }
         AssertLevel("laid");
         byte[]? roads = RoadSpatialGrid.SerializeAllRoadPoints();
@@ -433,7 +436,7 @@ public sealed class StructureEndTests : IDisposable
         Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(roads!));
         AssertLevel("read back");
         Assert.Equal(c.FromEnd, Assert.Single(loaded).FromEnd);
-        Assert.Equal(0, BridgeStructures.Ends(loaded[0], world).near.Steps);
+        Assert.Equal(1, BridgeStructures.Ends(loaded[0], world).near.Steps);
     }
 
     /// <summary>
@@ -657,23 +660,26 @@ public sealed class StructureEndTests : IDisposable
         var c = RoadCrossing.Between(new Vector2(-30f, 0f), new Vector2(30f, 0f), 26f, new Vector2(0f, 0f), 60f, CrossingKind.Bridge);
         c.Kit = BridgeStructures.Kit.WoodRail;
         StructureEnds.End whole = StructureEnds.Natural(c, world).near;
+        // The road come along the line: the crossing's ends as its site alone meets them (StructureEnds.AtSite, the two ends
+        // chosen as a pair) are the ones met.
+        var site = StructureEnds.AtSite(c, world, cap).near;
         var path = new List<Vector2> { new(-90f, 0f), new(-60f, 0f), new(-30f, 0f), new(30f, 0f), new(60f, 0f), new(90f, 0f) };
         Assert.Null(Meet(path, c, world, cap));
-        // The road come along the line: the end as its site alone meets it (StructureEnds.AtSite) is the one met.
-        var site = StructureEnds.AtSite(whole, c.FromBank, p => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world), cap);
         Assert.True(site != null, "the site alone meets no way of the end the road met");
         Assert.Equal((c.FromEnd!.Value.Steps, c.FromEnd!.Value.Up, c.FromPad, c.FromEarthwork), (site!.Value.End.Steps, site.Value.End.Up, site.Value.Pad, site.Value.Earthwork));
         return (c.FromEnd!.Value, whole, c);
     }
 
     /// <summary>A deck 4 m over the road arriving along its line (a higher bridge): the road approaches it flat, filled up
-    /// to the deck's height within the caps, no stairs laid; it is cheaper than the whole run's four steps.</summary>
+    /// within the caps, not by the whole run's four steps. Its other end, its bank at the deck's height, is low and met by
+    /// its one step (StructureEnds.Low), so the two ends chosen as a pair (StructureEnds.Pair) are both stepped: the road is
+    /// filled up to one step's foot, not flush with the deck.</summary>
     [Fact]
     public void AHigherDeckIsApproachedFlat()
     {
         var (met, whole, c) = WestEnd(new WestBank());
         Assert.True(whole.Steps >= 3, $"the end as the bank takes it has {whole.Steps} stairs");
-        Assert.Equal(0, met.Steps);
+        Assert.Equal((1, 1), (met.Steps, c.ToEnd!.Value.Steps));
         Assert.Equal(whole.Up, met.Up);
         Assert.False(c.FromPad || c.FromStands);
     }

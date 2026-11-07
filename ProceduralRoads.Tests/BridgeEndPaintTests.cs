@@ -159,31 +159,35 @@ public sealed class BridgeEndPaintTests : IDisposable
     /// <summary>
     /// An end met level (no stairs): its road runs on under the deck's end at the deck's height, levelled and painted like
     /// any road (StructureEnds.Unpainted: only the road under an end's stairs is unpainted), and the road before it painted.
+    /// A viaduct between banks at its deck's height is met level at both ends.
     /// </summary>
     [Fact]
     public void AnEndMetLevelPaintsItsRoadOnUnderTheDecksEnd()
     {
-        var world = new StructureEndTests.BankRisingBeside();
-        _scope.WithWorld(world);
-        SetPathfinder(new RoadPathfinder(world) { Stairs = true, Viaducts = true, Bridges = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
-        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-45f, 0f, -40f), 0f, new Vector3(70f, 0f, 0f), 0f, 4f, "from the side"), RoadSpatialGrid.LastRefusal);
-        RoadCrossing c = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.Kind == CrossingKind.Bridge);
-        var (near, _) = BridgeStructures.Ends(c, world);
-        Assert.Equal(0, near.Steps);
-        var around = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(near.Meet.x, 0f, near.Meet.y), 6f).Where(rp => rp.IsRoad).ToList();
-        Vector2 across = new(-near.Up.y, near.Up.x);
-        bool Under(Vector2 p)
+        var level = new DvergrViaductEndStairTests.StepValley { Depth = _ => 18f };
+        _scope.WithWorld(level);
+        SetPathfinder(new RoadPathfinder(level) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-110f, 0f, -50f), 0f, new Vector3(110f, 0f, 50f), 0f, 4f, "level"), RoadSpatialGrid.LastRefusal);
+        RoadCrossing viaduct = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.ValleyJump);
+        var (vn, vf) = BridgeStructures.Ends(viaduct, level);
+        Assert.Equal((0, 0), (vn.Steps, vf.Steps));
+        foreach (var (end, which) in new[] { (vn, "near"), (vf, "far") })
         {
-            float along = Vector2.Dot(p - near.Meet, near.Up);
-            return along > 0.25f && along <= StructureEnds.JoinOverlap + 0.25f && Mathf.Abs(Vector2.Dot(p - near.Meet, across)) <= 2f;
+            var around = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(end.Meet.x, 0f, end.Meet.y), 6f).Where(rp => rp.IsRoad).ToList();
+            Vector2 across = new(-end.Up.y, end.Up.x);
+            bool Under(Vector2 p)
+            {
+                float along = Vector2.Dot(p - end.Meet, end.Up);
+                return along > 0.25f && along <= StructureEnds.JoinOverlap + 0.25f && Mathf.Abs(Vector2.Dot(p - end.Meet, across)) <= 2f;
+            }
+            var under = around.Where(rp => Under(rp.p)).ToList();
+            Assert.True(under.Count > 0, $"{which} end: no road run on under the deck's end");
+            Assert.All(under, rp => Assert.False(rp.unpainted, $"{which} end: the road at {rp.p}, under the deck's end, is unpainted"));
+            Assert.All(under, rp => Assert.True(Mathf.Abs(rp.h - end.MeetHeight) <= 0.1f, $"{which} end: the road under the deck's end at {rp.p} stands {rp.h:F2}, the end {end.MeetHeight:F2}"));
+            var before = around.Where(rp => Vector2.Dot(rp.p - end.Meet, end.Up) < -1f).ToList();
+            Assert.NotEmpty(before);
+            Assert.All(before, rp => Assert.False(rp.unpainted, $"{which} end: the road before it at {rp.p} is unpainted"));
         }
-        var under = around.Where(rp => Under(rp.p)).ToList();
-        Assert.True(under.Count > 0, "no road run on under the deck's end");
-        Assert.All(under, rp => Assert.False(rp.unpainted, $"the road at {rp.p}, under the deck's end, is unpainted"));
-        Assert.All(under, rp => Assert.True(Mathf.Abs(rp.h - near.MeetHeight) <= 0.1f, $"the road under the deck's end at {rp.p} stands {rp.h:F2}, the end {near.MeetHeight:F2}"));
-        var before = around.Where(rp => Vector2.Dot(rp.p - near.Meet, near.Up) < -1f).ToList();
-        Assert.NotEmpty(before);
-        Assert.All(before, rp => Assert.False(rp.unpainted, $"the road before it at {rp.p} is unpainted"));
     }
 
     /// <summary>

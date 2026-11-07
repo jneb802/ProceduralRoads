@@ -1735,7 +1735,7 @@ public static partial class RoadNetworkGenerator
         Log.LogInfo(FormattableString.Invariant($"  One road (RoadRide): {RoadRide.RiddenMetres:F0} m of planned road riding the network left to the road laid there, {RoadRide.CrossingsRidden} crossing(s) left to the road that built them, {RoadRide.CaughtAtCommit} ridden stretch(es) caught at the commit"));
         LogDoors();
         Log.LogInfo($"  Cross-island reads (an island worker's reads that passed over a road point, ride line, staircase, crossing or viaduct another island committed; islands build as separate networks): {CrossIslandReads.Describe()}");
-        Log.LogInfo($"  Structure ends met by earthwork (their landing filled over ground under the road's floor, StructureEnds.MeetEnds): {m_endEarthworks}; left from their landing pad off their line: {m_endPads}; on a landing shared with the next structure: {m_endShared}; where the road's last point stands, off their line: {m_endStands}; steps laid at them: {m_endSteps}; ends with none, one, more: {m_endFlat}/{m_endOneStep}/{m_endMoreSteps}");
+        Log.LogInfo($"  Structure ends met by earthwork (their landing filled over ground under the road's floor, StructureEnds.MeetEnds): {m_endEarthworks}; left from their landing pad off their line: {m_endPads}; on a landing shared with the next structure: {m_endShared}; where the road's last point stands, off their line: {m_endStands}; steps laid at them: {m_endSteps}; ends with none, one, more: {m_endFlat}/{m_endOneStep}/{m_endMoreSteps}; structures with both ends stepped, both flush, one of each (StructureEnds.Pair): {m_pairsStepped}/{m_pairsFlush}/{m_pairsOneSided}");
         Log.LogInfo($"  Staircase feet carried to a crossing's end (RoadStairRuns.EndUnderFoot): {RoadStairRuns.FeetLoweredToEnds}; of them met on a stair sunk into the road under the foot (StairLayout.FootToRoad): {RoadStairRuns.FeetSunkAtEnds}, sunk stairs laid for it: {RoadStairRuns.SunkStairsLaid}");
         Log.LogInfo($"  Staircase tops met at a crest (RoadStairRuns.JoinCrest, StairLayout.JoinTops, each try): {RoadStairRuns.TopJoinsSnapped} joined by a snapped run, {RoadStairRuns.TopJoinsClipped} by a clip ({RoadStairRuns.TopJoinsAsTheyStand} as they stand, {RoadStairRuns.TopJoinsClipSunk} on a stair sunk into the top floor under it), {RoadStairRuns.TopJoinsRefused} refused; ridge meets laid back to back (searched down from the first's top): {RoadStairRuns.RidgesSnapped}");
         if (RoadsLog)
@@ -2623,6 +2623,9 @@ public static partial class RoadNetworkGenerator
                         System.Threading.Interlocked.Add(ref m_endSteps, e.Steps);
                         System.Threading.Interlocked.Increment(ref e.Steps == 0 ? ref m_endFlat : ref e.Steps == 1 ? ref m_endOneStep : ref m_endMoreSteps);
                     }
+                // A structure's two ends as a pair (StructureEnds.Pair): both stepped, both flush, or one of each.
+                if (c.FromEnd is StructureEnds.End { IsStructure: true } from && c.ToEnd is StructureEnds.End { IsStructure: true } to)
+                    System.Threading.Interlocked.Increment(ref from.Steps > 0 != to.Steps > 0 ? ref m_pairsOneSided : ref from.Steps > 0 ? ref m_pairsStepped : ref m_pairsFlush);
                 // An end met by earthwork (StructureEnds.MeetEnds): its landing filled over ground under the road's floor.
                 int earthworks = (c.FromEarthwork ? 1 : 0) + (c.ToEarthwork ? 1 : 0);
                 if (earthworks == 0) continue;
@@ -4070,7 +4073,10 @@ public static partial class RoadNetworkGenerator
         return null;
     }
 
-    private static int m_viaductsRefusedAtEnds, m_crossingsUnmetSearchedRound, m_bridgeEndsUnmet, m_endEarthworks, m_endPads, m_endShared, m_endStands, m_endSteps, m_endFlat, m_endOneStep, m_endMoreSteps;
+    private static int m_viaductsRefusedAtEnds, m_crossingsUnmetSearchedRound, m_bridgeEndsUnmet, m_endEarthworks, m_endPads, m_endShared, m_endStands, m_endSteps, m_endFlat, m_endOneStep, m_endMoreSteps,
+        m_pairsStepped, m_pairsFlush, m_pairsOneSided;
+    /// <summary>Structures laid with both ends stepped, both flush, and one of each (StructureEnds.Pair).</summary>
+    public static (int stepped, int flush, int oneSided) EndPairs => (m_pairsStepped, m_pairsFlush, m_pairsOneSided);
     /// <summary>Structure ends laid the road leaves from their landing pad, off their line (StructureEnds.PadLength).</summary>
     public static int EndPads => m_endPads;
     /// <summary>Structure ends laid on a landing shared with the facing end of the next structure (StructureEnds.Share).</summary>
@@ -5148,7 +5154,7 @@ public static partial class RoadNetworkGenerator
         RoadPathfinder.SqueezeHits.Clear(); RoadPathfinder.ShoreFillCells.Clear();
         m_earthworkUnavoided = 0;
         RoadGrade.SteepestPlanned = 0f;
-        m_viaductsLaid = m_viaductsRefusedAtEnds = m_crossingsUnmetSearchedRound = m_bridgeEndsUnmet = m_endEarthworks = m_endPads = m_endShared = m_endStands = m_endSteps = m_endFlat = m_endOneStep = m_endMoreSteps = 0;
+        m_viaductsLaid = m_viaductsRefusedAtEnds = m_crossingsUnmetSearchedRound = m_bridgeEndsUnmet = m_endEarthworks = m_endPads = m_endShared = m_endStands = m_endSteps = m_endFlat = m_endOneStep = m_endMoreSteps = m_pairsStepped = m_pairsFlush = m_pairsOneSided = 0;
     }
 
     internal static void ResetData()

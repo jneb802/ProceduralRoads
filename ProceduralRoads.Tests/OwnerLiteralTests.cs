@@ -99,7 +99,6 @@ public class OwnerLiteralTests
         new("clearance lift 0.1 m", "Roads/StairRailing.cs", "- bottom) < 0.1f", Why.Unrelated, "a tolerance between a walk's surface and a rail's bottom"),
 
         // ---- Known duplicates: the number is written again; fold each onto its owner and delete its entry ----
-        new("half a rise", "Roads/StairLayout.Chains.cs", "ClipStep = PieceRise / 2f", Why.Known, "a named half rise, a top clip's band; should read the rounding owner (StairLayout.WholeStairsOver)"),
     };
 
     private static readonly Regex NotCode = new(@"/\*.*?\*/|//[^\n]*|@""(?:[^""]|"""")*""|""(?:[^""\\\n]|\\.)*""|'(?:[^'\\\n]|\\.)*'",

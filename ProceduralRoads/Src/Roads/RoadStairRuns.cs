@@ -311,7 +311,7 @@ public static partial class RoadStairRuns
         s_laid.Clear();
         StairLayout.ResetSupportRefusals();
         StairSupport.ResetCounts();
-        Crests = ClimbedOn = RoadTopsCrested = TopFloors = FeetLowered = FeetLoweredToEnds = FeetSunkAtEnds = SunkStairsLaid = FeetFacedFreely = RidgesBridged = RidgesSnapped = TopJoinsSnapped = TopJoinsClipped = TopJoinsAsTheyStand = TopJoinsRefused = TopsBeside = ValleysMet = FootAprons = RingEndsThrough = RidgesSnappedOffCrest = CrestStubs = ValleysSpanned = RidgesJoinedLow = BackTracksJoined = BackTracksMerged = BackTracksRefused = LedgeUnpriced = FlightLandings = FeetStartedLower = RidgesToFeet = KitsRelaid = ApproachesNotFacingIn = ApproachFacingReruns = AimsBuried = LaidBesideTheirAim = BareTopsKept = 0;
+        Crests = ClimbedOn = RoadTopsCrested = TopFloors = FeetLowered = FeetLoweredToEnds = FeetSunkAtEnds = SunkStairsLaid = FeetFacedFreely = RidgesBridged = RidgesSnapped = TopJoinsSnapped = TopJoinsClipped = TopJoinsAsTheyStand = TopJoinsClipSunk = TopJoinsRefused = TopsBeside = ValleysMet = FootAprons = RingEndsThrough = RidgesSnappedOffCrest = CrestStubs = ValleysSpanned = RidgesJoinedLow = BackTracksJoined = BackTracksMerged = BackTracksRefused = LedgeUnpriced = FlightLandings = FeetStartedLower = RidgesToFeet = KitsRelaid = ApproachesNotFacingIn = ApproachFacingReruns = AimsBuried = LaidBesideTheirAim = BareTopsKept = 0;
         RoadFeetAcross = MergedFeetAcross = RoadTopsAcross = ApproachStartsAcross = ApproachLayoutsAcross = SiteChecksAcross = 0;
         Array.Clear(RingEnds, 0, RingEnds.Length);
         PadsAtFeet = PadsAtTops = PadsPartial = 0;
@@ -784,6 +784,7 @@ public static partial class RoadStairRuns
                         {
                             System.Threading.Interlocked.Increment(ref TopJoinsClipped);
                             if (clipped.Length == 0f) System.Threading.Interlocked.Increment(ref TopJoinsAsTheyStand);
+                            if (clipped.Sunk) System.Threading.Interlocked.Increment(ref TopJoinsClipSunk);
                         }
                     }
                     StairChain.LogTopJoin(crest, kit, joined);

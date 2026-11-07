@@ -144,12 +144,13 @@ public static class StairChain
     }
 
     /// <summary>One line per top-to-top join (StairLayout.JoinTops) at <paramref name="at"/>, once per place and outcome:
-    /// laid or refused and why, how far it carries floors, and how high over the ground they stand at most.</summary>
+    /// laid (on a stair sunk into the top floor under it, where a clip is) or refused and why, how far it carries floors, and
+    /// how high over the ground they stand at most.</summary>
     public static void LogTopJoin(Vector2 at, StairKit kit, TopJoin join)
     {
         if (!RoadNetworkGenerator.RoadsLog || !FirstAt("tops", at, join.Laid)) return;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(FormattableString.Invariant(
-            $"[STAIRS] top-to-top at ({at.x:F1}, {at.y:F1}) {kit.Name}: {(join.Laid ? "laid" : "refused, " + join.Why)}, {join.Length:F1} m carried, {(float.IsNaN(join.Highest) ? "-" : join.Highest.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))} m over the ground at most (cap {StairKit.WalkwayCap:F0})"));
+            $"[STAIRS] top-to-top at ({at.x:F1}, {at.y:F1}) {kit.Name}: {(join.Laid ? join.Sunk ? "laid, on a stair sunk into the top floor under it" : "laid" : "refused, " + join.Why)}, {join.Length:F1} m carried, {(float.IsNaN(join.Highest) ? "-" : join.Highest.ToString("F2", System.Globalization.CultureInfo.InvariantCulture))} m over the ground at most (cap {StairKit.WalkwayCap:F0})"));
     }
 
     /// <summary>Places logged within a cell this wide count as one.</summary>

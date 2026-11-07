@@ -126,7 +126,7 @@ public static partial class StairLayout
         if (!sink) return (at, at.y, false, false);
         bool laid = plan.SunkPieces <= 0;
         if (laid) SinkStep(plan, StairKit.Of(plan.Kit), new Vector2(at.x, at.z), plan.StartHeading, at.y, Lanes(width), ground);
-        if (!(at.y > road && at.y - road < PieceRise)) return null;
+        if (!SunkStairSpans(at.y, road)) return null;
         plan.SunkStairMeets = road;
         return (at, road, true, laid);
     }
@@ -137,24 +137,40 @@ public static partial class StairLayout
     /// staircase's own sunk step alone is not that: nothing checked it lies over this road.</summary>
     public static bool FootMeets(StairPlan plan, float foot, float road) =>
         Walkable(foot, road)
-        || plan.SunkPieces > 0 && plan.SunkStairMeets is float met && Walkable(met, road) && foot > road && foot - road < PieceRise;
+        || plan.SunkPieces > 0 && plan.SunkStairMeets is float met && Walkable(met, road) && SunkStairSpans(foot, road);
+
+    /// <summary>Whether one stair sunk into the lower of two walking surfaces (<see cref="SunkStair"/>) carries a walk up to the
+    /// higher: <paramref name="high"/> over <paramref name="low"/>, by less than a rise, so the stair's slope comes up out of the
+    /// lower to the higher. The one judgement of the flex, for a foot over a road (<see cref="FootToRoad"/>, <see cref="FootMeets"/>)
+    /// and a clip over a top floor (<see cref="ClipTops"/>); within a step (<see cref="Walkable"/>) none is needed.</summary>
+    internal static bool SunkStairSpans(float high, float low) => high > low && high - low < PieceRise;
 
     /// <summary>The stair sunk under a foot at <paramref name="foot"/> (<paramref name="height"/>, its low edge), the one way one
-    /// is laid: a whole stair a rise down, out from the foot back along <paramref name="heading"/> (the first stair's), its top at
-    /// the foot, so the flight comes up out of the road rather than starting on top of it with a lip (one extra stair clipped
-    /// down into the earth makes it connect better). Buried on purpose: no earthwork uncovers it (uncut, not counted as a stair
-    /// of the flight). First in the plan's lists, as a plan lays its pieces from its foot (<see cref="StairPlan.SunkPieces"/>).</summary>
+    /// is laid under a foot (<see cref="SunkStair"/>), first in the plan's lists, as a plan lays its pieces from its foot
+    /// (<see cref="StairPlan.SunkPieces"/>).</summary>
     private static void SinkStep(StairPlan plan, StairKit kit, Vector2 foot, float heading, float height, int lanes, Func<float, float, float> ground)
     {
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
-        AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, foot - Forward(heading) * PieceRun, heading, height - PieceRise, lanes, ground, mark: false, cut: false);
-        for (int i = pieces; i < plan.Pieces.Count; i++) plan.Pieces[i].Sunk = true;
+        SunkStair(plan, kit, foot, heading, height, lanes, ground);
         int added = plan.Pieces.Count - pieces, addedClearances = plan.Clearances.Count - clearances;
         FirstInWalkingOrder(plan.Pieces, new List<int> { pieces, plan.Pieces.Count });
         FirstInWalkingOrder(plan.Clearances, new List<int> { clearances, plan.Clearances.Count });
         if (plan.LastRowPieces >= 0) { plan.LastRowPieces += added; plan.LastRowClearances += addedClearances; }
         plan.SunkPieces = added; plan.SunkClearances = addedClearances;
         plan.Foot = new Vector3(foot.x, height, foot.y);
+    }
+
+    /// <summary>The one place a stair is sunk into a lower walking surface: a whole stair a rise down from
+    /// <paramref name="height"/> at <paramref name="edge"/> (its top edge's middle), out back along <paramref name="heading"/> (the
+    /// way it climbs), so the walk comes up out of the lower surface rather than meeting a lip (one extra stair clipped down
+    /// into the earth makes it connect better). Under a foot it is sunk into the road (<see cref="SinkStep"/>); under a clip
+    /// into the lower top's floor (<see cref="ClipTops"/>). Buried on purpose: no earthwork uncovers it (uncut, not counted as
+    /// a stair of the flight), marked <see cref="StairPiece.Sunk"/>.</summary>
+    private static void SunkStair(StairPlan plan, StairKit kit, Vector2 edge, float heading, float height, int lanes, Func<float, float, float> ground)
+    {
+        int pieces = plan.Pieces.Count;
+        AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, edge - Forward(heading) * PieceRun, heading, height - PieceRise, lanes, ground, mark: false, cut: false);
+        for (int i = pieces; i < plan.Pieces.Count; i++) plan.Pieces[i].Sunk = true;
     }
 
     /// <summary><paramref name="steps"/> stairs added on down from a plan's foot along its first heading, the sunk step

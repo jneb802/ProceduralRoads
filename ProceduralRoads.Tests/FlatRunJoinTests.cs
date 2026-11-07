@@ -360,14 +360,16 @@ public sealed class FlatRunJoinTests
 
     /// <summary>
     /// Whether two tops' join can be walked: no floor stands on or over a stair's tread (a floor inside its footprint at or
-    /// above its surface), and the walk from <paramref name="start"/> through the run's pieces (nearest first) to
-    /// <paramref name="end"/> stays on a stair or floor (or by a turn's filler) with no step taller than a rise.
+    /// above its surface; a stair sunk into a floor is buried on purpose, its slope coming up out of it), and the walk from
+    /// <paramref name="start"/> through the run's pieces (nearest first) to <paramref name="end"/> stays on a stair or floor
+    /// (or by a turn's filler) with no step taller than <paramref name="step"/> (a rise by default).
     /// </summary>
-    internal static List<string> WalkFaults(IReadOnlyList<StairPiece> pieces, IReadOnlyList<StairPiece> run, StairKit kit, Vector2 start, Vector2 end, float height)
+    internal static List<string> WalkFaults(IReadOnlyList<StairPiece> pieces, IReadOnlyList<StairPiece> run, StairKit kit, Vector2 start, Vector2 end, float height,
+        float step = StairLayout.PieceRise)
     {
         var faults = new List<string>();
         var walked = pieces.Where(p => p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing).ToList();
-        foreach (StairPiece s in walked.Where(p => p.Kind == StairPieceKind.Stair))
+        foreach (StairPiece s in walked.Where(p => p.Kind == StairPieceKind.Stair && !p.Sunk))
             for (float u = -0.9f; u <= 0.91f; u += 0.3f)
                 for (float v = -0.9f; v <= 0.91f; v += 0.3f)
                 {
@@ -400,28 +402,29 @@ public sealed class FlatRunJoinTests
                         faults.Add(FormattableString.Invariant($"nothing to walk on at {at}"));
                     continue;
                 }
-                float step = under.OrderBy(h => Mathf.Abs(h - at0)).First();
-                if (Mathf.Abs(step - at0) > StairLayout.PieceRise + 0.01f)
-                    faults.Add(FormattableString.Invariant($"a step of {step - at0:F2} m at {at}"));
-                at0 = step;
+                float on = under.OrderBy(h => Mathf.Abs(h - at0)).First();
+                if (Mathf.Abs(on - at0) > step + 0.01f)
+                    faults.Add(FormattableString.Invariant($"a step of {on - at0:F2} m at {at}"));
+                at0 = on;
             }
         }
         return faults;
     }
 
     /// <summary>Two tops no snapped run joins, the pair otherwise lost (50 of 51 top-to-top joins over six worlds were refused):
-    /// off the rise (half a rise, a rise and a half, 0.6 of one between two top stairs), closer than a floor and out of line,
-    /// or the other top lower. Joined by snapping to one top and clipping the other: the end floor over the other's top floor
-    /// (or on its top stair's edge), at its level or up to half a rise over it. Walkable: no tread covered, no step taller than
-    /// a rise.</summary>
+    /// off the rise (half a rise, a rise and a half, 0.4 of one), closer than a floor and out of line, or the other top lower.
+    /// Joined by snapping to one top and clipping the other: the end floor over the other's top floor (or on its top stair's
+    /// edge) within a walker's step, or, more than a step over a top floor, on its far edge with one more stair sunk into that
+    /// floor (<paramref name="sunk"/>), its slope coming up out of it. Walkable at the walker's step: no tread covered, no step
+    /// over 0.2 m (until 6 Nov a clip stood up to half a rise over the top it met, and this walked at a rise: the half-rise
+    /// row was a clip with a 0.5 m step, now it meets on a sunk stair; the rows 0.6 apart between two top stairs and 1.4
+    /// apart half a metre aside left a 0.4 m step, and the rise and a half a 0.5 m one: refused now, see
+    /// TopsAClipCannotJoinAreRefused).</summary>
     [Theory]
-    [InlineData(0f, 4f, 0.5f, true, true, 0)]
-    [InlineData(0f, 6f, 1.5f, true, true, 1)]
-    [InlineData(0f, 4f, 0.6f, false, false, 1)]
-    [InlineData(0.6f, 1f, 0f, true, true, 0)]
-    [InlineData(0.5f, 6f, -1.4f, true, true, 1)]
-    [InlineData(0f, 4f, -0.4f, false, true, 0)]
-    public void TopsNoSnappedRunJoinsAreJoinedByClippingOne(float aside, float gap, float rise, bool firstFloor, bool secondFloor, int stairs)
+    [InlineData(0f, 4f, 0.5f, true, true, 1, 1)]
+    [InlineData(0.6f, 1f, 0f, true, true, 0, 0)]
+    [InlineData(0f, 4f, -0.4f, false, true, 0, 1)]
+    public void TopsNoSnappedRunJoinsAreJoinedByClippingOne(float aside, float gap, float rise, bool firstFloor, bool secondFloor, int stairs, int sunk)
     {
         StairKit kit = StairKit.BlackMarble;
         static float Ground(float x, float z) => 41f;
@@ -437,22 +440,69 @@ public sealed class FlatRunJoinTests
         TopJoin laid = Meet(second, a, b, Ground, kit);
         Assert.True(laid.Laid, laid.Why);
         var run = second.Pieces.Skip(before).ToList();
-        Assert.Equal(stairs, run.Count(p => p.Kind == StairPieceKind.Stair));
+        Assert.Equal(stairs, run.Count(p => p.Kind == StairPieceKind.Stair && !p.Sunk));
+        Assert.Equal(sunk, run.Count(p => p.Sunk));
+        Assert.Equal(sunk == 1, laid.Sunk);
         var all = first.Pieces.Concat(second.Pieces).ToList();
         // From the middle of the first's top row to the middle of the second's.
         Vector2 Row(StairContinuation t) => t.Edge - StairLayout.Forward(t.Heading) * (StairLayout.PieceRun / 2f);
-        var faults = WalkFaults(all, run, kit, Row(a), Row(b), 45f - (firstFloor ? 0f : 0.5f));
+        var faults = WalkFaults(all, run, kit, Row(a), Row(b), 45f - (firstFloor ? 0f : 0.5f), StairLayout.StepUp);
         Assert.True(faults.Count == 0, string.Join("\n", faults.Take(10)));
     }
 
-    /// <summary>Two top floors that already overlap, the higher up to half a rise over the other, are joined as they stand,
-    /// nothing laid: at RoadSeedD 8605,-2712 two level top floors with centres 1.3 m apart, turned 45 degrees, and at RoadSeedC
-    /// 496,-6882 two 0.2 m apart, the second's half a rise under the first's, were refused (closer than a floor, no run fits)
-    /// and lost the pair.</summary>
+    /// <summary>
+    /// A clip whose end floor would stand more than a step over the top floor it meets (the decision of 6 Nov: "0.2, if above
+    /// an extra stair clipping into the one below it", as a foot over a road): the run ends on that top's far edge, in line and
+    /// centred on its row, and one stair is sunk into the top's floor, as a foot's into a road (StairLayout.SinkStep's
+    /// geometry): its top on the edge at the run's floor, a rise down, its footprint the top's row exactly, uncut and marked
+    /// sunk, its slope coming up out of the floor. From a top stair at 45, level floors north to a top floor 0.4 under it.
+    /// </summary>
+    [Fact]
+    public void AClipMoreThanAStepOverATopFloorMeetsItOnAStairSunkIntoIt()
+    {
+        StairKit kit = StairKit.BlackMarble;
+        static float Ground(float x, float z) => 41f;
+        var a = new StairContinuation(new Vector2(0f, 6f), 0f, 45f, StairPieceKind.Stair);
+        var b = new StairContinuation(new Vector2(0f, 10f), 180f, 44.6f, StairPieceKind.Landing);
+        StairPlan first = TopAt(a.Edge, 0f, 45f, false, kit, Ground);
+        StairPlan second = TopAt(b.Edge, 180f, 44.6f, true, kit, Ground);
+        int before = second.Pieces.Count;
+        TopJoin laid = Meet(second, a, b, Ground, kit);
+        Assert.True(laid.Laid, laid.Why);
+        Assert.True(laid.Sunk);
+        var run = second.Pieces.Skip(before).ToList();
+        StairPiece sunk = Assert.Single(run, p => p.Sunk);
+        Assert.Equal(StairPieceKind.Stair, sunk.Kind);
+        Assert.Equal(kit.Stair, sunk.Prefab);
+        // On the top's row (its far edge at 0,10, its back at 0,12): centred on it, climbing to the edge (a stair faces down).
+        Assert.Equal(0f, sunk.Position.x, 3);
+        Assert.Equal(11f, sunk.Position.z, 3);
+        Assert.Equal(0f, sunk.YawDegrees, 3);
+        // A rise down from the run's floor: its top at 45 on the edge, its low edge at 44 inside the floor at 44.6.
+        Assert.Equal(44f, sunk.Position.y, 3);
+        StairPiece end = run.Where(p => p.Kind == StairPieceKind.Landing).OrderBy(p => p.Position.z).Last();
+        Assert.True(StairLayout.Walkable(sunk.Position.y + StairLayout.PieceRise, end.Position.y + kit.FloorTop), "the stair's top meets the run's floor");
+        Assert.True(sunk.Position.y < 44.6f && sunk.Position.y + StairLayout.PieceRise > 44.6f, "its slope comes up out of the top's floor");
+        // The run's floors stop on the edge: none reaches into the top's row.
+        Assert.All(run.Where(p => p.Kind == StairPieceKind.Landing), p => Assert.True(p.Position.z <= 9.01f, $"floor at {p.Position}"));
+        Assert.Equal(1, run.Count(p => p.Kind == StairPieceKind.Stair));
+        var faults = WalkFaults(first.Pieces.Concat(second.Pieces).ToList(), run, kit, new Vector2(0f, 5f), new Vector2(0f, 11f), 44.5f, StairLayout.StepUp);
+        Assert.True(faults.Count == 0, string.Join("\n", faults.Take(10)));
+    }
+
+    /// <summary>Two top floors that already overlap, the higher within a walker's step of the other, are joined as they stand,
+    /// nothing laid: at RoadSeedD 8605,-2712 two level top floors with centres 1.3 m apart, turned 45 degrees, were refused
+    /// (closer than a floor, no run fits) and lost the pair. More than a step apart they are not (until 6 Nov up to half a
+    /// rise was: at RoadSeedC 496,-6882 two 0.2 m apart, the second's half a rise under the first's, were joined with a 0.5 m
+    /// step): a stair sunk into the lower would lie under the higher, which overlaps it, so none is laid, and no run fits
+    /// these two either.</summary>
     [Theory]
-    [InlineData(3.0f, -0.7f, 135f, 0f)]
-    [InlineData(0.4f, -0.5f, 225f, -0.5f)]
-    public void TopFloorsThatAlreadyOverlapAreJoinedAsTheyStand(float x, float z, float heading, float rise)
+    [InlineData(3.0f, -0.7f, 135f, 0f, true)]
+    [InlineData(0.4f, -0.5f, 225f, -0.15f, true)]
+    [InlineData(0.4f, -0.5f, 225f, -0.35f, false)]
+    [InlineData(0.4f, -0.5f, 225f, -0.5f, false)]
+    [InlineData(3.0f, -0.7f, 135f, 0.35f, false)]
+    public void TopFloorsThatAlreadyOverlapAreJoinedAsTheyStandWithinAStep(float x, float z, float heading, float rise, bool joined)
     {
         StairKit kit = StairKit.BlackMarble;
         static float Ground(float x, float z) => 41f;
@@ -460,7 +510,7 @@ public sealed class FlatRunJoinTests
         var first = new StairContinuation(new Vector2(0f, 0f), 270f, 45f, StairPieceKind.Landing);
         var second = new StairContinuation(new Vector2(x, z), heading, 45f + rise, StairPieceKind.Landing);
         TopJoin join = Meet(plan, first, second, Ground, kit);
-        Assert.True(join.Laid, join.Why);
+        Assert.True(join.Laid == joined, join.Why);
         Assert.Empty(plan.Pieces);
     }
 
@@ -482,17 +532,29 @@ public sealed class FlatRunJoinTests
     }
 
     /// <summary>What a clip never joins: tops four rises apart, and two tops side by side climbing the same way (a join would
-    /// double back alongside both).</summary>
+    /// double back alongside both). Nor a clip that would leave a step over 0.2 m where no stair can be sunk under it (laid
+    /// until 6 Nov with that step): a top stair 0.4 or 0.6 under the run's floor (a stair laid over it would cover its treads),
+    /// and a top floor 0.4 under it but half a metre aside (the sunk stair is aimed at the 2 m row, not a road's width), and
+    /// tops 1.4 apart half a metre aside. Two top floors a rise and a half apart in line: laid until 6 Nov from the lower
+    /// one's floor, clipped half a rise over it; now the clip on from the lower top to the higher one's edge, a stair sunk
+    /// into that floor, ties the one from the lower's own edge (the same length) and is kept, and its floors stand 6 m over
+    /// this world's ground, over the walkway cap (raised: the tie, or the other way when the kept one is refused).</summary>
     [Theory]
-    [InlineData(0f, 10f, 180f, 4f)]
-    [InlineData(3f, 0f, 0f, 0f)]
-    public void TopsAClipCannotJoinAreRefused(float aside, float gap, float heading, float rise)
+    [InlineData(0f, 10f, 180f, 4f, true, true)]
+    [InlineData(3f, 0f, 0f, 0f, true, true)]
+    [InlineData(0f, 4f, 180f, -0.4f, false, false)]
+    [InlineData(0f, 4f, 180f, 0.6f, false, false)]
+    [InlineData(0.5f, 4f, 180f, -0.4f, false, true)]
+    [InlineData(0.5f, 6f, 180f, -1.4f, true, true)]
+    [InlineData(0f, 6f, 180f, 1.5f, true, true)]
+    public void TopsAClipCannotJoinAreRefused(float aside, float gap, float heading, float rise, bool firstFloor, bool secondFloor)
     {
         StairKit kit = StairKit.BlackMarble;
         static float Ground(float x, float z) => 41f;
         var plan = new StairPlan { Kit = kit.Name, Reached = true };
-        TopJoin join = Meet(plan, new StairContinuation(new Vector2(0f, 8f), 0f, 45f, StairPieceKind.Landing),
-            new StairContinuation(new Vector2(aside, 8f + gap), heading, 45f + rise, StairPieceKind.Landing), Ground, kit);
+        float firstEnd = firstFloor ? 8f : 6f;
+        TopJoin join = Meet(plan, new StairContinuation(new Vector2(0f, firstEnd), 0f, 45f, firstFloor ? StairPieceKind.Landing : StairPieceKind.Stair),
+            new StairContinuation(new Vector2(aside, firstEnd + gap), heading, 45f + rise, secondFloor ? StairPieceKind.Landing : StairPieceKind.Stair), Ground, kit);
         Assert.False(join.Laid);
         Assert.Empty(plan.Pieces);
     }

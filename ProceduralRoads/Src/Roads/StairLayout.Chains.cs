@@ -420,70 +420,78 @@ public static partial class StairLayout
     /// <summary>Why <see cref="JoinTops"/> refuses from the higher top (the caller lays it from the lower).</summary>
     public const string OtherTopLower = "the other top lower";
 
-    /// <summary>Most a clipped join's end floor stands over the top it meets (<see cref="ClipTops"/>): half a rise, a step no
-    /// taller than a stair's.</summary>
-    public const float ClipStep = PieceRise / 2f;
-
     /// <summary>
     /// Two tops no snapped run joins (<see cref="JoinTops"/>: tops off the rise from each other, out of line by less than a
     /// turn makes up, or closer than a floor) joined by snapping to one top and clipping the other: "snap one side and clip
-    /// the other good enough". The run's end floor at the other end overlaps that top's floor, reaching a quarter to a whole
-    /// floor into it (half where it fits), never past its far end; floors may overlap, but a stair is never overlapped (its
-    /// treads would be covered), so at a top stair the end floor, in line with it, stops on its edge. Either way up to half the
-    /// run's width aside, and level with that top or over it by up to <see cref="ClipStep"/>, never under it, so the walk across
-    /// steps no more than that. Two ways, each up to <see cref="TopJoinStairs"/> straight stairs: snapped on from
-    /// <paramref name="from"/> as a snapped run sets off (its turns), stairs then a floor clipping <paramref name="to"/>; or in
-    /// line with <paramref name="to"/>, finishing head-on on its edge, from a floor clipping <paramref name="from"/>. Only up,
-    /// as <see cref="JoinTops"/> (the caller asks from either top, so a top lower than the other is reached from it); of those
-    /// that fit, the one turning least, then the shortest, within <paramref name="reach"/>, the walkway cap and dry ground. Two
-    /// top floors that already overlap, within that step, are joined as they stand.
+    /// the other good enough". The run's floor at the clipped top stands level with it or over it, never under it, and the
+    /// walk between them is a walker's step at most, as a foot onto a road ("0.2, if above an extra stair clipping into the
+    /// one below it"). Within a step (<see cref="Walkable"/>) the end floor overlaps that top's floor, reaching a quarter to a
+    /// whole floor into it (half where it fits), never past its far end; floors may overlap, but a stair is never overlapped
+    /// (its treads would be covered), so at a top stair the end floor, in line with it, stops on its edge; either way up to
+    /// half the run's width aside. More than a step over a top floor (by less than a rise, <see cref="SunkStairSpans"/>), the
+    /// run ends on that top's far edge, in line and centred on its row (aimed at its 2 m row, not a road's width), and one
+    /// stair is sunk into the top's floor (<see cref="SunkStair"/>, as a foot's into a road): its top on the edge at the run's
+    /// floor, a rise down, its footprint the top's row, its slope coming up out of the floor. A top stair takes no such stair
+    /// (laid over it, it would cover its treads): refused there. Two ways, each up to <see cref="TopJoinStairs"/> straight
+    /// stairs: snapped on from <paramref name="from"/> as a snapped run sets off (its turns), stairs then a floor clipping
+    /// <paramref name="to"/>; or in line with <paramref name="to"/>, finishing head-on on its edge, from a floor clipping
+    /// <paramref name="from"/>. Only up, as <see cref="JoinTops"/> (the caller asks from either top, so a top lower than the
+    /// other is reached from it); of those that fit, the one turning least, then the shortest, within <paramref name="reach"/>,
+    /// the walkway cap and dry ground. Two top floors that already overlap within a step are joined as they stand; more than
+    /// a step apart they are not (a stair sunk into the lower would lie under the higher).
     /// </summary>
     private static TopJoin ClipTops(StairPlan plan, StairContinuation from, StairContinuation to, Func<float, float, float> ground, float width, StairKit kit, float reach)
     {
         float apart = Vector2.Distance(from.Edge, to.Edge), half = width / 2f, onto = Wrap(to.Heading + 180f), rise = to.Height - from.Height;
         if (!plan.Reached) return new TopJoin(false, apart, float.NaN, "no clipped run fits");
-        // Two top floors that already overlap (centres closer than a floor is long), `to` level with `from` or over it by up
-        // to ClipStep: joined as they stand, nothing laid (two level top floors 1.3 m apart, turned 45 degrees, were refused
-        // as closer than a floor and lost the pair).
-        if (from.Kind == StairPieceKind.Landing && to.Kind == StairPieceKind.Landing && rise > -0.01f && rise <= ClipStep + 0.01f
+        // Two top floors that already overlap (centres closer than a floor is long), `to` level with `from` or over it within
+        // a step: joined as they stand, nothing laid (two level top floors 1.3 m apart, turned 45 degrees, were refused as
+        // closer than a floor and lost the pair).
+        if (from.Kind == StairPieceKind.Landing && to.Kind == StairPieceKind.Landing && rise > -0.01f && Walkable(to.Height, from.Height)
             && Vector2.Distance(from.Edge - Forward(from.Heading) * (PieceRun / 2f), to.Edge - Forward(to.Heading) * (PieceRun / 2f)) < PieceRun)
             return new TopJoin(true, 0f, 0f, "");
         // How far into a top's row (from its far edge, `inward`) a floor clipping it reaches: a floor's a quarter to a whole
-        // floor, half where it fits; a stair's not at all.
-        static (float lo, float aim, float hi) Clip(StairContinuation top) =>
-            top.Kind == StairPieceKind.Landing ? (PieceRun / 4f, PieceRun / 2f, PieceRun) : (0f, 0f, 0f);
+        // floor, half where it fits; a stair's not at all, nor a floor's a stair is sunk into (`sunk`: the run stops on its edge).
+        static (float lo, float aim, float hi) Clip(StairContinuation top, bool sunk) =>
+            top.Kind == StairPieceKind.Landing && !sunk ? (PieceRun / 4f, PieceRun / 2f, PieceRun) : (0f, 0f, 0f);
         // Whether a floor laid along `dir`, its edge's middle at `at`, clips a top: that middle and both its corners within the
-        // reach into its row, up to half the width aside.
-        bool Clips(StairContinuation top, Vector2 inward, Vector2 at, float dir)
+        // reach into its row, up to half the width aside; centred on the row where a stair is sunk into it (its sides the row's).
+        bool Clips(StairContinuation top, Vector2 inward, Vector2 at, float dir, bool sunk)
         {
-            var (lo, _, hi) = Clip(top);
+            var (lo, _, hi) = Clip(top, sunk);
             Vector2 side = Right(dir) * half;
             float a = Vector2.Dot(at - top.Edge, inward);
-            return a >= lo - 0.01f && Mathf.Abs(Vector2.Dot(at - top.Edge, Right(top.Heading))) <= half + 0.01f
+            return a >= lo - 0.01f && Mathf.Abs(Vector2.Dot(at - top.Edge, Right(top.Heading))) <= (sunk ? 0f : half) + 0.01f
                 && Vector2.Dot(at + side - top.Edge, inward) <= hi + 0.01f && Vector2.Dot(at - side - top.Edge, inward) <= hi + 0.01f;
         }
         // The length of a straight run between lo and hi whose end lies a0 + length * cos into the top's row, as near its aim as fits.
-        float? Length(StairContinuation top, float lo, float hi, float a0, float cos)
+        float? Length(StairContinuation top, float lo, float hi, float a0, float cos, bool sunk)
         {
-            var (reachLo, aim, reachHi) = Clip(top);
+            var (reachLo, aim, reachHi) = Clip(top, sunk);
             float min = Mathf.Max(lo, (reachLo - a0) / cos), max = Mathf.Min(hi, (reachHi - a0) / cos);
             return min > max + 0.001f ? null : Mathf.Clamp((aim - a0) / cos, min, max);
         }
         int Turn(float a, float b) => Mathf.RoundToInt((Wrap(b - a + 180f) - 180f) / HeadingStep);
         Node? best = null;
         float bestScore = float.MaxValue, laidLength = 0f;
+        // The stair sunk into the clipped top's floor under the run (its top edge, heading and height), where one is.
+        (Vector2 edge, float heading, float height)? sink = null;
         var why = new List<string>();
 
-        // Snapped on from `from`: a whole number of rises up, the end floor over `to` (or on its stair's edge) by up to ClipStep.
+        // Snapped on from `from`: a whole number of rises up, the end floor over `to` (or on its stair's edge) within a step,
+        // or on the far edge of `to`'s floor with a stair sunk into it.
         int up = Mathf.CeilToInt(rise / PieceRise - 0.01f);
-        if (up < 0 || up * PieceRise - rise > ClipStep + 0.01f) why.Add("on from it, the other top lower");
+        float high = from.Height + up * PieceRise;
+        bool sinkTo = !Walkable(high, to.Height);
+        if (up < 0 || sinkTo && !SunkStairSpans(high, to.Height)) why.Add("on from it, the other top lower");
+        else if (sinkTo && to.Kind != StairPieceKind.Landing) why.Add("on from it, more than a step over the other's top stair");
         else if (up > TopJoinStairs) why.Add(FormattableString.Invariant($"tops {up} rises apart"));
         else
         {
             bool offFloor = from.Kind == StairPieceKind.Landing;
             int most = offFloor ? MaxFloorTurnSteps : MaxJoinTurnSteps;
-            // Onto a floor turned up to a floor over a floor; onto a stair in line.
-            int onFloor = to.Kind == StairPieceKind.Landing ? MaxFloorTurnSteps : 0;
+            // Onto a floor turned up to a floor over a floor; onto a stair, or a floor a stair is sunk into, in line.
+            int onFloor = to.Kind == StairPieceKind.Landing && !sinkTo ? MaxFloorTurnSteps : 0;
             Vector2 inward = Forward(onto);
             for (int t1 = -most; t1 <= most; t1++)
             {
@@ -496,15 +504,15 @@ public static partial class StairLayout
                 // Level: a whole floor on at least, or one set back over a top floor straight on. Up: the stairs straight on
                 // from the row (turned off it as a stair off a stair), or a whole floor on first; then the end floor.
                 float? length;
-                if (up == 0) length = Length(to, offFloor && t1 == 0 ? 0.05f : PieceRun - 0.01f, reach, a0, cos);
+                if (up == 0) length = Length(to, offFloor && t1 == 0 ? 0.05f : PieceRun - 0.01f, reach, a0, cos, sinkTo);
                 else
                 {
                     float stairs = (up + 1) * PieceRun;
-                    length = Length(to, stairs + PieceRun, reach, a0, cos);
-                    if ((t1 == 0 || (!offFloor && Math.Abs(t1) <= MaxStairTurnSteps)) && Length(to, stairs, stairs, a0, cos) is { } off)
+                    length = Length(to, stairs + PieceRun, reach, a0, cos, sinkTo);
+                    if ((t1 == 0 || (!offFloor && Math.Abs(t1) <= MaxStairTurnSteps)) && Length(to, stairs, stairs, a0, cos, sinkTo) is { } off)
                         length = off;
                 }
-                if (length is not { } L || !Clips(to, inward, s1 + mf * L, m)) continue;
+                if (length is not { } L || !Clips(to, inward, s1 + mf * L, m, sinkTo)) continue;
                 float score = L + (Math.Abs(t1) + Math.Abs(t2)) * 1000f;
                 if (score >= bestScore) continue;
                 Node node = Root(from.Kind, from.Edge, from.Heading, from.Height);
@@ -519,23 +527,27 @@ public static partial class StairLayout
                 bestScore = score;
                 best = node;
                 laidLength = L;
+                sink = sinkTo ? (to.Edge, to.Heading, high) : null;
             }
             if (best == null) why.Add(FormattableString.Invariant($"no run on from it clips the other ({up} rise(s) up)"));
         }
 
-        // In line with `to`, finishing head-on on its edge, from a floor clipping `from` by up to ClipStep, whole rises below `to`.
+        // In line with `to`, finishing head-on on its edge, from a floor clipping `from` within a step, or on the far edge of
+        // `from`'s floor with a stair sunk into it, whole rises below `to`.
         int below = Mathf.FloorToInt(rise / PieceRise + 0.01f);
         float lift = rise - below * PieceRise;
+        bool sinkFrom = !Walkable(from.Height + lift, from.Height);
         int turned = Turn(from.Heading, onto);
-        if (below < 0 || lift > ClipStep + 0.01f) why.Add("in line with the other, its own top lower");
+        if (below < 0 || sinkFrom && !SunkStairSpans(from.Height + lift, from.Height)) why.Add("in line with the other, its own top lower");
+        else if (sinkFrom && from.Kind != StairPieceKind.Landing) why.Add("in line with the other, more than a step over its own top stair");
         else if (below > TopJoinStairs) why.Add(FormattableString.Invariant($"tops {below} rises apart"));
-        else if (Math.Abs(turned) > (from.Kind == StairPieceKind.Landing ? MaxFloorTurnSteps : 0)) why.Add("in line with the other, turned off its own top");
+        else if (Math.Abs(turned) > (from.Kind == StairPieceKind.Landing && !sinkFrom ? MaxFloorTurnSteps : 0)) why.Add("in line with the other, turned off its own top");
         else
         {
             Vector2 of = Forward(onto), inward = -Forward(from.Heading);
             // The run's start, its length back from `to`'s edge, lies a0 + length * cos into `from`'s row.
             float a0 = Vector2.Dot(to.Edge - from.Edge, inward), cos = Vector2.Dot(-of, inward);
-            if (Length(from, (below + 1) * PieceRun - 0.01f, reach, a0, cos) is { } L && Clips(from, inward, to.Edge - of * L, onto)
+            if (Length(from, (below + 1) * PieceRun - 0.01f, reach, a0, cos, sinkFrom) is { } L && Clips(from, inward, to.Edge - of * L, onto, sinkFrom)
                 && L + Math.Abs(turned) * 1000f < bestScore)
             {
                 Vector2 start = to.Edge - of * L;
@@ -543,11 +555,12 @@ public static partial class StairLayout
                 if (below > 0) node = JoinStairs(node, below, onto, 0, node.Edge, node.Edge);
                 best = node;
                 laidLength = L;
+                sink = sinkFrom ? (from.Edge, from.Heading, from.Height + lift) : null;
             }
             else if (best == null) why.Add("no run in line with the other clips its own");
         }
         if (best == null) return new TopJoin(false, apart, float.NaN, string.Join(", ", why));
-        return LayJoin(plan, best, laidLength, ground, width, kit);
+        return LayJoin(plan, best, laidLength, ground, width, kit, sink);
     }
 
     /// <summary>A join's root: the row it carries on from (never emitted), its far edge at <paramref name="edge"/>.</summary>
@@ -595,12 +608,15 @@ public static partial class StairLayout
         return parent;
     }
 
-    /// <summary>A join's run emitted as any staircase is and laid into <paramref name="plan"/> (pieces only): refused where any
-    /// floor of it would stand higher over the ground than <see cref="StairKit.WalkwayCap"/>, or over water.</summary>
-    private static TopJoin LayJoin(StairPlan plan, Node node, float length, Func<float, float, float> ground, float width, StairKit kit)
+    /// <summary>A join's run emitted as any staircase is and laid into <paramref name="plan"/> (pieces only), with the stair a
+    /// clip sinks into the top under it (<paramref name="sink"/>, <see cref="SunkStair"/>): refused where any floor of it would
+    /// stand higher over the ground than <see cref="StairKit.WalkwayCap"/>, or over water.</summary>
+    private static TopJoin LayJoin(StairPlan plan, Node node, float length, Func<float, float, float> ground, float width, StairKit kit,
+        (Vector2 edge, float heading, float height)? sink = null)
     {
         var laid = new StairPlan { Kit = kit.Name, Reached = true };
         Emit(laid, node, ground, width, kit);
+        if (sink is { } s) SunkStair(laid, kit, s.edge, s.heading, s.height, Lanes(width), ground);
         // How high over the ground its floors stand, at their corners and centres, and whether any stands over water.
         float highest = 0f;
         bool wet = false;
@@ -627,7 +643,7 @@ public static partial class StairLayout
         plan.TurnSteps += laid.TurnSteps;
         plan.OverlapTurnSteps += laid.OverlapTurnSteps;
         plan.WalkedLength += length;
-        return new TopJoin(true, length, highest, "");
+        return new TopJoin(true, length, highest, "", sink != null);
     }
     /// <summary>Most of a ridge join's foot stair that stands over the floor its foot rests on, along it (<see cref="JoinDown"/>:
     /// a Mistlands ridge joined by hand stood 1.16 m of it on the pad below).</summary>
@@ -718,15 +734,16 @@ public static partial class StairLayout
 }
 
 /// <summary>What <see cref="StairLayout.JoinTops"/> did: whether it laid the run, how long the run is (or the gap, where no run
-/// fits), how high over the ground its floors stand at most (NaN where none was laid out), and why it was refused.</summary>
+/// fits), how high over the ground its floors stand at most (NaN where none was laid out), why it was refused, and whether a
+/// clip meets the top under it on a stair sunk into that top's floor.</summary>
 public readonly struct TopJoin
 {
-    public readonly bool Laid;
+    public readonly bool Laid, Sunk;
     public readonly float Length, Highest;
     public readonly string Why;
 
-    public TopJoin(bool laid, float length, float highest, string why)
+    public TopJoin(bool laid, float length, float highest, string why, bool sunk = false)
     {
-        Laid = laid; Length = length; Highest = highest; Why = why;
+        Laid = laid; Length = length; Highest = highest; Why = why; Sunk = sunk;
     }
 }

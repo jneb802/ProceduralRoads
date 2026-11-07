@@ -706,6 +706,21 @@ public sealed class StructureEndTests : IDisposable
         Assert.False(c.FromPad || c.FromStands);
     }
 
+    /// <summary>Two one-sided bands of the end rule read half a rise (StairLayout.StairFitsFrom), not a walker's step (they
+    /// are not walks between two heights): a deck 0.4 m under the road arriving is still low (StructureEnds.Low), and a foot
+    /// sunk 0.4 m in its ground still stands on it, so the rows past the whole run (the road cut down to their foot) are
+    /// ways of meeting it (StructureEnds.Ways). Past half a rise neither holds.</summary>
+    [Fact]
+    public void TheLowBandAndAFootOnTheGroundReadHalfARise()
+    {
+        var whole = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 38f, 1);
+        Assert.True(StructureEnds.Low(whole, 38.4f), "a deck 0.4 m under the road arriving is not low");
+        Assert.False(StructureEnds.Low(whole, 38.6f), "a deck 0.6 m under the road arriving is low");
+        // The foot at 37 m, its ground 0.4 m over it: the row past the run (two steps) is a way; at 0.6 m it is not.
+        Assert.Contains(StructureEnds.Ways(whole, _ => 37.4f, low: true), w => w.end.Steps == 2);
+        Assert.DoesNotContain(StructureEnds.Ways(whole, _ => 37.6f, low: true), w => w.end.Steps == 2);
+    }
+
     /// <summary>A deck lying a metre over its bank, the road coming down to it from ground 1.5 m over the deck (the road
     /// arriving higher than the deck it meets): the structure is low over the bank it stands on, so it is met by a step up
     /// onto it, the road cut down to the step's foot, not the road run onto the deck flush.</summary>

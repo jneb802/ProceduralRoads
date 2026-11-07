@@ -452,13 +452,13 @@ public static class StructureEnds
     public const float LowFlushPrice = 2f;
 
     /// <summary>Whether an end the bank takes as <paramref name="natural"/> is low: it has stairs, and its deck stands
-    /// within <see cref="LowDeckRise"/> over <paramref name="arrival"/> (and not under it by more than a step's height,
-    /// <see cref="StairLayout.StepUp"/>), the lower of the bank under the end (the ground along its line over an apron,
+    /// within <see cref="LowDeckRise"/> over <paramref name="arrival"/> (and not under it by more than half a rise,
+    /// <see cref="StairLayout.StairFitsFrom"/>: a pricing band, not a walk), the lower of the bank under the end (the ground along its line over an apron,
     /// <see cref="Arrival"/>) and the road arriving (<see cref="ArrivalOnPath"/>): a road coming down a slope to a deck
     /// lying low on its bank comes to a low structure. A low bridge or a ford's span looks best met by a step or two up
     /// onto it.</summary>
     public static bool Low(End natural, float arrival) =>
-        natural.Steps >= 1 && natural.Height - arrival <= LowDeckRise && natural.Height - arrival >= -StairLayout.StepUp;
+        natural.Steps >= 1 && natural.Height - arrival <= LowDeckRise && natural.Height - arrival >= -StairLayout.StairFitsFrom;
 
     /// <summary>
     /// The price of meeting an end one way, the one rule every way is chosen by (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>,
@@ -613,9 +613,10 @@ public static class StructureEnds
             yield return (landed, false);
             yield return (landed, true);
         }
-        // Past the whole run only where its foot stands on the ground: the next row's ground is cut down under the road
+        // Past the whole run only where its foot stands on the ground, sunk in it by less than half a rise
+        // (StairLayout.StairFitsFrom, as the run's own foot lands): the next row's ground is cut down under the road
         // (End.UnderTheJoint), the run's own steps stand as the bank takes them.
-        bool footDown = ground(natural.Meet) <= natural.MeetHeight + StairLayout.StepUp;
+        bool footDown = ground(natural.Meet) <= natural.MeetHeight + StairLayout.StairFitsFrom;
         for (int row = natural.Steps + 1; low && footDown && row <= LowSteps; row++)
         {
             var cut = new End(natural.Edge, natural.Up, natural.Height, row);

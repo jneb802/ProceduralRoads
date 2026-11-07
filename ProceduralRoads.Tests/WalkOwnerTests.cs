@@ -29,8 +29,6 @@ public class WalkOwnerTests
         new("Roads/StairLayout.cs", "Walkable(float a, float b) => Mathf.Abs(a - b) <= StepUp", "the one walk test"),
 
         // ---- Not a walk between two heights ----
-        new("Roads/StructureEnds.cs", "natural.Height - arrival >= -StairLayout.StepUp", "a low structure's pricing band (Low), one-sided"),
-        new("Roads/StructureEnds.cs", "ground(natural.Meet) <= natural.MeetHeight + StairLayout.StepUp", "whether a foot stands on the ground, one-sided (Ways: rows past the run)"),
         new("Roads/RockClearances.cs", "highest + StairLayout.StepUp", "the rock layer over the treads a lump on them is in, not a walk"),
         new("Roads/RoadStairRuns.cs", "CrestStubJoinReach, StairLayout.StepUp, clip", "two staircases' tops joined top to top (no road): JoinTops' height tolerance, a whole number of rises apart within it (two calls)"),
         new("Roads/StairEnds.cs", "d <= StairLayout.StepUp && d >= -over", "the end reader's step-off band, one-sided: a step under the edge, up to a rise over a low edge (StepsOff)"),

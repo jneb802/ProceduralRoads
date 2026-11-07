@@ -417,7 +417,7 @@ public sealed class BridgeStructures : IStructureSource
                 : RoadSpatialGrid.TryGetRoadHeightWithin(a, 4f, out float road) ? road : BridgeLayout.MinDeck(RoadConstants.SeaLevel);
             int n = Mathf.CeilToInt(length);
             for (int i = 0; i <= n; i++)
-                deck.Add(new RoadSpatialGrid.RoadPoint(a + (b - a) * (i / (float)n), RoadSpatialGrid.DefaultRoadWidth, height));
+                deck.Add(new RoadSpatialGrid.RoadPoint(a + (b - a) * (i / (float)n), BridgeLayout.EndStairsWidth, height)); // the deck's own width, not the road setting
         }
         // Headings come from every deck point in reach.
         foreach (var point in deck)

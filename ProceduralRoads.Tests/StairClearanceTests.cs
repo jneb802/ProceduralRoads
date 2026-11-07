@@ -129,7 +129,7 @@ public class StairClearanceTests : IDisposable
         var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
         StairStructures.Add(run);
 
-        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _, out _);
+        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _);
         int rising = run.Clearances.Count(Rises);
         Assert.True(rising > 0);
         Assert.True(rising < run.Clearances.Count);
@@ -142,7 +142,6 @@ public class StairClearanceTests : IDisposable
                 && Mathf.Abs(b.Turn.eulerAngles.y - Quaternion.Euler(0f, stored.YawDegrees, 0f).eulerAngles.y) < 1e-3f).ToList();
             foreach (RockClearance box in mine)
             {
-                Assert.False(box.HasPoint);
                 Assert.False(box.WholeOnly);
                 Assert.Equal(stored.Half.z, box.Half.z, 4);
             }
@@ -169,7 +168,6 @@ public class StairClearanceTests : IDisposable
         var point = new RoadSpatialGrid.RoadPoint(new Vector2(0f, -10f), RoadSpatialGrid.DefaultRoadWidth, Flat);
         RockClearance road = RockClearances.Road(point, Flat, new List<RoadSpatialGrid.RoadPoint> { point }, RoadRockPolicy.ClearanceHeight,
             wholeOnly: false, keepsSiteRocks: false);
-        Assert.True(road.HasPoint);
         Assert.Equal(RockClearances.Top(Flat), road.Top, 3);
         Assert.Equal(Flat + RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, road.Top, 3);
     }
@@ -244,7 +242,7 @@ public class StairClearanceTests : IDisposable
         Assert.True(plan.Reached, plan.Reason);
         var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
         StairStructures.Add(run);
-        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _, out _);
+        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _);
 
         float rise = StairLayout.PieceRise / StairLayout.ClearanceStretches;
         float corridor = RockClearances.Corridor(RoadStairRuns.Width / 2f);

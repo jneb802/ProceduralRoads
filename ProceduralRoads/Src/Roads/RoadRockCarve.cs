@@ -329,7 +329,7 @@ public static class RoadRockCarve
     {
         if (RockBounds(rock) is not Bounds bounds) return new List<RockClearance>();
         float reach = new Vector2(bounds.extents.x, bounds.extents.z).magnitude + WidestRoadHalfWidth;
-        return RockClearances.Near(bounds.center, reach, GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out _, out _, out _);
+        return RockClearances.Near(bounds.center, reach, GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out _, out _);
     }
 
     /// <summary>The bounds of a rock's live chunks, or null when none are left.</summary>

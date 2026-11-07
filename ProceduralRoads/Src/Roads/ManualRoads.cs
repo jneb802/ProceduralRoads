@@ -208,10 +208,11 @@ public static class ManualRoads
     {
         if (append.Zones != null) return append.Zones;
         var zones = new HashSet<Vector2s>();
-        void Reach(Vector2 p, float width)
+        void Reach(Vector2 p, float width) => ReachBy(p, RoadSpatialGrid.ZoneReach(width));
+        void ReachBy(Vector2 p, float reach)
         {
-            // As far as a zone gathers the point (RoadSpatialGrid.ZoneReach), at the width the append stores.
-            float reach = RoadSpatialGrid.ZoneReach(width);
+            // As far as a zone gathers the point (RoadSpatialGrid.ZoneReach at the width the append stores; a cut-only point's
+            // cut and batter, RoadTerrainModifier.CutReach).
             Vector2s low = ZoneSystem.GetZone(new Vector3(p.x - reach, 0f, p.y - reach));
             Vector2s high = ZoneSystem.GetZone(new Vector3(p.x + reach, 0f, p.y + reach));
             for (int x = low.x; x <= high.x; x++)
@@ -226,7 +227,7 @@ public static class ManualRoads
         foreach (RoadSpatialGrid.PlannedPath path in append.WithFills.Concat(append.IntoSite))
             for (int i = 0; i < path.Points.Count; i++)
                 Reach(path.Points[i], path.Widths != null && i < path.Widths.Count ? path.Widths[i] : path.Width);
-        foreach (Vector3 cut in append.StairCuts) Reach(new Vector2(cut.x, cut.z), StairLayout.CutWidth);
+        foreach (Vector3 cut in append.StairCuts) ReachBy(new Vector2(cut.x, cut.z), RoadTerrainModifier.StairCutReach + RoadTerrainModifier.CutGatherPad);
         foreach (Vector3 cut in append.Ground.Cuts) Reach(new Vector2(cut.x, cut.z), RoadNetworkGenerator.CrossingGround.CutWidth);
         foreach (var (at, _) in append.Ground.Raised) Reach(at.p, at.w);
         var world = WorldGenerator.instance;

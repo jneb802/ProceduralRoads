@@ -1928,7 +1928,7 @@ public static partial class RoadSpatialGrid
                             if (!CrossIslandReads.Sees(me, rp.island)) continue;
                             // A staircase's cut reaches only w/2 (plus a vertex spacing): gathered
                             // wider, a zone it never touches waits for it forever, unstamped.
-                            float reach = RoadConstants.HalfZoneSize + (rp.cutOnly ? rp.w * 0.5f + RoadTerrainModifier.CutBatterReach + 1f : ZoneReach(rp.w));
+                            float reach = RoadConstants.HalfZoneSize + (rp.cutOnly ? RoadTerrainModifier.CutReach(rp.w) + RoadTerrainModifier.CutGatherPad : ZoneReach(rp.w));
                             if (rp.p.x >= zonePos.x - reach &&
                                 rp.p.x <= zonePos.x + reach &&
                                 rp.p.y >= zonePos.z - reach &&

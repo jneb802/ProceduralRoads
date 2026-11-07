@@ -358,6 +358,28 @@ public class ManualRoadTests : IDisposable
         foreach(var at in new[]{new Vector3(500,0,500),new Vector3(-500,0,-500),new Vector3(500,0,-500),new Vector3(0,0,0)})
             Assert.Contains(ZoneSystem.GetZone(at),zones);
     }
+    /// <summary>A manual road's stair cut writes the zones that gather it and no others (RoadTerrainModifier.StairCutReach and the
+    /// pad the zone gather keeps, RoadSpatialGrid.GetRoadPointsInZone): a cut 4.7 m inside a zone is gathered by the zone next to
+    /// it, so that zone is written; one 8 m inside is not, where the road-width reach (ZoneReach, over 10 m) marked it.</summary>
+    [Fact] public void AStairCutWritesTheZonesThatGatherIt()
+    {
+        float reach=RoadTerrainModifier.StairCutReach+RoadTerrainModifier.CutGatherPad;
+        Assert.Equal(reach,RoadTerrainModifier.CutReach(StairLayout.CutWidth)+RoadTerrainModifier.CutGatherPad);
+        Vector2s Zone(float x)=>ZoneSystem.GetZone(new Vector3(x,0f,0f));
+        HashSet<Vector2s> Written(float x)
+        {
+            var append=new RoadNetworkGenerator.ManualAppend();
+            append.StairCuts.Add(new Vector3(x,30f,0f));
+            return ManualRoads.ZonesReached(append,new List<RoadCrossing>());
+        }
+        float near=32f+reach-0.05f, far=32f+8f;
+        Assert.Contains(Zone(near),Written(near));
+        Assert.Contains(Zone(near-reach),Written(near));
+        Assert.NotEqual(Zone(near),Zone(near-reach));
+        Assert.Contains(Zone(far),Written(far));
+        Assert.DoesNotContain(Zone(31f),Written(far));
+        Assert.True(RoadSpatialGrid.ZoneReach(StairLayout.CutWidth)>8f,"the road-width reach no longer exceeds the cut's");
+    }
     [Fact] public void ProtectedWaypointIsRefusedWithoutExemptingItsOwnFootprint()
     {
         RoadSiteProtection.Set(new[]{new RoadSiteProtection.Footprint(new Vector2(0,0),20)});

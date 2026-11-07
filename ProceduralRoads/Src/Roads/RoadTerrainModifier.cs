@@ -931,6 +931,14 @@ public static class RoadTerrainModifier
     /// <see cref="LowestCut"/>). The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     internal const float StairCutReach = StairLayout.CutRadius + CutBatterReach;
 
+    /// <summary>How far from a cut-only point of stored width <paramref name="width"/> its ground is changed (half the width and the
+    /// batter): <see cref="StairCutReach"/> for a staircase's cut (<see cref="StairLayout.CutWidth"/>), more for a wider crossing cut.</summary>
+    internal static float CutReach(float width) => width * 0.5f + CutBatterReach;
+
+    /// <summary>A vertex spacing past a cut's reach that a zone still gathers it, so the zone next door, holding the same border
+    /// vertices, sees it too.</summary>
+    internal const float CutGatherPad = 1f;
+
     /// <summary>
     /// The ground <paramref name="ground"/> at (<paramref name="x"/>, <paramref name="z"/>) as the writer leaves it under the
     /// not yet written staircase cuts <paramref name="cuts"/> (a plan's, each a point and its height, at the staircase cut's

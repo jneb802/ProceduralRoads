@@ -271,10 +271,6 @@ public static partial class StairLayout
     /// <summary>The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float PieceRise = 1f;
 
-    /// <summary>Half a rise. Staircases and structure ends stand in whole rises, so two of them meet within half a rise: the
-    /// rounding of a foot to its road (<see cref="WholeStairsOver"/>) and two structures sharing a landing
-    /// (StructureEnds.Share). A walker's step is <see cref="StepUp"/>. The one owner of step and stair geometry (docs/OWNERS.md).</summary>
-    public const float HalfRise = PieceRise * 0.5f;
     public const float HeadingStep = 22.5f;
     /// <summary>
     /// A generated staircase keeps this close to the stretch of road it

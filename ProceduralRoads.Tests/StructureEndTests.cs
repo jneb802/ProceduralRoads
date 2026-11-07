@@ -786,8 +786,10 @@ public sealed class StructureEndTests : IDisposable
     /// beyond, so the first bridge's deck stands 3 m over the land between and the second's 1 m.</summary>
     internal sealed class TwoChannels : WorldGenerator
     {
+        /// <summary>How far the second channel and its banks (east of -12) stand over those of the world as seen.</summary>
+        public float Offset;
         public override float GetHeight(float x, float z) =>
-            x <= -60f ? 35f : x < -20f ? 26f : x <= -12f ? 32f : x < 28f ? 26f : 33f;
+            x <= -60f ? 35f : x < -20f ? 26f : x <= -12f ? 32f : x < 28f ? 26f + Offset : 33f + Offset;
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
         public override void GetRiverWeight(float x, float z, out float weight, out float width)
         {
@@ -800,7 +802,8 @@ public sealed class StructureEndTests : IDisposable
     /// <summary>
     /// Two structures whose facing ends have between them too little ground for each end's own run-up or pad (a bridge
     /// then the next, 8 m of land apart) are one approach (StructureEnds.Share): both ends are met on one landing between
-    /// their feet, at a common height (within a step), each laying its stairs down to it; the road crosses the landing
+    /// their feet, at their common height (each within a step of it, StructureEnds.SharesLanding), each laying its stairs down
+    /// to it; the road crosses the landing
     /// from one foot to the other.
     /// </summary>
     [Fact]
@@ -819,7 +822,7 @@ public sealed class StructureEndTests : IDisposable
 
         Assert.True(a.ToShared && b.FromShared, "the two facing ends do not share a landing");
         StructureEnds.End left = a.ToEnd!.Value, right = b.FromEnd!.Value;
-        Assert.True(StairLayout.Walkable(left.MeetHeight, right.MeetHeight),
+        Assert.True(StructureEnds.SharesLanding(left.MeetHeight, right.MeetHeight),
             FormattableString.Invariant($"the feet stand at {left.MeetHeight:F2} and {right.MeetHeight:F2} m"));
         Assert.True(Vector2.Distance(left.Meet, right.Meet) >= StructureEnds.SharedLandingLength - 1e-3f, "the feet leave no landing between them");
         Assert.True(left.Steps + right.Steps < aFar.Steps + bNear.Steps, "the shared landing takes away no stairs");
@@ -830,8 +833,44 @@ public sealed class StructureEndTests : IDisposable
         // Each structure lays its stairs down to the landing, and the road meets both.
         Assert.Equal(left.Steps, BridgeStructures.Ends(a, world).far.Steps);
         Assert.Equal(right.Steps, BridgeStructures.Ends(b, world).near.Steps);
-        var landing = new List<RoadSpatialGrid.PlannedPath> { Piece(left.Meet, right.Meet, 0.5f * (left.MeetHeight + right.MeetHeight)) };
+        var landing = new List<RoadSpatialGrid.PlannedPath> { Piece(left.Meet, right.Meet, StructureEnds.LandingHeight(left.MeetHeight, right.MeetHeight)) };
         Assert.True(StairLayout.Walkable(landing[0].Heights[0], left.MeetHeight) && StairLayout.Walkable(landing[0].Heights[1], right.MeetHeight));
+    }
+
+    /// <summary>
+    /// The same two bridges, the second's banks and deck raised by <paramref name="offset"/>, so its rows stand that far off
+    /// the first's (each a whole rise). Two facing ends share one landing only where each is within a walker's step of their
+    /// common height (StructureEnds.SharesLanding): 0.3 m apart, at the common height, each 0.15 m off it; 0.5 m apart
+    /// neither row of either end shares one (each 0.25 m off), and the ground between is too short for each end alone, so
+    /// the crossing is left unmet (the road is searched round it); 0.6 m apart, the second bridge's foot one row lower
+    /// (one more stair) stands 0.4 m under the first's: shared, each 0.2 m off the common height.
+    /// </summary>
+    [Theory]
+    [InlineData(0.3f, 0.3f)]
+    [InlineData(0.5f, float.NaN)]
+    [InlineData(0.6f, -0.4f)]
+    public void TwoFacingEndsShareALandingOnlyWithinAStepOfIt(float offset, float apart)
+    {
+        var world = new TwoChannels { Offset = offset };
+        _scope.WithWorld(world);
+        var a = RoadCrossing.Between(new Vector2(-60f, 0f), new Vector2(-20f, 0f), 26f, new Vector2(-40f, 0f), 40f, CrossingKind.Bridge);
+        var b = RoadCrossing.Between(new Vector2(-12f, 0f), new Vector2(28f, 0f), 26f + offset, new Vector2(8f, 0f), 40f, CrossingKind.Bridge);
+        a.Kit = b.Kit = BridgeStructures.Kit.WoodRail;
+        var path = new List<Vector2> { new(-100f, 0f), new(-60f, 0f), new(-20f, 0f), new(-16f, 0f), new(-12f, 0f), new(28f, 0f), new(80f, 0f) };
+        (a.FromIndex, a.ToIndex, b.FromIndex, b.ToIndex) = (1, 2, 4, 5);
+        RoadCrossing? unmet = StructureEnds.MeetEnds(path, new List<RoadCrossing> { a, b }, world, RoadConstants.TerrainDeltaMax, null);
+        if (float.IsNaN(apart))
+        {
+            Assert.NotNull(unmet);
+            Assert.False(a.ToShared || b.FromShared, "two ends 0.5 m apart share a landing");
+            return;
+        }
+        Assert.Null(unmet);
+        Assert.True(a.ToShared && b.FromShared, "the two facing ends do not share a landing");
+        StructureEnds.End left = a.ToEnd!.Value, right = b.FromEnd!.Value;
+        Assert.Equal(apart, right.MeetHeight - left.MeetHeight, 2);
+        float landing = StructureEnds.LandingHeight(left.MeetHeight, right.MeetHeight);
+        Assert.True(StairLayout.Walkable(left.MeetHeight, landing) && StairLayout.Walkable(right.MeetHeight, landing));
     }
 
     // ------------------------------------------------- the final check

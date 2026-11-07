@@ -530,7 +530,7 @@ public static class StructureEnds
     /// or pad (their edges nearer than both ends' <see cref="OwnGround"/>): <paramref name="far"/>, the end of the crossing
     /// the road leaves at <paramref name="path"/>'s point <paramref name="from"/>, and <paramref name="near"/>, the end of the
     /// next it comes to at <paramref name="to"/>, each as the bank takes it. Every pair of rows up their flights whose
-    /// feet stand close enough in height to share it (<see cref="SharesLanding"/>), at least
+    /// feet share it (<see cref="SharesLanding"/>: each within a walker's step of their common height), at least
     /// <see cref="SharedLandingLength"/> apart, each foot opening onto the other along its line (within a turn of 60
     /// degrees), is a candidate: the road between the two feet levelled at their common height, within the earthwork cap,
     /// dry or else as earthwork over water, every other road on it raised to it (RoadStairRuns.Land). The cheapest
@@ -556,7 +556,7 @@ public static class StructureEnds
             {
                 var f = new End(far.Edge, far.Up, far.Height, rf);
                 var m = new End(near.Edge, near.Up, near.Height, rn);
-                float step = Mathf.Abs(f.MeetHeight - m.MeetHeight), height = 0.5f * (f.MeetHeight + m.MeetHeight);
+                float step = Mathf.Abs(f.MeetHeight - m.MeetHeight), height = LandingHeight(f.MeetHeight, m.MeetHeight);
                 if (!SharesLanding(f.MeetHeight, m.MeetHeight) || height < RoadConstants.DryRoadFloor - StairLayout.StepUp) continue;
                 Vector2 across = m.Meet - f.Meet;
                 float length = across.magnitude;
@@ -787,9 +787,8 @@ public static class StructureEnds
     /// <summary>
     /// Why the road <paramref name="points"/> between two structures, held at <paramref name="from"/> and
     /// <paramref name="to"/> at its ends, is a stub: shorter than <see cref="StubLength"/> (the stretch under a viaduct's
-    /// joining piece apart) and its ends further apart in height than two structures may share a landing across
-    /// (<see cref="SharesLanding"/>), so it is not one
-    /// level landing. Null where it is a landing, or long enough to be road.
+    /// joining piece apart) and its ends too far apart in height to share one level landing (<see cref="SharesLanding"/>: each
+    /// within a walker's step of their common height). Null where it is a landing, or long enough to be road.
     /// </summary>
     public static string? IsStub(IReadOnlyList<Vector2> points, float from, float to)
     {
@@ -800,10 +799,20 @@ public static class StructureEnds
         return FormattableString.Invariant($"a stub of road {length:F1} m long between two structures {Mathf.Abs(from - to):F1} m apart in height");
     }
 
-    /// <summary>Whether two structure ends at <paramref name="a"/> and <paramref name="b"/> may share one level landing: structures
-    /// stand in whole rises, so within half a rise (<see cref="StairLayout.HalfRise"/>), not a walker's step. The one rule for
-    /// <see cref="Share"/> and for levelling that landing (RoadSpatialGrid.LevelledOn). The one owner of A foot or a landing rounds to whole stairs (docs/OWNERS.md).</summary>
-    public static bool SharesLanding(float a, float b) => Mathf.Abs(a - b) <= StairLayout.HalfRise + 1e-3f;
+    /// <summary>The height one level landing between two ends held at <paramref name="a"/> and <paramref name="b"/> is levelled at:
+    /// their common height (<see cref="SharesLanding"/>).</summary>
+    public static float LandingHeight(float a, float b) => 0.5f * (a + b);
+
+    /// <summary>Whether two ends held at <paramref name="a"/> and <paramref name="b"/> (two structures' ends, a structure's end
+    /// and a staircase's foot or another held end) may share one level landing: levelled at their common height
+    /// (<see cref="LandingHeight"/>), each within a walker's step of it (StairLayout.Walkable), so up to two steps apart. The one
+    /// rule for <see cref="Share"/>, <see cref="IsStub"/> and levelling that landing (RoadSpatialGrid.LevelledOn). The one owner of
+    /// a walker's step (docs/OWNERS.md).</summary>
+    public static bool SharesLanding(float a, float b)
+    {
+        float landing = LandingHeight(a, b);
+        return StairLayout.Walkable(a, landing) && StairLayout.Walkable(b, landing);
+    }
 
     // ------------------------------------------------------- the built road
 

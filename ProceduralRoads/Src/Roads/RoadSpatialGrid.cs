@@ -546,10 +546,15 @@ public static partial class RoadSpatialGrid
         BendFallbacks.AddOrUpdate((stage, refusedFor ?? "other"), 1, (_, n) => n + 1);
 
     /// <summary>The ends of a piece of <paramref name="points"/> (<paramref name="total"/> long) that are levelled
-    /// (<see cref="LevelledEnds"/>), each whether at its start and its height. A piece levelled at both ends whose levelled
-    /// stretches overlap, the two close enough to share it (StructureEnds.SharesLanding: a landing two structures' ends share), is levelled at their
-    /// common height all along, as the landing was laid (StructureEnds.Share), not at the one levelled last.</summary>
-    private static List<(bool atStart, float height)> LevelledOn(List<(Vector2 at, float height)> ends, List<Vector2> points, float total)
+    /// (<see cref="LevelledEnds"/>), each whether at its start and its height: the one reading of them, for the levelling and
+    /// for putting it back once the grade is limited, so both hold the same height. A piece that is one level landing between
+    /// two held ends (StructureEnds.Share) is levelled at their common height all along, as the landing was laid, not at the
+    /// end levelled last: levelled at both ends whose levelled stretches overlap, or at one end with the whole piece within
+    /// its stretch and its other end held (<paramref name="startGround"/>, <paramref name="endGround"/>: a staircase's foot,
+    /// a place's ground, a join), where the two share it (StructureEnds.SharesLanding, each within a walker's step of it).
+    /// Further apart each keeps its own height, and the piece is refused (<see cref="LevelledOverHeldEnd"/>).</summary>
+    private static List<(bool atStart, float height)> LevelledOn(List<(Vector2 at, float height)> ends, List<Vector2> points, float total,
+        float? startGround, float? endGround)
     {
         var on = new List<(bool atStart, float height)>();
         foreach (var (at, height) in ends)
@@ -561,11 +566,33 @@ public static partial class RoadSpatialGrid
         if (s >= 0 && e >= 0 && total <= 2f * (StructureEnds.ApronLength + StructureEnds.JoinOverlap) + 1e-3f
             && StructureEnds.SharesLanding(on[s].height, on[e].height))
         {
-            float common = 0.5f * (on[s].height + on[e].height);
+            float common = StructureEnds.LandingHeight(on[s].height, on[e].height);
             on[s] = (true, common);
             on[e] = (false, common);
         }
+        else if ((s >= 0) != (e >= 0) && total <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f)
+        {
+            int k = s >= 0 ? s : e;
+            if ((on[k].atStart ? endGround : startGround) is float held && StructureEnds.SharesLanding(on[k].height, held))
+                on[k] = (on[k].atStart, StructureEnds.LandingHeight(on[k].height, held));
+        }
         return on;
+    }
+
+    /// <summary>Whether the levelled stretches of a piece's ends (<see cref="LevelledOn"/>) take an end of it held at another
+    /// height: a stretch over the whole piece whose other end is held (<paramref name="startGround"/>,
+    /// <paramref name="endGround"/>) more than a walker's step (StairLayout.Walkable) off it, or two stretches that overlap at
+    /// heights they cannot share. The two cannot both be met level, and the piece is refused.</summary>
+    private static bool LevelledOverHeld(List<(bool atStart, float height)> on, float total, float? startGround, float? endGround, float minHeight)
+    {
+        int s = on.FindIndex(x => x.atStart), e = on.FindIndex(x => !x.atStart);
+        if (s >= 0 && e >= 0 && total <= 2f * (StructureEnds.ApronLength + StructureEnds.JoinOverlap) + 1e-3f)
+            return !StairLayout.Walkable(on[s].height, on[e].height);
+        foreach (var (atStart, height) in on)
+            if (total <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f && (atStart ? endGround : startGround) is float other
+                && !StairLayout.Walkable(other, Mathf.Max(height, minHeight)))
+                return true;
+        return false;
     }
 
     /// <summary>How near a road already laid a planned road's end is joined to it, its end aimed at that road's height
@@ -809,25 +836,24 @@ public static partial class RoadSpatialGrid
 
         // A structure's end (StructureEnds): the road's last ApronLength to it is level at its height.
         if (!followTerrain && LevelledEnds is { } levelledEnds && densePoints.Count > 1)
-            foreach (var (atStart, height) in LevelledOn(levelledEnds, densePoints, pathTotal))
+        {
+            var on = LevelledOn(levelledEnds, densePoints, pathTotal, startGround, endGround);
+            // The levelled stretch never takes the piece's other end where that end is held at another height (a
+            // staircase's foot, another structure's end) that cannot share its landing (StructureEnds.SharesLanding): the two
+            // cannot both be met, and the piece is refused.
+            if (LevelledOverHeld(on, pathTotal, startGround, endGround, minHeight))
             {
-                // The levelled stretch never takes the piece's other end where that end is held at another height (a
-                // staircase's foot, another structure's end) further than two structures may share a landing across
-                // (StructureEnds.SharesLanding): the two cannot both be met, and the piece is refused.
-                float? other = atStart ? endGround : startGround;
-                if (pathTotal <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f && other is float otherHeight
-                    && !StructureEnds.SharesLanding(otherHeight, Mathf.Max(height, minHeight)))
-                {
-                    LastRefusal = LevelledOverHeldEnd;
-                    Log.LogDebug("Road refused: a structure's levelled end reaches a held end at another height");
-                    return null;
-                }
+                LastRefusal = LevelledOverHeldEnd;
+                Log.LogDebug("Road refused: a structure's levelled end reaches a held end at another height");
+                return null;
+            }
+            foreach (var (atStart, height) in on)
                 for (int i = 0; i < densePoints.Count; i++)
                 {
                     float from = atStart ? distanceFromStart[i] : pathTotal - distanceFromStart[i];
                     if (from <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f) finalHeights[i] = Mathf.Max(height, minHeight);
                 }
-            }
+        }
 
         // Smoothing and the ramp both move heights after the search priced the
         // ground, so a route the search accepted can still be built too steep.
@@ -955,7 +981,7 @@ public static partial class RoadSpatialGrid
         {
             var moved = new bool[densePoints.Count];
             bool any = false;
-            foreach (var (atStart, height) in LevelledOn(heldEnds, densePoints, pathTotal))
+            foreach (var (atStart, height) in LevelledOn(heldEnds, densePoints, pathTotal, startGround, endGround))
             {
                 float target = Mathf.Max(height, minHeight);
                 for (int i = 0; i < densePoints.Count; i++)

@@ -4166,7 +4166,7 @@ public static partial class RoadNetworkGenerator
         // What the road is cut at, in path order: river crossings and staircases. Every crossing's ends are the one owner's
         // (StructureEnds.MeetEnds), which brought the path to them: a structure's at its crossing's FromIndex and ToIndex,
         // where the road ends at the end's foot at its height, its last ApronLength levelled to it
-        // (RoadSpatialGrid.LevelledEnds), and runs on under the joining piece (StructureEnds.JoinOverlap), unpainted; a
+        // (RoadSpatialGrid.LevelledEnds), and runs on under the joining piece (StructureEnds.JoinOverlap), unpainted under stairs; a
         // crossing that is road at its banks.
         var gaps = new List<(int from, int to, Vector2 fromPoint, Vector2 toPoint, Vector2? fromLand, Vector2? toLand, float? fromHeight, float? toHeight, RoadCrossing? crossing)>();
         var levelled = new List<(Vector2 at, float height)>();
@@ -4366,7 +4366,7 @@ public static partial class RoadNetworkGenerator
                 RoadSpatialGrid.StairStarts = default;
                 if (plan == null)
                     return null;
-                // Past a structure's end (its stairs' foot, or its deck's edge) the road is levelled under it but not painted.
+                // Past an end's stairs' foot the road is levelled under them but not painted; under a deck met level it is painted on.
                 plan.Unpainted = StructureEnds.Unpainted(plan.Points, ends, width * 0.5f);
                 plans.Add(plan);
             }

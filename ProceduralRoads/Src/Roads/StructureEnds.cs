@@ -93,13 +93,14 @@ public static class StructureEnds
             Vector2 across = new(-Up.y, Up.x);
             return along >= -0.25f && along <= JoinOverlap + 0.25f && Mathf.Abs(Vector2.Dot(p - Meet, across)) <= halfWidth;
         }
-        /// <summary>Whether <paramref name="p"/> lies on the road past where the paint stops, under the structure (inward
-        /// of <see cref="Meet"/> up to <see cref="Joint"/>, <paramref name="halfWidth"/> either side of the line): under the
-        /// stairs where the end has them, under the deck's end module where it has none. That road is levelled for the
-        /// structure to stand on but not painted: every end's paint stops at the structure, the bottom step or the deck's
-        /// edge.</summary>
-        public bool UnderTheStructure(Vector2 p, float halfWidth)
+        /// <summary>Whether <paramref name="p"/> lies on the road past where the paint stops, under the end's stairs (inward
+        /// of <see cref="Meet"/>, their foot, up to <see cref="Joint"/>, <paramref name="halfWidth"/> either side of the
+        /// line). That road is levelled for the bottom step to stand on but not painted: the paint stops at the stairs' foot.
+        /// An end met level has none: its road is painted on under the deck's end like any road, so no grass grows at the
+        /// deck's edge or up through its planks (the ground under the deck itself is cut below it, BridgeStructures.GroundUnderDeck).</summary>
+        public bool UnderTheStairs(Vector2 p, float halfWidth)
         {
+            if (Steps <= 0) return false;
             float along = Vector2.Dot(p - Meet, Up);
             Vector2 across = new(-Up.y, Up.x);
             return along > 0.25f && along <= JoinOverlap + 0.25f && Mathf.Abs(Vector2.Dot(p - Meet, across)) <= halfWidth;
@@ -111,16 +112,16 @@ public static class StructureEnds
 
     /// <summary>
     /// Which of a road's <paramref name="points"/> are stored unpainted (RoadSpatialGrid.RoadPoint.unpainted): those under
-    /// the structure at any of <paramref name="ends"/> (<see cref="End.UnderTheStructure"/>). The road there is levelled
-    /// like any other, so the stairs or the deck's end module stand on level ground, but its paint stops at the structure:
-    /// the stairs' foot, or the deck's edge where an end has none. Null where every point is painted.
+    /// the stairs at any of <paramref name="ends"/> (<see cref="End.UnderTheStairs"/>). The road there is levelled like any
+    /// other, so the stairs stand on level ground, but its paint stops at the stairs' foot. An end met level paints its road
+    /// on under the deck's end. Null where every point is painted.
     /// </summary>
     public static List<bool>? Unpainted(IReadOnlyList<Vector2> points, IReadOnlyList<End> ends, float halfWidth)
     {
         List<bool>? unpainted = null;
         for (int i = 0; i < points.Count; i++)
             foreach (End end in ends)
-                if (end.IsSet && end.UnderTheStructure(points[i], halfWidth))
+                if (end.IsSet && end.UnderTheStairs(points[i], halfWidth))
                 {
                     unpainted ??= new List<bool>(new bool[points.Count]);
                     unpainted[i] = true;

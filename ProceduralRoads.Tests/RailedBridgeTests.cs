@@ -658,13 +658,13 @@ public sealed class RailedBridgeTests : IDisposable
                 Assert.True(Vector2.Distance(foot, end.Meet) < 0.02f, $"{which}: the stairs' foot {foot}, the end's meeting point {end.Meet}");
                 Assert.Equal(end.MeetHeight, lowest, 3);
             }
-            // The paint stops at the foot of the stairs laid; with none, at the deck's edge.
+            // The paint stops at the foot of the stairs laid; with none, the road under the deck's end is painted.
             var points = Enumerable.Range(-12, 33).Select(i => foot + end.Up * (i * 0.25f)).ToList();
             List<bool>? unpainted = StructureEnds.Unpainted(points, new[] { end }, 2f);
             for (int i = 0; i < points.Count; i++)
             {
                 float along = (i - 12) * 0.25f;
-                bool under = along > 0.25f + 1e-3f && along <= StructureEnds.JoinOverlap + 0.25f - 1e-3f;
+                bool under = end.Steps > 0 && along > 0.25f + 1e-3f && along <= StructureEnds.JoinOverlap + 0.25f - 1e-3f;
                 bool edge = Mathf.Abs(along - 0.25f) < 1e-3f || Mathf.Abs(along - StructureEnds.JoinOverlap - 0.25f) < 1e-3f;
                 if (!edge) Assert.True(under == (unpainted?[i] ?? false), $"{which}: the road {along:F2} m past the end's meeting point is {(under ? "painted" : "unpainted")}");
             }

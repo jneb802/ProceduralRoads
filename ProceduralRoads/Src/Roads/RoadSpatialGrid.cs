@@ -48,10 +48,10 @@ public static partial class RoadSpatialGrid
         /// a place's footprint too, which it leaves alone for every other point, and only
         /// within <see cref="RoadSiteEntry.InsideReach"/> of them there.</summary>
         public bool intoSite;
-        /// <summary>Unpainted: road, levelled like any other point, but never painted. The road a structure stands on past
-        /// its stairs' foot (under the stairs and under the deck's end): levelled so the stairs stand on level ground and
-        /// no terrain pokes through the deck, while the paint stops at the bottom step. Everything that asks where the
-        /// road is counts these points as road.</summary>
+        /// <summary>Unpainted: road, levelled like any other point, but never painted. The road a structure's end stairs
+        /// stand on past their foot (StructureEnds.Unpainted): levelled so the stairs stand on level ground, while the paint
+        /// stops at the bottom step; and a staircase's start pad. Everything that asks where the road is counts these points
+        /// as road.</summary>
         public bool unpainted;
         /// <summary>The island worker that committed it (<see cref="CrossIslandReads.Tag"/>): another island's worker does not
         /// see it. 0 for none. Not saved.</summary>

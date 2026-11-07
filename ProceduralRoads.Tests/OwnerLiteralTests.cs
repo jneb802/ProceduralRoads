@@ -39,7 +39,7 @@ public class OwnerLiteralTests
         new("earthwork cap 8 m", "RoadConstants.TerrainDeltaMax", Float(@"8(?:\.0+)?"),
             R(@"earthwork|\bcap\b|terrainlimit|shaped|\bcut|\bfill|batter|terraindelta")),
         new("step 0.2 m", "StairLayout.StepUp", Float(@"0?\.20*"), R(@"step|rise|walk|stair|tolerance|\bup\b|ledge")),
-        new("half a rise", "StairLayout.WholeStairsOver",
+        new("half a rise", "StairLayout.StairFitsFrom",
             Exact(@"\bPieceRise\s*(?:\*\s*0?\.5[fF]?|/\s*2(?:\.0+)?[fF]?)(?![\w.])|(?<![\w.])0?\.5[fF]?\s*\*\s*(?:\w+\.)*PieceRise\b"), null),
         new("rise 1 m", "StairLayout.PieceRise", Float(@"1(?:\.0+)?"), Exact(@"\w*Rise\b")),
         new("run 2 m", "StairLayout.PieceRun", Alone(@"2(?:\.0+)?"), R(@"\bstair|\bstep|\bpiece"), R(@"PieceRun|StairRun")),
@@ -58,6 +58,7 @@ public class OwnerLiteralTests
         new("earthwork cap 8 m", "Roads/RoadConstants.cs", "TerrainDeltaMin = -8f", Why.Owner, "the negative end of the same clamp"),
         new("step 0.2 m", "Roads/StairLayout.cs", "StepUp = 0.2f", Why.Owner, "a walker's step"),
         new("rise 1 m", "Roads/StairLayout.cs", "PieceRise = 1f", Why.Owner, "the rise of one stair piece"),
+        new("half a rise", "Roads/StairLayout.Feet.cs", "StairFitsFrom = PieceRise / 2f", Why.Owner, "a height rounding to whole stairs: from half a rise off one stair is the nearer fit"),
         new("half a rise", "Roads/StairLayout.Tops.cs", "StepMiddle = PieceRise / 2f", Why.Owner, "a stair step's walking surface at its middle: the one place half a rise is written for a step"),
         new("headroom 2 m", "Roads/RoadRockPolicy.cs", "ClearanceHeight = 2f", Why.Owner, "the headroom box"),
         new("clearance lift 0.1 m", "Roads/RoadRockPolicy.cs", "ClearanceLift = 0.1f", Why.Owner, "the headroom box's lift over the walk"),
@@ -67,6 +68,8 @@ public class OwnerLiteralTests
         new("paint edge ratio 0.85", "Roads/RoadConstants.cs", "RoadPaintOuterRatio = 0.85f", Why.Owner, "the painted share of the half width"),
 
         // ---- Another fact that shares the number ----
+        new("run 2 m", "Roads/RoadSiteApproach.cs", "oldWorst < 2f", Why.Unrelated, "an approach's worst grade mismatch score, not a stair run"),
+        new("run 2 m", "Roads/RoadSiteApproach.cs", "Mathf.Max(2f, oldWorst", Why.Unrelated, "the same score's floor, not a stair run"),
         new("paint edge ratio 0.85", "Patches/ExistingWorldChoicePanel.cs", "new Color(.85f", Why.Unrelated, "a grey in the question panel"),
         new("paint edge ratio 0.85", "Patches/RoadGenerationPanel.cs", "new Color(.85f", Why.Unrelated, "a colour of the progress bar"),
         new("paint edge ratio 0.85", "Roads/BridgeLayout.cs", "BankSurvival = 0.85f", Why.Unrelated, "a chance that a bank stub survives weathering"),
@@ -96,8 +99,6 @@ public class OwnerLiteralTests
         new("clearance lift 0.1 m", "Roads/StairRailing.cs", "- bottom) < 0.1f", Why.Unrelated, "a tolerance between a walk's surface and a rail's bottom"),
 
         // ---- Known duplicates: the number is written again; fold each onto its owner and delete its entry ----
-        new("half a rise", "Roads/StructureEnds.cs", "off <= StairLayout.PieceRise * 0.5f", Why.Known, "an end's stairs chosen to the nearest whole stair, its own copy of the rounding; should read StairLayout.WholeStairsOver"),
-        new("half a rise", "Roads/RoadNetworkGenerator.cs", "ArrivalLevel = StairLayout.PieceRise / 2f", Why.Known, "a named half rise, a road's arrival band; should read the rounding owner (StairLayout.WholeStairsOver)"),
         new("half a rise", "Roads/StairLayout.Chains.cs", "ClipStep = PieceRise / 2f", Why.Known, "a named half rise, a top clip's band; should read the rounding owner (StairLayout.WholeStairsOver)"),
     };
 

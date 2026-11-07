@@ -530,7 +530,7 @@ public class StairEndFloorTests : IDisposable
         Assert.True(RoadSpatialGrid.AddRoadPath(across, 4f, world));
         RoadSpatialGrid.FinalizeRoadNetwork();
         Assert.True(RoadSpatialGrid.TryGetRoadHeightWithin(new Vector2(0f, start), 1f, out float held));
-        Assert.True(44f - held > RoadNetworkGenerator.ArrivalLevel, $"the road across at {held:F2}");
+        Assert.True(44f - held > StairLayout.StairFitsFrom, $"the road across at {held:F2}");
 
         StairPlan carried = CarryOn(world, plan.Copy(), path, foot: false, top: true);
         Assert.Empty(RoadStairRuns.EndFloorsKept);

@@ -160,7 +160,7 @@ public static class StructureEnds
             float off = Mathf.Abs(height - s * StairLayout.PieceRise - Arrival(foot, -up, ground));
             if (off < bestOff - 1e-3f) { best = s; bestOff = off; }
             // Past a flush end that already meets the arriving road, no stairs.
-            if (s == 0 && off <= StairLayout.PieceRise * 0.5f) break;
+            if (s == 0 && off <= StairLayout.StairFitsFrom) break;
         }
         return new End(edge, up, height, best);
     }

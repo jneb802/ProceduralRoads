@@ -9,7 +9,7 @@ namespace ProceduralRoads.Tests;
 
 public partial class SitesFirstTests
 {
-    /// <summary>A placed place is reached only by network level with its landing (<see cref="RoadNetworkGenerator.ArrivalLevel"/>),
+    /// <summary>A placed place is reached only by network level with its landing (<see cref="StairLayout.StairFitsFrom"/>),
     /// as every other place: road beside its landing 30 m or 5 m under it does not reach it (the 20 m allowed before
     /// counted the 5 m), nor road 3 m over it; road level with it does. Without a guard network far under a landing
     /// counted the place reached and its stub was dropped.</summary>

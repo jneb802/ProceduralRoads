@@ -320,9 +320,6 @@ public static partial class StairLayout
     /// Just under two pieces: at 2.5 m a stair a step from the top could overshoot it on every heading.</summary>
     public const float ReachRadius = 3.5f;
     public const float ReachHeight = 0.5f;
-    /// <summary>A staircase that may finish anywhere near its goal finishes no lower than this
-    /// below the goal's ground: level with it (<see cref="RoadNetworkGenerator.ArrivalLevel"/>).</summary>
-    public const float ArriveBelow = RoadNetworkGenerator.ArrivalLevel;
     /// <summary>A stair's clearance is cut into this many stretches along it, so it follows the steps up: one a cut point's
     /// spacing long (<see cref="CutSpacing"/>), 4 to a stair, each rising a quarter of its rise. With 2 a stretch's box reached
     /// 0.4 m under the walk at its high end, into the stair's body and the rock it lies on, and the carve took every chunk
@@ -739,7 +736,7 @@ public static partial class StairLayout
             ? OnTheRing(node, ring, route.TopLandings)
             : (Vector2.Distance(node.Edge, route.Final) <= (route.ArriveWithin ?? ReachRadius)
                || route.OnLanding != null && route.OnLanding(node.Edge + Forward(node.Heading) * ProudReach))) &&
-        (route.ArriveWithin.HasValue && !route.TopRing.HasValue ? node.Height >= route.GoalHeight - ArriveBelow : Mathf.Abs(route.GoalHeight - node.Height) <= ReachHeight) &&
+        (route.ArriveWithin.HasValue && !route.TopRing.HasValue ? node.Height >= route.GoalHeight - StairFitsFrom : Mathf.Abs(route.GoalHeight - node.Height) <= ReachHeight) &&
         (!route.EndHeading.HasValue || Mathf.Abs(Wrap(node.Heading - route.EndHeading.Value + 180f) - 180f) <= AlignSteps * HeadingStep + 0.01f) &&
         (!route.TopFacing.HasValue || Mathf.Abs(Wrap(node.Heading - route.TopFacing.Value + 180f) - 180f) <= FacingSteps * HeadingStep + 0.01f);
 
@@ -800,7 +797,7 @@ public static partial class StairLayout
         /// <summary>Deepest the ground may stand over a walking surface on any piece.</summary>
         public float MaxBuried = StairCover.RoadStaircase;
         /// <summary>Set: the staircase may finish anywhere this close to the goal, at the
-        /// ground's height where it finishes and no more than <see cref="ArriveBelow"/> below
+        /// ground's height where it finishes and no more than <see cref="StairFitsFrom"/> below
         /// the goal's, rather than within <see cref="ReachRadius"/> at the goal's own height.</summary>
         public float? ArriveWithin;
 

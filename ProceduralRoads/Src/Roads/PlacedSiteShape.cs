@@ -595,10 +595,10 @@ public sealed class PlacedSiteShape
                 var next = (x + dx, z + dz);
                 if (region.Contains(next) || !Walkable(next.Item1, next.Item2)) continue;
                 float there = ground(next.Item1, next.Item2);
-                // Level with the landing it is walked from (RoadNetworkGenerator.ArrivalLevel), not only a step from the
+                // Level with the landing it is walked from (StairLayout.StairFitsFrom), not only a step from the
                 // last metre: stepping down WalkStep a metre, the edge aimed at at Hildir's cave lay a metre under its
                 // landing and 4 m short of it (at -2304,1536).
-                if (Mathf.Abs(there - here) > WalkStep || Mathf.Abs(there - level) > RoadNetworkGenerator.ArrivalLevel) continue;
+                if (Mathf.Abs(there - here) > WalkStep || Mathf.Abs(there - level) > StairLayout.StairFitsFrom) continue;
                 region.Add(next);
                 queue.Enqueue((next.Item1, next.Item2, level));
             }
@@ -620,7 +620,7 @@ public sealed class PlacedSiteShape
     /// coming up where it connects to the mountain it likely can be). The
     /// ground walked onto the landings (<see cref="Landings"/>; a metre to the next rising or falling
     /// <see cref="WalkStep"/> at most and level with the landing it is walked from, within
-    /// <see cref="RoadNetworkGenerator.ArrivalLevel"/>, clear of the pit and rock, out to <see cref="LandingSearch"/> past the flat) is followed out to its edges; an edge is joined where the ground outside it falls no more than
+    /// <see cref="StairLayout.StairFitsFrom"/>, clear of the pit and rock, out to <see cref="LandingSearch"/> past the flat) is followed out to its edges; an edge is joined where the ground outside it falls no more than
     /// <see cref="JoinGrade"/> over <see cref="JoinReach"/>, and overhangs where it falls further. Aims: up to
     /// <see cref="JoinedEdges"/> joined edges <see cref="JoinApart"/> apart (out of the water) and the landings that are
     /// themselves joined, nearest <paramref name="from"/> first, then the overhanging landings; at most <paramref name="tries"/>. The face below

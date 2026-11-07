@@ -43,7 +43,7 @@ public static partial class RoadStairRuns
     /// centre), and nothing builds the last stretch, which is often too steep
     /// for road anyway. Where the place levels a single flat round its centre
     /// (an apron), the road's end is not level with it (more than
-    /// <see cref="RoadNetworkGenerator.ArrivalLevel"/> above or below it; 2 m before the end-level rule) and within <see cref="SiteReach"/> of it, this lays a
+    /// <see cref="StairLayout.StairFitsFrom"/> above or below it; 2 m before the end-level rule) and within <see cref="SiteReach"/> of it, this lays a
     /// staircase from the road's end to just inside the apron's edge on the
     /// side the road comes from, over the ground the place is expected to leave
     /// (<see cref="PlacedSites.ExpectedGround"/>). It may cross the
@@ -198,7 +198,7 @@ public static partial class RoadStairRuns
     private static string AimRefused(Vector2 roadEnd, float roadHeight, Vector2 target, float apron, bool roadRefused = false,
         float reach = SiteReach) =>
         Vector2.Distance(roadEnd, target) > reach ? "too far"
-        : !roadRefused && Mathf.Abs(apron - roadHeight) <= RoadNetworkGenerator.ArrivalLevel ? "level enough"
+        : !roadRefused && Mathf.Abs(apron - roadHeight) <= StairLayout.StairFitsFrom ? "level enough"
         : !RoadWater.BuiltDry(apron) ? "flat under water"
         : "";
 

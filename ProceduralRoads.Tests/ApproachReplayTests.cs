@@ -76,8 +76,8 @@ public class ApproachReplayTests
         Assert.Equal("joined edge", aims[0].name);
         Assert.Equal("joined edge", aims[1].name);
         Assert.All(aims.GetRange(2, aims.Count - 2), a => Assert.Equal("level landing", a.name));
-        // Every aim is level with a landing (RoadNetworkGenerator.ArrivalLevel): an approach that reaches it ends level.
-        Assert.All(aims, a => Assert.Contains(landings, l => Mathf.Abs(file.Ground(a.at.x, a.at.y) - l.height) <= RoadNetworkGenerator.ArrivalLevel));
+        // Every aim is level with a landing (StairLayout.StairFitsFrom): an approach that reaches it ends level.
+        Assert.All(aims, a => Assert.Contains(landings, l => Mathf.Abs(file.Ground(a.at.x, a.at.y) - l.height) <= StairLayout.StairFitsFrom));
         // The west edge is where the landing was finished by hand, in the cave's frame (turned 337.5 here, 315 for the hand-built
         // one). Before (ground followed out a stair's grade a metre at a time), it lay a metre under the landing and 1.5 m
         // short of it, as the generated stairs' top stood a step under and 4 m short (-6.1,3.6 here; the hand-built top -10.7,6.6).
@@ -95,11 +95,11 @@ public class ApproachReplayTests
         RoadStairSpan? joined = file.Replay(total, stall, RoadStairRuns.GenerationExpansions, out string why);
         Assert.True(joined != null, why);
         Assert.True(joined!.Plan.Rise >= 42f, $"rose {joined.Plan.Rise}");
-        // Its top on the shelf's level ground, level with its landings (RoadNetworkGenerator.ArrivalLevel): the edge it
+        // Its top on the shelf's level ground, level with its landings (StairLayout.StairFitsFrom): the edge it
         // aimed at is joined to them by level ground (AnApproachAimsAtTheShelfsLevelEdges).
         Vector2 top = new(joined.Plan.End.x, joined.Plan.End.z);
         Assert.Contains(file.Aims(), a => Vector2.Distance(a.at, top) <= RoadStairRuns.LedgeReach + RoadStairRuns.FinishReach);
-        Assert.Contains(file.Landings(), l => Mathf.Abs(l.height - joined.Plan.End.y) <= RoadNetworkGenerator.ArrivalLevel);
+        Assert.Contains(file.Landings(), l => Mathf.Abs(l.height - joined.Plan.End.y) <= StairLayout.StairFitsFrom);
         // 22019 steps with StairLayout.FootOffRoadWeight: a start along the road searched a little longer.
         Assert.True(file.Steps <= 25000, $"{file.Steps} steps");
         // Aimed at the landings in front only, the same allowance searches the face under the overhang: once stalled there,

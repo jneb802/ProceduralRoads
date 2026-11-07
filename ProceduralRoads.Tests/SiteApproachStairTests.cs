@@ -856,7 +856,7 @@ public class SiteApproachStairTests : IDisposable
 
     /// <summary>The one owner's choice from a road's end (<see cref="RoadNetworkGenerator.ApproachStairsAt"/>, in the
     /// Mountains, on the apron at 52 m): a custom place gets a staircase up from an end under its flat, none down from one
-    /// over it (more than <see cref="RoadNetworkGenerator.ArrivalLevel"/>); a vanilla place both.</summary>
+    /// over it (more than <see cref="StairLayout.StairFitsFrom"/>); a vanilla place both.</summary>
     [Fact]
     public void ApproachStairsGoDownOnlyToAVanillaPlace()
     {
@@ -866,7 +866,7 @@ public class SiteApproachStairTests : IDisposable
         {
             var centre = new Vector2(0f, 0f);
             Assert.True(RoadNetworkGenerator.ApproachStairsAt(centre, "MwlFixtureAltar", 44f));
-            Assert.True(RoadNetworkGenerator.ApproachStairsAt(centre, "MwlFixtureAltar", 52f + RoadNetworkGenerator.ArrivalLevel));
+            Assert.True(RoadNetworkGenerator.ApproachStairsAt(centre, "MwlFixtureAltar", 52f + StairLayout.StairFitsFrom));
             Assert.False(RoadNetworkGenerator.ApproachStairsAt(centre, "MwlFixtureAltar", 60f));
             Assert.True(RoadNetworkGenerator.ApproachStairsAt(centre, "MwlFixtureAltar"));
             Assert.True(RoadNetworkGenerator.ApproachStairsAt(centre, "MountainCave02", 60f));

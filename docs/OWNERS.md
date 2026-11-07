@@ -33,7 +33,7 @@ calls the owner; it never restates the rule. This is the one list of those decis
 | Ways into a place, and twin ways | `PlaceWaysIn.Of`, `PlaceWaysIn.SameWay`, `PlaceWaysIn.Twins` | none | One record of the ways in; readers do not rebuild it. |
 | Places that are entered from the front only | `PlacedSiteShape.FrontOnly` | none | Add the place to its list. |
 | Staircase starts: the ring, the pads and the feet | `RoadEndRing.Starts`, `RoadEndRing.Allows`, `RoadStairRuns.StartPads`, `StairLayout.LowerFoot` | `RoadEndRing.PadUnderFloor` | A foot meets its road within a step (`StairLayout.Walkable`). |
-| A foot rounds to whole stairs | `StairLayout.WholeStairsOver` | `StairLayout.PieceRise` | The nearest whole stair; below half a rise the landing is filled to the foot. |
+| A height rounds to whole stairs: a foot, an end's stairs, a road arriving level with a place | `StairLayout.WholeStairsOver`, `StairLayout.StairFitsFrom` | `StairLayout.PieceRise` | The nearest whole stair: off by less than half a rise no stair fits (a foot's landing is filled to it; a road's end is level with its place). Read `StairFitsFrom`; never write half a rise. |
 | Staircase ends: reading the drop, and finishing the top | `StairEnds.Drops`, `StairEnds.Choose`, `StairEnds.Corners`, `StairEnds.OverAhead`, `StairLayout.FinishTop` | `StairLayout.TopFloorBand`, `StairLayout.EndReach` | The end reads the ground at its two corners; do not add a second reading point. |
 | Is this edge walked across (rails, stair ends) | `StairEnds.Walks`, `StairRailing.WalkedOn` | `StairLayout.TopFloorBand` | `StairEnds.Walks` is the test; the railing and the walk graph both call it. |
 | Step and stair geometry: rise, run, a walker's step | `StairLayout.PieceRise`, `StairLayout.PieceRun`, `StairLayout.StepUp`, `StairRailing.LedgeDrop` | `StairLayout.PieceRise`, `StairLayout.PieceRun`, `StairLayout.StepUp` | Bridges and viaducts read the same constants as stairs. |
@@ -75,7 +75,7 @@ different fact. A known duplicate is listed there too, so the test passes today,
 |---|---|---|
 | Earthwork cap 8 m | `RoadConstants.TerrainDeltaMax` | an 8 on a line about earthwork, cap, cut, fill or batter |
 | Step 0.2 m | `StairLayout.StepUp` | 0.2 on a line about steps, rises, stairs, walking or ledges |
-| Half a rise | `StairLayout.WholeStairsOver` (the nearest whole stair; half a rise has no constant of its own) | `PieceRise * 0.5` or `PieceRise / 2` |
+| Half a rise | `StairLayout.StairFitsFrom` (the nearest whole stair, with `WholeStairsOver`; a step's middle is `StairLayout.StepMiddle`) | `PieceRise * 0.5` or `PieceRise / 2` |
 | Rise 1 m | `StairLayout.PieceRise` | 1 on a line naming a rise |
 | Run 2 m | `StairLayout.PieceRun` | 2 on a line about a run, stair, step or piece that does not name `PieceRun` |
 | Headroom 2 m, lift 0.1 m | `RoadRockPolicy.ClearanceHeight`, `RoadRockPolicy.ClearanceLift` | 2 on a clearance or box line; 0.1 on a clearance, lift, bottom or rock line |

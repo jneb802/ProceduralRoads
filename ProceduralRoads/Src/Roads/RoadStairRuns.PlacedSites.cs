@@ -393,7 +393,7 @@ public static partial class RoadStairRuns
                 // Hildir_cave -2304,1536: the top stood 1.3 m over it): its top, before it is finished over the ledge, ends
                 // level with a landing, or the next aim is tried (and the approach laid as before where none faces in).
                 if (refused == "" && finished && faceInto && landing.Landings.Count > 0
-                    && !landing.Landings.Exists(l => Mathf.Abs(l.height - laid.End.y) <= RoadNetworkGenerator.ArrivalLevel))
+                    && !landing.Landings.Exists(l => Mathf.Abs(l.height - laid.End.y) <= StairLayout.StairFitsFrom))
                     refused = NotLevelWithTheLanding;
                 return refused;
             }

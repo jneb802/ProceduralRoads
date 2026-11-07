@@ -68,7 +68,18 @@ public static partial class StairLayout
     /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise
     /// the foot stays (the road's landing is filled up to it); from half a rise up, a stair drops
     /// (<see cref="LowerFoot"/>, <see cref="FootToRoad"/>). Half rounds up, not to even. The one owner of a foot rounding to whole stairs (docs/OWNERS.md).</summary>
-    private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + 0.5f);
+    private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + StairFitsFrom / PieceRise);
+
+    /// <summary>
+    /// How far off a height must be for one stair to be the nearer fit: half a rise (<see cref="PieceRise"/>). Off by less, no
+    /// stair fits and it is the ground's own unevenness; off by this or more, a stair is laid where one may be. The one owner of
+    /// a height rounding to whole stairs, with <see cref="WholeStairsOver"/> (docs/OWNERS.md): a foot over its road, an end's
+    /// stairs (StructureEnds.Decide), and how far over or under a place's landing the network may arrive and still be level with
+    /// it (a road always ends level, even at the cost of a POI, and may end in stairs if needed): the reached test, a road's end
+    /// at its place, an approach staircase's threshold, the landing's level ground (PlacedSiteShape.Aims) and a staircase that
+    /// may finish anywhere near its goal finishing no lower than this under it.
+    /// </summary>
+    public const float StairFitsFrom = PieceRise / 2f;
 
     /// <summary>
     /// A staircase whose foot (the first step's low edge, at the ground's height there) stands over its road's ground

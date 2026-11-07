@@ -385,23 +385,13 @@ public static partial class RoadNetworkGenerator
     internal const float ReachPastEdge = RoadPathfinder.CellSize;
 
     /// <summary>
-    /// How far over or under a place's landing the network may arrive and still be level with it (a road always ends
-    /// level, even at the cost of a POI, and may end in stairs if needed): half a stair's rise
-    /// (<see cref="StairLayout.PieceRise"/>). Off by more, one stair is the nearer fit and the stairs builder lays it; off by less, no stair fits and it is the ground's own unevenness, which a landing
-    /// is allowed too (<see cref="PlacedSiteShape.LevelTolerance"/>, and a stair top's own <see cref="StairLayout.ReachHeight"/>).
-    /// The one level for the reached test (<see cref="Reached"/>), a road's end at its place, an approach staircase's
-    /// threshold and the landing's level ground (<see cref="PlacedSiteShape.Aims"/>).
-    /// </summary>
-    public const float ArrivalLevel = StairLayout.PieceRise / 2f;
-
-    /// <summary>
     /// How far over or under the place's own level (<see cref="ArrivalHeight"/>) the network may end and still reach it: the one
     /// height for "reached" (<see cref="Reached"/>, <see cref="LandingReached"/>) and for refusing a road whose end does not
     /// (<see cref="EndNotLevel"/>). About a step (a road ending more than about a step under or over the place's
     /// ground is not reached; it gets an approach or the place goes unserved). 1.5 m: a stair and a half
     /// (<see cref="StairLayout.PieceRise"/>), which the player walks up over the ground between a road's end and the place's
     /// edge (at least half a road's width, its blend and a path cell, 4 m or more: under 21 degrees). More is a climb: a
-    /// staircase is laid onto it where one can be (from <see cref="ArrivalLevel"/> off, where a stair fits), and without one
+    /// staircase is laid onto it where one can be (from <see cref="StairLayout.StairFitsFrom"/> off, where a stair fits), and without one
     /// the end does not reach it. Before, a place with no single levelled flat (AbandonedLogCabin04, which only smooths) had no
     /// known height and was reached by a road 10 m under it, and outside the Mountains every place was reached at any height.
     /// </summary>
@@ -416,7 +406,7 @@ public static partial class RoadNetworkGenerator
     /// its landing is refused (<see cref="EndNotLevel"/>); a place outside the Mountains left unserved that way then falls back
     /// to a road ending off its level (<see cref="ReachOffLevel"/>). The one owner of that choice. From a road's end at
     /// <paramref name="fromHeight"/> (null where not known), none down to a custom location standing below it (its own level,
-    /// <see cref="CustomLevel"/>, more than <see cref="ArrivalLevel"/> under the end, where a stair would fit): its first
+    /// <see cref="CustomLevel"/>, more than <see cref="StairLayout.StairFitsFrom"/> under the end, where a stair would fit): its first
     /// attempt leaves it unserved, and its fallback ends the road at its ring off its level, with no stand-off
     /// (<see cref="StandOffLevel"/> stands an end off only below the place). A staircase down onto such a place's flat ended
     /// in the rocks the place keeps round it.
@@ -426,7 +416,7 @@ public static partial class RoadNetworkGenerator
         if (prefab != null && OwnLandingOnly(prefab)) return true;
         // Every place on the fallback (HeightNeeded false, OffLevelAllowed): the road ends at its ring, no staircase.
         if (!HeightNeeded(centre)) return false;
-        if (fromHeight is float from && CustomLevel(centre, prefab, out _) is float own && from - own > ArrivalLevel) return false;
+        if (fromHeight is float from && CustomLevel(centre, prefab, out _) is float own && from - own > StairLayout.StairFitsFrom) return false;
         var world = GenerationWorld;
         return world == null || world.GetBiome(centre.x, centre.y) == Heightmap.Biome.Mountain;
     }
@@ -1154,7 +1144,7 @@ public static partial class RoadNetworkGenerator
             if (Mathf.Abs(off) <= ReachRise)
             {
                 // Level enough to reach it, but a stair or more off (no staircase outside the Mountains): counted, kept.
-                if (RoadsLog && Mathf.Abs(off) > ArrivalLevel) System.Threading.Interlocked.Increment(ref m_closeEnds);
+                if (RoadsLog && Mathf.Abs(off) > StairLayout.StairFitsFrom) System.Threading.Interlocked.Increment(ref m_closeEnds);
                 return null;
             }
             return (NotLevelRefusal, FormattableString.Invariant($"ends {Mathf.Abs(off):F1} m {(off > 0f ? "over" : "under")} its place, not level with it, and no approach staircase onto it"));
@@ -1889,7 +1879,7 @@ public static partial class RoadNetworkGenerator
     /// <summary>With <see cref="RoadsLog"/>: the generation's staircase tallies for the summary.</summary>
     private static int m_stairRuns, m_stairRoadsUnlaid, m_stretchRetries, m_stretchRetriesKept, m_tightTurnStairs, m_tightTurnStairsBuilt, m_notLevelEnds;
     /// <summary>With <see cref="RoadsLog"/>: road ends kept close to their place, within <see cref="ReachRise"/> of its level
-    /// but more than <see cref="ArrivalLevel"/> off (<see cref="EndNotLevel"/>), or short of a placed place's landing
+    /// but more than <see cref="StairLayout.StairFitsFrom"/> off (<see cref="EndNotLevel"/>), or short of a placed place's landing
     /// (<see cref="PlanEntry"/>), with no staircase onto it.</summary>
     private static int m_closeEnds;
     /// <summary>Staircases laid by this thread, with <see cref="RoadsLog"/>: a retry reads it to know whether it kept the road's stairs.</summary>
@@ -1993,7 +1983,7 @@ public static partial class RoadNetworkGenerator
         Log.LogDebug($"Site approach {centre}: keep-out edge {radius:F1}m, approach {(platform.HasValue ? platform.Value.ToString("F2") : "unknown")}m");
         Func<float, float, float> expected = PlacedSites.ExpectedGround(centre, centreHeight, ops, world);
         float Ground(Vector2 p) => expected(p.x, p.y);
-        float? Target(Vector2 p) => platform.HasValue && Mathf.Abs(Ground(p) - platform.Value) <= ArrivalLevel
+        float? Target(Vector2 p) => platform.HasValue && Mathf.Abs(Ground(p) - platform.Value) <= StairLayout.StairFitsFrom
             ? Ground(p) : PlacedSites.ExpectedLevelAt(p, centre, centreHeight, ops, world);
         return RoadSiteApproach.Improve(path, centre, radius, width, world, atStart, Target, Ground, platform);
     }
@@ -2009,7 +1999,7 @@ public static partial class RoadNetworkGenerator
         // Never make an arbitrary high embankment merely to hit a platform.
         // The approach search must first find naturally nearby elevation.
         if (platform.HasValue)
-            return RoadWater.BuiltDry(platform.Value) && Mathf.Abs(natural - platform.Value) <= ArrivalLevel ? natural : null;
+            return RoadWater.BuiltDry(platform.Value) && Mathf.Abs(natural - platform.Value) <= StairLayout.StairFitsFrom ? natural : null;
         // A place with no flat (a cabin that only smooths round its centre, not placed first or placed with no landing to go
         // onto: PlacedSites.Prepare) is arrived at its ground at its edge on the road's side (ArrivalHeight). An end whose
         // ground is level with that, as the reached test has it (ReachRise), is held there and so ends on the level landing

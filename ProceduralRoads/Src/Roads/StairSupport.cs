@@ -429,7 +429,7 @@ public static class StairSupport
     private const float VineHalfAcross = 1.15f, VineBelow = 1.17f, VineAbove = 1.26f, VineFront = 0.15f;
 
     /// <summary>Whether any part of a vine's leaves (a grid over them) stands over a walked piece's footprint between its
-    /// walking surface and <see cref="RoadRockPolicy.ClearanceHeight"/> over it. Only the walks the leaves can reach are read:
+    /// walking surface and the top of a walker's box over it (<see cref="RockClearances.Top"/>, as over a road). Only the walks the leaves can reach are read:
     /// a walk whose footprint lies farther from the vine than its leaves reach (each of their half-extents added, a bound past
     /// any of their points) and its own half-extents (and <see cref="Over"/>'s slack) holds none of them.</summary>
     private static bool InHeadroom(StairKit kit, IReadOnlyList<Walk> walks, StructurePiece vine)
@@ -454,7 +454,7 @@ public static class StairSupport
                 {
                     if (!Over(w, at)) continue;
                     float surface = w.Surface(Mathf.Clamp(Vector2.Dot(at - w.Back, w.Dir), 0f, w.Depth), kit);
-                    if (q.y > surface - 0.01f && q.y < surface + RoadRockPolicy.ClearanceHeight) return true;
+                    if (q.y > surface - 0.01f && q.y < RockClearances.Top(surface)) return true;
                 }
             }
         return false;

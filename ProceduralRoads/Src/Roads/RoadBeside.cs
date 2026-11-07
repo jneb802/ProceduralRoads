@@ -14,7 +14,7 @@ public static class RoadBeside
     /// <summary>A centreline (or a staircase's walked piece) this far or less across from a road's runs beside it: a road's
     /// width and its terrain blend. Nearer, the two roads' levelled ground and blend overlap and they read as one smeared road
     /// (a road wavering just past a narrower reach would slip through it). At the default width; what is asked is
-    /// <see cref="Current"/>, the Roads/RoadWidth setting's (RoadStairRuns.ParallelReach, a constant, still reads this one).</summary>
+    /// <see cref="Current"/>, the Roads/RoadWidth setting's.</summary>
     public const float Reach = RoadConstants.DefaultRoadWidth + RoadConstants.TerrainBlendMargin;
 
     /// <summary>The reach at the Roads/RoadWidth setting: the road's width and its terrain blend. The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>

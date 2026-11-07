@@ -424,6 +424,7 @@ public sealed class BridgeStructures : IStructureSource
         }
         // Headings come from every deck point in reach.
         foreach (var point in deck)
-            clearances.Add(new StructureClearance(point, deck, point.h - DeckBelow, DeckBelow + RoadRockPolicy.ClearanceHeight, wholeOnly: true));
+            // From under the deck to the top of a walker's box over it (RockClearances.Top), as over a road.
+            clearances.Add(new StructureClearance(point, deck, point.h - DeckBelow, RockClearances.Top(point.h) - (point.h - DeckBelow), wholeOnly: true));
     }
 }

@@ -1481,39 +1481,34 @@ public static partial class RoadStairRuns
         return $"{kind}, {where}";
     }
 
-    /// <summary>A walked piece this close across to a road, and within <see cref="ParallelHeight"/> of its height, runs
-    /// beside it; <see cref="ParallelPieces"/> in a row make a staircase redundant there. The owner's (<see cref="RoadBeside"/>).</summary>
-    public const float ParallelReach = RoadBeside.Reach;
-    public const float ParallelHeight = RoadBeside.Height;
-    public const int ParallelPieces = RoadBeside.MostStairPieces;
-
     /// <summary>
-    /// Whether a staircase over path[from..to] runs beside a road at that road's height for <see cref="ParallelPieces"/> or
-    /// more walked pieces in a row, away from its own ends (at -5853,5918 a staircase ran parallel to a road, mostly flat pieces:
+    /// Whether a staircase over path[from..to] runs beside a road (within <see cref="RoadBeside.Current"/>, at the road width
+    /// setting) at that road's height for <see cref="RoadBeside.MostStairPieces"/> or more walked pieces in a row, away from its own ends (at -5853,5918 a staircase ran parallel to a road, mostly flat pieces:
     /// better to connect further up the road, or avoid running parallel even if it costs POIs). Its own
     /// road outside the stretch (at the ground's height) and the network's roads count.
     /// </summary>
     internal static bool BesideARoad(StairPlan plan, List<Vector2> path, int from, int to, Func<float, float, float> ground)
     {
         Vector2 a = path[from], b = path[to];
+        float reach = RoadBeside.Current;
         int run = 0;
         foreach (StairPiece piece in plan.Pieces)
         {
             if (piece.Kind != StairPieceKind.Stair && piece.Kind != StairPieceKind.Landing) continue;
             var p = new Vector2(piece.Position.x, piece.Position.z);
             float top = StairLayout.TopSurface(piece);
-            if (Vector2.Distance(p, a) <= ParallelReach || Vector2.Distance(p, b) <= ParallelReach) { run = 0; continue; }
+            if (Vector2.Distance(p, a) <= reach || Vector2.Distance(p, b) <= reach) { run = 0; continue; }
             bool beside = false;
             for (int i = 1; i < path.Count && !beside; i++)
             {
                 if (i > from && i <= to) continue;
-                if (DistanceToSegment(p, path[i - 1], path[i]) >= ParallelReach) continue;
+                if (DistanceToSegment(p, path[i - 1], path[i]) >= reach) continue;
                 Vector2 q = Vector2.Lerp(path[i - 1], path[i], 0.5f);
                 beside = RoadBeside.AtItsHeight(ground(q.x, q.y), top);
             }
             if (!beside) beside = RoadBeside.NearAtItsHeight(p, top);
             run = beside ? run + 1 : 0;
-            if (run >= ParallelPieces) return true;
+            if (run >= RoadBeside.MostStairPieces) return true;
         }
         return false;
     }

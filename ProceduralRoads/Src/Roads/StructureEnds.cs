@@ -113,8 +113,7 @@ public static class StructureEnds
     /// Which of a road's <paramref name="points"/> are stored unpainted (RoadSpatialGrid.RoadPoint.unpainted): those under
     /// the structure at any of <paramref name="ends"/> (<see cref="End.UnderTheStructure"/>). The road there is levelled
     /// like any other, so the stairs or the deck's end module stand on level ground, but its paint stops at the structure:
-    /// the stairs' foot, or the deck's edge where an end has none; the ground under a deck's end is never painted either
-    /// (RoadNetworkGenerator.CrossingGround.UnderDecks). Null where every point is painted.
+    /// the stairs' foot, or the deck's edge where an end has none. Null where every point is painted.
     /// </summary>
     public static List<bool>? Unpainted(IReadOnlyList<Vector2> points, IReadOnlyList<End> ends, float halfWidth)
     {

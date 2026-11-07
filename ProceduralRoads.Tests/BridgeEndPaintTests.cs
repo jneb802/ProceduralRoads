@@ -78,9 +78,9 @@ public sealed class BridgeEndPaintTests : IDisposable
     /// <summary>
     /// A wooden bridge over a wide river, its east bank 1 m over the west, so both its ends are low over the road
     /// (StructureEnds.Low) and each has its one step: past each stairs' foot the stored road (under the bottom
-    /// step at the foot's height, and the ground under the deck's end where it is land) is all unpainted, and every point
-    /// before the foot is painted. Written to the terrain, the ground under the stairs and the deck's end is levelled and
-    /// unpainted beyond the paint blend of the foot, and the road before the foot is painted.
+    /// step at the foot's height) is all unpainted, and every point before the foot is painted; the ground under the deck is
+    /// cut to its underside (BridgeStructures.GroundUnderDeck). Written to the terrain, the ground under the stairs is levelled
+    /// and unpainted beyond the paint blend of the foot, and the road before the foot is painted.
     /// </summary>
     [Fact]
     public void PaintStopsAtAWoodenBridgesStairsFoot()
@@ -97,7 +97,8 @@ public sealed class BridgeEndPaintTests : IDisposable
         RoadCrossing c = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.Kind == CrossingKind.Bridge);
         Assert.False(DvergrViaduct.Applies(c, world));
         var (near, far) = BridgeStructures.Ends(c, world);
-        int deckEnds = 0, stepped = 0;
+        int stepped = 0;
+        float depth = BridgeStructures.DeckDepth(c, world);
         foreach (var (end, which) in new[] { (near, "near"), (far, "far") })
         {
             if (end.Steps == 0) continue;
@@ -105,7 +106,6 @@ public sealed class BridgeEndPaintTests : IDisposable
             Vector2 across = new(-end.Up.y, end.Up.x);
             float stairs = StairLayout.PieceRun * end.Steps;
             int underStairs = 0, before = 0;
-            bool underDeck = false;
             foreach (var rp in RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(end.Meet.x, 0f, end.Meet.y), stairs + 12f))
             {
                 if (!rp.IsRoad) continue;
@@ -115,7 +115,6 @@ public sealed class BridgeEndPaintTests : IDisposable
                 {
                     Assert.True(rp.unpainted, $"{which} end: painted road at {rp.p}, {along:F2} m past the stairs' foot {end.Meet}");
                     if (along <= StructureEnds.JoinOverlap + 0.25f && Mathf.Abs(rp.h - end.MeetHeight) <= 0.1f) underStairs++;
-                    underDeck |= along > stairs;
                 }
                 else if (along > -StructureEnds.ApronLength)
                 {
@@ -124,7 +123,10 @@ public sealed class BridgeEndPaintTests : IDisposable
                 }
             }
             Assert.True(underStairs > 0, $"{which} end: no levelled road under the bottom step");
-            if (underDeck) deckEnds++;
+            // The ground under the deck, past the cuts' batter from its edge, cut to the deck's underside.
+            Vector2 inDeck = end.Edge + end.Up * (RoadNetworkGenerator.CrossingGround.CutWidth * 0.5f + depth + 1f);
+            Assert.Contains(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(inDeck.x, 0f, inDeck.y), 1.1f),
+                rp => rp.cutOnly && Mathf.Abs(rp.h - (end.Height - depth)) < 1e-3f);
             Assert.True(before > 0, $"{which} end: no road before the stairs' foot");
 
             // The terrain writer on the zone of the foot: unpainted past the foot's paint blend, painted before it.
@@ -152,8 +154,6 @@ public sealed class BridgeEndPaintTests : IDisposable
                 Assert.True(tc.m_modifiedPaint[foot], $"{which} end: the road 3 m before the stairs' foot is not painted");
         }
         Assert.True(stepped > 0, "neither end has stairs");
-        // Ground under a deck's end is levelled only over land: the west bank's (the east bank's shelf is under the waterline).
-        Assert.True(deckEnds > 0, "no levelled ground under either deck's end");
     }
 
     /// <summary>

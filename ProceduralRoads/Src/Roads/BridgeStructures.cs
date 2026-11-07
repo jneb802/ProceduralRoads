@@ -128,6 +128,62 @@ public sealed class BridgeStructures : IStructureSource
         _ => 0f,
     };
 
+    /// <summary>How far a kit's deck reaches under its walking surface, to its underside, as the ship's way measures it
+    /// (<see cref="BridgeLayout.NavigationChannel"/>): the railed kits' beams (<see cref="BridgeLayout.DeckDepth"/>), the stone
+    /// kit's floor and its arches' tall ends (<see cref="BridgeLayout.StoneDeckDepth"/>), the Dvergr wood kit's planks and
+    /// stringers (<see cref="DvergrWoodBridge.DeckDepth"/>), the viaduct's course down to its floors
+    /// (<see cref="DvergrViaduct.FloorDrop"/>). The one owner of the ground under a deck (docs/OWNERS.md).</summary>
+    public static float DeckDepth(Kit kit) => kit switch
+    {
+        Kit.WoodRail or Kit.WoodBraced => BridgeLayout.DeckDepth,
+        Kit.Stone => BridgeLayout.StoneDeckDepth,
+        Kit.DvergrWood => DvergrWoodBridge.DeckDepth,
+        Kit.DvergrViaduct => DvergrViaduct.FloorDrop,
+        _ => 0f,
+    };
+
+    /// <summary>The deepest deck a crossing may be built in, the envelope every kit lays its deck within (as
+    /// <see cref="DeckHalfWidth"/>), asked without choosing a kit: its saved kit's, a viaduct's, else the deepest of the kits
+    /// that fit it (<see cref="KitsThatFit"/>). 0 where none does. The one owner of the ground under a deck (docs/OWNERS.md).</summary>
+    public static float DeckDepth(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (Chosen(crossing.Kit)) return DeckDepth(crossing.Kit!.Value);
+        if (IsViaduct(crossing, world)) return DeckDepth(Kit.DvergrViaduct);
+        float depth = 0f;
+        foreach (Kit kit in KitsThatFit(crossing, world)) depth = Mathf.Max(depth, DeckDepth(kit));
+        return depth;
+    }
+
+    /// <summary>
+    /// The ground under a crossing's deck, as cuts of <paramref name="reach"/> (RoadNetworkGenerator.CrossingGround.Cuts):
+    /// from each end's edge in to the deck's middle, one every <see cref="RoadCrossingDetector.DeckLineStep"/>, at the deck's
+    /// underside (the end's walking surface less <see cref="DeckDepth(RoadCrossing, WorldGenerator)"/>), and nearer the
+    /// edge no lower than the cut's batter (<see cref="RoadTerrainModifier.CutBatterSlope"/>) climbs back to the walking
+    /// surface at the edge. So no ground stands over a deck's underside but the wedge its batter leaves inside the deck's
+    /// first metre or so, under its walking surface, and the road before the edge keeps its height. A cut only lowers:
+    /// over water, or where the ground already lies lower, it changes nothing. The road run on under an end met level, at
+    /// its walking surface (StructureEnds.JoinOverlap), is cut down here too. The one owner of the ground under a deck
+    /// (docs/OWNERS.md), every kit's and the viaduct's.
+    /// </summary>
+    public static List<Vector3> GroundUnderDeck(RoadCrossing crossing, WorldGenerator world, float reach)
+    {
+        var cuts = new List<Vector3>();
+        if (!HasDeck(crossing)) return cuts;
+        var (near, far) = Ends(crossing, world);
+        if (!near.IsStructure || !far.IsStructure) return cuts;
+        float depth = DeckDepth(crossing, world);
+        float half = Vector2.Distance(near.Edge, far.Edge) * 0.5f;
+        foreach (StructureEnds.End end in new[] { near, far })
+            for (float along = RoadCrossingDetector.DeckLineStep; along <= half + 1e-3f; along += RoadCrossingDetector.DeckLineStep)
+            {
+                float down = Mathf.Min(depth, (along - reach) * RoadTerrainModifier.CutBatterSlope);
+                if (down <= 0f) continue;
+                Vector2 at = end.Edge + end.Up * along;
+                cuts.Add(new Vector3(at.x, end.Height - down, at.y));
+            }
+        return cuts;
+    }
+
     /// <summary>Whether a crossing's saved kit is one it is built in: not none, not <see cref="Kit.Undecided"/>.</summary>
     public static bool Chosen(Kit? kit) => kit is Kit k && k != Kit.Undecided;
 

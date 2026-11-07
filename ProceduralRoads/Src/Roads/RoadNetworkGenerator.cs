@@ -2609,7 +2609,7 @@ public static partial class RoadNetworkGenerator
         // span or bridge (a neighbouring ford's piece in a pool chain did, under a deck turned onto a buildable heading).
         // A bridge whose ends the owner brings the road to (MeetsTheRoad) is left to StructureEnds' own trimming.
         // The other roads on a structure end's landing ground are raised to it with the road (StructureEnds.MeetEnds).
-        CrossingGround crossingGround = GroundOf(crossings, width);
+        CrossingGround crossingGround = GroundOf(crossings);
         crossingGround.RaiseOthers();
         foreach (RoadCrossing c in crossings)
             if (!c.Shared)
@@ -2757,52 +2757,34 @@ public static partial class RoadNetworkGenerator
     /// painted in its style: waded at the ground's own height, or raised to
     /// the bank clearance so the leveled road stands above the water.
     /// </summary>
-    /// <summary>Metres of levelled ground carried in under each end of a bridge deck,
-    /// over land only.</summary>
-    public const float DeckGroundReach = 3f;
-    /// <summary>Ground under a deck end is held at least this far below the deck.</summary>
-    public const float DeckUnderClearance = 0.4f;
-
     /// <summary>
     /// What a road's crossings change besides the road itself, the one list a generated road and a manual road both store
-    /// with it: the other roads on an end's landing raised to it (StructureEnds.MeetEnds), and the ground under each
-    /// bridge's deck ends (<see cref="CrossingGround.UnderDecks"/>).
+    /// with it: the other roads on an end's landing raised to it (StructureEnds.MeetEnds), and the ground cut under each
+    /// deck and each viaduct's end stairs (<see cref="CrossingGround.Cuts"/>).
     /// </summary>
     internal sealed class CrossingGround
     {
         /// <summary>The other roads' points on the landings of the road's own crossings' ends, each to its new height.</summary>
         public readonly List<(RoadSpatialGrid.RoadPoint at, float to)> Raised = new();
-        /// <summary>The ground cut to each step under a viaduct's end stairs, decided from the road's arrival (StructureEnds),
-        /// <see cref="CutWidth"/> wide.</summary>
+        /// <summary>The ground cut, <see cref="CutWidth"/> wide: to each step under a viaduct's end stairs, decided from the
+        /// road's arrival (StructureEnds), and under every deck to its underside (BridgeStructures.GroundUnderDeck).</summary>
         public readonly List<Vector3> Cuts = new();
         public static float CutWidth => BridgeLayout.EndStairsWidth;
-        /// <summary>
-        /// Road carried in under each end of every bridge, up to
-        /// <see cref="DeckGroundReach"/> and only while the ground is above the
-        /// waterline, levelled to the ground or <see cref="DeckUnderClearance"/>
-        /// under the deck, whichever is lower, and never painted: the paint stops
-        /// at the end's stairs' foot (StructureEnds.Unpainted). It cuts what the
-        /// height estimate missed: measured at one bridge, the estimate put the
-        /// ground 1 m in at 31.2 m while the game's terrain stood 31.9-32.4 m
-        /// under a 31.8 m deck, poking through it. Null where there is none.
-        /// </summary>
-        public RoadSpatialGrid.PlannedPath? UnderDecks;
 
         /// <summary>The other roads raised (generation: before the road is stored, so its junctions meet them as raised).</summary>
         public void RaiseOthers() => RoadSpatialGrid.SetRoadHeights(Raised);
 
-        /// <summary>The cuts and the ground under the decks stored (generation: once the road and its staircases are).</summary>
+        /// <summary>The cuts stored (generation: once the road and its staircases are).</summary>
         public void CommitGround()
         {
             if (Cuts.Count > 0) RoadSpatialGrid.CommitCuts(Cuts, CutWidth);
-            if (UnderDecks != null) RoadSpatialGrid.CommitLevelled(UnderDecks.Points, UnderDecks.Heights, UnderDecks.Width, unpainted: true);
         }
     }
 
-    /// <summary><see cref="CrossingGround"/> of <paramref name="crossings"/>, a road's of <paramref name="width"/>: the raises of
-    /// those it builds (not of one shared with a road laid before, which that road raised), the ground under every bridge's
-    /// deck ends where crossings are built over water (<see cref="RoadCrossingDetector.ToWater"/>).</summary>
-    internal static CrossingGround GroundOf(List<RoadCrossing> crossings, float width)
+    /// <summary><see cref="CrossingGround"/> of <paramref name="crossings"/>: the raises of those it builds (not of one shared
+    /// with a road laid before, which that road raised), and where crossings are built over water
+    /// (<see cref="RoadCrossingDetector.ToWater"/>) the ground cut under every deck and under a viaduct's end stairs.</summary>
+    internal static CrossingGround GroundOf(List<RoadCrossing> crossings)
     {
         var ground = new CrossingGround();
         foreach (RoadCrossing c in crossings)
@@ -2811,15 +2793,11 @@ public static partial class RoadNetworkGenerator
                     if (raised != null) ground.Raised.AddRange(raised);
         if (!RoadCrossingDetector.ToWater) return ground;
         var world = GenerationWorld;
-        var temp = new List<Vector2>(); var hs = new List<float>();
         foreach (var c in crossings)
         {
-            // A bridge's alone: a ford's span keeps its deck's line clear of road (OwnPieces, RoadRide.DeckLines), its
-            // footbridge low over shallow water where no ground stands under the deck to cut.
-            if (c.Kind != CrossingKind.Bridge) continue;
+            if (!BridgeStructures.HasDeck(c)) continue;
             float span = Vector2.Distance(c.FromBank, c.ToBank);
             if (span < 2f) continue;
-            float ceiling = BridgeStructures.DeckHeight(c, world) - DeckUnderClearance;
             // Under a viaduct's end stairs the ground is cut to each step.
             if (IsViaduct(c))
             {
@@ -2831,25 +2809,10 @@ public static partial class RoadNetworkGenerator
                         ground.Cuts.Add(new Vector3(at.x, StructureEnds.StepBase(end.Height, k), at.y));
                     }
             }
-            // No road painted in under a viaduct's deck at the ground's height: its road runs on under the end module at the
-            // meeting height (StructureEnds.JoinOverlap), and road at the ground under a deck end is wrong.
-            if (IsViaduct(c)) continue;
-            float reach = Mathf.Min(DeckGroundReach, span * 0.5f);
-            // Nor at an end with no stairs laid (met level, or landed on its last row, StructureEnds.MeetEnds): its road runs on
-            // under the deck's end at the deck's height, as a viaduct's does.
-            var (nearEnd, farEnd) = BridgeStructures.Ends(c, world);
-            foreach (var (bank, other, end) in new[] { (c.FromBank, c.ToBank, nearEnd), (c.ToBank, c.FromBank, farEnd) })
-                for (float d = 0.5f; d <= reach && end.Steps != 0; d += 0.5f)
-                {
-                    var p = bank + (other - bank) * (d / span);
-                    float g = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
-                    if (g < RoadCrossingDetector.Waterline) break;
-                    temp.Add(p); hs.Add(Mathf.Min(g, ceiling));
-                }
+            // Under every deck, of every kit, to its underside: no ground pokes up through it, at an end met level (its road
+            // run on under the deck's end at the walking surface, StructureEnds.JoinOverlap) or one with stairs.
+            ground.Cuts.AddRange(BridgeStructures.GroundUnderDeck(c, world, CrossingGround.CutWidth * 0.5f));
         }
-        if (temp.Count > 0)
-            ground.UnderDecks = new RoadSpatialGrid.PlannedPath(temp, hs, temp.ConvertAll(_ => default(RoadPointDebugInfo)), width, 0f, false)
-                { Unpainted = temp.ConvertAll(_ => true) };
         return ground;
     }
 

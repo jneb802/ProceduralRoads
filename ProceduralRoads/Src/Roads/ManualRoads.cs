@@ -517,11 +517,10 @@ public static partial class RoadNetworkGenerator
             append.IntoSite.AddRange(ends.IntoSite);
             append.Landed.AddRange(ends.Landed);
         }
-        append.Ground = GroundOf(crossings, paths.Count > 0 ? paths[0].Width : RoadWidth);
+        append.Ground = GroundOf(crossings);
         append.WithFills.AddRange(paths);
         append.WithFills.AddRange(RoadJunctionFillet.For(paths, WorldGenerator.instance, crossings, own));
         append.WithFills.AddRange(RoadStairRuns.StartPads(paths, own, WorldGenerator.instance));
-        if (append.Ground.UnderDecks != null) append.WithFills.Add(append.Ground.UnderDecks);
         return append;
     }
 

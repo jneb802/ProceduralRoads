@@ -62,8 +62,8 @@ public sealed class ManualRoadPipelineTests : IDisposable
 
     /// <summary>
     /// A manual road's crossings change the network as a generated road's do (RoadNetworkGenerator.GroundOf), in its one
-    /// append: another road on a bridge end's landing is raised to it (to the higher, where both ends raise it), and the ground under each deck end with stairs is
-    /// carried in under the deck, unpainted. The raised road is the append's, so terrain written before it is written again.
+    /// append: another road on a bridge end's landing is raised to it (to the higher, where both ends raise it), and the ground under its deck
+    /// is cut to the deck's underside (BridgeStructures.GroundUnderDeck). The raised road is the append's, so terrain written before it is written again.
     /// </summary>
     [Fact]
     public void AManualRoadsBridgeRaisesTheRoadOnItsLandingAndGroundsItsDeckEnds()
@@ -96,11 +96,66 @@ public sealed class ManualRoadPipelineTests : IDisposable
         Assert.All(raised, rp => Assert.Equal(37f, rp.h, 3));
         Assert.Contains(RoadSpatialGrid.PendingPoints(RoadSpatialGrid.GetRoadPointsInZone(ZoneSystem.GetZone(new Vector3(-24f, 0f, -20f))), before),
             rp => rp.IsRoad && Vector2.Distance(rp.p, onLanding.p) < 0.01f);
-        foreach (float x in new[] { -14.5f, 14.5f })
+        float underside = 38f - BridgeStructures.DeckDepth(c, world);
+        foreach (float x in new[] { -12f, 12f })
         {
-            var under = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 0.6f).Where(rp => rp.IsRoad && rp.unpainted).ToList();
-            Assert.True(under.Count > 0, $"no ground carried in under the deck's end at x = {x}");
+            var under = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 0.6f).Where(rp => rp.cutOnly).ToList();
+            Assert.True(under.Count > 0, $"no ground cut under the deck's end at x = {x}");
+            Assert.All(under, rp => Assert.Equal(underside, rp.h, 3));
         }
+    }
+
+    /// <summary>
+    /// A Dvergr wood bridge whose ends are met level, the road run on under each deck's end at its walking surface
+    /// (StructureEnds.JoinOverlap), over banks standing at that height: the ground under the deck is cut to the deck's
+    /// underside (BridgeStructures.GroundUnderDeck), only the batter's wedge under its first metres standing over it, and
+    /// never up to the walking surface; the road before the edge keeps its height. Before, the bank stood level with the planks'
+    /// top under each end and showed through them (at one bridge 31.50 m ground under 31.50 m plank tops).
+    /// </summary>
+    [Fact]
+    public void TheGroundUnderADeckMetLevelStaysUnderItsUnderside()
+    {
+        using var toWater = StaticOverride.Keep(() => RoadCrossingDetector.ToWater);
+        RoadCrossingDetector.ToWater = true;
+        var world = new Gorge();
+        _scope.WithWorld(world).WithZdos().WithZoneSystem().WithScene().AsServer();
+        RoadNetworkGenerator.MarkLocationsReady();
+        RoadSpatialGrid.FinalizeRoadNetwork(); RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+        int before = RoadSpatialGrid.RoadNetworkVersion;
+
+        var c = RoadCrossing.Between(new Vector2(-16f, 0f), new Vector2(16f, 0f), 20f, new Vector2(0f, 0f), 24f, CrossingKind.Bridge);
+        c.Kit = BridgeStructures.Kit.DvergrWood;
+        c.FromEnd = new StructureEnds.End(c.FromBank, c.Direction, 36f, 0);
+        c.ToEnd = new StructureEnds.End(c.ToBank, -c.Direction, 36f, 0);
+        // The road to the edge and on under the deck's end at its walking surface, as the generator lays it.
+        var road = new List<Vector2>();
+        for (float x = -60f; x <= -16f + StructureEnds.JoinOverlap + 0.01f; x += 0.5f) road.Add(new Vector2(x, 0f));
+        var piece = new RoadSpatialGrid.PlannedPath(road, road.ConvertAll(_ => 36f), road.ConvertAll(_ => default(RoadPointDebugInfo)), 4f, 44f, false);
+        RoadNetworkGenerator.AppendManualRoad(new[] { piece }, new List<RoadCrossing> { c }, Array.Empty<RoadStairSpan>(), road[0], before);
+
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = _scope.RegisterHeightmap(zone, 64);
+        TerrainComp tc = hm.m_terrainComp!;
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), hm, tc);
+        float Ground(int x, int z)
+        {
+            int i = (z + 32) * 65 + (x + 32);
+            return BiomeBlendedHeight.GetBlendedHeight(x, z, world) + (tc.m_modifiedHeight[i] ? tc.m_levelDelta[i] + tc.m_smoothDelta[i] : 0f);
+        }
+        float depth = DvergrWoodBridge.DeckDepth;
+        Assert.Equal(depth, BridgeStructures.DeckDepth(c, world));
+        foreach (int sign in new[] { -1, 1 })
+            for (int along = 1; along <= 4; along++)
+                for (int z = -1; z <= 1; z++)
+                {
+                    // On the line the batter's wedge climbs to the walking surface at the edge; off it the cuts' batter
+                    // climbs a little higher (they are round), still well under the walking surface.
+                    int x = sign * (16 - along);
+                    float g = Ground(x, z), most = 36f - Mathf.Min(along, depth) * (z == 0 ? 1f : 0.5f);
+                    Assert.True(g <= most + 1e-3f, $"ground {g:F2} at ({x}, {z}), {along} m under the deck's end: over {most:F2} (deck 36, underside {36f - depth:F2})");
+                }
+        for (int x = -20; x <= -17; x++)
+            Assert.True(Mathf.Abs(Ground(x, 0) - 36f) < 0.05f, $"the road before the deck's edge at x = {x} stands {Ground(x, 0):F2}, not 36");
     }
 
     public ManualRoadPipelineTests()

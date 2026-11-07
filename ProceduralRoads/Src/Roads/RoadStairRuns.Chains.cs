@@ -489,6 +489,10 @@ public static partial class RoadStairRuns
     /// <summary>Ridge meets laid back to back, the second searched down from the first's top edge (StairLayout.BuildDown).</summary>
     public static int RidgesSnapped;
 
+    /// <summary>Two tops met at a crest this generation (JoinCrest, StairLayout.JoinTops), each try: joined by a snapped run,
+    /// joined by a clip (of those, as they stand, nothing laid), or refused.</summary>
+    public static int TopJoinsSnapped, TopJoinsClipped, TopJoinsAsTheyStand, TopJoinsRefused;
+
 
     /// <summary>Valley meets laid from a floor shared at the bottom this generation.</summary>
     public static int ValleysMet;

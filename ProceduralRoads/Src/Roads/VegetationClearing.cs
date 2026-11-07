@@ -689,6 +689,14 @@ public static class VegetationClearing
     private static bool StillCurrent(Vector2s zone, int version) =>
         version == RoadSpatialGrid.RoadNetworkVersion && RoadTerrainModifier.CarriesCurrentRoads(zone, Version);
 
+    /// <summary>The zones explored before the network whose lying vegetation has been judged, by the network version
+    /// (<see cref="ServerBakePlanner.LyingOwed"/>). Not saved: judging again leaves what was turned or removed as it is.</summary>
+    private static readonly Dictionary<Vector2s, int> s_lyingJudged = new();
+
+    public static bool LyingJudged(Vector2s zone, int version) => s_lyingJudged.TryGetValue(zone, out int judged) && judged == version;
+
+    public static void MarkLyingJudged(Vector2s zone, int version) => s_lyingJudged[zone] = version;
+
     public static void MarkCleared(Vector2s zone, int version)
     {
         if (version == 0)
@@ -760,6 +768,7 @@ public static class VegetationClearing
     public static void Reset()
     {
         s_unknown.Clear();
+        s_lyingJudged.Clear();
         s_unknownVersion = s_unknownAppends = 0;
         s_cleared.Clear();
         s_clearedThrough.Clear();

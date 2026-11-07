@@ -1105,7 +1105,11 @@ public static class ServerTerrainBake
     /// </summary>
     private static Outcome ProcessVegetation(Vector2s zone, bool generated, bool loadedHere)
     {
-        if (!ServerBakePlanner.VegetationOwed(generated, VegetationClearing.IsCleared(zone, s_version), NetworkCutoff.Excludes(zone)))
+        bool beforeNetwork = NetworkCutoff.Excludes(zone);
+        // A zone explored before the network keeps its trees, bushes and rocks, but what lies across the road is still judged.
+        if (ServerBakePlanner.LyingOwed(generated, beforeNetwork, VegetationClearing.LyingJudged(zone, s_version)))
+            return ProcessLyingVegetation(zone);
+        if (!ServerBakePlanner.VegetationOwed(generated, VegetationClearing.IsCleared(zone, s_version), beforeNetwork))
         {
             // Nothing owed here any more. Terrain's give-up, if it has one,
             // stands -- this says the PENDING work is done, not that terrain
@@ -1169,6 +1173,33 @@ public static class ServerTerrainBake
         // Vegetation is finished for this zone and this network. If terrain
         // gave up earlier it stays given up; what goes is the pending entry,
         // which otherwise kept the bake from ever reporting itself done.
+        s_ghostRepair.PendingWorkDone(zone);
+        return Outcome.Done;
+    }
+
+    /// <summary>The lying vegetation of a zone explored before the network (<see cref="ServerBakePlanner.LyingOwed"/>): each
+    /// stump and fallen log is judged by the one rule (VegetationClearing.Decide) and turned off the road or removed.</summary>
+    private static Outcome ProcessLyingVegetation(Vector2s zone)
+    {
+        List<VegetationClearing.Area> areas = ClearAreasFor(zone);
+        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
+        if (areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0)
+        {
+            if (AnyPeerNear(zone))
+            {
+                s_ghostRepair.Defer(zone, Time.time, RetryDelaySeconds);
+                return Outcome.Waiting;
+            }
+            int removed = RemoveVegetation(zone, areas, structureAreas, road, lyingOnly: true);
+            if (removed > 0)
+            {
+                s_counts.VegetationZones++;
+                s_counts.VegetationRemoved += removed;
+                Log.LogDebug($"[BAKE] zone {zone}: removed {removed} lying trees and stumps from the road");
+            }
+        }
+        VegetationClearing.MarkLyingJudged(zone, s_version);
         s_ghostRepair.PendingWorkDone(zone);
         return Outcome.Done;
     }
@@ -1314,7 +1345,7 @@ public static class ServerTerrainBake
     }
 
     private static int RemoveVegetation(Vector2s zone, List<VegetationClearing.Area> areas, List<VegetationClearing.Area> structureAreas,
-        List<VegetationClearing.RoadCentre> road)
+        List<VegetationClearing.RoadCentre> road, bool lyingOnly = false)
     {
         HashSet<int> vegetation = VegetationPrefabs();
         List<VegetationClearing.Footprint> locations = LocationsNear(zone);
@@ -1325,6 +1356,7 @@ public static class ServerTerrainBake
         int removed = 0;
         foreach (ZDO zdo in zdos)
         {
+            if (lyingOnly && !VegetationClearing.IsLying(zdo.GetPrefab())) continue;
             Vector3 position = zdo.GetPosition();
             Vector3 euler = zdo.GetRotation().eulerAngles;
             VegetationClearing.Lying verdict = VegetationClearing.Decide(zdo.GetPrefab(), new Vector2(position.x, position.z),

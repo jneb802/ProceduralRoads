@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Valheim.Testing.Doubles;
 using Xunit;
@@ -124,6 +125,38 @@ public class ServerBakeTests
         Assert.True(ServerBakePlanner.VegetationOwed(generated: true, cleared: false, generatedBeforeNetwork: false));
         Assert.False(ServerBakePlanner.VegetationOwed(generated: true, cleared: true, generatedBeforeNetwork: false));
         Assert.False(ServerBakePlanner.VegetationOwed(generated: false, cleared: false, generatedBeforeNetwork: false));
+    }
+
+    /// <summary>
+    /// A zone explored before the network keeps its trees, bushes and rocks, but not what lies across the road: a stump or a
+    /// fallen log is still judged there (VegetationClearing.Decide), once per zone and network, however the zone was reached.
+    /// </summary>
+    [Fact]
+    public void LyingVegetationInACutoffZoneIsStillOwedItsJudgement()
+    {
+        Assert.True(ServerBakePlanner.LyingOwed(generated: true, generatedBeforeNetwork: true, done: false));
+        Assert.False(ServerBakePlanner.LyingOwed(generated: true, generatedBeforeNetwork: true, done: true));
+        // A zone generated with the network is owed its whole pass (VegetationOwed), not this one; an ungenerated one nothing.
+        Assert.False(ServerBakePlanner.LyingOwed(generated: true, generatedBeforeNetwork: false, done: false));
+        Assert.False(ServerBakePlanner.LyingOwed(generated: false, generatedBeforeNetwork: true, done: false));
+    }
+
+    /// <summary>The stump and the log found on a paved road in an already generated zone, and one clear of it.</summary>
+    [Fact]
+    public void AnExistingStumpOnTheRoadIsRemovedAndALogAcrossItTurnedWhileOneClearIsLeft()
+    {
+        var road = Enumerable.Range(-60, 121).Select(x => new VegetationClearing.RoadCentre(new Vector2(x, 0f), 2f)).ToList();
+        var none = new List<VegetationClearing.Area>();
+        var nobody = new List<VegetationClearing.Footprint>();
+        int stump = "stubbe".GetStableHashCode(), log = "FirTree_oldLog".GetStableHashCode();
+        var vegetation = new HashSet<int> { stump, log };
+        Assert.True(VegetationClearing.IsLying(stump) && VegetationClearing.IsLying(log));
+        Assert.Equal(VegetationClearing.Lying.Remove, VegetationClearing.Decide(stump, new Vector2(10f, 0.5f), false, vegetation, none, nobody, nobody,
+            road, 1f, null, null, 90f, out _));
+        Assert.Equal(VegetationClearing.Lying.Turned, VegetationClearing.Decide(log, new Vector2(0f, 5f), false, vegetation, none, nobody, nobody,
+            road, 1f, null, null, 0f, out _));
+        Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(log, new Vector2(0f, 30f), false, vegetation, none, nobody, nobody,
+            road, 1f, null, null, 0f, out _));
     }
 
     [Theory]

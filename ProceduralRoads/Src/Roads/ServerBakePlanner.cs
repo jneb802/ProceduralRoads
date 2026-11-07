@@ -126,6 +126,15 @@ public static class ServerBakePlanner
         generated && !cleared && !generatedBeforeNetwork;
 
     /// <summary>
+    /// Whether a zone explored before the network is owed the judgement of what lies along the ground (a stump, a fallen log:
+    /// <see cref="VegetationClearing.IsLying"/>) and nothing else of the vegetation pass: such a piece across the road is turned
+    /// off it or removed there as in any zone (<see cref="VegetationClearing.Decide"/>), once per zone and network, while the
+    /// trees, bushes and rocks its players grew up with stay (<see cref="VegetationOwed"/>).
+    /// </summary>
+    public static bool LyingOwed(bool generated, bool generatedBeforeNetwork, bool done) =>
+        generated && generatedBeforeNetwork && !done;
+
+    /// <summary>
     /// Whether a zone owed its vegetation pass also has its saved rocks
     /// cleared: only where the server does not have the zone loaded (a loaded zone's rocks are live objects,
     /// which the half-second pass of RoadRockClearing clears).

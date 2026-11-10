@@ -31,7 +31,7 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static void Prefix(Vector2s zoneID, List<ZoneSystem.ClearArea> clearAreas)
         {
-            if (!RoadNetworkGenerator.RoadsGenerated)
+            if (!RoadNetworkGenerator.RoadsAvailable)
                 return;
 
             List<ZoneSystem.ClearArea> roadClearAreas = RoadClearAreaManager.GetOrCreateClearAreas(zoneID);
@@ -48,7 +48,7 @@ public static class ZoneSystem_Patch
             if (mode == ZoneSystem.SpawnMode.Client)
                 return;
 
-            if (__result && RoadNetworkGenerator.RoadsGenerated)
+            if (__result && RoadNetworkGenerator.RoadsAvailable)
             {
                 List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
                 if (roadPoints.Count > 0)

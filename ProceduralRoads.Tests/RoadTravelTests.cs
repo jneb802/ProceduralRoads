@@ -35,11 +35,14 @@ public sealed class RoadTravelTests : IDisposable
     {
         Road(0, 0, 100, 0); Road(100, 0, 150, 10); RoadTravelApi.Rebuild();
         string[] ids = RoadTravelApi.GetRoutes().Select(r => r.Id).OrderBy(id => id).ToArray();
+        string geometry = RoadTravelApi.GeometryVersion;
         byte[] saved = RoadTravelApi.Export();
         RoadTravelApi.Clear(); Assert.True(RoadTravelApi.Import(saved));
         Assert.True(RoadTravelApi.Connected(ids[0], ids[1]));
+        Assert.Equal(geometry, RoadTravelApi.GeometryVersion);
         RoadTravelApi.Clear(); Road(100, 0, 150, 10); Road(0, 0, 100, 0); RoadTravelApi.Rebuild();
         Assert.Equal(ids, RoadTravelApi.GetRoutes().Select(r => r.Id).OrderBy(id => id).ToArray());
+        Assert.Equal(geometry, RoadTravelApi.GeometryVersion);
         RoadTravelApi.WorldId = 456; Assert.False(RoadTravelApi.Import(saved));
     }
     [Fact]

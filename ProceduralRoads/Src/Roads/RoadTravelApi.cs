@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using UnityEngine;
@@ -15,6 +16,7 @@ public static class RoadTravelApi
     internal static long WorldId;
     public static bool Ready => RoadNetworkGenerator.RoadsAvailable && Routes.Count > 0;
     public static int Revision { get; private set; }
+    internal static string GeometryVersion { get; private set; } = "";
     private static readonly List<Route> Routes = new();
     private static readonly Dictionary<string, Route> ById = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, string> Components = new(StringComparer.Ordinal);
@@ -77,7 +79,7 @@ public static class RoadTravelApi
 
     internal static void Clear()
     {
-        Routes.Clear(); ById.Clear(); Components.Clear(); AccessRoads.Clear(); Cells.Clear(); Revision++;
+        Routes.Clear(); ById.Clear(); Components.Clear(); AccessRoads.Clear(); Cells.Clear(); GeometryVersion = ""; Revision++;
     }
 
     internal static void Rebuild()
@@ -111,6 +113,8 @@ public static class RoadTravelApi
             }
         }
         foreach (string id in ById.Keys) Components[id] = Root(id);
+        using SHA256 sha = SHA256.Create();
+        GeometryVersion = BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(string.Join("|", ById.Keys.OrderBy(id => id, StringComparer.Ordinal))))).Replace("-", "");
         Revision++;
     }
 

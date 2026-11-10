@@ -125,6 +125,7 @@ public static class RoadNetworkPersistence
             Log.LogWarning("[SAVE] SerializeAllRoadPoints returned null or empty data!");
         }
 
+        metadataZdo.Set("ProceduralRoads_TravelV1", RoadTravelApi.Export());
         byte[] startPointsData = SerializeRoadStartPoints(roadStartPoints);
         if (startPointsData != null && startPointsData.Length > 0)
         {
@@ -171,6 +172,9 @@ public static class RoadNetworkPersistence
             Log.LogDebug($"[LOAD] Successfully loaded: {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
 
             TryLoadRoadMetadata(roadStartPoints);
+            byte[]? topology = metadataZdo.GetByteArray("ProceduralRoads_TravelV1", null);
+            if (topology != null && !RoadTravelApi.Import(topology))
+                Log.LogWarning("Saved road travel data is incompatible. Road travel is unavailable.");
 
             return true;
         }

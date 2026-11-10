@@ -81,7 +81,7 @@ public static class RoadSpatialGrid
         return m_debugInfo.TryGetValue(position, out debugInfo);
     }
 
-    public static void AddRoadPath(List<Vector2> path, float width, WorldGenerator worldGen)
+    public static void AddRoadPath(List<Vector2> path, float width, WorldGenerator worldGen, Vector2? startNode = null, Vector2? endNode = null)
     {
         if (path == null || path.Count < 2 || worldGen == null)
             return;
@@ -119,6 +119,7 @@ public static class RoadSpatialGrid
         }
 
         MergePoints(tempPoints);
+        RoadTravelApi.Add(startNode ?? path[0], endNode ?? path[path.Count - 1], width, densePoints, smoothedHeights);
         
         TotalRoadPoints += densePoints.Count;
         TotalRoadLength += totalLength;

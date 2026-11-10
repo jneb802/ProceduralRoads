@@ -7,12 +7,19 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadLifecycleManager
 {
+    public static void UpdateServer()
+    {
+        if (ZNet.instance != null && ZNet.instance.IsServer() && RoadNetworkGenerator.IsLocationsReady &&
+            !RoadNetworkGenerator.RoadsAvailable && WorldGenerator.instance != null)
+            OnLocationsGenerated();
+    }
     /// <summary>
     /// Called when ZoneSystem starts. Initializes road generator and subscribes to events.
     /// </summary>
     public static void OnZoneSystemStart(ZoneSystem zoneSystem)
     {
         RoadNetworkGenerator.Initialize();
+        RoadTravelApi.WorldId = ZNet.instance != null && ZNet.m_world != null ? ZNet.instance.GetWorldUID() : 0;
         zoneSystem.GenerateLocationsCompleted += OnLocationsGenerated;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Subscribed to GenerateLocationsCompleted event");
     }

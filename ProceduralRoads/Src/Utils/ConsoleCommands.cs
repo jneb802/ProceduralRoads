@@ -414,6 +414,11 @@ public static class ConsoleCommands
     /// </summary>
     private static void GenerateRoadsCommand(Terminal.ConsoleEventArgs args)
     {
+        if (RoadGenerationAuthority.RequestServer())
+        {
+            args.Context.AddString("Requested a server road rebuild. The server accepts this only from an administrator.");
+            return;
+        }
         // Check prerequisites
         if (WorldGenerator.instance == null)
         {

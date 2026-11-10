@@ -10,6 +10,11 @@ namespace ProceduralRoads;
 /// </summary>
 public static class ZoneSystem_Patch
 {
+    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Update))]
+    private static class ServerRoadStartup
+    {
+        private static void Postfix() => RoadLifecycleManager.UpdateServer();
+    }
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))]
     public static class ZoneSystem_Start_Patch
     {

@@ -188,13 +188,13 @@ public static class RoadNetworkGenerator
     /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
     public static void GenerateRoads(bool force = false)
     {
-        if (m_roadsGenerated && !force)
+        if (RoadsAvailable && !force)
         {
             Log.LogDebug("Roads already generated, skipping");
             return;
         }
         
-        if (force && m_roadsGenerated)
+        if (force && RoadsAvailable)
         {
             Log.LogDebug("Force regenerating roads...");
             Reset();

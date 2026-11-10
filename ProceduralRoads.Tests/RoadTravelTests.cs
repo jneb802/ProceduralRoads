@@ -23,6 +23,30 @@ public sealed class RoadTravelTests : IDisposable
         Assert.False(RoadTravelApi.Connected(RoadTravelApi.GetRoutes()[0].Id, RoadTravelApi.GetRoutes()[1].Id));
     }
     [Fact]
+    public void ParallelRoadProjectionKeepsTheClosestRoadAndStableTies()
+    {
+        Road(0, 0, 100, 0); Road(0, 5, 100, 5); RoadTravelApi.Rebuild();
+        string first = RoadTravelApi.GetRoutes()[0].Id, second = RoadTravelApi.GetRoutes()[1].Id;
+        Assert.True(RoadTravelApi.TryFindRoad(new Vector3(50, 10, 1), 10, out string nearFirst, out _, out _, out _));
+        Assert.Equal(first, nearFirst);
+        Assert.True(RoadTravelApi.TryFindRoad(new Vector3(50, 10, 4), 32, out string nearSecond, out _, out _, out _));
+        Assert.Equal(second, nearSecond);
+        Assert.True(RoadTravelApi.TryFindRoad(new Vector3(50, 10, 2.5f), 10, out string tied, out _, out _, out _));
+        RoadTravelApi.Clear(); Road(0, 5, 100, 5); Road(0, 0, 100, 0); RoadTravelApi.Rebuild();
+        Assert.True(RoadTravelApi.TryFindRoad(new Vector3(50, 10, 2.5f), 10, out string reordered, out _, out _, out _));
+        Assert.Equal(tied, reordered);
+    }
+    [Fact]
+    public void ForcedRegenerationDiscardsLoadedConnectionsWhenNewDataIsUnavailable()
+    {
+        Road(0, 0, 100, 0); RoadTravelApi.Rebuild();
+        Assert.True(RoadTravelApi.Ready);
+        WorldGenerator.instance = null;
+        RoadNetworkGenerator.GenerateRoads(true);
+        Assert.Empty(RoadTravelApi.GetRoutes());
+        Assert.False(RoadTravelApi.Ready);
+    }
+    [Fact]
     public void JunctionsConnectButOverpassesDoNot()
     {
         Road(0, 0, 100, 0); Road(50, -30, 50, 30); Road(70, -30, 70, 30, 20); RoadTravelApi.Rebuild();

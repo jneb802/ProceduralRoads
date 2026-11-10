@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -7,6 +8,34 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadLifecycleManager
 {
+    private static readonly Queue<Heightmap> PendingTerrain = new();
+    private static float nextTerrainScan;
+
+    public static void UpdateLoadedTerrain()
+    {
+        if (!RoadTravelApi.Ready || ZoneSystem.instance == null) return;
+        if (PendingTerrain.Count == 0 && Time.unscaledTime >= nextTerrainScan)
+        {
+            nextTerrainScan = Time.unscaledTime + 2f;
+            foreach (Heightmap heightmap in Heightmap.GetAllHeightmaps())
+                if (heightmap != null && !heightmap.IsDistantLod) PendingTerrain.Enqueue(heightmap);
+        }
+        if (PendingTerrain.Count == 0) return;
+        Heightmap current = PendingTerrain.Dequeue();
+        if (current == null || !ZoneSystem.instance.IsZoneLoaded(current.transform.position)) return;
+        Vector2s zone = ZoneSystem.GetZone(current.transform.position);
+        List<RoadSpatialGrid.RoadPoint> points = RoadSpatialGrid.GetRoadPointsInZone(zone);
+        if (points.Count == 0) return;
+        TerrainComp terrain = TerrainComp.FindTerrainCompiler(current.transform.position);
+        // Network objects can arrive after the zone root. Wait for them before creating a compiler.
+        if (terrain == null)
+        {
+            if (ZNetScene.instance == null || !ZNetScene.instance.IsAreaReady(current.transform.position)) return;
+            terrain = current.GetAndCreateTerrainCompiler();
+        }
+        if (!terrain.m_nview.IsValid() || !terrain.m_nview.IsOwner()) return;
+        RoadTerrainModifier.ApplyRoadTerrainMods(zone, points);
+    }
     public static void UpdateServer()
     {
         if (ZNet.instance != null && ZNet.instance.IsServer() && RoadNetworkGenerator.IsLocationsReady &&
@@ -18,6 +47,8 @@ public static class RoadLifecycleManager
     /// </summary>
     public static void OnZoneSystemStart(ZoneSystem zoneSystem)
     {
+        PendingTerrain.Clear();
+        nextTerrainScan = 0f;
         RoadNetworkGenerator.Initialize();
         RoadTravelApi.WorldId = ZNet.instance != null && ZNet.m_world != null ? ZNet.instance.GetWorldUID() : 0;
         zoneSystem.GenerateLocationsCompleted += OnLocationsGenerated;
@@ -29,6 +60,7 @@ public static class RoadLifecycleManager
     /// </summary>
     public static void OnZoneSystemDestroy(ZoneSystem zoneSystem)
     {
+        PendingTerrain.Clear();
         zoneSystem.GenerateLocationsCompleted -= OnLocationsGenerated;
         RoadNetworkGenerator.Reset();
         RoadClearAreaManager.ClearCache();

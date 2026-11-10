@@ -70,6 +70,20 @@ public sealed class RoadTravelTests : IDisposable
         RoadTravelApi.WorldId = 456; Assert.False(RoadTravelApi.Import(saved));
     }
     [Fact]
+    public void ImportedGeometryReplacesTheTerrainGridWithAuthoritativeHeights()
+    {
+        Road(0, 0, 20, 0, 42); RoadTravelApi.Rebuild();
+        byte[] saved = RoadTravelApi.Export();
+        RoadSpatialGrid.Clear();
+        Assert.True(RoadTravelApi.Import(saved));
+        Assert.True(RoadSpatialGrid.IsInitialized);
+        Assert.Equal(2, RoadSpatialGrid.TotalRoadPoints);
+        Assert.Equal(20f, RoadSpatialGrid.TotalRoadLength);
+        Assert.Contains(RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0, 0)), point => point.p.x == 0 && point.h == 42 && point.w == 4);
+        Assert.True(RoadTravelApi.Import(saved));
+        Assert.Equal(2, RoadSpatialGrid.TotalRoadPoints);
+    }
+    [Fact]
     public void ProjectionUsesSegmentAndReturnsDirectionAndWidth()
     {
         Road(0, 0, 100, 0); RoadTravelApi.Rebuild();

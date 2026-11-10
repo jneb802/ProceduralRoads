@@ -248,7 +248,9 @@ public static class RoadTravelApi
                 for (int j = 0; j < n; j++) points.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));
                 loaded.Add(new Route(id, start, end, a, b, width, points));
             }
-            Clear(); Routes.AddRange(loaded); Rebuild(); RoadNetworkGenerator.MarkRoadsLoadedFromZDO(); return true;
+            Clear(); Routes.AddRange(loaded); Rebuild();
+            RoadSpatialGrid.ImportTravelRoutes(Routes);
+            RoadNetworkGenerator.MarkRoadsLoadedFromZDO(); return true;
         }
         catch (Exception e) when (e is IOException || e is ArgumentException) { return false; }
     }

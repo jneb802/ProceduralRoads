@@ -52,6 +52,25 @@ public static class RoadSpatialGrid
 
     public static bool IsInitialized => m_initialized;
 
+    internal static void ImportTravelRoutes(IReadOnlyList<RoadTravelApi.Route> routes)
+    {
+        Clear();
+        Dictionary<Vector2i, List<RoadPoint>> points = new();
+        foreach (RoadTravelApi.Route route in routes)
+        {
+            for (int index = 0; index < route.Points.Count; index++)
+            {
+                Vector3 point = route.Points[index];
+                AddRoadPoint(points, new Vector2(point.x, point.z), route.Width, point.y);
+                TotalRoadPoints++;
+                if (index > 0) TotalRoadLength += Vector3.Distance(point, route.Points[index - 1]);
+            }
+        }
+        MergePoints(points);
+        m_initialized = TotalRoadPoints > 0;
+        FinalizeRoadNetwork();
+    }
+
     public static void Clear()
     {
         m_roadCacheLock.EnterWriteLock();

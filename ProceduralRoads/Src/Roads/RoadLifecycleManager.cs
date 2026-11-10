@@ -23,10 +23,11 @@ public static class RoadLifecycleManager
         if (PendingTerrain.Count == 0) return;
         Heightmap current = PendingTerrain.Dequeue();
         if (current == null || !ZoneSystem.instance.IsZoneLoaded(current.transform.position)) return;
+        TerrainComp terrain = TerrainComp.FindTerrainCompiler(current.transform.position);
+        if (terrain != null && (!terrain.m_nview.IsValid() || !terrain.m_nview.IsOwner() || RoadTerrainModifier.IsCurrent(terrain))) return;
         Vector2s zone = ZoneSystem.GetZone(current.transform.position);
         List<RoadSpatialGrid.RoadPoint> points = RoadSpatialGrid.GetRoadPointsInZone(zone);
         if (points.Count == 0) return;
-        TerrainComp terrain = TerrainComp.FindTerrainCompiler(current.transform.position);
         // Network objects can arrive after the zone root. Wait for them before creating a compiler.
         if (terrain == null)
         {

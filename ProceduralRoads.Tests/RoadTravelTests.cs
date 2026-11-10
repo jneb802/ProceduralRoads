@@ -111,4 +111,23 @@ public sealed class RoadTravelTests : IDisposable
         Assert.True(RoadTravelApi.TryGetLocationAccess(new Vector3(20, 0, 0), out _, out Vector3 shortEnd, out _, out _));
         Assert.Equal(7, shortStart.x); Assert.Equal(13, shortEnd.x);
     }
+    private sealed class CountingWorld : WorldGenerator
+    {
+        internal int HeightQueries;
+        public override float GetHeight(float x, float z) { HeightQueries++; return 40; }
+        public override Heightmap.Biome GetBiome(float x, float z) => Heightmap.Biome.Meadows;
+    }
+    [Fact]
+    public void RepeatedPathQueriesReuseTerrainSamplesWithinAPathAndRefreshBetweenPaths()
+    {
+        CountingWorld world = new(); RoadPathfinder pathfinder = new(world);
+        List<Vector2>? first = pathfinder.FindPath(new Vector2(0, 0), new Vector2(256, 0));
+        Assert.NotNull(first);
+        int queries = world.HeightQueries;
+        Assert.True(queries < 2000, "Terrain height queries: " + queries);
+        world.HeightQueries = 0;
+        List<Vector2>? second = pathfinder.FindPath(new Vector2(0, 0), new Vector2(256, 0));
+        Assert.Equal(first, second);
+        Assert.Equal(queries, world.HeightQueries);
+    }
 }

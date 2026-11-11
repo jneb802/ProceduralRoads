@@ -22,7 +22,9 @@ public static class ZoneSystem_Patch
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))]
     public static class ZoneSystem_Start_Patch
     {
+        // Run before other mods' postfixes: when one of them throws, Harmony skips every postfix after it.
         [HarmonyPostfix]
+        [HarmonyPriority(Priority.First)]
         public static void Postfix(ZoneSystem __instance)
         {
             RoadLifecycleManager.OnZoneSystemStart(__instance);

@@ -51,9 +51,16 @@ public static class RoadLifecycleManager
         PendingTerrain.Clear();
         nextTerrainScan = 0f;
         RoadNetworkGenerator.Initialize();
-        RoadTravelApi.WorldId = ZNet.instance != null && ZNet.m_world != null ? ZNet.instance.GetWorldUID() : 0;
+        UseCurrentWorld();
         zoneSystem.GenerateLocationsCompleted += OnLocationsGenerated;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Subscribed to GenerateLocationsCompleted event");
+    }
+
+    // Another mod's ZoneSystem.Start postfix can throw and stop OnZoneSystemStart from running, so the world ID is
+    // set again right before roads are loaded or generated. Saved topology is only accepted for the same world ID.
+    private static void UseCurrentWorld()
+    {
+        if (ZNet.instance != null && ZNet.m_world != null) RoadTravelApi.WorldId = ZNet.instance.GetWorldUID();
     }
 
     /// <summary>
@@ -78,6 +85,7 @@ public static class RoadLifecycleManager
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Location generation complete...");
         RoadNetworkGenerator.MarkLocationsReady();
         RoadClearAreaManager.ClearCache();
+        UseCurrentWorld();
 
         bool hasWorldGen = WorldGenerator.instance != null;
         bool hasLocations = ZoneSystem.instance?.GetLocationList()?.Count > 0;
@@ -115,6 +123,7 @@ public static class RoadLifecycleManager
 
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
             $"Player spawning at {spawnPoint}, attempting to load global road data...");
+        UseCurrentWorld();
 
         if (RoadNetworkGenerator.TryLoadGlobalRoadData())
         {

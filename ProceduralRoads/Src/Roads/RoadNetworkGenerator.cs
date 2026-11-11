@@ -391,7 +391,12 @@ public static partial class RoadNetworkGenerator
     /// <summary>How far from a place's centre a road still arrives at it, as <see cref="Reached"/> measures an ordinary
     /// place: its keep-out edge and one path cell past it. Where the road topology looks for a place's way in
     /// (<see cref="RoadTopologyService"/>).</summary>
-    internal static float ArrivalReach(Vector2 centre, float radius) => KeepOutEdge(centre, radius, RoadWidth) + ReachPastEdge;
+    /// <remarks>The keep-out edge of a place not placed first (<see cref="KeepOutEdge(Vector2, float, float, bool)"/>), read
+    /// without the site footprint index: its arrival radius is never past the exterior radius
+    /// (<see cref="RoadSiteProtection.ArrivalRadiusAt"/>), and building the index on a world that only loads its network
+    /// reads every location's prefab on the main thread (minutes on a dedicated server). A place placed first has its road
+    /// carried onto its landing, inside that radius.</remarks>
+    internal static float ArrivalReach(float radius) => radius + RoadSiteProtection.Clearance(RoadWidth) + ReachPastEdge;
 
     /// <summary>
     /// How far over or under the place's own level (<see cref="ArrivalHeight"/>) the network may end and still reach it: the one

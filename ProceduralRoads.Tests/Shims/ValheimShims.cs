@@ -158,6 +158,7 @@ public class ZoneSystem
 
     public class ZoneLocation
     {
+        public string m_group = "";
         public PrefabEntry m_prefab = new();
         public float m_exteriorRadius;
 

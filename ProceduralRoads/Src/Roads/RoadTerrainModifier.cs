@@ -8,6 +8,9 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadTerrainModifier
 {
+    private const string TerrainVersionKey = "ProceduralRoads.TravelTerrainV1";
+    internal static bool IsCurrent(TerrainComp terrain) => RoadTravelApi.GeometryVersion.Length > 0 &&
+        terrain.m_nview.GetZDO().GetString(TerrainVersionKey) == RoadTravelApi.GeometryVersion;
     private static int s_coordLogCount = 0;
 
     public static void ResetDebugCounters()
@@ -22,6 +25,8 @@ public static class RoadTerrainModifier
     {
         TerrainContext? context = GetTerrainContext(zoneID);
         if (context == null)
+            return;
+        if (IsCurrent(context.Value.TerrainComp))
             return;
 
         ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
@@ -254,6 +259,8 @@ public static class RoadTerrainModifier
         
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
+            if (RoadTravelApi.GeometryVersion.Length > 0)
+                context.TerrainComp.m_nview.GetZDO().Set(TerrainVersionKey, RoadTravelApi.GeometryVersion);
             context.TerrainComp.Save();
             // Valheim 1.0 turned Poke's bool into a selector for WHICH late
             // pass rebuilds the mesh, not a count: LateUpdate acts on 1,

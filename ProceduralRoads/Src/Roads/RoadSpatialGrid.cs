@@ -52,6 +52,25 @@ public static class RoadSpatialGrid
 
     public static bool IsInitialized => m_initialized;
 
+    internal static void ImportTravelRoutes(IReadOnlyList<RoadTravelApi.Route> routes)
+    {
+        Clear();
+        Dictionary<Vector2i, List<RoadPoint>> points = new();
+        foreach (RoadTravelApi.Route route in routes)
+        {
+            for (int index = 0; index < route.Points.Count; index++)
+            {
+                Vector3 point = route.Points[index];
+                AddRoadPoint(points, new Vector2(point.x, point.z), route.Width, point.y);
+                TotalRoadPoints++;
+                if (index > 0) TotalRoadLength += Vector3.Distance(point, route.Points[index - 1]);
+            }
+        }
+        MergePoints(points);
+        m_initialized = TotalRoadPoints > 0;
+        FinalizeRoadNetwork();
+    }
+
     public static void Clear()
     {
         m_roadCacheLock.EnterWriteLock();
@@ -81,7 +100,7 @@ public static class RoadSpatialGrid
         return m_debugInfo.TryGetValue(position, out debugInfo);
     }
 
-    public static void AddRoadPath(List<Vector2> path, float width, WorldGenerator worldGen)
+    public static void AddRoadPath(List<Vector2> path, float width, WorldGenerator worldGen, Vector2? startNode = null, Vector2? endNode = null)
     {
         if (path == null || path.Count < 2 || worldGen == null)
             return;
@@ -119,6 +138,7 @@ public static class RoadSpatialGrid
         }
 
         MergePoints(tempPoints);
+        RoadTravelApi.Add(startNode ?? path[0], endNode ?? path[path.Count - 1], width, densePoints, smoothedHeights);
         
         TotalRoadPoints += densePoints.Count;
         TotalRoadLength += totalLength;

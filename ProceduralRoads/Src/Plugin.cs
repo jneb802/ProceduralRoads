@@ -63,7 +63,7 @@ namespace ProceduralRoads
 
             IslandRoadPercentage = Config.Bind("Roads", "IslandRoadPercentage", 50,
                 new ConfigDescription("Percentage of islands that will have roads generated (0-100). " +
-                    "Islands are selected by size (largest first).",
+                    "Islands are selected by size (largest first). Shipping port islands with dry approaches are also included.",
                     new AcceptableValueRange<int>(0, 100)));
 
             PathfindingMaxIterations = Config.Bind("Roads", "PathfindingMaxIterations", 10000,

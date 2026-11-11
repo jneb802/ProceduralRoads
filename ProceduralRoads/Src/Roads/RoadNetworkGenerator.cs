@@ -83,6 +83,9 @@ public static class RoadNetworkGenerator
     /// Location names registered via API or config for road generation.
     /// </summary>
     private static readonly HashSet<string> RegisteredLocationNames = new HashSet<string>();
+    private static readonly HashSet<string> ShippingPortNames = new() { "MWL_PortLocation", "MWL_DragonPort1", "MWL_PortStone1" };
+    private static readonly Dictionary<Vector2, Vector2> PortApproaches = new();
+    private static readonly Dictionary<Vector2, int> PortIslands = new();
 
     #region Location Registration API
 
@@ -185,13 +188,13 @@ public static class RoadNetworkGenerator
     /// <param name="force">If true, regenerate roads even if already generated (for existing worlds)</param>
     public static void GenerateRoads(bool force = false)
     {
-        if (m_roadsGenerated && !force)
+        if (RoadsAvailable && !force)
         {
             Log.LogDebug("Roads already generated, skipping");
             return;
         }
         
-        if (force && m_roadsGenerated)
+        if (force && RoadsAvailable)
         {
             Log.LogDebug("Force regenerating roads...");
             Reset();
@@ -230,13 +233,16 @@ public static class RoadNetworkGenerator
             return;
 
         var islands = IslandDetector.DetectIslands();
+        PreparePortApproaches(islands, locations.Value.AllLocations);
         
         var sortedIslands = islands.OrderByDescending(i => i.ApproxArea).ToList();
         
         int islandCount = Mathf.Max(1, Mathf.RoundToInt(sortedIslands.Count * IslandRoadPercentage / 100f));
         var selectedIslands = sortedIslands.Take(islandCount).ToList();
+        foreach (Island island in sortedIslands)
+            if (PortIslands.ContainsValue(island.Id) && !selectedIslands.Contains(island)) selectedIslands.Add(island);
         
-        Log.LogDebug($"Islands: {islands.Count} total, {islandCount} selected ({IslandRoadPercentage}%)");
+        Log.LogDebug($"Islands: {islands.Count} total, {selectedIslands.Count} selected ({IslandRoadPercentage}% plus shipping port islands)");
 
         foreach (var island in selectedIslands)
         {
@@ -245,11 +251,14 @@ public static class RoadNetworkGenerator
             
             int maxLocs = GetMaxLocationsForIsland(island);
             var selected = SelectLocations(islandLocations, maxLocs);
+            // Ports are explicit road destinations. Do not drop them because of the ordinary location cap.
+            foreach ((string name, Vector3 position, float radius) port in islandLocations.Where(loc => IsShippingPort(loc.name)))
+                if (!selected.Contains(port)) selected.Add(port);
             
             Log.LogDebug(
                 $"Island {island.Id}: {islandLocations.Count} candidates -> {selected.Count} selected (max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km²)");
             
-        bool isStarterIsland = island.ContainsPoint(locations.Value.SpawnPoint);
+            bool isStarterIsland = island.ContainsPoint(locations.Value.SpawnPoint);
             
             if (isStarterIsland)
             {
@@ -260,17 +269,21 @@ public static class RoadNetworkGenerator
             {
                 GenerateIslandRoads(island, selected);
             }
+            EnsurePortRoads(selected);
         }
 
         TimeSpan elapsed = DateTime.Now - startTime;
         LogGenerationStats(m_roadsGeneratedCount, elapsed);
 
         RoadSpatialGrid.FinalizeRoadNetwork();
+        RoadTravelApi.Rebuild();
         
         m_roadsGenerated = true;
         m_pathfinder = null;
         
         RoadNetworkPersistence.EnsureMetadataInstance();
+        // Write the generated data now. Save implementations can bypass ZDOMan.PrepareSave.
+        SaveGlobalRoadData();
     }
 
     #region Core Road Generation Primitive
@@ -297,7 +310,9 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        List<Vector2>? path = m_pathfinder.FindPath(startCenter, endCenter);
+        Vector2 startAccess = PortApproaches.TryGetValue(startCenter, out Vector2 fromPort) ? fromPort : startCenter;
+        Vector2 endAccess = PortApproaches.TryGetValue(endCenter, out Vector2 toPort) ? toPort : endCenter;
+        List<Vector2>? path = m_pathfinder.FindPath(startAccess, endAccess);
 
         UnityEngine.Canvas.ForceUpdateCanvases();
 
@@ -317,7 +332,7 @@ public static class RoadNetworkGenerator
             return false;
         }
 
-        RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance);
+        RoadSpatialGrid.AddRoadPath(path, width, WorldGenerator.instance, startCenter, endCenter);
         m_roadsGeneratedCount++;
 
         if (path.Count > 0)
@@ -375,6 +390,7 @@ public static class RoadNetworkGenerator
         foreach (var loc in locationInstances)
         {
             string prefabName = loc.m_location.m_prefab.Name;
+            if (loc.m_location.m_group == "MWL_Ports") ShippingPortNames.Add(prefabName);
             float exteriorRadius = loc.m_location.m_exteriorRadius;
 
             allLocations.Add((prefabName, loc.m_position, exteriorRadius));
@@ -414,17 +430,62 @@ public static class RoadNetworkGenerator
         var result = new List<(string name, Vector3 position, float radius)>();
         foreach (var loc in allLocations)
         {
-            if (island.ContainsPoint(loc.position) && IsRoadLocation(loc.name))
+            Vector2 center = new(loc.position.x, loc.position.z);
+            bool belongs = IsShippingPort(loc.name) ? PortIslands.TryGetValue(center, out int portIsland) && portIsland == island.Id : island.ContainsPoint(loc.position);
+            if (belongs && IsRoadLocation(loc.name))
                 result.Add(loc);
         }
         return result;
     }
 
+    private static bool IsShippingPort(string name) => ShippingPortNames.Contains(name);
+
+    private static void PreparePortApproaches(List<Island> islands, List<(string name, Vector3 position, float radius)> locations)
+    {
+        PortApproaches.Clear(); PortIslands.Clear();
+        foreach ((string name, Vector3 position, float radius) port in locations.Where(location => IsShippingPort(location.name)))
+        {
+            Vector2 center = new(port.position.x, port.position.z);
+            float best = float.MaxValue;
+            foreach (float extra in new[] { 4f, 20f, 52f, 100f })
+            for (int i = 0; i < 32; i++)
+            {
+                float angle = i * Mathf.PI * 2 / 32;
+                Vector2 point = center + new Vector2(Mathf.Cos(angle), Mathf.Sin(angle)) * (port.radius + extra);
+                // Validate the same grid cell that the pathfinder will use, rather than a nearby shore sample.
+                point = new Vector2(Mathf.RoundToInt(point.x / RoadPathfinder.CellSize) * RoadPathfinder.CellSize,
+                    Mathf.RoundToInt(point.y / RoadPathfinder.CellSize) * RoadPathfinder.CellSize);
+                if (Vector2.Distance(point, center) < port.radius + 2) continue;
+                Island? island = islands.FirstOrDefault(candidate => candidate.ContainsPoint(point.x, point.y));
+                if (island == null) continue;
+                float height = WorldGenerator.instance.GetHeight(point.x, point.y);
+                if (height < RoadConstants.ShallowWaterHeight + 0.5f) continue;
+                float score = port.radius + extra + Mathf.Abs(height - RoadConstants.SeaLevel) * 2;
+                if (score >= best) continue;
+                best = score; PortApproaches[center] = point; PortIslands[center] = island.Id;
+            }
+            if (!PortApproaches.ContainsKey(center)) Log.LogWarning("No dry road approach found for shipping port at " + port.position);
+        }
+    }
+
     private static bool IsRoadLocation(string locationName)
     {
-        return BossLocationNames.Contains(locationName) ||
+        return IsShippingPort(locationName) || BossLocationNames.Contains(locationName) ||
                LocationPriorities.ContainsKey(locationName) ||
                RegisteredLocationNames.Contains(locationName);
+    }
+
+    private static void EnsurePortRoads(List<(string name, Vector3 position, float radius)> locations)
+    {
+        foreach ((string name, Vector3 position, float radius) port in locations.Where(location => IsShippingPort(location.name)))
+        {
+            string node = RoadTravelApi.NodeId(port.position);
+            if (RoadTravelApi.GetRoutes().Any(road => road.StartNode == node || road.EndNode == node)) continue;
+            // A failed edge in the ordinary road strategy must not silently remove a port.
+            foreach ((string name, Vector3 position, float radius) other in locations.Where(location => Vector3.Distance(location.position, port.position) > 0.1f)
+                         .OrderBy(location => Vector3.Distance(location.position, port.position)))
+                if (GenerateRoad(port.position, port.radius, other.position, other.radius, RoadWidth, "Port access: " + port.name + " -> " + other.name)) break;
+        }
     }
 
     private static int GetMaxLocationsForIsland(Island island)
@@ -602,7 +663,9 @@ public static class RoadNetworkGenerator
         m_pathfinder = null;
         m_roadsGeneratedCount = 0;
         m_roadStartPoints.Clear();
+        PortApproaches.Clear(); PortIslands.Clear();
         RoadNetworkPersistence.Reset();
+        RoadTravelApi.Clear();
         RoadSpatialGrid.Clear();
     }
 

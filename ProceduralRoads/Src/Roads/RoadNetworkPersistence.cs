@@ -125,6 +125,7 @@ public static class RoadNetworkPersistence
             Log.LogWarning("[SAVE] SerializeAllRoadPoints returned null or empty data!");
         }
 
+        metadataZdo.Set("ProceduralRoads_TravelV1", RoadTravelApi.Export());
         byte[] startPointsData = SerializeRoadStartPoints(roadStartPoints);
         if (startPointsData != null && startPointsData.Length > 0)
         {
@@ -171,6 +172,15 @@ public static class RoadNetworkPersistence
             Log.LogDebug($"[LOAD] Successfully loaded: {RoadSpatialGrid.GridCellsWithRoads} cells, {RoadSpatialGrid.TotalRoadPoints} points");
 
             TryLoadRoadMetadata(roadStartPoints);
+            // Roads exist, so the travel routes must too. Missing routes (a save from before road travel), routes from
+            // another world ID, or an empty route list mean road travel cannot work, so the caller regenerates.
+            byte[]? topology = metadataZdo.GetByteArray("ProceduralRoads_TravelV1", null);
+            if (topology == null || !RoadTravelApi.Import(topology) || RoadTravelApi.GetRoutes().Count == 0)
+            {
+                Log.LogWarning("Saved road travel data is missing, empty, or from another world. Regenerating roads.");
+                RoadNetworkGenerator.Reset();
+                return false;
+            }
 
             return true;
         }

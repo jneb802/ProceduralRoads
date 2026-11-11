@@ -41,6 +41,8 @@ public class RoadPathfinder
     }
 
     private WorldGenerator m_worldGen;
+    private readonly Dictionary<Vector2i, float> heights = new();
+    private readonly Dictionary<Vector2i, float> variances = new();
 
     public RoadPathfinder(WorldGenerator worldGen)
     {
@@ -49,6 +51,7 @@ public class RoadPathfinder
 
     public List<Vector2>? FindPath(Vector2 start, Vector2 end)
     {
+        heights.Clear(); variances.Clear();
         Vector2i startGrid = WorldToGrid(start);
         Vector2i endGrid = WorldToGrid(end);
 
@@ -133,9 +136,18 @@ public class RoadPathfinder
         return Mathf.Sqrt(dx * dx + dy * dy);
     }
 
-    private float GetTerrainVariance(Vector2 pos)
+    private float GetHeight(Vector2i cell)
     {
-        float centerHeight = m_worldGen.GetHeight(pos.x, pos.y);
+        if (heights.TryGetValue(cell, out float height)) return height;
+        Vector2 position = GridToWorld(cell);
+        height = m_worldGen.GetHeight(position.x, position.y); heights[cell] = height; return height;
+    }
+
+    private float GetTerrainVariance(Vector2i cell)
+    {
+        if (variances.TryGetValue(cell, out float variance)) return variance;
+        Vector2 pos = GridToWorld(cell);
+        float centerHeight = GetHeight(cell);
         float minHeight = centerHeight;
         float maxHeight = centerHeight;
         
@@ -149,24 +161,23 @@ public class RoadPathfinder
             maxHeight = Mathf.Max(maxHeight, h);
         }
         
-        return maxHeight - minHeight;
+        variance = maxHeight - minHeight; variances[cell] = variance; return variance;
     }
 
     private float GetMoveCost(Vector2i from, Vector2i to, int directionIndex)
     {
-        Vector2 fromWorld = GridToWorld(from);
         Vector2 toWorld = GridToWorld(to);
 
         float dist = DirectionCosts[directionIndex] * CellSize;
-        float h1 = m_worldGen.GetHeight(fromWorld.x, fromWorld.y);
-        float h2 = m_worldGen.GetHeight(toWorld.x, toWorld.y);
+        float h1 = GetHeight(from);
+        float h2 = GetHeight(to);
         float slope = Mathf.Abs(h2 - h1) / dist;
 
         m_worldGen.GetRiverWeight(toWorld.x, toWorld.y, out float riverWeight, out _);
         if (riverWeight > RoadConstants.RiverImpassableThreshold)
             return RiverPenalty;
 
-        float biomeHeight = m_worldGen.GetHeight(toWorld.x, toWorld.y);
+        float biomeHeight = h2;
         if (biomeHeight < RoadConstants.DeepWaterHeight)
             return WaterPenalty * 2f;
         if (biomeHeight < RoadConstants.ShallowWaterHeight)
@@ -175,7 +186,7 @@ public class RoadPathfinder
         if (slope > SteepSlopeThreshold)
             return SteepSlopePenalty;
 
-        if (GetTerrainVariance(toWorld) > TerrainVarianceThreshold)
+        if (GetTerrainVariance(to) > TerrainVarianceThreshold)
             return TerrainVariancePenalty;
 
         Heightmap.Biome biome = m_worldGen.GetBiome(toWorld.x, toWorld.y);

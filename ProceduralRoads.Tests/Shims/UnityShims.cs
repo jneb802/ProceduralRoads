@@ -74,6 +74,13 @@ public struct Vector3
     }
 
     public static Vector3 zero => new(0f, 0f, 0f);
+    public Vector3 normalized { get { Vector3 value = this; value.Normalize(); return value; } }
+    public void Normalize()
+    {
+        float length = (float)System.Math.Sqrt(x * x + y * y + z * z);
+        if (length > 0.00001f) { x /= length; y /= length; z /= length; }
+        else { x = 0; y = 0; z = 0; }
+    }
 
     public static float Distance(Vector3 a, Vector3 b)
     {

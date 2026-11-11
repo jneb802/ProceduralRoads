@@ -64,6 +64,28 @@ public static class ConsoleCommands
             var p = RoadLifecycleManager.Progress;
             args.Context.AddString($"Road progress: run={p.RunId} phase={p.Phase} completed={p.Completed} total={p.Total} elapsed={p.ElapsedSeconds:F1}s frame={Time.frameCount}");
         });
+        new Terminal.ConsoleCommand("road_topology", "Show the road topology this peer answers other mods from (the server's copy on a client)", args =>
+        {
+            RoadTopology? t = RoadTopologyService.Current;
+            string source = RoadLifecycleManager.HoldsTheNetwork ? "server" : "client copy";
+            if (t == null) { args.Context.AddString($"Road topology ({source}): none. Revision {RoadTopologyService.Revision}."); return; }
+            List<int> sizes = t.ComponentSizes();
+            args.Context.AddString($"Road topology ({source}) {t.Hash:x16}: network {t.NetworkVersion}, revision {RoadTopologyService.Revision}, " +
+                $"{t.PointCount} points, {t.Components} connected network(s) (largest {string.Join(", ", sizes.GetRange(0, Mathf.Min(5, sizes.Count)))}), " +
+                $"{t.AccessCount} place(s) with a way in, {t.Bytes.Length} bytes.");
+        });
+        new Terminal.ConsoleCommand("road_topology_nearest", "[radius] The road nearest the player in the road topology: route, centre, heading, width", args =>
+        {
+            Player? player = Player.m_localPlayer;
+            if (player == null) { args.Context.AddString("No local player."); return; }
+            float radius = args.Length > 1 && float.TryParse(args[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float r) ? r : 32f;
+            Vector3 at = player.transform.position;
+            if (!RoadTravelApi.TryFindRoad(at, radius, out string route, out Vector3 point, out Vector3 direction, out float width))
+            { args.Context.AddString($"No road within {radius:F0} m (topology ready: {RoadTravelApi.Ready})."); return; }
+            float across = Utils.DistanceXZ(at, point);
+            args.Context.AddString(System.FormattableString.Invariant(
+                $"Road {route}: centre ({point.x:F2}, {point.y:F2}, {point.z:F2}), heading ({direction.x:F3}, {direction.z:F3}), width {width:F2}, {across:F2} m across from the player."));
+        });
         ManualRoadCommands.Register();
         ManualRoadCommands.NextFrame = work => BepInEx.ThreadingHelper.Instance.StartCoroutine(AfterFrames(work));
         if (DevCommands)

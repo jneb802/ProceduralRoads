@@ -11,5 +11,7 @@ namespace ProceduralRoads
         public static System.Collections.Generic.List<string> ConfigLocationNames { get; set; } = new();
 
         public static System.Collections.Generic.List<string> GetConfigLocationNames() => new(ConfigLocationNames);
+        public static System.Collections.Generic.List<string> ConfigRequiredNames { get; set; } = new();
+        public static System.Collections.Generic.List<string> GetConfigRequiredNames() => new(ConfigRequiredNames);
     }
 }

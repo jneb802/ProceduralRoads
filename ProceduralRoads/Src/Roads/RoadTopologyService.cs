@@ -7,19 +7,16 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// Keeps the current <see cref="RoadTopology"/>: on the server (or host) it is rebuilt whenever the network's version
-/// changes (a generation, a load, a manual road, a clear); a client with the mod asks the server for it and keeps the copy
-/// it receives. A client never holds a network or writes terrain: the copy is read-only shape and connections. A client
-/// without the mod never asks and is unaffected.
+/// changes (a generation, a load, a manual road, a clear). A client with the mod asks for it once, when it joins, and keeps
+/// the copy it receives; the server sends it then (or as soon as it is built), and again only when an admin changes the
+/// network. Nothing is sent on a timer. A client never holds a network or writes terrain: the copy is read-only shape and
+/// connections. A client without the mod never asks and is unaffected.
 /// </summary>
 public static class RoadTopologyService
 {
     private const string RequestRpc = "ProceduralRoads.Topology.Request1";
     private const string DataRpc = "ProceduralRoads.Topology.Data1";
     private const byte KindNone = 0, KindChunk = 1;
-    /// <summary>How often a client asks whether its copy is current. Unchanged, the answer is nothing at all.</summary>
-    private const float ClientPollSeconds = 5f;
-    /// <summary>The fewest seconds between two answers to one peer.</summary>
-    private const float PeerAnswerSeconds = 2f;
     /// <summary>The largest piece of a copy sent in one message, under the transport's reliable message size.</summary>
     private const int ChunkBytes = 256 * 1024;
 
@@ -27,8 +24,10 @@ public static class RoadTopologyService
     private static ZRoutedRpc? s_rpc;
     private static Task<RoadTopology>? s_building;
     private static int s_buildingVersion, s_failedVersion;
-    private static float s_nextPoll;
-    private static readonly Dictionary<long, float> s_nextAnswer = new();
+    /// <summary>Client: the one request of this session has been sent.</summary>
+    private static bool s_requested;
+    /// <summary>Server: the peers that asked, and the hash of the copy each was last sent (0: none yet).</summary>
+    private static readonly Dictionary<long, long> s_subscribers = new();
     private static long s_receivingHash;
     private static byte[][]? s_received;
 
@@ -61,8 +60,8 @@ public static class RoadTopologyService
 
     private static void Forget()
     {
-        s_session = null; s_rpc = null; s_building = null; s_buildingVersion = s_failedVersion = 0; s_nextPoll = 0f;
-        s_nextAnswer.Clear(); s_received = null; s_receivingHash = 0;
+        s_session = null; s_rpc = null; s_building = null; s_buildingVersion = s_failedVersion = 0; s_requested = false;
+        s_subscribers.Clear(); s_received = null; s_receivingHash = 0;
         Publish(null);
     }
 
@@ -89,13 +88,14 @@ public static class RoadTopologyService
             // A network changed while it was built is built again on the next frame.
             Publish(done.Result);
             Log(done.Result);
+            SendToSubscribers();
             return;
         }
         // While a generation holds the world the copy is left as it was: its old network stays until the new one is published.
         if (RoadLifecycleManager.HoldsTheWorld) return;
         if (!RoadNetworkGenerator.RoadsAvailable)
         {
-            if (Current != null) Publish(null);
+            if (Current != null) { Publish(null); SendToSubscribers(); }
             return;
         }
         int version = RoadSpatialGrid.RoadNetworkVersion;
@@ -137,58 +137,74 @@ public static class RoadTopologyService
             $"{t.Bytes.Length} bytes to send.");
     }
 
+    /// <summary>Client: ask the server once this session, as soon as it is known. Its answer comes when it has a copy.</summary>
     private static void ClientTick()
     {
-        if (Time.unscaledTime < s_nextPoll) return;
+        if (s_requested) return;
         long server = ZRoutedRpc.instance!.GetServerPeerID();
         if (server == 0) return;
-        s_nextPoll = Time.unscaledTime + ClientPollSeconds;
+        s_requested = true;
         ZPackage request = new();
         request.Write(RoadTopology.FormatVersion);
-        request.Write(Current?.Hash ?? 0L);
         ZRoutedRpc.instance.InvokeRoutedRPC(server, RequestRpc, request);
     }
 
+    /// <summary>Server: a joining client asks once. It is sent the current copy (if any) and every later copy.</summary>
     private static void OnRequest(long sender, ZPackage package)
     {
-        if (!RoadLifecycleManager.HoldsTheNetwork || sender == ZNet.GetUID()) return;
+        if (!RoadLifecycleManager.HoldsTheNetwork || sender == ZNet.GetUID() || ZNet.instance.GetPeer(sender) == null) return;
         try
         {
-            int format = package.ReadInt();
-            long known = package.ReadLong();
-            if (s_nextAnswer.TryGetValue(sender, out float next) && Time.unscaledTime < next) return;
-            s_nextAnswer[sender] = Time.unscaledTime + PeerAnswerSeconds;
             // A client of another format gets nothing: it keeps no copy and its road features stay unavailable.
-            if (format != RoadTopology.FormatVersion) return;
-            RoadTopology? current = Ready ? Current : null;
-            if (current == null)
-            {
-                if (known == 0L) return;
-                ZPackage none = new();
-                none.Write(KindNone);
-                ZRoutedRpc.instance.InvokeRoutedRPC(sender, DataRpc, none);
-                return;
-            }
-            if (known == current.Hash) return;
-            byte[] bytes = current.Bytes;
-            int chunks = Math.Max(1, (bytes.Length + ChunkBytes - 1) / ChunkBytes);
-            for (int i = 0; i < chunks; i++)
-            {
-                int offset = i * ChunkBytes, length = Math.Min(ChunkBytes, bytes.Length - offset);
-                byte[] part = new byte[length];
-                Buffer.BlockCopy(bytes, offset, part, 0, length);
-                ZPackage chunk = new();
-                chunk.Write(KindChunk);
-                chunk.Write(current.Hash);
-                chunk.Write(i);
-                chunk.Write(chunks);
-                chunk.Write(part);
-                ZRoutedRpc.instance.InvokeRoutedRPC(sender, DataRpc, chunk);
-            }
+            if (package.ReadInt() != RoadTopology.FormatVersion) return;
+            if (!s_subscribers.ContainsKey(sender)) s_subscribers[sender] = 0L;
+            SendTo(sender);
         }
         catch (Exception e) when (e is System.IO.EndOfStreamException || e is ArgumentException)
         {
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("Ignored a malformed road topology request: " + e.Message);
+        }
+    }
+
+    /// <summary>Server: send the current copy to every client that asked and is still connected (after the copy changed).</summary>
+    private static void SendToSubscribers()
+    {
+        foreach (long peer in new List<long>(s_subscribers.Keys))
+            if (ZNet.instance == null || ZNet.instance.GetPeer(peer) == null) s_subscribers.Remove(peer);
+            else SendTo(peer);
+    }
+
+    /// <summary>Server: send one peer the current copy, at most once per copy; or tell it there is none, once, after it had
+    /// one. Repeated requests send nothing more.</summary>
+    private static void SendTo(long peer)
+    {
+        RoadTopology? current = Ready ? Current : null;
+        long sent = s_subscribers[peer];
+        if (current == null)
+        {
+            if (sent == 0L) return;
+            s_subscribers[peer] = 0L;
+            ZPackage none = new();
+            none.Write(KindNone);
+            ZRoutedRpc.instance.InvokeRoutedRPC(peer, DataRpc, none);
+            return;
+        }
+        if (sent == current.Hash) return;
+        s_subscribers[peer] = current.Hash;
+        byte[] bytes = current.Bytes;
+        int chunks = Math.Max(1, (bytes.Length + ChunkBytes - 1) / ChunkBytes);
+        for (int i = 0; i < chunks; i++)
+        {
+            int offset = i * ChunkBytes, length = Math.Min(ChunkBytes, bytes.Length - offset);
+            byte[] part = new byte[length];
+            Buffer.BlockCopy(bytes, offset, part, 0, length);
+            ZPackage chunk = new();
+            chunk.Write(KindChunk);
+            chunk.Write(current.Hash);
+            chunk.Write(i);
+            chunk.Write(chunks);
+            chunk.Write(part);
+            ZRoutedRpc.instance.InvokeRoutedRPC(peer, DataRpc, chunk);
         }
     }
 

@@ -87,9 +87,14 @@ public class RegisteredIconedPlaceTests : System.IDisposable
         Register("MP_Village_Test");
         Register("Vendor_BlackForest");
 
-        object? data = Call("GatherLocationData");
+        // The gathering step as a load runs it (RoadNetworkGenerator.PrepareSteps), drained to its end.
+        RoadNetworkGenerator.LocationData? data = null;
+        System.Action<RoadNetworkGenerator.LocationData?> complete = value => data = value;
+        MethodInfo steps = typeof(RoadNetworkGenerator).GetMethod("GatherLocationSteps", BindingFlags.Static | BindingFlags.NonPublic)!;
+        using (RoadPreparation preparation = new(p => (IEnumerable<bool>)steps.Invoke(null, new object[] { ZoneSystem.instance!, p, complete })!))
+            preparation.Drain();
         Assert.NotNull(data);
-        var all = (List<(string name, Vector3 position, float radius)>)data!.GetType().GetField("AllLocations")!.GetValue(data)!;
+        List<(string name, Vector3 position, float radius)> all = data!.Value.AllLocations;
         Assert.Equal(new[] { "MP_Village_Test", "StartTemple" }, all.Select(l => l.name).OrderBy(n => n).ToArray());
     }
 }

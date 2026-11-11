@@ -114,11 +114,13 @@ public static class RoadTopologyService
         if (ZoneSystem.instance != null && ZoneSystem.instance.GetLocationList() is { } locations)
             foreach (ZoneSystem.LocationInstance location in locations)
             {
+                // Every place joins the roads arriving at it; only a registered or configured one is offered a way in.
                 ZoneSystem.ZoneLocation? definition = location.m_location;
                 string? name = definition?.m_prefab.Name;
-                if (definition == null || name == null || !RoadNetworkGenerator.IsCustomLocation(name)) continue;
+                if (definition == null || name == null) continue;
                 Vector2 centre = new(location.m_position.x, location.m_position.z);
-                places.Add(new RoadTopology.SourcePlace(centre, RoadNetworkGenerator.ArrivalReach(centre, definition.m_exteriorRadius)));
+                places.Add(new RoadTopology.SourcePlace(centre, RoadNetworkGenerator.ArrivalReach(centre, definition.m_exteriorRadius),
+                    RoadNetworkGenerator.IsCustomLocation(name)));
             }
         float reach = RoadRide.Reach;
         s_buildingVersion = version;

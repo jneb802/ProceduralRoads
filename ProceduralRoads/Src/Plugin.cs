@@ -211,7 +211,9 @@ namespace ProceduralRoads
                 HildirQuestSites = AttemptRoadsToHildirQuestSites.Value,
             };
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
-            // CustomLocations is parsed at generation time to preserve API registrations
+            // The configured names are known from the start, not only once a generation runs: a loaded world asks them too
+            // (manual roads, the road topology's places). Generation reads them again in case the file changed.
+            RoadNetworkGenerator.RegisterConfiguredLocations();
         }
 
         /// <summary>

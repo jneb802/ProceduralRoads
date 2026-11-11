@@ -40,12 +40,15 @@ public sealed class RoadTopology
         { Position = position; Height = height; Width = width; Walked = walked; }
     }
 
-    /// <summary>A place the network may reach: its centre and how far from it a road still arrives at it.</summary>
+    /// <summary>A place the network may reach: its centre and how far from it a road still arrives at it. Every place joins
+    /// the roads that arrive at it (a player walks through it from one to the other); one <see cref="Offered"/> also gets
+    /// a way in other mods can ask for (<see cref="TryGetPlaceAccess"/>).</summary>
     public readonly struct SourcePlace
     {
         public readonly Vector2 Centre;
         public readonly float Reach;
-        public SourcePlace(Vector2 centre, float reach) { Centre = centre; Reach = reach; }
+        public readonly bool Offered;
+        public SourcePlace(Vector2 centre, float reach, bool offered = true) { Centre = centre; Reach = reach; Offered = offered; }
     }
 
     private readonly struct Point : IComparable<Point>
@@ -93,6 +96,9 @@ public sealed class RoadTopology
     /// carried by <see cref="Serialize"/>: zero on a decoded copy.</summary>
     public int LinksGiven { get; private set; }
     public int LinksJoined { get; private set; }
+    /// <summary>The links with an end that found no road in reach, and which ends (for the diagnostics). Empty on a decoded copy.</summary>
+    public IReadOnlyList<(Vector2 a, Vector2 b, bool aFound, bool bFound)> UnjoinedLinks { get; private set; } =
+        Array.Empty<(Vector2, Vector2, bool, bool)>();
     /// <summary>The compressed bytes clients receive; <see cref="Deserialize"/> of them gives an equal copy.</summary>
     public byte[] Bytes => m_bytes;
 
@@ -155,15 +161,67 @@ public sealed class RoadTopology
                 }
         }
 
-        int given = 0, joined = 0;
-        foreach ((Vector2 a, Vector2 b) in links)
+        // A structure's two ends are one node each, past the points: an end joins the road within reach of it, its own other
+        // end, and every other structure end within reach (a staircase that runs straight onto a bridge has no road between).
+        List<(Vector2 a, Vector2 b)> linkList = new(links);
+        int given = linkList.Count, joined = 0;
+        int ends = linkList.Count * 2;
+        Array.Resize(ref parent, all.Length + ends);
+        for (int k = all.Length; k < parent.Length; k++) parent[k] = k;
+        Vector2 End(int k) => k % 2 == 0 ? linkList[k / 2].a : linkList[k / 2].b;
+        bool[] onRoad = new bool[ends];
+        for (int k = 0; k < ends; k++)
         {
-            given++;
-            int ia = Nearest(all, cells, reach, a, reach, walkedOnly: false);
-            int ib = Nearest(all, cells, reach, b, reach, walkedOnly: false);
-            if (ia < 0 || ib < 0) continue;
-            Union(parent, ia, ib);
-            joined++;
+            Union(parent, all.Length + k, all.Length + (k ^ 1));
+            int road = Nearest(all, cells, reach, End(k), reach, walkedOnly: false);
+            if (road >= 0) { Union(parent, all.Length + k, road); onRoad[k] = true; }
+        }
+        Dictionary<long, List<int>> endCells = new();
+        for (int k = 0; k < ends; k++)
+        {
+            long key = CellKey(End(k), reach);
+            if (!endCells.TryGetValue(key, out List<int> list)) endCells[key] = list = new List<int>();
+            list.Add(k);
+        }
+        bool[] touches = new bool[ends];
+        for (int k = 0; k < ends; k++)
+        {
+            (int cx, int cz) = Cell(End(k), reach);
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dz = -1; dz <= 1; dz++)
+                {
+                    if (!endCells.TryGetValue(CellKey(cx + dx, cz + dz), out List<int> near)) continue;
+                    foreach (int other in near)
+                        if (other / 2 != k / 2 && (End(other) - End(k)).sqrMagnitude <= reachSquared)
+                        { Union(parent, all.Length + k, all.Length + other); touches[k] = true; }
+                }
+        }
+        List<(Vector2, Vector2, bool, bool)> unjoined = new();
+        for (int l = 0; l < given; l++)
+        {
+            bool a = onRoad[2 * l] || touches[2 * l], b = onRoad[2 * l + 1] || touches[2 * l + 1];
+            if (a && b) joined++;
+            else unjoined.Add((linkList[l].a, linkList[l].b, onRoad[2 * l], onRoad[2 * l + 1]));
+        }
+
+        List<SourcePlace> placeList = new(places);
+        foreach (SourcePlace place in placeList)
+        {
+            // The roads arriving at a place meet there: each walked point within its reach joins the place's first one.
+            int first = -1;
+            (int cx, int cz) = Cell(place.Centre, reach);
+            int span = Mathf.CeilToInt(place.Reach / reach);
+            float placeSquared = place.Reach * place.Reach;
+            for (int dx = -span; dx <= span; dx++)
+                for (int dz = -span; dz <= span; dz++)
+                {
+                    if (!cells.TryGetValue(CellKey(cx + dx, cz + dz), out List<int> near)) continue;
+                    foreach (int i in near)
+                    {
+                        if (!all[i].Walked || (all[i].Flat - place.Centre).sqrMagnitude > placeSquared) continue;
+                        if (first < 0) first = i; else Union(parent, first, i);
+                    }
+                }
         }
 
         // Component numbers in the canonical point order: the same network numbers its roads alike every time.
@@ -177,8 +235,9 @@ public sealed class RoadTopology
         }
 
         List<(int zx, int zz, Vector2 centre, int point)> found = new();
-        foreach (SourcePlace place in places)
+        foreach (SourcePlace place in placeList)
         {
+            if (!place.Offered) continue;
             int point = Nearest(all, cells, reach, place.Centre, place.Reach, walkedOnly: true);
             if (point < 0) continue;
             found.Add((RoadConstants.ZoneIndex(place.Centre.x), RoadConstants.ZoneIndex(place.Centre.y), place.Centre, point));
@@ -197,7 +256,7 @@ public sealed class RoadTopology
 
         byte[] raw = Encode(networkVersion, reach, all, component, access);
         RoadTopology built = new(networkVersion, reach, all, component, access.ToArray(), Compress(raw), HashOf(raw))
-        { LinksGiven = given, LinksJoined = joined };
+        { LinksGiven = given, LinksJoined = joined, UnjoinedLinks = unjoined };
         return built;
     }
 
@@ -282,6 +341,67 @@ public sealed class RoadTopology
         foreach (int c in m_component) sizes[c]++;
         List<int> list = new(sizes);
         list.Sort((a, b) => b.CompareTo(a));
+        return list;
+    }
+
+    /// <summary>Each place's way in: its zone, the road point and its component (for the diagnostics).</summary>
+    public List<(int zoneX, int zoneZ, Vector3 road, int component)> PlaceAccesses()
+    {
+        List<(int, int, Vector3, int)> list = new();
+        foreach (Access a in m_access)
+        {
+            Point p = m_points[a.Point];
+            list.Add((a.ZoneX, a.ZoneZ, new Vector3(p.Flat.x, p.Height, p.Flat.y), m_component[a.Point]));
+        }
+        return list;
+    }
+
+    /// <summary>Each component's point count and the box its points span, largest first (for the diagnostics).</summary>
+    public List<(int component, int points, Vector2 min, Vector2 max)> ComponentExtents()
+    {
+        int[] counts = new int[Components];
+        Vector2[] min = new Vector2[Components], max = new Vector2[Components];
+        for (int i = 0; i < m_points.Length; i++)
+        {
+            int c = m_component[i];
+            Vector2 p = m_points[i].Flat;
+            if (counts[c]++ == 0) { min[c] = p; max[c] = p; continue; }
+            min[c] = new Vector2(Mathf.Min(min[c].x, p.x), Mathf.Min(min[c].y, p.y));
+            max[c] = new Vector2(Mathf.Max(max[c].x, p.x), Mathf.Max(max[c].y, p.y));
+        }
+        List<(int, int, Vector2, Vector2)> list = new();
+        for (int c = 0; c < Components; c++) list.Add((c, counts[c], min[c], max[c]));
+        list.Sort((a, b) => b.Item2.CompareTo(a.Item2));
+        return list;
+    }
+
+    /// <summary>For each component, the nearest point of any other component within <paramref name="radius"/> across: how far,
+    /// where, and the height between (for the diagnostics: a near miss between two networks shows a join this build missed).</summary>
+    public List<(int component, int other, float distance, Vector2 at, float rise)> NearestOtherComponents(float radius)
+    {
+        Dictionary<int, (int other, float distance, Vector2 at, float rise)> best = new();
+        int span = Mathf.CeilToInt(radius / Reach);
+        for (int i = 0; i < m_points.Length; i++)
+        {
+            Vector2 p = m_points[i].Flat;
+            (int cx, int cz) = Cell(p, Reach);
+            for (int dx = -span; dx <= span; dx++)
+                for (int dz = -span; dz <= span; dz++)
+                {
+                    if (!m_cells.TryGetValue(CellKey(cx + dx, cz + dz), out List<int> cell)) continue;
+                    foreach (int j in cell)
+                    {
+                        if (m_component[j] == m_component[i]) continue;
+                        float d = (m_points[j].Flat - p).magnitude;
+                        if (d > radius || best.TryGetValue(m_component[i], out var b) && b.distance <= d) continue;
+                        best[m_component[i]] = (m_component[j], d, p, m_points[j].Height - m_points[i].Height);
+                    }
+                }
+        }
+        List<(int, int, float, Vector2, float)> list = new();
+        foreach (KeyValuePair<int, (int other, float distance, Vector2 at, float rise)> kv in best)
+            list.Add((kv.Key, kv.Value.other, kv.Value.distance, kv.Value.at, kv.Value.rise));
+        list.Sort((a, b) => a.Item3.CompareTo(b.Item3));
         return list;
     }
 

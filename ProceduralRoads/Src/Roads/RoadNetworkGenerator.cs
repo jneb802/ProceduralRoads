@@ -1826,11 +1826,11 @@ public static partial class RoadNetworkGenerator
     private static WorldGenerator GenerationWorld => m_generationWorld ?? WorldGenerator.instance!;
 
     /// <summary>
-    /// Merge the config-defined custom locations into the registered set.
-    /// Every generation entry point calls this first, so a location named in
-    /// the config counts as road-eligible whichever entry point runs first.
+    /// Merge the config-defined custom and required locations into the registered sets. Called when the configuration is
+    /// applied, and again by every generation entry point, so a location named in the config counts as road-eligible
+    /// whichever entry point runs first and on a world that only loads its network.
     /// </summary>
-    private static void RegisterConfiguredLocations()
+    internal static void RegisterConfiguredLocations()
     {
         ConfiguredLocationNames.Clear();
         foreach (string name in ProceduralRoadsPlugin.GetConfigLocationNames())

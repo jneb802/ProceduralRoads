@@ -90,6 +90,46 @@ public class RoadTopologyTests
     }
 
     [Fact]
+    public void StructuresMeetingEndToEndJoinWithNoRoadBetween()
+    {
+        // A staircase climbs from one road straight onto a bridge, which lands on the other road: no road where they meet.
+        List<RoadTopology.SourcePoint> roads = Road(new Vector2(0, 0), new Vector2(40, 0))
+            .Concat(Road(new Vector2(100, 0), new Vector2(140, 0), 60f)).ToList();
+        (Vector2, Vector2)[] chain = { (new Vector2(41, 0), new Vector2(60, 0)), (new Vector2(61, 0), new Vector2(99, 0)) };
+        RoadTopology t = Build(roads, chain);
+        Assert.Equal(1, t.Components);
+        Assert.Equal(2, t.LinksJoined);
+        Assert.Empty(t.UnjoinedLinks);
+        // A staircase up to a place's landing ends with no road and no structure at its top: reported, joining nothing.
+        RoadTopology approach = Build(roads, new[] { (new Vector2(41, 0), new Vector2(41, 30)) });
+        Assert.Equal(2, approach.Components);
+        Assert.False(Assert.Single(approach.UnjoinedLinks).bFound);
+    }
+
+    [Fact]
+    public void RoadsArrivingAtOnePlaceFromTwoSidesJoinThere()
+    {
+        // Two roads stop at a fort's ring, 26 m apart across it: a player walks through the fort from one to the other.
+        List<RoadTopology.SourcePoint> roads = Road(new Vector2(0, 0), new Vector2(87, 0))
+            .Concat(Road(new Vector2(113, 0), new Vector2(200, 0))).ToList();
+        Assert.Equal(2, Build(roads).Components);
+        RoadTopology joined = Build(roads, places: new[] { new RoadTopology.SourcePlace(new Vector2(100, 0), 20f, offered: false) });
+        Assert.Equal(1, joined.Components);
+        // Not offered: no way in for other mods to ask for.
+        Assert.Equal(0, joined.AccessCount);
+        Assert.False(joined.TryGetPlaceAccess(new Vector3(100, 0, 0), out _, out _, out _, out _));
+    }
+
+    [Fact]
+    public void ANearMissBetweenNetworksIsReported()
+    {
+        RoadTopology t = Build(Road(new Vector2(0, 0), new Vector2(40, 0)).Concat(Road(new Vector2(52, 0), new Vector2(90, 0))));
+        (int component, int other, float distance, Vector2 at, float rise) miss = t.NearestOtherComponents(40f)[0];
+        Assert.Equal(12f, miss.distance, 1);
+        Assert.NotEqual(miss.component, miss.other);
+    }
+
+    [Fact]
     public void AWadedFordConnectsButIsNeverOffered()
     {
         List<RoadTopology.SourcePoint> points = Road(new Vector2(0, 0), new Vector2(40, 0))

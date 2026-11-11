@@ -64,7 +64,7 @@ public static class ConsoleCommands
             var p = RoadLifecycleManager.Progress;
             args.Context.AddString($"Road progress: run={p.RunId} phase={p.Phase} completed={p.Completed} total={p.Total} elapsed={p.ElapsedSeconds:F1}s frame={Time.frameCount}");
         });
-        new Terminal.ConsoleCommand("road_topology", "Show the road topology this peer answers other mods from (the server's copy on a client)", args =>
+        new Terminal.ConsoleCommand("road_topology", "[all] Show the road topology this peer answers other mods from (the server's copy on a client)", args =>
         {
             RoadTopology? t = RoadTopologyService.Current;
             string source = RoadLifecycleManager.HoldsTheNetwork ? "server" : "client copy";
@@ -73,6 +73,19 @@ public static class ConsoleCommands
             args.Context.AddString($"Road topology ({source}) {t.Hash:x16}: network {t.NetworkVersion}, revision {RoadTopologyService.Revision}, " +
                 $"{t.PointCount} points, {t.Components} connected network(s) (largest {string.Join(", ", sizes.GetRange(0, Mathf.Min(5, sizes.Count)))}), " +
                 $"{t.AccessCount} place(s) with a way in, {t.Bytes.Length} bytes.");
+            if (args.Length < 2 || args[1] != "all") return;
+            foreach ((int component, int points, Vector2 min, Vector2 max) in t.ComponentExtents())
+                args.Context.AddString(System.FormattableString.Invariant(
+                    $"  network {component}: {points} points, x {min.x:F0}..{max.x:F0}, z {min.y:F0}..{max.y:F0}"));
+            foreach ((int zoneX, int zoneZ, Vector3 road, int component) in t.PlaceAccesses())
+                args.Context.AddString(System.FormattableString.Invariant(
+                    $"  place in zone ({zoneX}, {zoneZ}): way in at ({road.x:F1}, {road.y:F1}, {road.z:F1}) on network {component}"));
+            foreach ((int component, int other, float distance, Vector2 at, float rise) in t.NearestOtherComponents(40f))
+                args.Context.AddString(System.FormattableString.Invariant(
+                    $"  network {component} comes within {distance:F1} m of network {other} at ({at.x:F1}, {at.y:F1}), {rise:+0.0;-0.0} m in height"));
+            foreach ((Vector2 a, Vector2 b, bool aFound, bool bFound) in t.UnjoinedLinks)
+                args.Context.AddString(System.FormattableString.Invariant(
+                    $"  link ({a.x:F1}, {a.y:F1}) {(aFound ? "on road" : "NO ROAD")} -> ({b.x:F1}, {b.y:F1}) {(bFound ? "on road" : "NO ROAD")}"));
         });
         new Terminal.ConsoleCommand("road_topology_nearest", "[radius] The road nearest the player in the road topology: route, centre, heading, width", args =>
         {

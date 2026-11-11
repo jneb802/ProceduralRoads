@@ -389,7 +389,7 @@ public static partial class RoadNetworkGenerator
     internal const float ReachPastEdge = RoadPathfinder.CellSize;
 
     /// <summary>How far from a place's centre a road still arrives at it, as <see cref="Reached"/> measures an ordinary
-    /// place: its keep-out edge and one path cell past it. Where the road topology looks for a place's way in
+    /// place: its keep-out edge and one path cell past it. Where the road topology looks for the road end at a location
     /// (<see cref="RoadTopologyService"/>).</summary>
     /// <remarks>The keep-out edge of a place not placed first (<see cref="KeepOutEdge(Vector2, float, float, bool)"/>), read
     /// without the site footprint index: its arrival radius is never past the exterior radius

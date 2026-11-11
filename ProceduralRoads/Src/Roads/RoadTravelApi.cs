@@ -28,12 +28,12 @@ public static class RoadTravelApi
         return false;
     }
 
-    /// <summary>Where the network reaches the registered or configured place whose centre is <paramref name="center"/>:
+    /// <summary>Where a road ends at the registered or configured location whose centre is <paramref name="center"/>:
     /// its route, the road's centre there, its heading and width. False where no road reaches it.</summary>
     public static bool TryGetLocationAccess(Vector3 center, out string routeId, out Vector3 point, out Vector3 direction, out float width)
     {
         RoadTopology? topology = RoadTopologyService.Current;
-        if (topology != null) return topology.TryGetPlaceAccess(center, out routeId, out point, out direction, out width);
+        if (topology != null) return topology.TryGetLocationAccess(center, out routeId, out point, out direction, out width);
         routeId = ""; point = direction = default; width = 0f;
         return false;
     }

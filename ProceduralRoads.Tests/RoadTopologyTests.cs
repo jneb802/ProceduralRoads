@@ -8,14 +8,14 @@ namespace ProceduralRoads.Tests;
 
 /// <summary>
 /// The road topology other mods read (RoadTravelApi): roads join where one ends on another at its height, bridges and
-/// staircases join their two ends, a place's way in is the road within its reach, and a client's decoded copy answers
+/// staircases join their two ends, a location's road end is the road within its reach, and a client's decoded copy answers
 /// exactly as the server's does.
 /// </summary>
 public class RoadTopologyTests
 {
     private const float Reach = 4f;
     private static readonly (Vector2, Vector2)[] NoLinks = Array.Empty<(Vector2, Vector2)>();
-    private static readonly RoadTopology.SourcePlace[] NoPlaces = Array.Empty<RoadTopology.SourcePlace>();
+    private static readonly RoadTopology.SourceLocation[] NoLocations = Array.Empty<RoadTopology.SourceLocation>();
 
     /// <summary>Points a metre apart from <paramref name="from"/> to <paramref name="to"/>, as the planner stores them
     /// (width / 4 with the default 4 m road), at <paramref name="height"/>.</summary>
@@ -29,8 +29,8 @@ public class RoadTopologyTests
     }
 
     private static RoadTopology Build(IEnumerable<RoadTopology.SourcePoint> points, IEnumerable<(Vector2, Vector2)>? links = null,
-        IEnumerable<RoadTopology.SourcePlace>? places = null) =>
-        RoadTopology.Build(7, Reach, points, links ?? NoLinks, places ?? NoPlaces);
+        IEnumerable<RoadTopology.SourceLocation>? locations = null) =>
+        RoadTopology.Build(7, Reach, points, links ?? NoLinks, locations ?? NoLocations);
 
     private static string RouteAt(RoadTopology t, float x, float z)
     {
@@ -100,24 +100,24 @@ public class RoadTopologyTests
         Assert.Equal(1, t.Components);
         Assert.Equal(2, t.LinksJoined);
         Assert.Empty(t.UnjoinedLinks);
-        // A staircase up to a place's landing ends with no road and no structure at its top: reported, joining nothing.
+        // A staircase up to a location's landing ends with no road and no structure at its top: reported, joining nothing.
         RoadTopology approach = Build(roads, new[] { (new Vector2(41, 0), new Vector2(41, 30)) });
         Assert.Equal(2, approach.Components);
         Assert.False(Assert.Single(approach.UnjoinedLinks).bFound);
     }
 
     [Fact]
-    public void RoadsArrivingAtOnePlaceFromTwoSidesJoinThere()
+    public void RoadsArrivingAtOneLocationFromTwoSidesJoinThere()
     {
         // Two roads stop at a fort's ring, 26 m apart across it: a player walks through the fort from one to the other.
         List<RoadTopology.SourcePoint> roads = Road(new Vector2(0, 0), new Vector2(87, 0))
             .Concat(Road(new Vector2(113, 0), new Vector2(200, 0))).ToList();
         Assert.Equal(2, Build(roads).Components);
-        RoadTopology joined = Build(roads, places: new[] { new RoadTopology.SourcePlace(new Vector2(100, 0), 20f, offered: false) });
+        RoadTopology joined = Build(roads, locations: new[] { new RoadTopology.SourceLocation(new Vector2(100, 0), 20f, offered: false) });
         Assert.Equal(1, joined.Components);
         // Not offered: no way in for other mods to ask for.
         Assert.Equal(0, joined.AccessCount);
-        Assert.False(joined.TryGetPlaceAccess(new Vector3(100, 0, 0), out _, out _, out _, out _));
+        Assert.False(joined.TryGetLocationAccess(new Vector3(100, 0, 0), out _, out _, out _, out _));
     }
 
     [Fact]
@@ -159,19 +159,19 @@ public class RoadTopologyTests
     }
 
     [Fact]
-    public void APlaceIsReachedByTheNearestRoadWithinItsReachKeyedByItsZone()
+    public void ALocationsRoadEndIsTheNearestRoadWithinItsReachKeyedByItsZone()
     {
-        RoadTopology t = Build(Road(new Vector2(0, 0), new Vector2(200, 0)), places: new[]
+        RoadTopology t = Build(Road(new Vector2(0, 0), new Vector2(200, 0)), locations: new[]
         {
-            new RoadTopology.SourcePlace(new Vector2(100, 20), 30f),
-            new RoadTopology.SourcePlace(new Vector2(100, 400), 30f),
+            new RoadTopology.SourceLocation(new Vector2(100, 20), 30f),
+            new RoadTopology.SourceLocation(new Vector2(100, 400), 30f),
         });
         Assert.Equal(1, t.AccessCount);
-        Assert.True(t.TryGetPlaceAccess(new Vector3(100, 0, 20), out string route, out Vector3 point, out _, out _));
+        Assert.True(t.TryGetLocationAccess(new Vector3(100, 0, 20), out string route, out Vector3 point, out _, out _));
         Assert.Equal(100f, point.x, 1);
         Assert.Equal(0f, point.z, 1);
         Assert.True(t.Connected(route, RouteAt(t, 10, 0)));
-        Assert.False(t.TryGetPlaceAccess(new Vector3(100, 0, 400), out _, out _, out _, out _));
+        Assert.False(t.TryGetLocationAccess(new Vector3(100, 0, 400), out _, out _, out _, out _));
     }
 
     [Fact]
@@ -191,7 +191,7 @@ public class RoadTopologyTests
     public void AClientCopyAnswersAsTheServerDoes()
     {
         RoadTopology server = Build(Road(new Vector2(0, 0), new Vector2(100, 37)).Concat(Road(new Vector2(0, 80), new Vector2(60, 80))),
-            places: new[] { new RoadTopology.SourcePlace(new Vector2(30, 90), 20f) });
+            locations: new[] { new RoadTopology.SourceLocation(new Vector2(30, 90), 20f) });
         RoadTopology? client = RoadTopology.Deserialize(server.Bytes);
         Assert.NotNull(client);
         Assert.Equal(server.Hash, client!.Hash);
@@ -204,8 +204,8 @@ public class RoadTopologyTests
             Assert.True(client.TryFindRoad(at, 10f, out string cr, out Vector3 cp, out Vector3 cd, out float cw));
             Assert.Equal(sr, cr); Assert.Equal(sp, cp); Assert.Equal(sd, cd); Assert.Equal(sw, cw);
         }
-        Assert.True(server.TryGetPlaceAccess(new Vector3(30, 0, 90), out string a, out _, out _, out _));
-        Assert.True(client.TryGetPlaceAccess(new Vector3(30, 0, 90), out string b, out _, out _, out _));
+        Assert.True(server.TryGetLocationAccess(new Vector3(30, 0, 90), out string a, out _, out _, out _));
+        Assert.True(client.TryGetLocationAccess(new Vector3(30, 0, 90), out string b, out _, out _, out _));
         Assert.Equal(a, b);
     }
 

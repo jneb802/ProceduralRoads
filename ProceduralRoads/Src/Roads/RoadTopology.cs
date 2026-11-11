@@ -8,7 +8,7 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// A read-only copy of the road network's shape for other mods: which roads connect, the nearest road to a point, and
-/// where the network reaches a registered or configured place. The server builds it from the finished network
+/// where a road ends at a registered or configured location. The server builds it from the finished network
 /// (<see cref="RoadTopologyService"/>); clients with the mod receive the same bytes and never hold a network or write terrain.
 /// Server and client answer every question from the same decoded copy, so they agree to the centimetre.
 /// </summary>
@@ -40,15 +40,15 @@ public sealed class RoadTopology
         { Position = position; Height = height; Width = width; Walked = walked; }
     }
 
-    /// <summary>A place the network may reach: its centre and how far from it a road still arrives at it. Every place joins
-    /// the roads that arrive at it (a player walks through it from one to the other); one <see cref="Offered"/> also gets
-    /// a way in other mods can ask for (<see cref="TryGetPlaceAccess"/>).</summary>
-    public readonly struct SourcePlace
+    /// <summary>A location (a <see cref="ZoneSystem.LocationInstance"/>): its centre and how far from it a road still arrives
+    /// at it. Every location joins the roads that arrive at it (a player walks through it from one to the other); one
+    /// <see cref="Offered"/> also records its road end for other mods (<see cref="TryGetLocationAccess"/>).</summary>
+    public readonly struct SourceLocation
     {
         public readonly Vector2 Centre;
         public readonly float Reach;
         public readonly bool Offered;
-        public SourcePlace(Vector2 centre, float reach, bool offered = true) { Centre = centre; Reach = reach; Offered = offered; }
+        public SourceLocation(Vector2 centre, float reach, bool offered = true) { Centre = centre; Reach = reach; Offered = offered; }
     }
 
     private readonly struct Point : IComparable<Point>
@@ -119,12 +119,12 @@ public sealed class RoadTopology
     }
 
     /// <summary>
-    /// Build from the stored points, the links across structures, and the places to find a way into. The same input in
+    /// Build from the stored points, the links across structures, and the locations to find the road ends of. The same input in
     /// any order gives the same bytes: points are rounded to centimetres, sorted and de-duplicated (the grid stores a point
     /// in every cell its width reaches) before anything is joined.
     /// </summary>
     public static RoadTopology Build(int networkVersion, float reach, IEnumerable<SourcePoint> points,
-        IEnumerable<(Vector2 a, Vector2 b)> links, IEnumerable<SourcePlace> places)
+        IEnumerable<(Vector2 a, Vector2 b)> links, IEnumerable<SourceLocation> locations)
     {
         if (!(reach > 0f)) throw new ArgumentOutOfRangeException(nameof(reach), "The join reach must be positive.");
         List<Point> sorted = new();
@@ -204,21 +204,21 @@ public sealed class RoadTopology
             else unjoined.Add((linkList[l].a, linkList[l].b, onRoad[2 * l], onRoad[2 * l + 1]));
         }
 
-        List<SourcePlace> placeList = new(places);
-        foreach (SourcePlace place in placeList)
+        List<SourceLocation> locationList = new(locations);
+        foreach (SourceLocation location in locationList)
         {
-            // The roads arriving at a place meet there: each walked point within its reach joins the place's first one.
+            // The roads arriving at a location meet there: each walked point within its reach joins the location's first one.
             int first = -1;
-            (int cx, int cz) = Cell(place.Centre, reach);
-            int span = Mathf.CeilToInt(place.Reach / reach);
-            float placeSquared = place.Reach * place.Reach;
+            (int cx, int cz) = Cell(location.Centre, reach);
+            int span = Mathf.CeilToInt(location.Reach / reach);
+            float locationSquared = location.Reach * location.Reach;
             for (int dx = -span; dx <= span; dx++)
                 for (int dz = -span; dz <= span; dz++)
                 {
                     if (!cells.TryGetValue(CellKey(cx + dx, cz + dz), out List<int> near)) continue;
                     foreach (int i in near)
                     {
-                        if (!all[i].Walked || (all[i].Flat - place.Centre).sqrMagnitude > placeSquared) continue;
+                        if (!all[i].Walked || (all[i].Flat - location.Centre).sqrMagnitude > locationSquared) continue;
                         if (first < 0) first = i; else Union(parent, first, i);
                     }
                 }
@@ -235,14 +235,14 @@ public sealed class RoadTopology
         }
 
         List<(int zx, int zz, Vector2 centre, int point)> found = new();
-        foreach (SourcePlace place in placeList)
+        foreach (SourceLocation location in locationList)
         {
-            if (!place.Offered) continue;
-            int point = Nearest(all, cells, reach, place.Centre, place.Reach, walkedOnly: true);
+            if (!location.Offered) continue;
+            int point = Nearest(all, cells, reach, location.Centre, location.Reach, walkedOnly: true);
             if (point < 0) continue;
-            found.Add((RoadConstants.ZoneIndex(place.Centre.x), RoadConstants.ZoneIndex(place.Centre.y), place.Centre, point));
+            found.Add((RoadConstants.ZoneIndex(location.Centre.x), RoadConstants.ZoneIndex(location.Centre.y), location.Centre, point));
         }
-        // One place per zone (the game's own rule); where two inputs share a zone, the one nearer its road keeps it.
+        // One location per zone (the game's own rule); where two inputs share a zone, the one nearer its road keeps it.
         found.Sort((x, y) =>
         {
             int c = x.zx.CompareTo(y.zx); if (c != 0) return c;
@@ -313,9 +313,9 @@ public sealed class RoadTopology
         return Describe(nearest, new Vector2(position.x, position.z), out route, out point, out direction, out width);
     }
 
-    /// <summary>Where the network reaches the place standing at <paramref name="centre"/> (one place per zone): its route,
-    /// the road's centre there, its heading and width. False where the place had no road in its reach when built.</summary>
-    public bool TryGetPlaceAccess(Vector3 centre, out string route, out Vector3 point, out Vector3 direction, out float width)
+    /// <summary>Where a road ends at the location whose centre is <paramref name="centre"/> (one location per zone): its
+    /// route, the road's centre there, its heading and width. False where no road reached the location when built.</summary>
+    public bool TryGetLocationAccess(Vector3 centre, out string route, out Vector3 point, out Vector3 direction, out float width)
     {
         int zx = RoadConstants.ZoneIndex(centre.x), zz = RoadConstants.ZoneIndex(centre.z);
         if (!m_accessByZone.TryGetValue(ZoneKey(zx, zz), out int index))
@@ -344,8 +344,8 @@ public sealed class RoadTopology
         return list;
     }
 
-    /// <summary>Each place's way in: its zone, the road point and its component (for the diagnostics).</summary>
-    public List<(int zoneX, int zoneZ, Vector3 road, int component)> PlaceAccesses()
+    /// <summary>Each location's road end: its zone, the road point and its component (for the diagnostics).</summary>
+    public List<(int zoneX, int zoneZ, Vector3 road, int component)> LocationAccesses()
     {
         List<(int, int, Vector3, int)> list = new();
         foreach (Access a in m_access)

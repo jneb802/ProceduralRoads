@@ -4,7 +4,7 @@ Every rule, check, threshold or limit in ProceduralRoads is decided in exactly o
 calls the owner; it never restates the rule. This is the one list of those decisions.
 
 - **Before adding or changing a check, threshold or rule**, find its decision here and call (or change) that owner.
-- **A new decision adds a row here in the same commit.** A new number needs the maintainer's approval.
+- **A new decision adds a row here in the same commit.**
 - An owner is written `Type.Member`, never `file:line`: lines move, names are checked. `OwnersDocTests` resolves every
   `Type.Member` in the Owner and Key constants columns against the code, so a rename or a delete fails the gate until this
   list is updated.

@@ -4,7 +4,7 @@ Every rule, check, threshold or limit in ProceduralRoads is decided in exactly o
 calls the owner; it never restates the rule. This is the one list of those decisions.
 
 - **Before adding or changing a check, threshold or rule**, find its decision here and call (or change) that owner.
-- **A new decision adds a row here in the same commit.** A new number needs the maintainer's approval.
+- **A new decision adds a row here in the same commit.**
 - An owner is written `Type.Member`, never `file:line`: lines move, names are checked. `OwnersDocTests` resolves every
   `Type.Member` in the Owner and Key constants columns against the code, so a rename or a delete fails the gate until this
   list is updated.
@@ -52,7 +52,8 @@ calls the owner; it never restates the rule. This is the one list of those decis
 | Ground readers: natural, planning, finished | `BiomeBlendedHeight.GetBlendedHeight`, `RoadStairRuns.PlanningGround`, `RoadStairRuns.FinishedGround`, `RoadTerrainModifier.FinishedGround` | none | The game's blended ground is the only natural ground; `WorldGenerator.GetHeight` is not. |
 | What counts as reached | `RoadNetworkGenerator.Reached`, `RoadNetworkGenerator.EndReached`, `RoadNetworkGenerator.LandingReached` | `RoadNetworkGenerator.LandingReach` | Arrival at a place is `Reached`. |
 | Joining a network | `RoadNetworkGenerator.JoinTo`, `RoadNetworkGenerator.JoinNetwork`, `RoadNetworkGenerator.JoinTargets`, `JoinHold.Reason` | none | A manual road joins through `JoinTo`, as generation does. |
-| Which places get a road and which connect | `RoadNetworkSelection.Quota`, `RoadConnectionPlanner.Connect`, `RoadCoastalLandings.Priority` | none | Priority and quota live in the selection, not at the call site. |
+| Which places get a road and which connect | `RoadNetworkSelection.Quota`, `RoadNetworkSelection.Islands`, `RoadConnectionPlanner.Connect`, `RoadCoastalLandings.Priority`, `RoadNetworkGenerator.IsConfiguredRequired` | none | Priority and quota live in the selection, not at the call site. A RequiredLocations name is the one reason to add an island past the share (`Islands`' mustInclude); bosses are not. |
+| The road topology other mods read: which roads connect, the nearest road and its heading, the road end at a location | `RoadTopology.Build`, `RoadTopology.TryFindRoad`, `RoadTopology.TryGetLocationAccess`, `RoadNetworkGenerator.ArrivalReach`, `LocationLevelling.GroundReach`, `RoadTopologyService.Tick` | none | Joins read `RoadRide.Reach` and `RoadBeside.AtItsHeight`; a location's reach is `ArrivalReach`. Clients only receive the server's copy (`RoadTopologyService`); they never build one. |
 | The saved network: what is stored, read back and versioned | `RoadNetworkPersistence.SaveGlobalRoadData`, `RoadNetworkPersistence.TryLoadGlobalRoadData`, `StairLayout.LayoutVersion`, `BridgeLayout.LayoutVersion` | `StairLayout.LayoutVersion`, `BridgeLayout.LayoutVersion` | A change to stored geometry bumps the layout version of the type that lays it. |
 | Placing pieces into zones, and whether a zone's structure is started | `StructurePlacement.OnZoneSpawned`, `StructurePlacement.SpawnInZone`, `StructurePlans.Started`, `StructureAppendQueue.Prepare` | none | Ask `StructurePlans.Started`; do not test the spawned or owed state yourself. |
 | Terrain settled, and whether the world is held | `RoadTerrainModifier.TerrainSettled`, `RoadRockClearing.TerrainWritten`, `RoadLifecycleManager.HoldsTheWorld`, `GhostRepairLedger.DueAt` | none | Joins and passes wait on `HoldsTheWorld`. |

@@ -116,6 +116,10 @@ public static partial class RoadNetworkGenerator
 
     private static readonly HashSet<string> ConfiguredLocationNames = new();
 
+    /// <summary>Location names the RequiredLocations setting lists: always destinations, and their islands always get
+    /// roads (<see cref="IsConfiguredRequired"/>).</summary>
+    private static readonly HashSet<string> RequiredLocationNames = new();
+
     #region Location Registration API
 
     /// <summary>
@@ -383,6 +387,21 @@ public static partial class RoadNetworkGenerator
     /// <summary>How far past a place's keep-out edge (<see cref="KeepOutEdge"/>) the network may run and still reach
     /// it: one path cell, the search's own resolution.</summary>
     internal const float ReachPastEdge = RoadPathfinder.CellSize;
+
+    /// <summary>How far from a location's centre a road still arrives at it, as <see cref="Reached"/> measures it: its
+    /// keep-out edge and one path cell past it. Where the road topology looks for the road end at a location
+    /// (<see cref="RoadTopologyService"/>).</summary>
+    /// <remarks>The keep-out edge (<see cref="KeepOutEdge(Vector2, float, float, bool)"/>) read without the site footprint
+    /// index: building that index on a world that only loads its network reads every location's prefab on the main thread
+    /// (minutes on a dedicated server). A location not placed first never arrives past its exterior radius
+    /// (<see cref="RoadSiteProtection.ArrivalRadiusAt"/>). One placed before its roads keeps its whole footprint, which can
+    /// reach past it: that is the ground its saved level operations shape (<see cref="LocationLevelling.GroundReach"/>).</remarks>
+    internal static float ArrivalReach(Vector2 centre, float radius)
+    {
+        float edge = radius;
+        if (PlacedSites.TryGet(centre, out PlacedSiteRecord record)) edge = Mathf.Max(edge, LocationLevelling.GroundReach(record.Ops));
+        return edge + RoadSiteProtection.Clearance(RoadWidth) + ReachPastEdge;
+    }
 
     /// <summary>
     /// How far over or under the place's own level (<see cref="ArrivalHeight"/>) the network may end and still reach it: the one
@@ -1317,6 +1336,8 @@ public static partial class RoadNetworkGenerator
     /// <summary>River crossings of the generated roads (fords and bridges
     /// prototypes): empty unless the network was generated with either on.</summary>
     public static IReadOnlyList<RoadCrossing> GetRoadCrossings() => m_roadCrossings;
+    /// <summary>The crossings copied under the lock islands add them under.</summary>
+    internal static RoadCrossing[] CopyRoadCrossings() { lock (m_recordGate) return m_roadCrossings.ToArray(); }
     /// <summary>The shore landings of the islands the network was built for (name <see cref="RoadCoastalLandings.Name"/>), by
     /// island then position, each with whether its island's destinations took it and whether the network reaches it.
     /// Saved with the network.</summary>
@@ -1545,7 +1566,8 @@ public static partial class RoadNetworkGenerator
         }
         else
         {
-            selectedIslands = RoadNetworkSelection.Islands(islands, i => eligible[i].Count, percentage);
+            selectedIslands = RoadNetworkSelection.Islands(islands, i => eligible[i].Count, percentage,
+                i => eligible[i].Exists(l => IsConfiguredRequired(l.name)));
             Log.LogDebug($"Islands: {islands.Count} total, {selectedIslands.Count} selected (target {IslandRoadPercentage}%; boss islands are not automatically included)");
         }
 
@@ -1814,15 +1836,18 @@ public static partial class RoadNetworkGenerator
     private static WorldGenerator GenerationWorld => m_generationWorld ?? WorldGenerator.instance!;
 
     /// <summary>
-    /// Merge the config-defined custom locations into the registered set.
-    /// Every generation entry point calls this first, so a location named in
-    /// the config counts as road-eligible whichever entry point runs first.
+    /// Merge the config-defined custom and required locations into the registered sets. Called when the configuration is
+    /// applied, and again by every generation entry point, so a location named in the config counts as road-eligible
+    /// whichever entry point runs first and on a world that only loads its network.
     /// </summary>
-    private static void RegisterConfiguredLocations()
+    internal static void RegisterConfiguredLocations()
     {
         ConfiguredLocationNames.Clear();
         foreach (string name in ProceduralRoadsPlugin.GetConfigLocationNames())
             if (!string.IsNullOrWhiteSpace(name)) ConfiguredLocationNames.Add(name.Trim());
+        RequiredLocationNames.Clear();
+        foreach (string name in ProceduralRoadsPlugin.GetConfigRequiredNames())
+            if (!string.IsNullOrWhiteSpace(name)) RequiredLocationNames.Add(name.Trim());
     }
 
     #region Core Road Generation Primitive
@@ -4967,12 +4992,18 @@ public static partial class RoadNetworkGenerator
                IsCustomLocation(locationName);
     }
 
-    private static bool IsCustomLocation(string name) => RegisteredLocationNames.Contains(name)
-        || ConfiguredLocationNames.Contains(name);
+    internal static bool IsCustomLocation(string name) => RegisteredLocationNames.Contains(name)
+        || ConfiguredLocationNames.Contains(name) || RequiredLocationNames.Contains(name);
+
+    /// <summary>Named by the RequiredLocations setting: a destination whatever the island's budget, and a reason to give its
+    /// island roads (<see cref="RoadNetworkSelection.Islands"/>). Bosses and Hildir's sites are required inside a selected
+    /// island only; some boss islands stay roadless.</summary>
+    internal static bool IsConfiguredRequired(string name) => RequiredLocationNames.Contains(name);
 
     private static bool IsRequiredLocation(string name) => IsBossLocation(name)
         || HildirRoads(name)
-        || name == RoadCoastalLandings.Name;
+        || name == RoadCoastalLandings.Name
+        || IsConfiguredRequired(name);
 
     private static List<(string name, Vector3 position, float radius)> SelectIslandDestinations(
         Island island, List<(string name, Vector3 position, float radius)> locations, int quota)

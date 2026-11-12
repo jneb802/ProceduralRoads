@@ -44,6 +44,7 @@ namespace ProceduralRoads
         // Configuration entries
         public static ConfigEntry<float> RoadWidth = null!;
         public static ConfigEntry<string> CustomLocations = null!;
+        public static ConfigEntry<string> RequiredLocations = null!;
         public static ConfigEntry<Heightmap.Biome> ExcludedRoadBiomes = null!;
         public static ConfigEntry<bool> AttemptRoadsToHildirQuestSites = null!;
         public static ConfigEntry<int> IslandRoadPercentage = null!;
@@ -85,6 +86,12 @@ namespace ProceduralRoads
                 "Comma-separated list of location names to include in road generation. " +
                 "Use this for locations added by Expand World Data or other mods. " +
                 "Example: Runestone_Boars,Runestone_Greydwarfs,MerchantCamp");
+
+            RequiredLocations = Config.Bind("Locations", "RequiredLocations", "",
+                "Comma-separated list of location names that always get a road: each is a destination whatever the per-island " +
+                "budget, and an island holding one always gets roads, past IslandRoadPercentage (0 still turns roads off). " +
+                "A listed name counts as a custom location too. ExcludedRoadBiomes still applies. " +
+                "Example: MWL_Port1,MWL_Port2");
 
             // Locations level the ground under themselves when they are
             // placed; roads are built before that happens, so the generator
@@ -204,30 +211,29 @@ namespace ProceduralRoads
                 HildirQuestSites = AttemptRoadsToHildirQuestSites.Value,
             };
             RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
-            // CustomLocations is parsed at generation time to preserve API registrations
+            // The configured names are known from the start, not only once a generation runs: a loaded world asks them too
+            // (manual roads, the road topology's places). Generation reads them again in case the file changed.
+            RoadNetworkGenerator.RegisterConfiguredLocations();
         }
 
         /// <summary>
         /// Parse the CustomLocations config string into a list of location names.
         /// Called at generation time to merge with API-registered locations.
         /// </summary>
-        public static HashSet<string> GetConfigLocationNames()
-        {
-            var result = new HashSet<string>();
-            
-            if (string.IsNullOrWhiteSpace(CustomLocations.Value))
-                return result;
+        public static HashSet<string> GetConfigLocationNames() => ParseNames(CustomLocations.Value);
 
-            string[] locationNames = CustomLocations.Value.Split(',');
-            foreach (string name in locationNames)
+        /// <summary>The RequiredLocations config string as location names, read at generation time.</summary>
+        public static HashSet<string> GetConfigRequiredNames() => ParseNames(RequiredLocations.Value);
+
+        private static HashSet<string> ParseNames(string value)
+        {
+            HashSet<string> result = new();
+            if (string.IsNullOrWhiteSpace(value)) return result;
+            foreach (string name in value.Split(','))
             {
                 string trimmed = name.Trim();
-                if (!string.IsNullOrEmpty(trimmed))
-                {
-                    result.Add(trimmed);
-                }
+                if (!string.IsNullOrEmpty(trimmed)) result.Add(trimmed);
             }
-            
             return result;
         }
 
@@ -237,6 +243,7 @@ namespace ProceduralRoads
         private void Update()
         {
             RoadLifecycleManager.Tick();
+            RoadTopologyService.Tick();
             RoadGenerationPanel.Synchronize();
             if (m_configurationPending && !RoadLifecycleManager.IsGenerating) ApplyConfiguration();
             if (Time.time < m_nextTerrainSweep) return;

@@ -54,6 +54,22 @@ public class NetworkSelectionTests
         Assert.Equal(3, Assert.Single(RoadNetworkSelection.Islands(islands, _ => 1, 33)).Id);
     }
 
+    /// <summary>A place the RequiredLocations setting names gives its island roads past the share, in rank order; zero is
+    /// still off.</summary>
+    [Fact]
+    public void AnIslandHoldingAConfiguredRequiredPlaceIsAddedPastTheShare()
+    {
+        var islands = new[] {
+            new Island { Id=1, ApproxArea=1000 }, new Island { Id=2, ApproxArea=100 },
+            new Island { Id=3, ApproxArea=10000 } };
+        Assert.Equal(new[] { 1, 2 }, RoadNetworkSelection.Islands(islands,
+            i => i.Id == 1 ? 10 : 1, 33, i => i.Id == 2).Select(i => i.Id));
+        // Already selected: not added twice.
+        Assert.Equal(new[] { 1 }, RoadNetworkSelection.Islands(islands,
+            i => i.Id == 1 ? 10 : 1, 33, i => i.Id == 1).Select(i => i.Id));
+        Assert.Empty(RoadNetworkSelection.Islands(islands, _ => 10, 0, _ => true));
+    }
+
     // Eight, plus four for every two square kilometres, capped.
     [Theory]
     [InlineData(0, 48, 8)]

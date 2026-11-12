@@ -13,7 +13,7 @@ public static class RoadNetworkSelection
     public const int TargetSubAreas = 9;
 
     public static List<Island> Islands(IReadOnlyList<Island> islands,
-        Func<Island, int> contentCount, int percentage)
+        Func<Island, int> contentCount, int percentage, Func<Island, bool>? mustInclude = null)
     {
         // Zero is a real opt-out, including required destinations.
         if (percentage <= 0) return new List<Island>();
@@ -22,7 +22,12 @@ public static class RoadNetworkSelection
         var ranked = islands.OrderByDescending(contentCount).ThenByDescending(i => i.ApproxArea).ThenBy(i => i.Id);
         // Bosses and quests are protected inside selected islands, not a reason
         // to add more islands. Some boss islands deliberately remain roadless.
-        return ranked.Take(count).ToList();
+        List<Island> selected = ranked.Take(count).ToList();
+        // A place the RequiredLocations setting names is the one reason to add an island past the share, in rank order.
+        if (mustInclude != null)
+            foreach (Island island in ranked.Skip(count))
+                if (mustInclude(island)) selected.Add(island);
+        return selected;
     }
 
     /// <summary>Destinations an island earns: eight, plus four for every two

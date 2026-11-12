@@ -96,6 +96,7 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadEndRing.cs" Link="ModSrc/RoadEndRing.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkOptions.cs" Link="ModSrc/RoadNetworkOptions.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkSelection.cs" Link="ModSrc/RoadNetworkSelection.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadTopology.cs" Link="ModSrc/RoadTopology.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadConstants.cs" Link="ModSrc/RoadConstants.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPathfinder.cs" Link="ModSrc/RoadPathfinder.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadNetworkGenerator.cs" Link="ModSrc/RoadNetworkGenerator.cs"/>

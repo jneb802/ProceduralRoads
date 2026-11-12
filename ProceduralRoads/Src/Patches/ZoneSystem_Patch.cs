@@ -15,7 +15,10 @@ public static class ZoneSystem_Patch
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))]
     public static class ZoneSystem_Start_Patch
     {
+        // Before other mods' postfixes: when one of them throws, Harmony runs no postfix after it, and the roads would
+        // never subscribe to this world (RoadLifecycleManager.DecideOnce waits for it forever).
         [HarmonyPostfix]
+        [HarmonyPriority(Priority.First)]
         public static void Postfix(ZoneSystem __instance)
         {
             RoadLifecycleManager.OnZoneSystemStart(__instance);

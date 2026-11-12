@@ -201,6 +201,24 @@ public static class LocationLevelling
     }
 
     /// <summary>
+    /// How far from a location's centre its level operations shape the ground: each operation's offset and the larger of
+    /// its level and smooth radius (a square one to its corner), as the footprint index reads a prefab's terrain modifiers
+    /// (LocationPrefabLevelling), without their paint, which does not move the ground. For a location placed before its
+    /// roads, read from its saved record, so no prefab is loaded.
+    /// </summary>
+    public static float GroundReach(IReadOnlyList<LevelOp> ops)
+    {
+        float reach = 0f;
+        foreach (LevelOp op in ops)
+        {
+            float radius = Mathf.Max(op.Radius, op.SmoothRadius);
+            if (op.Square) radius *= Mathf.Sqrt(2f);
+            reach = Mathf.Max(reach, new Vector2(op.OffsetX, op.OffsetZ).magnitude + radius);
+        }
+        return reach;
+    }
+
+    /// <summary>
     /// How far out a road to a place stops, from its centre: the ground the place SHAPES, its
     /// exterior radius and each levelling and smoothing reach, but not the ground it only paints out to
     /// <paramref name="footprint"/> (its whole reach, paint included). A Crypt4 paints cleared ground out to

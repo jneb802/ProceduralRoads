@@ -119,7 +119,7 @@ public static class RoadTopologyService
                 string? name = definition?.m_prefab.Name;
                 if (definition == null || name == null) continue;
                 Vector2 centre = new(location.m_position.x, location.m_position.z);
-                locations.Add(new RoadTopology.SourceLocation(centre, RoadNetworkGenerator.ArrivalReach(definition.m_exteriorRadius),
+                locations.Add(new RoadTopology.SourceLocation(centre, RoadNetworkGenerator.ArrivalReach(centre, definition.m_exteriorRadius),
                     RoadNetworkGenerator.IsCustomLocation(name)));
             }
         float reach = RoadRide.Reach;

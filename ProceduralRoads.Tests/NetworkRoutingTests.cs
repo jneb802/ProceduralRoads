@@ -131,11 +131,11 @@ public class NetworkRoutingTests
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(0, 0), new(8, 0), new(16, 0) }, 4, world);
             RoadSpatialGrid.FinalizeRoadNetwork();
 
-            var path = finder.FindPathToNetwork(new Vector2(0, 0), 8);
+            var path = finder.FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize);
             Assert.Null(path);
             Assert.True(finder.AlreadyOnNetwork, "a start already within reach is not a failure");
 
-            var away = finder.FindPathToNetwork(new Vector2(4000, 4000), 8);
+            var away = finder.FindPathToNetwork(new Vector2(4000, 4000), RoadPathfinder.CellSize);
             Assert.False(finder.AlreadyOnNetwork, "a real search must not claim it was already connected");
             Assert.Null(away);
         }
@@ -176,7 +176,7 @@ public class NetworkRoutingTests
         {
             var world=new Flat();
             RoadSpatialGrid.AddRoadPath(new() {new Vector2(-80,0),new Vector2(80,0)},4,world);
-            var path=new RoadPathfinder(world).FindPathToNetwork(new Vector2(0,100),8,
+            var path=new RoadPathfinder(world).FindPathToNetwork(new Vector2(0,100), RoadPathfinder.CellSize,
                 new[] {new Vector2(-80,0),new Vector2(80,0)});
             Assert.NotNull(path);
             var end=path![path.Count-1];

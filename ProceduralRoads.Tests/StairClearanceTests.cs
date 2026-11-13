@@ -129,7 +129,7 @@ public class StairClearanceTests : IDisposable
         var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
         StairStructures.Add(run);
 
-        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _, out _);
+        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _);
         int rising = run.Clearances.Count(Rises);
         Assert.True(rising > 0);
         Assert.True(rising < run.Clearances.Count);
@@ -142,7 +142,6 @@ public class StairClearanceTests : IDisposable
                 && Mathf.Abs(b.Turn.eulerAngles.y - Quaternion.Euler(0f, stored.YawDegrees, 0f).eulerAngles.y) < 1e-3f).ToList();
             foreach (RockClearance box in mine)
             {
-                Assert.False(box.HasPoint);
                 Assert.False(box.WholeOnly);
                 Assert.Equal(stored.Half.z, box.Half.z, 4);
             }
@@ -153,7 +152,7 @@ public class StairClearanceTests : IDisposable
                 RockClearance box = Assert.Single(mine);
                 Assert.Equal(stored.Half, box.Half);
                 Assert.Equal(RoadStairRuns.Width, 2f * box.Half.x, 3);
-                Assert.Equal(StairLayout.ClearanceHeight, box.Top - box.Surface, 3);
+                Assert.Equal(RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, box.Top - box.Surface, 3);
                 continue;
             }
             // A stair's: its corridor, the box's full height, and its tread layer, the walk's width to StepUp over its
@@ -162,21 +161,57 @@ public class StairClearanceTests : IDisposable
             RockClearance inner = Assert.Single(mine, b => Mathf.Abs(2f * b.Half.x - corridor) < 1e-3f);
             RockClearance tread = Assert.Single(mine, b => Mathf.Abs(2f * b.Half.x - RoadStairRuns.Width) < 1e-3f);
             Assert.Equal(storedTop, inner.Top, 3);
-            Assert.Equal(storedTop - StairLayout.ClearanceHeight + StairLayout.StepUp, tread.Top, 3);
+            Assert.Equal(StairLayout.HighestWalk(stored.Centre, stored.Half, stored.Surface) + StairLayout.StepUp, tread.Top, 3);
         }
 
         // A road's clearance is a player's height over the road, its own roof too.
         var point = new RoadSpatialGrid.RoadPoint(new Vector2(0f, -10f), RoadSpatialGrid.DefaultRoadWidth, Flat);
         RockClearance road = RockClearances.Road(point, Flat, new List<RoadSpatialGrid.RoadPoint> { point }, RoadRockPolicy.ClearanceHeight,
             wholeOnly: false, keepsSiteRocks: false);
-        Assert.True(road.HasPoint);
         Assert.Equal(RockClearances.Top(Flat), road.Top, 3);
         Assert.Equal(Flat + RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, road.Top, 3);
     }
 
+    /// <summary>A stair's walking box is a road's (RockClearances.Bottom to Top, a lift over the walk and a player's headroom
+    /// over that: 2.1 m over it, not 2.0), pinned over walks at zero, under
+    /// and over the sea, large and NaN.</summary>
+    [Theory]
+    [InlineData(0f, 0.1f, 2.1f)]
+    [InlineData(1.9f, 2f, 4f)]
+    [InlineData(30f, 30.1f, 32.1f)]
+    [InlineData(-30.5f, -30.4f, -28.4f)]
+    [InlineData(1234.567f, 1234.667f, 1236.667f)]
+    [InlineData(float.NaN, float.NaN, float.NaN)]
+    public void AStairBoxIsARoadBox(float walk, float bottom, float boxTop)
+    {
+        Assert.Equal(bottom, RockClearances.Bottom(walk), 3);
+        Assert.Equal(boxTop, StairLayout.BoxTop(walk), 3);
+        // Exact floats, as the game stores them: the lift added once (one rounding), the headroom added to that (a second).
+        float exactBottom = walk + 0.1f;
+        float exactTop = exactBottom + 2f;
+        Assert.Equal(exactBottom, RockClearances.Bottom(walk));
+        Assert.Equal(exactTop, StairLayout.BoxTop(walk));
+        Assert.Equal(RockClearances.Top(walk), StairLayout.BoxTop(walk));
+    }
+
+    /// <summary>A stair stretch's walking box saved by a build before the headroom became the road's (its top 2.0 m over the
+    /// highest walk, not 2.1) reads back the same highest walk as one laid now: read from the bottom and surface, which every
+    /// build stored the same way, never from the top.</summary>
+    [Fact]
+    public void AStairBoxSavedBeforeTheRoadsHeadroomReadsAsLaid()
+    {
+        float lowest = 10f, highest = 10.25f, surface = 10.125f;
+        float bottom = lowest + RoadRockPolicy.ClearanceLift;
+        foreach (float top in new[] { highest + 2.0f, StairLayout.BoxTop(highest) })
+        {
+            var box = new StairClearance(new Vector3(0f, (bottom + top) / 2f, 0f), new Vector3(1f, (top - bottom) / 2f, 0.25f), 0f, surface);
+            Assert.Equal(highest, StairLayout.HighestWalk(box.Centre, box.Half, box.Surface), 3);
+        }
+    }
+
     /// <summary>Whether a stored walking box is a stair's stretch: its top stands a player's headroom over a walk higher than
     /// its middle one.</summary>
-    private static bool Rises(StairClearance box) => box.Centre.y + box.Half.y - StairLayout.ClearanceHeight > box.Surface + 0.01f;
+    private static bool Rises(StairClearance box) => StairLayout.HighestWalk(box.Centre, box.Half, box.Surface) > box.Surface + 0.01f;
 
     /// <summary>Whether a box centred at <paramref name="centre"/>, turned to <paramref name="yaw"/>, is one of a walked piece's
     /// own: standing over its footprint, turned to its heading.</summary>
@@ -199,7 +234,7 @@ public class StairClearanceTests : IDisposable
     /// Nothing the rock clearing leaves obstructs a stair's walk, and what only clips its edge stays (assistant-written,
     /// 6 Nov 2026): over every stair's tread the walker's corridor (the way, RoadRockPolicy.MinOpening, clipped to the walk,
     /// so the whole capsule and its margin fit) is in a box from just over the walk to a player's headroom
-    /// (StairLayout.ClearanceHeight) over it, so no chunk is left there; a point at the walk's edge, outside the corridor,
+    /// (RoadRockPolicy.ClearanceHeight) over it, so no chunk is left there; a point at the walk's edge, outside the corridor,
     /// is in the tread layer up to StairLayout.StepUp over it, and over that in none of the stair's own boxes, so a chunk
     /// only there stays. And the boxes hug the treads: none reaches more than a stretch's rise under the walk, nor more than a
     /// stretch's rise over its headroom.
@@ -212,7 +247,7 @@ public class StairClearanceTests : IDisposable
         Assert.True(plan.Reached, plan.Reason);
         var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
         StairStructures.Add(run);
-        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _, out _);
+        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _);
 
         float rise = StairLayout.PieceRise / StairLayout.ClearanceStretches;
         float corridor = RockClearances.Corridor(RoadStairRuns.Width / 2f);
@@ -240,7 +275,7 @@ public class StairClearanceTests : IDisposable
             {
                 Vector3 walk = WalkAt(walked, along);
                 foreach (float side in new[] { -corridor + 0.01f, 0f, corridor - 0.01f })
-                    for (float over = 2f * RoadRockPolicy.ClearanceLift; over <= StairLayout.ClearanceHeight + 1e-4f; over += 0.1f)
+                    for (float over = 2f * RoadRockPolicy.ClearanceLift; over <= RoadRockPolicy.ClearanceHeight + 1e-4f; over += 0.1f)
                         Assert.True(boxes.Any(b => Inside(b, walk + right * side + up * over)),
                             $"stair at {walked.Position}: {over:F2} m over its walk {along:F2} m along, {side:F2} m aside, in no box");
                 // Outside the corridor, at the walk's edge, up to StepUp: the tread layer.
@@ -255,7 +290,7 @@ public class StairClearanceTests : IDisposable
                             $"stair at {walked.Position}: its edge {side:F2} m aside, {over:F2} m over its walk, in a box");
                 // Hugging the treads: nothing more than a stretch's rise under the walk, nor over its headroom.
                 Assert.False(own.Any(b => Inside(b, walk - up * (rise + 0.01f))), $"stair at {walked.Position}: under its walk {along:F2} m along");
-                Assert.False(own.Any(b => Inside(b, walk + up * (StairLayout.ClearanceHeight + rise + 0.01f))),
+                Assert.False(own.Any(b => Inside(b, walk + up * (RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight + rise + 0.01f))),
                     $"stair at {walked.Position}: over its headroom {along:F2} m along");
             }
         }
@@ -274,24 +309,22 @@ public class StairClearanceTests : IDisposable
             new(at, StairLayout.PieceRun * 0.75f),
             new(new Vector3(-100f, 0f, -100f), 2f),
         };
-        Assert.True(RoadRockPolicy.ClearingTakes("rock4_coast", Heightmap.Biome.Meadows, RockClearingMode.Carve));
-        Assert.False(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", RockClearingMode.Carve, meadows, firstRockKeepingArea: 2));
-        // Vegetation stays out of it; with rock clearing off, so does the rock; a bridge's area keeps it out.
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "Beech1", RockClearingMode.Carve, meadows, firstRockKeepingArea: 2));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", RockClearingMode.Off, meadows, firstRockKeepingArea: 2));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", RockClearingMode.Carve, meadows, firstRockKeepingArea: 1));
-        Assert.True(RoadClearAreaManager.InsideClearArea(areas, 0, 1, at, "rock4_coast", RockClearingMode.Carve, meadows));
+        Assert.True(RoadRockPolicy.ClearingTakes("rock4_coast", Heightmap.Biome.Meadows));
+        int rock = "rock4_coast".GetStableHashCode(), tree = "Beech1".GetStableHashCode();
+        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 2), at, rock, meadows));
+        // Vegetation stays out of it; a bridge's area keeps it out.
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 2), at, tree, meadows));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 1), at, rock, meadows));
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), at, rock, meadows));
 
         // The server's clearing of a zone generated before the staircase: the same.
-        var rock = "rock4_coast".GetStableHashCode();
-        var tree = "Beech1".GetStableHashCode();
         var vegetation = new HashSet<int> { rock, tree };
-        var none = new List<VegetationClearing.Area>();
         var p = new Vector2(at.x, at.z);
-        List<VegetationClearing.Area> Structure(bool stair) => new() { new(p, StairLayout.PieceRun * 0.75f, leavesRocks: stair) };
-        bool Removed(int prefab, bool stair) => VegetationClearing.ShouldRemove(prefab, p, false, vegetation, none,
-            new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), structureAreas: Structure(stair),
-            rockClearing: RockClearingMode.Carve, biomeAt: _ => Heightmap.Biome.Meadows);
+        // The staircase's area alone, as a staircase's (rock-leaving) or as a bridge's.
+        VegetationClearing.ZoneAreas Structure(bool stair) =>
+            new(new List<ZoneSystem.ClearArea> { new(at, StairLayout.PieceRun * 0.75f) }, 0, 0, stair ? 1 : 0);
+        bool Removed(int prefab, bool stair) => VegetationClearing.ShouldRemove(prefab, p, false, vegetation, Structure(stair),
+            new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), biomeAt: meadows);
         Assert.False(Removed(rock, stair: true));
         Assert.True(Removed(tree, stair: true));
         Assert.True(Removed(rock, stair: false));

@@ -148,6 +148,33 @@ public static partial class RoadStairRuns
 
 
 
+    /// <summary>
+    /// The one crest owner: the row a staircase laid down over a ridge is searched down from, off the top of <paramref name="up"/>,
+    /// the staircase before it (the merged and the unmerged cases both read it here). Null where that top is not one to meet: a
+    /// staircase laid down, or a top that is neither a stair, a floor already, nor a reached floor. A top that is a floor already
+    /// (a top landing, or the far floor of a flight up out of a valley) is the crest's 2x2; a top stair gets a 2x2 carried on from it
+    /// (<see cref="StairLayout.CarryTopTo"/>) to a stair on, only on this road's own staircase: an earlier road's is met at its top
+    /// stair, back to back, never edited. Where there is a floor, <paramref name="up"/> ends on it (its point and height move to the
+    /// floor's far edge), and <paramref name="floored"/> says so; else the row is its top stair's edge.
+    /// </summary>
+    internal static StairContinuation? DownFromCrest(RoadStairSpan up, Func<float, float, float> ground, out bool floored)
+    {
+        floored = false;
+        StairPlan first = up.Plan;
+        if (first.Reversed
+            || !(first.LastRowKind == StairPieceKind.Stair || first.CrestFloored
+                || first.LastRowKind == StairPieceKind.Landing && first.Reached)) return null;
+        floored = first.CrestFloored || first.LastRowKind == StairPieceKind.Landing;
+        if (floored && !up.Existing) first.CrestFloored = true;
+        // A 2x2 at the crest between the two top stairs (a ridge always has at least one 2x2 between the up and down stairs): a floor
+        // on from the first's top stair, the second from its far edge.
+        if (!floored && !up.Existing
+            && StairLayout.CarryTopTo(first, up.ToPoint + StairLayout.Forward(first.EndHeading) * StairLayout.PieceRun, up.ToHeight, ground, Width, up.Kit))
+            floored = first.CrestFloored = true;
+        if (floored) { up.ToPoint = new Vector2(first.End.x, first.End.z); up.ToHeight = first.End.y; }
+        return new StairContinuation(up.ToPoint, first.EndHeading, up.ToHeight, floored ? StairPieceKind.Landing : StairPieceKind.Stair);
+    }
+
     /// <summary>Ridge meets snapped off the crest's floor's side or a second floor on (<see cref="SnapOffCrest"/>).</summary>
     public static int RidgesSnappedOffCrest;
 
@@ -173,7 +200,7 @@ public static partial class RoadStairRuns
             StairPlan down = StairLayout.BuildDown(row, b, ground, Width, kit, GenerationExpansions, GenerationTotalExpansions, GenerationStall, corridor: corridor);
             if (!down.Reached || !Usable(down, path, start, to, world, spans, row.Edge)) continue;
             // A second floor on is the first's: never on a staircase an earlier road built.
-            if (second && (up.Existing || !StairLayout.CarryTopTo(first, row.Edge, crest.Height, ground, Width, kit))) continue;
+            if (second && (up.Existing || !StairLayout.CarryTopTo(first, row.Edge, crest.Height, ground, Width, up.Kit))) continue;
             up.ToPoint = row.Edge;
             a = row.Edge;
             meet = row.Edge;
@@ -446,7 +473,7 @@ public static partial class RoadStairRuns
     private static bool RunsInto(StairPlan plan, int from, StairPlan other, float foot)
     {
         bool Walked(StairPiece p) => p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         var laid = plan.Pieces.Take(from).Concat(other.Pieces)
             .Where(p => Walked(p) && !(p.Kind == StairPieceKind.Landing && Mathf.Abs(p.Position.y + kit.FloorTop - foot) < 0.05f)).ToList();
         foreach (StairPiece p in plan.Pieces.Skip(from).Where(Walked))
@@ -461,6 +488,10 @@ public static partial class RoadStairRuns
 
     /// <summary>Ridge meets laid back to back, the second searched down from the first's top edge (StairLayout.BuildDown).</summary>
     public static int RidgesSnapped;
+
+    /// <summary>Two tops met at a crest this generation (JoinCrest, StairLayout.JoinTops), each try: joined by a snapped run,
+    /// joined by a clip (of those, as they stand, nothing laid, and on a stair sunk into the top floor under it), or refused.</summary>
+    public static int TopJoinsSnapped, TopJoinsClipped, TopJoinsAsTheyStand, TopJoinsClipSunk, TopJoinsRefused;
 
 
     /// <summary>Valley meets laid from a floor shared at the bottom this generation.</summary>

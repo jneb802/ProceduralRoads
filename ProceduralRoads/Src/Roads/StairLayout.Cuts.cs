@@ -28,13 +28,20 @@ public static partial class StairLayout
     /// stand 0.5 m apart and terrain vertices 1 m apart, so this reaches every
     /// vertex under the cut stretch (half the 1 m diagonal is 0.71 m).</summary>
     public const float CutRadius = 0.75f;
+    /// <summary>The width a staircase's cut is committed at: twice its radius.</summary>
+    public const float CutWidth = CutRadius * 2f;
 
     internal const float SurfaceSpacing = CutSpacing / 2f;
+
+    /// <summary>The walking height <paramref name="along"/> metres on from a piece's back edge (a stair rises along it), less
+    /// <paramref name="below"/>. One expression, rounded once: the game's Mono works floats wider than float and rounds at the
+    /// store, so taking <paramref name="below"/> off a rounded walk height can move the last bit.</summary>
+    internal static float WalkHeight(bool stair, float height, float along, float below = 0f) => height + (stair ? PieceRise * along / PieceRun : 0f) - below;
 
     private static Vector3 WalkPoint(bool stair, Vector2 back, Vector2 dir, Vector2 right, float height, float along, float side)
     {
         Vector2 p = back + dir * along + right * side;
-        return new Vector3(p.x, height + (stair ? PieceRise * along / PieceRun : 0f), p.y);
+        return new Vector3(p.x, WalkHeight(stair, height, along), p.y);
     }
 
     /// <summary>The complete walked surface, its boundary included, whether or not cuts were emitted.
@@ -51,12 +58,10 @@ public static partial class StairLayout
     /// walking height at its back edge (a stair's low edge, a floor's top).</summary>
     internal static (Vector2 back, float heading, float across, float depth, float height) Footprint(StairPiece piece)
     {
-        StairKit kit = StairKit.Named(piece.Prefab.Split('_')[0]) ?? StairKit.Stone;
+        StairKit kit = StairKit.OfPrefab(piece.Prefab);
         bool stair = piece.Kind == StairPieceKind.Stair;
         float across = PieceRun, depth = PieceRun;
-        if (piece.Kind == StairPieceKind.Filler)
-            foreach (FillerKind filler in kit.Fillers)
-                if (filler.Prefab == piece.Prefab) { across = filler.Across; depth = filler.Depth; break; }
+        if (piece.Kind == StairPieceKind.Filler) { FillerKind filler = kit.FlatOf(piece.Prefab); across = filler.Across; depth = filler.Depth; }
         float heading = stair ? Wrap(piece.YawDegrees + 180f) : piece.YawDegrees;
         Vector2 back = new Vector2(piece.Position.x, piece.Position.z) - Forward(heading) * (depth / 2f);
         return (back, heading, across, depth, piece.Position.y + (stair ? 0f : kit.FloorTop));

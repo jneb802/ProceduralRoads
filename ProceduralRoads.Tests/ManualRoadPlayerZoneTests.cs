@@ -30,8 +30,8 @@ public sealed class ManualRoadPlayerZoneTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); NetworkCutoff.Forget(); ManualRoads.Reset();
         _scope.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
-        RoadGrade.Configured = .35f;
-        RoadNetworkGenerator.RoadWidth = 4;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
+        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
         // A network far away (along z = -400), generated on this world.
         RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-40f, -400f), new(40f, -400f) }, 4f, WorldGenerator.instance!);

@@ -71,7 +71,7 @@ public sealed class StairPlanningGroundTests : IDisposable
     }
 
     [Fact]
-    public void TheLatticeIsTheGroundAtItsMetresJoinedBilinearlyAcrossTileEdges()
+    public void TheLatticeIsTheGroundAtItsMetresJoinedAsTheGamesMeshJoinsThemAcrossTileEdges()
     {
         // The lattice a staircase is laid out on reads each cell's four corners from the ground as places leave it and joins
         // them as the game's mesh does, whichever tiles they fall in: in the middle of a tile, along its last row or column,
@@ -83,9 +83,7 @@ public sealed class StairPlanningGroundTests : IDisposable
         foreach (float x in new[] { 5.3f, 31.4f, 31.999f, 32f, 63.7f, -0.6f, -1f, -32.5f, -33.25f, 1000.75f })
             foreach (float z in new[] { 7.8f, 31.6f, -0.2f, -31.9f, -64.5f, 95.01f })
             {
-                int x0 = Mathf.FloorToInt(x), z0 = Mathf.FloorToInt(z);
-                float fx = x - x0, fz = z - z0;
-                float expected = Mathf.Lerp(Mathf.Lerp(Corner(x0, z0), Corner(x0 + 1, z0), fx), Mathf.Lerp(Corner(x0, z0 + 1), Corner(x0 + 1, z0 + 1), fx), fz);
+                float expected = BuriedPieces.MeshHeight(x, z, Corner);
                 Assert.Equal(expected, RoadStairRuns.GroundAt(x, z, world));
             }
     }

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Valheim.Testing;
+using Valheim.Testing.Doubles;
 using Xunit;
 namespace ProceduralRoads.Tests;
 
@@ -34,6 +35,8 @@ public class StairTurnTests
     [Fact]
     public void TheLandingRunsAlongBothLegs()
     {
+        using var landing6 = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
         Assert.True(RoadSwitchbacks.Shape(KnightZigzag(), 4, out var shaped, out var landing, Rising, stair: true));
         // Every turn's landing is longer than its arc: at least the arc plus
         // most of the configured run on each side (legs permitting).
@@ -44,7 +47,30 @@ public class StairTurnTests
             else { longest = Mathf.Max(longest, run); run = 0f; }
         }
         longest = Mathf.Max(longest, run);
-        Assert.True(longest >= 2f * RoadSwitchbacks.StairLanding, $"longest landing {longest:F1} m");
+        Assert.True(longest >= 2f * RoadPitches.JunctionLanding, $"longest landing {longest:F1} m");
+    }
+
+    /// <summary>A staircase turn's landing is the road's one landing (RoadPitches.JunctionLanding at JunctionLandingGrade), not a
+    /// copy of it: the landing along the legs follows it, and so does the grade the landing is held to.</summary>
+    [Fact]
+    public void TheStairTurnLandingIsTheRoadsLanding()
+    {
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        float Longest(float metres)
+        {
+            RoadPitches.JunctionLanding = metres;
+            Assert.True(RoadSwitchbacks.Shape(KnightZigzag(), 4, out var shaped, out var flat, Rising, stair: true));
+            float run = 0f, longest = 0f;
+            for (int i = 1; i < shaped!.Count; i++)
+            {
+                if (flat![i] && flat[i - 1]) run += Vector2.Distance(shaped[i - 1], shaped[i]);
+                else { longest = Mathf.Max(longest, run); run = 0f; }
+            }
+            return Mathf.Max(longest, run);
+        }
+        float none = Longest(0f), three = Longest(3f), six = Longest(6f);
+        Assert.True(none < three && three < six, $"landing runs follow the road's landing: 0 m {none:F1}, 3 m {three:F1}, 6 m {six:F1}");
+        Assert.Equal(RoadPitches.JunctionLandingGrade, RoadSwitchbacks.EffectiveLandingGrade(stair: true));
     }
 
     // Two parallel legs at different heights, run the other way along z.

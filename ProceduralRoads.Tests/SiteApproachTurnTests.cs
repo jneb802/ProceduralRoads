@@ -113,7 +113,7 @@ public class StairDescentTests
         Assert.Empty(plan.Pieces);
         // Nor on down from a foot to a road below it.
         plan = new StairPlan { Kit = StairKit.Stone.Name, Reached = true, StartHeading = 0f, Foot = new Vector3(0f, 20f, 0f) };
-        Assert.Null(StairLayout.LowerFootTo(plan, (x, z) => 0f, 2f, 17f));
+        Assert.Null(StairLayout.FootToRoad(plan, (x, z) => 0f, 2f, 17f));
         Assert.Empty(plan.Pieces);
         Assert.Equal(new Vector3(0f, 20f, 0f), plan.Foot);
     }
@@ -266,11 +266,15 @@ public class SiteApproachToppingFloorTests
             maxBuried: StairCover.ApproachSearch);
         float Lip(StairPlan p)
         {
-            Vector2 ahead = new Vector2(p.End.x, p.End.z) + StairLayout.Forward(p.EndHeading) * StairLayout.TopAhead;
-            return Knoll(ahead.x, ahead.y) - p.End.y;
+            // The ground a floor out from the top stands over it, read at the two far corners of that floor directly (the gate's
+            // own reader is not asked): the gentler of the two.
+            Vector2 far = new Vector2(p.End.x, p.End.z) + StairLayout.Forward(p.EndHeading) * StairLayout.PieceRun;
+            Vector2 side = StairLayout.Right(p.EndHeading) * (StairLayout.PieceRun / 2f);
+            float a = Knoll(far.x - side.x, far.y - side.y) - p.End.y, b = Knoll(far.x + side.x, far.y + side.y) - p.End.y;
+            return Mathf.Abs(a) <= Mathf.Abs(b) ? a : b;
         }
         StairPlan plan = Lay();
         Assert.True(plan.Reached, plan.Reason);
-        Assert.True(Lip(plan) <= StairLayout.PieceRise + StairLayout.StepUp, $"top at {plan.End}, the ground {Lip(plan):F2} m over it 2.5 m on");
+        Assert.True(Lip(plan) <= StairLayout.PieceRise + StairLayout.StepUp, $"top at {plan.End}, the ground {Lip(plan):F2} m over it ahead");
     }
 }

@@ -104,8 +104,8 @@ public static class DvergrViaduct
     /// a river its wooden bridge: <see cref="Refusal"/> is the one owner of the kit, and this carries its "under 6 m
     /// stays wood" (<see cref="MinClearance"/>) up to the floor. Its default.</summary>
     public const float DefaultMinViaductPier = 12f;
-    /// <summary>As set: PROCEDURALROADS_VIADUCT_MIN_PIER (metres, 6-20). Settable for tests.</summary>
-    public static float MinViaductPier = DebugSwitches.Number("VIADUCT_MIN_PIER", DefaultMinViaductPier, MinClearance, PierCeiling);
+    /// <summary>As set (metres). Settable for tests.</summary>
+    public static float MinViaductPier = DefaultMinViaductPier;
 
     /// <summary>Pier centre to pier centre, as the vanilla viaduct.</summary>
     public const float PierSpacing = 16f;
@@ -125,9 +125,6 @@ public static class DvergrViaduct
     /// the corbels' tips are weaker, and 22 m piers on 16 m bays dropped their deck.)
     /// </summary>
     public const float PierCeiling = 22f;
-    /// <summary>The pier ceiling the crossings saved without their kind (records of format 2 and older) were laid under: a
-    /// crossing read from one is a viaduct where it was then (RoadNetworkPersistence.DeserializeRoadCrossings).</summary>
-    public const float FormerPierCeiling = 20f;
     /// <summary>The navigation bay over a river: two vanilla bays (32 m) centred on its navigation channel, the pier on that
     /// line left out (a boat found a 16 m bay too tight, so the gap over a river is
     /// wider if possible).</summary>
@@ -381,9 +378,9 @@ public static class DvergrViaduct
     {
         Footing => (1f, 1f, 4f),
         Band or Block => (1f, 1f, 1f),
-        Filler or Corbel or Arch => (1f, 0.5f, 1f),
-        // Rip: blackmarble_outcorner's collider is 2 x 2 x 2 (was taken as 1 x 1 x 2).
-        CorbelCorner => (1f, 1f, 1f),
+        Filler => (1f, 0.5f, 1f),
+        // The collider tables are one: these are BuriedPieces' bounds (Rip: blackmarble_outcorner's is 2 x 2 x 2).
+        Corbel or CorbelCorner or Arch => HalfOf(prefab),
         // Rip: iron_floor_2x2 is 0.1 m thick and iron_wall_2x2 0.1 m (was taken as 0.2).
         Floor => (1f, 1f, 0.05f),
         Screen => (0.05f, 1f, 1f),
@@ -391,12 +388,18 @@ public static class DvergrViaduct
         HeadLeft or HeadRight => (1f, 1f, 1f),
         // Origin at the foot (Rip: y 0..1): only the stairs' own run (BridgeLayout.LayEndStairs) lays it, never Add.
         StepPrefab => (1f, 1f, 0.5f),
-        // The end stairs' parapet (StairRailing.LayParapet), laid along the deck: base_1 2 x 2 x 1 (Rip: its sloped face
-        // taken as its box), its half course 2 x 1 x 1.
-        StairRailing.ParapetPrefab => (1f, 0.5f, 1f),
-        StairRailing.ParapetHalfCoursePrefab => (1f, 0.5f, 0.5f),
+        // The end stairs' parapet (StairRailing.LayParapet), laid along the deck: base_1 and its half course.
+        StairRailing.ParapetPrefab or StairRailing.ParapetHalfCoursePrefab => HalfOf(prefab),
         _ => (0.5f, 0.5f, 0.5f),
     };
+
+    /// <summary>Half-extents on the deck's frame (along the deck is the prefab's x, across it z) of a piece whose collider
+    /// <see cref="BuriedPieces"/> knows.</summary>
+    private static (float u, float v, float y) HalfOf(string prefab)
+    {
+        BuriedPieces.BoundsOf(prefab, out Vector3 min, out Vector3 max);
+        return ((max.x - min.x) / 2f, (max.z - min.z) / 2f, (max.y - min.y) / 2f);
+    }
 
     // --------------------------------------------------------------- choice
 
@@ -409,9 +412,6 @@ public static class DvergrViaduct
     /// one owner of that choice: the plan, the search's valley jumps and the dev command all ask it.
     /// </summary>
     public static bool Applies(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world) == null;
-
-    /// <summary><see cref="Applies(RoadCrossing, WorldGenerator)"/> under another pier ceiling.</summary>
-    public static bool Applies(RoadCrossing crossing, WorldGenerator world, float ceiling) => Refusal(crossing, world, ceiling) == null;
 
     /// <summary>Whether a crossing stands under the viaduct's floor: its deck under <see cref="MinClearance"/> over the
     /// ground or water, or its tallest pier under <see cref="MinViaductPier"/>, the same two tests <see cref="Refusal"/>
@@ -431,7 +431,7 @@ public static class DvergrViaduct
     {
         if (crossing == null || world == null) return "no crossing";
         if (crossing.Kind != CrossingKind.Bridge) return "a ford";
-        if (world.GetBiome(crossing.Center.x, crossing.Center.y) != Heightmap.Biome.Mistlands) return "not in the Mistlands";
+        if (!BridgeStructures.InMistlands(crossing, world)) return "not in the Mistlands";
         return DeckRefusal(crossing, world, ceiling, AtGrade(crossing, world));
     }
 
@@ -458,7 +458,7 @@ public static class DvergrViaduct
     {
         if (Recorded(crossing) is { } ends) return ends.near.Height;
         float atGrade = AtGrade(crossing, world);
-        return atGrade + RaisedSteps(crossing, world, atGrade) * BridgeLayout.StairRise;
+        return atGrade + RaisedSteps(crossing, world, atGrade) * StairLayout.PieceRise;
     }
 
     /// <summary>
@@ -592,7 +592,7 @@ public static class DvergrViaduct
     /// moves a pier, so the bays carry whichever it takes. (The draw, not the raise: the raise asks the piers' height.)</summary>
     private static float ReachDeck(RoadCrossing crossing, WorldGenerator world) =>
         Recorded(crossing) is { } ends ? ends.near.Height
-            : AtGrade(crossing, world) + Mathf.Max(0, Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost)) * BridgeLayout.StairRise;
+            : AtGrade(crossing, world) + Mathf.Max(0, Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost)) * StairLayout.PieceRise;
 
     // ----------------------------------------------------------- deck reach
 
@@ -734,7 +734,7 @@ public static class DvergrViaduct
             Vector2 at = crossing.FromBank + dir * a;
             // Only road under the deck, beside the pier: never the viaduct's own road at its ends, on the bank or under a
             // joining piece (a pier 3 m in from a bank with end stairs read the apron at the stairs' foot as its floor).
-            foreach (var (p, h, w) in StructureEnds.BuiltRoadNear(at, HalfWidth + RoadConstants.DefaultRoadWidth * 0.5f + 1f, plans))
+            foreach (var (p, h, w) in StructureEnds.BuiltRoadNear(at, HalfWidth + RoadNetworkGenerator.RoadWidth * 0.5f + 1f, plans))
             {
                 float along = Vector2.Dot(p - crossing.FromBank, dir);
                 if (along <= first || along >= last || Mathf.Abs(Vector2.Dot(p - crossing.FromBank, side)) > HalfWidth + w * 0.5f) continue;
@@ -853,7 +853,7 @@ public static class DvergrViaduct
 
     /// <summary>How far past each bank a viaduct's end-approach volume reaches: its most end stairs, then the road's
     /// levelled apron (StructureEnds).</summary>
-    public static float ApproachReach => BridgeLayout.StairRun * Mathf.CeilToInt(MaxEndStairRise / BridgeLayout.StairRise - 1e-3f) + StructureEnds.ApronLength;
+    public static float ApproachReach => StairLayout.PieceRun * Mathf.CeilToInt(MaxEndStairRise / StairLayout.PieceRise - 1e-3f) + StructureEnds.ApronLength;
 
     /// <summary>Half a viaduct's width, its arches and heads included (the course and arches stand 3 m out).</summary>
     public const float HalfWidth = 3f;
@@ -1029,19 +1029,19 @@ public static class DvergrViaduct
     /// <summary>The most stairs, bank to deck, a viaduct has at either end (at most about 3 m of end
     /// stairs between the bank and the deck on each side; past that, no viaduct there). Its default.</summary>
     public const float DefaultMaxEndStairRise = 3f;
-    /// <summary>The most end stairs, as set: PROCEDURALROADS_VIADUCT_END_STAIRS (metres, 0-12).
+    /// <summary>The most end stairs, as set (metres).
     /// Past it at either end <see cref="Refusal"/> refuses the viaduct: a valley keeps
     /// its stairs or road, a river its wooden bridge. 0: level banks only. Settable for tests.</summary>
-    public static float MaxEndStairRise = DebugSwitches.Number("VIADUCT_END_STAIRS", DefaultMaxEndStairRise, 0f, BridgeLayout.MaxStairSteps * BridgeLayout.StairRise);
+    public static float MaxEndStairRise = DefaultMaxEndStairRise;
 
     // ----------------------------------------------------- at grade or raised
 
     /// <summary>The share of viaducts whose deck stands a step or two over the deck at grade (some
     /// at grade, some one or two steps up): about half. Its default.</summary>
     public const float DefaultRaisedShare = 0.5f;
-    /// <summary>The share raised, as set: PROCEDURALROADS_VIADUCT_RAISED (0-1). 0: every viaduct at grade. Settable for
+    /// <summary>The share raised, as set. 0: every viaduct at grade. Settable for
     /// tests.</summary>
-    public static float RaisedShare = DebugSwitches.Number("VIADUCT_RAISED", DefaultRaisedShare, 0f, 1f);
+    public static float RaisedShare = DefaultRaisedShare;
     /// <summary>Of the viaducts raised, the share raised two steps rather than one: half.</summary>
     public const float TwoStepShare = 0.5f;
     /// <summary>The most steps a deck is raised.</summary>
@@ -1050,7 +1050,7 @@ public static class DvergrViaduct
     private const int RoleRaise = 36;
 
     /// <summary>
-    /// How many stair rises (<see cref="BridgeLayout.StairRise"/>) the deck stands over the deck at grade
+    /// How many stair rises (<see cref="StairLayout.PieceRise"/>) the deck stands over the deck at grade
     /// (<see cref="AtGrade"/>): 0, the road running onto it at the higher bank, or 1 or 2, each end then a short flight
     /// whose foot the road meets (StructureEnds.MeetEnds, as any end's). The one owner of the choice, which the ends then
     /// carry once they are recorded with the crossing (<see cref="Recorded"/>). Drawn per crossing
@@ -1068,7 +1068,7 @@ public static class DvergrViaduct
     private static int RaisedSteps(RoadCrossing crossing, WorldGenerator world, float atGrade)
     {
         for (int steps = Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost); steps > 0; steps--)
-            if (DeckRefusal(crossing, world, PierCeiling, atGrade + steps * BridgeLayout.StairRise) == null)
+            if (DeckRefusal(crossing, world, PierCeiling, atGrade + steps * StairLayout.PieceRise) == null)
                 return steps;
         return 0;
     }
@@ -1669,7 +1669,7 @@ public static class DvergrViaduct
             }
             // The railing down these steps: a stepped black marble parapet on both sides, by the staircases' railing
             // rules (StairRailing.LayParapet), held as an ornament is (Hold): never ruined, as the steps.
-            foreach (StructurePiece p in StairRailing.LayParapet(end, 2f * BridgeLayout.DeckHalfWidth, (x, z) => finished(new Vector2(x, z))))
+            foreach (StructurePiece p in StairRailing.LayParapet(end, BridgeLayout.EndStairsWidth, (x, z) => finished(new Vector2(x, z))))
             {
                 p.Kind = StructurePieceKind.ViaductParapet;
                 p.HealthFraction = 1f;
@@ -1704,7 +1704,7 @@ public static class DvergrViaduct
     {
         var sides = new List<List<StructurePiece>>();
         float Finished(int x, int z) => finished(new Vector2(x, z));
-        foreach (var (outward, laid) in StairRailing.LayBankParapet(end, 2f * BridgeLayout.DeckHalfWidth, Finished))
+        foreach (var (outward, laid) in StairRailing.LayBankParapet(end, BridgeLayout.EndStairsWidth, Finished))
         {
             Vector2 at = end.Edge + outward * 2.5f;
             if (!WhollyBuried(Arch, at, dir, side, end.Height + ArchRise, finished))
@@ -1749,15 +1749,15 @@ public static class DvergrViaduct
 
     /// <summary>The most of a road's width a bank parapet's piece may block at any point and stand (<see cref="OnTheRoad"/>),
     /// counted in the rock clearing's slots across the road (<see cref="RoadRockPolicy.Slots"/>): a fifth, one slot of five.
-    /// The owner's, 5 Nov 2026 ("40% seems like a lot, lets start with 20% and see"): a rock left in place may block under
-    /// half (<see cref="RoadRockPolicy.KeepPartial"/>), a railing laid on the road's edge less.</summary>
+    /// The owner's, 5 Nov 2026 ("40% seems like a lot, lets start with 20% and see"): a railing laid on the road's edge blocks
+    /// less than the half a rock could.</summary>
     public const float ParapetRoadOverlap = 0.2f;
 
     /// <summary>
     /// Whether <paramref name="p"/> (its box on the bridge's axes, <see cref="Extents"/>) stands on a road built there
     /// (the network as it now stands, as <see cref="StructureEnds.BuiltRoadNear"/> reads it) more than it is let: at any
-    /// road point, in the road's walking box (over its surface by more than <see cref="BridgeLayout.StairFootTolerance"/>,
-    /// what a foot stands on as landed, and under the player's height, <see cref="RoadRockPolicy.PlayerHeight"/>), it blocks
+    /// road point, in the road's headroom box (over its surface by more than the lift, <see cref="RockClearances.Bottom"/>, and under
+    /// its top, <see cref="RockClearances.Top"/>: the box the rock clearing keeps clear, a stair's too), it blocks
     /// more of the road's width than <see cref="ParapetRoadOverlap"/>, counted as the rock clearing counts a rock
     /// (<see cref="RoadRockPolicy.Slots"/> narrow capsules across the road, <see cref="RoadRockPolicy.Slot"/>, the road's
     /// heading there <see cref="RoadRockPolicy.Heading"/>). A piece clipping the road's edge less than that stands; a piece
@@ -1771,12 +1771,12 @@ public static class DvergrViaduct
         float bottom = p.Position.y - hy, top = p.Position.y + hy;
         // The points round it, and their neighbours for each one's heading.
         List<RoadSpatialGrid.RoadPoint> near = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(c.x, 0f, c.y),
-            hu + hv + 2f * RoadConstants.DefaultRoadWidth).FindAll(q => q.IsRoad);
-        float reach = hu + hv + RoadConstants.DefaultRoadWidth;
+            hu + hv + 2f * RoadNetworkGenerator.RoadWidth).FindAll(q => q.IsRoad);
+        float reach = hu + hv + RoadNetworkGenerator.RoadWidth;
         foreach (RoadSpatialGrid.RoadPoint q in near)
         {
             if ((q.p - c).sqrMagnitude > reach * reach) continue;
-            if (top <= q.h + BridgeLayout.StairFootTolerance || bottom >= q.h + RoadRockPolicy.PlayerHeight) continue;
+            if (top <= RockClearances.Bottom(q.h) || bottom >= RockClearances.Top(q.h)) continue;
             Vector2 heading = RoadRockPolicy.Heading(q, near), across = new(-heading.y, heading.x);
             int blocked = 0;
             for (int k = 0; k < RoadRockPolicy.Slots; k++)
@@ -1840,7 +1840,7 @@ public static class DvergrViaduct
     }
 
     private static Func<Vector2, float> FinishedGround(WorldGenerator world, StructureEnds.End nearEnd, StructureEnds.End farEnd) =>
-        StructureGround.Of(world, nearEnd, farEnd, HalfWidth + BuriedPieces.Growth);
+        StructureGround.Of(world, nearEnd, farEnd, HalfWidth + SupportGraph.Reach);
 
     /// <summary>Whether a vine's origin lies within <see cref="VineTouch"/> of a stone piece laid (its bounds,
     /// <see cref="Extents"/>), on the bridge's axes.</summary>
@@ -1869,7 +1869,7 @@ public static class DvergrViaduct
     internal static float Ground(Vector2 p, WorldGenerator world) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
 
     /// <summary>Whether a piece would be wholly under the ground: its top at or under the ground
-    /// over its whole footprint grown by <see cref="BuriedPieces.Growth"/> (the game breaks such a
+    /// over its whole footprint grown by <see cref="SupportGraph.Reach"/> (the game breaks such a
     /// piece: it touches no terrain triangle, so it is not grounded).</summary>
     internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, WorldGenerator world) =>
         WhollyBuried(prefab, centre, dir, side, y, p => Ground(p, world));
@@ -1878,8 +1878,8 @@ public static class DvergrViaduct
     internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, Func<Vector2, float> ground)
     {
         var (hu, hv, hy) = Extents(prefab);
-        float top = y + hy + BuriedPieces.Growth;
-        hu += BuriedPieces.Growth; hv += BuriedPieces.Growth;
+        float top = y + hy + SupportGraph.Reach;
+        hu += SupportGraph.Reach; hv += SupportGraph.Reach;
         foreach (float su in new[] { -1f, 0f, 1f })
             foreach (float sv in new[] { -1f, 0f, 1f })
                 if (ground(centre + dir * (su * hu) + side * (sv * hv)) < top)
@@ -1894,7 +1894,7 @@ public static class DvergrViaduct
     public static string Describe(RoadCrossing crossing, WorldGenerator world)
     {
         float deck = DeckHeight(crossing, world);
-        int raised = Mathf.RoundToInt((deck - AtGrade(crossing, world)) / BridgeLayout.StairRise);
+        int raised = Mathf.RoundToInt((deck - AtGrade(crossing, world)) / StairLayout.PieceRise);
         List<float> piers = PierAlongs(crossing, world);
         bool river = HasNavigationBay(crossing, world), water = crossing.RiverbedHeight < crossing.WaterLevel;
         return FormattableString.Invariant(

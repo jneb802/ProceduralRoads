@@ -95,14 +95,13 @@ public static class PlacedSiteGround
     public const float OffGrid = 10000f;
 
     /// <summary>The ground between the vertices of a grid made by <see cref="Build"/>, as the game's
-    /// mesh joins them (bilinear); beyond it, a wall the stair layout will not climb.</summary>
+    /// mesh joins them (<see cref="BuriedPieces.BetweenVertices"/>, two triangles a cell); beyond it, a wall the stair layout will not climb.</summary>
     public static Func<float, float, float> Sampler(float[] heights, int x0, int z0, int w, int h) => (x, z) =>
     {
         float fx = x - x0, fz = z - z0;
         int i = Mathf.FloorToInt(fx), k = Mathf.FloorToInt(fz);
         if (i < 0 || k < 0 || i + 1 >= w || k + 1 >= h) return OffGrid;
         float tx = fx - i, tz = fz - k;
-        return Mathf.Lerp(Mathf.Lerp(heights[k * w + i], heights[k * w + i + 1], tx),
-                          Mathf.Lerp(heights[(k + 1) * w + i], heights[(k + 1) * w + i + 1], tx), tz);
+        return BuriedPieces.BetweenVertices(tx, tz, heights[k * w + i], heights[k * w + i + 1], heights[(k + 1) * w + i], heights[(k + 1) * w + i + 1]);
     };
 }

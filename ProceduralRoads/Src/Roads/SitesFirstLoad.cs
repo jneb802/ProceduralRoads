@@ -49,7 +49,7 @@ public static class SitesFirstLoad
     internal static IEnumerable<bool> Steps(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
     {
         Reset();
-        if (ZNet.instance == null || !ZNet.instance.IsServer() || ZoneSystem.instance == null || WorldGenerator.instance == null) yield break;
+        if (!RoadLifecycleManager.HoldsTheNetwork || ZoneSystem.instance == null || WorldGenerator.instance == null) yield break;
         var selected = work.AllSelected.ToList();
         preparation.BeginStage(ListingStage, selected.Count, "destinations"); yield return true;
         int already = 0;
@@ -157,13 +157,13 @@ public static class SitesFirstLoad
         float rock = PlacedSiteReader.RockRadius(centre);
         // The ground the road onto its landing may be laid over: out to the road's trim ring and round
         // its rock (a staircase from behind is led round it), and a margin beyond.
-        float ring = RoadNetworkGenerator.KeepOutEdge(centre, rock, RoadNetworkGenerator.RoadWidth, placed: true) + PlacedSites.AimOut;
+        float ring = RoadNetworkGenerator.DoorRing(centre, rock, RoadNetworkGenerator.RoadWidth, placed: true);
         float half = Mathf.Max(ring, rock + RoadStairRuns.RockMargin + RoadStairRuns.RockClearance) + PlacedSiteReader.Margin;
         int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
         string prefab = ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";
         // One that levels no flat but smooths round it is landed on the level ground beside it (PlacedSiteShape.OnLevelGround),
         // clear of its own pieces: read with its boulders.
-        bool pieces = RoadStairRuns.FlatOf(ops) == null && !PlacedSiteShape.HasDoor(prefab) && PlacedSites.SmoothsItsGround(ops);
+        bool pieces = PlacedSites.FlatFor(prefab, ops) == null && PlacedSites.SmoothsItsGround(ops);
         List<SiteRock> rocks = PlacedSiteReader.PlaceRocks(x0, z0, w, w, centre, root, yaw, out _, pieces);
         PlacedSites.Remember(new PlacedSiteRecord
         {

@@ -25,8 +25,8 @@ public class ApproachCorridorTests : IDisposable
     {
         StairStructures.Reset();
         PlaceWaysIn.Reset();
-        RoadNetworkGenerator.RoadSnap = 6f;
-        RoadNetworkGenerator.CorridorSnap = 14f;
+        RoadNetworkGenerator.RoadSnap = (float)PlainRoads.ModDefaults["road snap"];
+        RoadNetworkGenerator.CorridorSnap = (float)PlainRoads.ModDefaults["corridor snap"];
     }
 
     public void Dispose()

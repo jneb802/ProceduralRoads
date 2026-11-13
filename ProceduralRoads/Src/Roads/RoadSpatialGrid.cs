@@ -48,10 +48,10 @@ public static partial class RoadSpatialGrid
         /// a place's footprint too, which it leaves alone for every other point, and only
         /// within <see cref="RoadSiteEntry.InsideReach"/> of them there.</summary>
         public bool intoSite;
-        /// <summary>Unpainted: road, levelled like any other point, but never painted. The road a structure stands on past
-        /// its stairs' foot (under the stairs and under the deck's end): levelled so the stairs stand on level ground and
-        /// no terrain pokes through the deck, while the paint stops at the bottom step. Everything that asks where the
-        /// road is counts these points as road.</summary>
+        /// <summary>Unpainted: road, levelled like any other point, but never painted. The road a structure's end stairs
+        /// stand on past their foot (StructureEnds.Unpainted): levelled so the stairs stand on level ground, while the paint
+        /// stops at the bottom step; and a staircase's start pad. Everything that asks where the road is counts these points
+        /// as road.</summary>
         public bool unpainted;
         /// <summary>The island worker that committed it (<see cref="CrossIslandReads.Tag"/>): another island's worker does not
         /// see it. 0 for none. Not saved.</summary>
@@ -546,10 +546,16 @@ public static partial class RoadSpatialGrid
         BendFallbacks.AddOrUpdate((stage, refusedFor ?? "other"), 1, (_, n) => n + 1);
 
     /// <summary>The ends of a piece of <paramref name="points"/> (<paramref name="total"/> long) that are levelled
-    /// (<see cref="LevelledEnds"/>), each whether at its start and its height. A piece levelled at both ends whose levelled
-    /// stretches overlap, the two within a step of each other (a landing two structures' ends share), is levelled at their
-    /// common height all along, as the landing was laid (StructureEnds.Share), not at the one levelled last.</summary>
-    private static List<(bool atStart, float height)> LevelledOn(List<(Vector2 at, float height)> ends, List<Vector2> points, float total)
+    /// (<see cref="LevelledEnds"/>), each whether at its start and its height: the one reading of them, for the levelling and
+    /// for putting it back once the grade is limited, so both hold the same height. A piece that is one level landing between
+    /// two held ends (StructureEnds.Share) is levelled at their common height all along, as the landing was laid, not at the
+    /// end levelled last: levelled at both ends whose levelled stretches overlap, or at one end with the whole piece within
+    /// its stretch and its other end held (<paramref name="startGround"/>, <paramref name="endGround"/>: a staircase's foot,
+    /// a place's ground, a join), where the two share it (StructureEnds.SharesLanding, each within a walker's step of it) and
+    /// the held end is more than a step off the structure's (within a step the stretch stays at the structure's end's height).
+    /// Further apart each keeps its own height, and the piece is refused (<see cref="LevelledOverHeldEnd"/>).</summary>
+    private static List<(bool atStart, float height)> LevelledOn(List<(Vector2 at, float height)> ends, List<Vector2> points, float total,
+        float? startGround, float? endGround)
     {
         var on = new List<(bool atStart, float height)>();
         foreach (var (at, height) in ends)
@@ -559,26 +565,45 @@ public static partial class RoadSpatialGrid
         }
         int s = on.FindIndex(e => e.atStart), e = on.FindIndex(x => !x.atStart);
         if (s >= 0 && e >= 0 && total <= 2f * (StructureEnds.ApronLength + StructureEnds.JoinOverlap) + 1e-3f
-            && Mathf.Abs(on[s].height - on[e].height) <= StructureEnds.StepTolerance + 1e-3f)
+            && StructureEnds.SharesLanding(on[s].height, on[e].height))
         {
-            float common = 0.5f * (on[s].height + on[e].height);
+            float common = StructureEnds.LandingHeight(on[s].height, on[e].height);
             on[s] = (true, common);
             on[e] = (false, common);
         }
+        else if ((s >= 0) != (e >= 0) && total <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f)
+        {
+            int k = s >= 0 ? s : e;
+            if ((on[k].atStart ? endGround : startGround) is float held && !StairLayout.Walkable(on[k].height, held)
+                && StructureEnds.SharesLanding(on[k].height, held))
+                on[k] = (on[k].atStart, StructureEnds.LandingHeight(on[k].height, held));
+        }
         return on;
+    }
+
+    /// <summary>Whether the levelled stretches of a piece's ends (<see cref="LevelledOn"/>) take an end of it held at another
+    /// height: a stretch over the whole piece whose other end is held (<paramref name="startGround"/>,
+    /// <paramref name="endGround"/>) more than a walker's step (StairLayout.Walkable) off it, or two stretches that overlap at
+    /// heights they cannot share. The two cannot both be met level, and the piece is refused.</summary>
+    private static bool LevelledOverHeld(List<(bool atStart, float height)> on, float total, float? startGround, float? endGround, float minHeight)
+    {
+        int s = on.FindIndex(x => x.atStart), e = on.FindIndex(x => !x.atStart);
+        if (s >= 0 && e >= 0 && total <= 2f * (StructureEnds.ApronLength + StructureEnds.JoinOverlap) + 1e-3f)
+            return !StairLayout.Walkable(on[s].height, on[e].height);
+        foreach (var (atStart, height) in on)
+            if (total <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f && (atStart ? endGround : startGround) is float other
+                && !StairLayout.Walkable(other, Mathf.Max(height, minHeight)))
+                return true;
+        return false;
     }
 
     /// <summary>How near a road already laid a planned road's end is joined to it, its end aimed at that road's height
     /// (<see cref="JunctionMatch"/>).</summary>
     private static float JoinReach(float width) => width * 0.75f;
 
-    /// <summary>How near a road already laid a planned road's point is held to that road's height (<see cref="HoldToNetwork"/>):
-    /// its width and the terrain blend on both sides.</summary>
-    private static float HoldBand(float width) => width + 2f * RoadConstants.TerrainBlendMargin;
-
     /// <summary>
     /// The height a road planned along <paramref name="path"/> from <paramref name="startGround"/> stores at its first point,
-    /// where nothing but that value decides it: no road already laid within <see cref="HoldBand"/> of it (so it is neither
+    /// where nothing but that value decides it: no road already laid within <see cref="RoadProfile.Footprint(float)"/> of it (so it is neither
     /// joined, <see cref="JoinReach"/>, nor held to one), and no structure's end levelled (<see cref="LevelledEnds"/>), no
     /// waypoint held (<see cref="HeldPoints"/>) and no place's landing (<see cref="PlaceEnds"/>) on this thread. Every
     /// shaping step keeps the first point where it is, and the grade limiter holds its height. Null where any of them could
@@ -587,7 +612,7 @@ public static partial class RoadSpatialGrid
     internal static float? FirstHeight(List<Vector2> path, float width, float startGround)
     {
         if (path.Count < 2 || LevelledEnds != null || HeldPoints != null || PlaceEnds != default) return null;
-        if (m_initialized && TryGetRoadHeightWithin(path[0], HoldBand(width), out _)) return null;
+        if (m_initialized && TryGetRoadHeightWithin(path[0], RoadProfile.Footprint(width), out _)) return null;
         return startGround;
     }
 
@@ -708,7 +733,7 @@ public static partial class RoadSpatialGrid
         // A held waypoint stays where it is through the sway's resampling, the sway held round it (a piece meeting a
         // structure's end sways everywhere else: unswayed, a road from a crossing ran dead straight for its whole piece).
         if (!followTerrain && RoadWiggle.Enabled && !SuppressWiggle)
-            path = RoadWiggle.Apply(path, SampleTerrain, p => !RoadWater.BuiltDry(worldGen, p), p => worldGen.GetBiome(p.x, p.y), width, p => TryGetRoadWithin(p, width + 2f, out _), holds ? path.FindAll(Held) : null);
+            path = RoadWiggle.Apply(path, SampleTerrain, p => !RoadWater.BuiltDry(worldGen, p), p => worldGen.GetBiome(p.x, p.y), width, p => TryGetRoadWithin(p, width + RoadConstants.TerrainBlendMargin, out _), holds ? path.FindAll(Held) : null);
 
         // Order: the search's path was snapped onto existing road in
         // GenerateRoad; the pull above keeps every snapped waypoint; the sway
@@ -813,24 +838,24 @@ public static partial class RoadSpatialGrid
 
         // A structure's end (StructureEnds): the road's last ApronLength to it is level at its height.
         if (!followTerrain && LevelledEnds is { } levelledEnds && densePoints.Count > 1)
-            foreach (var (atStart, height) in LevelledOn(levelledEnds, densePoints, pathTotal))
+        {
+            var on = LevelledOn(levelledEnds, densePoints, pathTotal, startGround, endGround);
+            // The levelled stretch never takes the piece's other end where that end is held at another height (a
+            // staircase's foot, another structure's end) that cannot share its landing (StructureEnds.SharesLanding): the two
+            // cannot both be met, and the piece is refused.
+            if (LevelledOverHeld(on, pathTotal, startGround, endGround, minHeight))
             {
-                // The levelled stretch never takes the piece's other end where that end is held at another height (a
-                // staircase's foot, another structure's end): the two cannot both be met, and the piece is refused.
-                float? other = atStart ? endGround : startGround;
-                if (pathTotal <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f && other is float otherHeight
-                    && Mathf.Abs(otherHeight - Mathf.Max(height, minHeight)) > StructureEnds.StepTolerance)
-                {
-                    LastRefusal = LevelledOverHeldEnd;
-                    Log.LogDebug("Road refused: a structure's levelled end reaches a held end at another height");
-                    return null;
-                }
+                LastRefusal = LevelledOverHeldEnd;
+                Log.LogDebug("Road refused: a structure's levelled end reaches a held end at another height");
+                return null;
+            }
+            foreach (var (atStart, height) in on)
                 for (int i = 0; i < densePoints.Count; i++)
                 {
                     float from = atStart ? distanceFromStart[i] : pathTotal - distanceFromStart[i];
                     if (from <= StructureEnds.ApronLength + StructureEnds.JoinOverlap + 1e-3f) finalHeights[i] = Mathf.Max(height, minHeight);
                 }
-            }
+        }
 
         // Smoothing and the ramp both move heights after the search priced the
         // ground, so a route the search accepted can still be built too steep.
@@ -958,7 +983,7 @@ public static partial class RoadSpatialGrid
         {
             var moved = new bool[densePoints.Count];
             bool any = false;
-            foreach (var (atStart, height) in LevelledOn(heldEnds, densePoints, pathTotal))
+            foreach (var (atStart, height) in LevelledOn(heldEnds, densePoints, pathTotal, startGround, endGround))
             {
                 float target = Mathf.Max(height, minHeight);
                 for (int i = 0; i < densePoints.Count; i++)
@@ -1547,7 +1572,7 @@ public static partial class RoadSpatialGrid
         bool[]? letGo = null, IReadOnlyList<float>? edgeGrades = null, float floor = float.NegativeInfinity)
     {
         if (!m_initialized || points.Count == 0) return null;
-        float band = HoldBand(width);
+        float band = RoadProfile.Footprint(width);
         int n = points.Count;
         var held = new bool[n];
         bool any = false;
@@ -1903,7 +1928,7 @@ public static partial class RoadSpatialGrid
                             if (!CrossIslandReads.Sees(me, rp.island)) continue;
                             // A staircase's cut reaches only w/2 (plus a vertex spacing): gathered
                             // wider, a zone it never touches waits for it forever, unstamped.
-                            float reach = RoadConstants.HalfZoneSize + (rp.cutOnly ? rp.w * 0.5f + RoadTerrainModifier.CutBatterReach + 1f : ZoneReach(rp.w));
+                            float reach = RoadConstants.HalfZoneSize + (rp.cutOnly ? RoadTerrainModifier.CutReach(rp.w) + RoadTerrainModifier.CutGatherPad : ZoneReach(rp.w));
                             if (rp.p.x >= zonePos.x - reach &&
                                 rp.p.x <= zonePos.x + reach &&
                                 rp.p.y >= zonePos.z - reach &&
@@ -2128,117 +2153,6 @@ public static partial class RoadSpatialGrid
     }
 
     #region ZDO Persistence
-
-    public static readonly int RoadDataHash = "ProceduralRoads_RoadData".GetStableHashCode();
-
-    /// <summary>
-    /// Serialize road points for a specific zone to a byte array for ZDO storage.
-    /// Uses the same logic as GetRoadPointsInZone to capture all affecting points.
-    /// </summary>
-    public static byte[]? SerializeZoneRoadPoints(Vector2s zoneID)
-    {
-        var points = GetRoadPointsInZone(zoneID);
-        
-        if (points.Count == 0)
-            return null;
-
-        using var ms = new MemoryStream();
-        using var writer = new BinaryWriter(ms);
-        
-        writer.Write(points.Count);
-        foreach (var rp in points)
-        {
-            writer.Write(rp.p.x);
-            writer.Write(rp.p.y);
-            writer.Write(rp.w);
-            writer.Write(rp.h);
-        }
-        
-        return ms.ToArray();
-    }
-
-    /// <summary>
-    /// Deserialize road points from a byte array and add them to the grid.
-    /// Points are added to grid cells based on their actual position.
-    /// </summary>
-    public static void DeserializeZoneRoadPoints(Vector2s zoneID, byte[] data)
-    {
-        if (data == null || data.Length == 0)
-            return;
-
-        try
-        {
-            using var ms = new MemoryStream(data);
-            using var reader = new BinaryReader(ms);
-            
-            int count = reader.ReadInt32();
-            if (count <= 0 || count > 100000)
-                return;
-            
-            var pointsByGrid = new Dictionary<Vector2i, List<RoadPoint>>();
-            
-            for (int i = 0; i < count; i++)
-            {
-                float px = reader.ReadSingle();
-                float py = reader.ReadSingle();
-                float w = reader.ReadSingle();
-                float h = reader.ReadSingle();
-                
-                var point = new RoadPoint(new Vector2(px, py), w, h);
-                Vector2i grid = GetRoadGrid(px, py);
-                
-                if (!pointsByGrid.TryGetValue(grid, out var list))
-                {
-                    list = new List<RoadPoint>();
-                    pointsByGrid[grid] = list;
-                }
-                if(!ManualRoadDraft.IsFinite(px) || !ManualRoadDraft.IsFinite(py) || !ManualRoadDraft.IsFinite(w) || w<=0 || !ManualRoadDraft.IsFinite(h)) return;
-                list.Add(point);
-            }
-            if(ms.Position!=ms.Length) return;
-            AddDeserializedPoints(pointsByGrid);
-        }
-        catch (System.Exception ex)
-        {
-            Log.LogWarning($"Failed to deserialize road points for zone {zoneID}: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Add deserialized road points to the grid without duplicating.
-    /// </summary>
-    private static void AddDeserializedPoints(Dictionary<Vector2i, List<RoadPoint>> pointsByGrid)
-    {
-        m_roadCacheLock.EnterWriteLock();
-        try
-        {
-            int added=0;
-            foreach(var cell in pointsByGrid)
-                if(!m_roadPoints.ContainsKey(cell.Key)) added=checked(added+cell.Value.Count);
-            int total=checked(m_storedPointRecords+added);
-            s_narrowestFiled = 0f;
-            foreach (var kvp in pointsByGrid)
-            {
-                Vector2i grid = kvp.Key;
-                var newPoints = kvp.Value;
-                
-                if (!m_roadPoints.ContainsKey(grid))
-                {
-                    m_roadPoints[grid] = newPoints.ToArray();
-                    GridCellsWithRoads++;
-                }
-            }
-            
-            m_storedPointRecords=total;
-            if(added>0) m_committedPathLength=null;
-            m_initialized = true;
-            
-        }
-        finally
-        {
-            m_roadCacheLock.ExitWriteLock();
-        }
-    }
 
     /// <summary>
     /// Every stored road point, copied out under the read lock. Unordered and

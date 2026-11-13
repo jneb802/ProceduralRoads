@@ -25,9 +25,9 @@ public class ServerBakeKeptBuildTests
         var kept = new ServerBakeKeptBuild<Build>();
         var data = new Build();
         kept.Keep(new Vector2s(3, -2), data);
-        Assert.Null(kept.Take(new Vector2s(3, -1), enabled: true));
+        Assert.Null(kept.Take(new Vector2s(3, -1)));
         // Asked for another zone, it is gone: the zone it was kept for does not get it later either.
-        Assert.Null(kept.Take(new Vector2s(3, -2), enabled: true));
+        Assert.Null(kept.Take(new Vector2s(3, -2)));
     }
 
     [Fact]
@@ -36,16 +36,8 @@ public class ServerBakeKeptBuildTests
         var kept = new ServerBakeKeptBuild<Build>();
         var data = new Build();
         kept.Keep(new Vector2s(1, 1), data);
-        Assert.Same(data, kept.Take(new Vector2s(1, 1), enabled: true));
-        Assert.Null(kept.Take(new Vector2s(1, 1), enabled: true));
-    }
-
-    [Fact]
-    public void SwitchedOffNothingIsHandedBack()
-    {
-        var kept = new ServerBakeKeptBuild<Build>();
-        kept.Keep(new Vector2s(1, 1), new Build());
-        Assert.Null(kept.Take(new Vector2s(1, 1), enabled: false));
+        Assert.Same(data, kept.Take(new Vector2s(1, 1)));
+        Assert.Null(kept.Take(new Vector2s(1, 1)));
     }
 
     [Fact]
@@ -54,7 +46,7 @@ public class ServerBakeKeptBuildTests
         var kept = new ServerBakeKeptBuild<Build>();
         kept.Keep(new Vector2s(1, 1), new Build());
         kept.Drop();
-        Assert.Null(kept.Take(new Vector2s(1, 1), enabled: true));
+        Assert.Null(kept.Take(new Vector2s(1, 1)));
     }
 
     [Fact]
@@ -63,7 +55,7 @@ public class ServerBakeKeptBuildTests
         var kept = new ServerBakeKeptBuild<Build>();
         kept.Keep(new Vector2s(1, 1), new Build());
         kept.Keep(new Vector2s(1, 1), null);
-        Assert.Null(kept.Take(new Vector2s(1, 1), enabled: true));
+        Assert.Null(kept.Take(new Vector2s(1, 1)));
     }
 
     [Fact]

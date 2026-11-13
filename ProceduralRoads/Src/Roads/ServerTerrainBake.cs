@@ -22,7 +22,7 @@ namespace ProceduralRoads;
 ///
 /// A zone whose compiler carries the current network version is left alone, so
 /// a restart writes nothing twice and later player edits survive.
-/// Switches: PROCEDURALROADS_SERVER_BAKE (default on), PROCEDURALROADS_PEER_PROBE
+/// Switch: PROCEDURALROADS_PEER_PROBE
 /// (default off; logs where each connected player stands against the road).
 /// </summary>
 public static class ServerTerrainBake
@@ -45,13 +45,8 @@ public static class ServerTerrainBake
     private const float ProbeEverySeconds = 5f;
     private const float GhostLogEverySeconds = 30f;
 
-    private static bool? s_enabled;
     private static bool? s_probe;
-    private static bool Enabled => s_enabled ??= DebugSwitches.Flag("SERVER_BAKE", true);
     private static bool Probe => s_probe ??= DebugSwitches.Flag("PEER_PROBE", false);
-    private static bool? s_holdSpawn;
-    /// <summary>PROCEDURALROADS_BAKE_LOADSCREEN (default on): the host's first spawn waits for the bake, behind the loading screen.</summary>
-    private static bool HoldSpawnEnabled => s_holdSpawn ??= DebugSwitches.Flag("BAKE_LOADSCREEN", true);
     private static readonly ServerBakeLoadScreen s_loadScreen = new();
     /// <summary>Frame time the bake used behind the loading screen; at the host's first spawn, frame time used so far (-1 before).</summary>
     private static double s_heldMs, s_busyAtSpawn = -1;
@@ -98,7 +93,6 @@ public static class ServerTerrainBake
     /// <summary>Prefab hashes of the game's own vegetation (ZoneSystem.m_vegetation), per world.</summary>
     private static HashSet<int>? s_vegetationPrefabs;
 
-    private static bool IsServer => ZNet.instance != null && ZNet.instance.IsServer();
 
     /// <summary>Forget the queue: the world is going away.</summary>
     public static void Reset()
@@ -130,13 +124,13 @@ public static class ServerTerrainBake
     internal static bool HoldsFirstSpawn => s_loadScreen.Holds(BeforeFirstSpawn(), WorkOwed());
 
     private static bool BeforeFirstSpawn() =>
-        HoldSpawnEnabled && IsServer && !ZNet.instance.IsDedicated() && Game.instance != null &&
+        RoadLifecycleManager.HoldsTheNetwork && RoadLifecycleManager.HostHasScreen && Game.instance != null &&
         Player.m_localPlayer == null && Game.instance.m_firstSpawn && Game.instance.WaitingForRespawn();
 
     // A network whose queue is not built yet (its first Tick is still to come) is owed work too.
     private static bool WorkOwed()
     {
-        if (!Enabled || s_faults.IsPaused || !RoadNetworkGenerator.RoadsAvailable) return false;
+        if (s_faults.IsPaused || !RoadNetworkGenerator.RoadsAvailable) return false;
         int version = RoadSpatialGrid.RoadNetworkVersion;
         return version != 0 && (version != s_version || s_next < s_queue.Count || s_requests.Count > 0);
     }
@@ -165,15 +159,14 @@ public static class ServerTerrainBake
     /// spawn, what the loading screen took and what the in-world slices have left.</summary>
     public static void OnSpawn(Game game)
     {
-        if (!IsServer || !game.m_firstSpawn) return;
+        if (!RoadLifecycleManager.HoldsTheNetwork || !game.m_firstSpawn) return;
         s_loadScreen.Release();
         if (s_version == 0) return;
         s_busyAtSpawn = s_busyMs;
         int pending = Pending();
         // Wall time: game time crawls through a frame the bake holds long (Unity caps each frame's step).
         Log.LogInfo($"[BAKE] first spawn {s_wall.Elapsed.TotalSeconds:F1} s after the bake started: {s_busyMs:F0} ms of bake before it " +
-                    $"({s_heldMs:F0} ms of it holding the spawn); {pending} zone(s) pending for the in-world slices" +
-                    (HoldSpawnEnabled ? "" : " (loading-screen hold off by startup setting)"));
+                    $"({s_heldMs:F0} ms of it holding the spawn); {pending} zone(s) pending for the in-world slices");
     }
 
     /// <summary>
@@ -211,7 +204,7 @@ public static class ServerTerrainBake
         foreach (ServerBakePlanner.Compiler c in facts)
         {
             string owner = c.Owner == 0 ? "nobody" : c.Owner == me ? "this peer" : c.OwnerActiveHere ? "a peer in the zone" : "a peer elsewhere";
-            string current = c.AppliedVersion != 0 && (c.AppliedVersion == RoadSpatialGrid.RoadNetworkVersion || c.UnchangedByAppends) ? " (current)" : "";
+            string current = c.Current ? " (current)" : "";
             described.Add($"stamp {c.AppliedVersion}{current}, owned by {owner}");
         }
         string next = points == 0
@@ -367,7 +360,6 @@ public static class ServerTerrainBake
     {
         s_faults.Clear();
         s_version = 0;
-        // Do not change s_enabled: an operator's startup opt-out still holds.
     }
 
     /// <summary>Every frame (ZoneSystem.Update postfix): work the queue for a slice of the frame (a larger one while the
@@ -376,13 +368,13 @@ public static class ServerTerrainBake
     {
         try
         {
-            if (!IsServer || ZoneSystem.instance == null || ZDOMan.instance == null || ZNetScene.instance == null)
+            if (!RoadLifecycleManager.HoldsTheNetwork || ZoneSystem.instance == null || ZDOMan.instance == null || ZNetScene.instance == null)
                 return;
             if (s_faults.IsPaused)
                 return;
             if (Probe)
                 ProbePeers();
-            if (!Enabled || !RoadNetworkGenerator.RoadsAvailable)
+            if (!RoadNetworkGenerator.RoadsAvailable)
                 return;
             int version = RoadSpatialGrid.RoadNetworkVersion;
             if (version == 0)
@@ -414,7 +406,7 @@ public static class ServerTerrainBake
     {
         try
         {
-            if (!Enabled || !IsServer || hmap == null || ZDOMan.instance == null ||
+            if (!RoadLifecycleManager.HoldsTheNetwork || hmap == null || ZDOMan.instance == null ||
                 !RoadNetworkGenerator.RoadsAvailable || RoadSpatialGrid.RoadNetworkVersion == 0)
                 return;
             if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0)
@@ -465,13 +457,12 @@ public static class ServerTerrainBake
 
     /// <summary>
     /// Rocks clipping the road in a zone generated for a remote peer, cleared
-    /// as Roads/RockClearing says while the zone's objects still exist: the
+    /// carved while the zone's objects still exist: the
     /// server never loads that zone, so the automatic pass that clears loaded
     /// zones never sees it, and a player without the mod has no pass at all.
     /// </summary>
     private static int ClearGhostRocks(Vector2s zone, bool settle = true)
     {
-        if (!RoadRockPolicy.Clears(RoadRockClearing.Mode)) return 0;
         RoadRockCarve.GhostSpawned = ZoneSystem.instance.m_tempSpawnedObjects;
         try
         {
@@ -496,8 +487,7 @@ public static class ServerTerrainBake
             Vector3 centre = ZoneSystem.GetZonePos(zone);
             float radius = GhostRockReach(centre);
             if (!settle && RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius).Count == 0) return 0;
-            var lines = RoadRockProbe.Run(centre, radius, apply: true, sites: false, mist: true, cliffs: true,
-                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out int cleared);
+            var lines = RoadRockProbe.RunPass(centre, radius, null, out int cleared);
             Log.LogDebug($"[BAKE] zone {zone} (generated for a peer): {lines[0]}");
             return cleared;
         }
@@ -511,7 +501,7 @@ public static class ServerTerrainBake
     /// network) never had the pass a zone generated for a peer gets, and on a
     /// dedicated server no client clears rocks. The zone's terrain, its saved
     /// compiler and its clearable rocks are brought alive from their data, as
-    /// generation has them, carved as Roads/RockClearing says, and taken down
+    /// generation has them, carved, and taken down
     /// again, leaving their data. False, with nothing done, when the zone's
     /// terrain is not ready (the caller sends the zone round the queue again).
     /// </summary>
@@ -549,8 +539,7 @@ public static class ServerTerrainBake
             RoadRockCarve.GhostSpawned = alive;
             Physics.SyncTransforms();
             Vector3 centre = ZoneSystem.GetZonePos(zone);
-            var lines = RoadRockProbe.Run(centre, OwnRockReach(centre, alive), apply: true, sites: false, mist: true, cliffs: true,
-                partial: true, carve: RoadRockPolicy.Carves(RoadRockClearing.Mode), out cleared);
+            var lines = RoadRockProbe.RunPass(centre, OwnRockReach(centre, alive), null, out cleared);
             s_step.RocksProbe = Lap();
             Log.LogDebug($"[BAKE] zone {zone} (saved rocks): {lines[0]}");
             return true;
@@ -577,7 +566,7 @@ public static class ServerTerrainBake
         foreach (ZDO zdo in zdos)
         {
             GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
-            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, IsPlayerCreated(zdo)))
+            if (prefab != null && ServerBakePlanner.BringsRockAlive(prefab.name, PlayerChanges.IsPlayers(zdo), RoadRockCarve.FracturedFrom()))
                 rocks.Add((zdo, prefab));
         }
         s_step.RocksFind += clock.Elapsed.TotalMilliseconds;
@@ -586,7 +575,7 @@ public static class ServerTerrainBake
 
     /// <summary>
     /// Whether the saved-rock pass can make the zone's terrain now without waiting on the game's builder: the terrain
-    /// write's build data is handed back first (PROCEDURALROADS_BAKE_KEEP_BUILD), then the game is asked as the terrain
+    /// write's build data is handed back first, then the game is asked as the terrain
     /// write asks it (asking starts the build). Not ready: the zone comes back through the queue, as a terrain write does.
     /// </summary>
     private static ServerBakeBuilderRequests.Answer RockTerrainReady(Vector2s zone)
@@ -608,13 +597,8 @@ public static class ServerTerrainBake
 
     private static StepTimes s_step;
 
-    /// <summary>PROCEDURALROADS_BAKE_KEEP_BUILD (default on): the rock pass's temporary terrain reuses the build data
-    /// the zone's terrain write took from the game's builder (ServerBakeKeptBuild), instead of asking for it again.
-    /// Off, the rock pass asks the builder again and the zone waits for it through the queue (on the main thread only
-    /// when the builder evicts the build between the readiness answer and the terrain being made).</summary>
-    private static bool? s_keepBuild;
-    private static bool KeepBuild => s_keepBuild ??= DebugSwitches.Flag("BAKE_KEEP_BUILD", true);
-
+    // The rock pass's temporary terrain reuses the build data the zone's terrain write took from the game's builder
+    // (ServerBakeKeptBuild), instead of asking for it again.
     private static readonly ServerBakeKeptBuild<HeightmapBuilder.HMBuildData> s_keptBuild = new();
     /// <summary>The kept data while it sits on the builder's ready list, taken back off at the end of the zone if unused.</summary>
     private static HeightmapBuilder.HMBuildData? s_handedBack;
@@ -622,7 +606,7 @@ public static class ServerTerrainBake
     /// <summary>The terrain write made the zone's terrain: keep the data it was made from for the zone's rock pass.</summary>
     private static void KeepBuildData(Vector2s zone, Heightmap hmap)
     {
-        if (KeepBuild) s_keptBuild.Keep(zone, hmap.m_buildData);
+        s_keptBuild.Keep(zone, hmap.m_buildData);
     }
 
     /// <summary>Put the kept data back among the builder's ready data, where the next Heightmap.Generate for the zone
@@ -630,7 +614,7 @@ public static class ServerTerrainBake
     /// (HMBuildData.IsEqual, as RequestTerrain matches it), so it can never serve another zone.</summary>
     private static void HandBackKeptBuild(Vector2s zone)
     {
-        HeightmapBuilder.HMBuildData? data = s_keptBuild.Take(zone, KeepBuild);
+        HeightmapBuilder.HMBuildData? data = s_keptBuild.Take(zone);
         Heightmap? template = ZoneTemplate();
         HeightmapBuilder? builder = HeightmapBuilder.instance;
         if (data == null || template == null || builder == null || builder.m_lock == null || WorldGenerator.instance == null ||
@@ -679,7 +663,7 @@ public static class ServerTerrainBake
         var bounds = new List<(Vector2 min, Vector2 max)>();
         foreach (var go in objects)
         {
-            if (go == null || !RoadRockPolicy.IsClearableRock(RoadRockCarve.PrefabName(go, go.GetComponent<ZNetView>()))) continue;
+            if (go == null || !RoadRockPolicy.IsClearableRock(RoadRockCarve.PrefabName(go, go.GetComponent<ZNetView>()), RoadRockCarve.FracturedFrom())) continue;
             foreach (var c in go.GetComponentsInChildren<Collider>())
                 bounds.Add((new Vector2(c.bounds.min.x, c.bounds.min.z), new Vector2(c.bounds.max.x, c.bounds.max.z)));
         }
@@ -741,7 +725,7 @@ public static class ServerTerrainBake
                $"Generated for peers: {c.GhostCreated} compilers created, {c.GhostRewritten} saved ones written, " +
                $"{c.GhostFailed} failed ({s_ghostRepair.RepairCount} awaiting repair), {c.GhostRocks} rock(s) cleared, {c.GhostSettled} object(s) settled, {c.GhostMs:F0} ms; " +
                $"{s_faults.Count} zone exception(s); queue " +
-               (!Enabled ? "disabled by startup setting" : s_faults.IsPaused
+               (s_faults.IsPaused
                    ? $"paused ({s_faults.PauseReason}); fix the cause, then road_bake again"
                    : s_faults.Count > 0 ? "enabled; stopped zones need road_bake again after fixing the cause" : "enabled");
     }
@@ -977,15 +961,11 @@ public static class ServerTerrainBake
                     Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);
                     return Outcome.Waiting;
                 }
-                if (!live.m_nview.IsOwner())
+                if (!RoadTerrainModifier.TakeIfReleased(live.m_nview))
                 {
                     // Somebody else's to write; ours only once they let go.
-                    if (live.m_nview.HasOwner())
-                    {
-                        Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);
-                        return Outcome.Waiting;
-                    }
-                    live.m_nview.ClaimOwnership();
+                    Resolve(zone, action, ServerBakePlanner.WriteReport.NotAttempted);
+                    return Outcome.Waiting;
                 }
                 RoadTerrainModifier.LastWriteOutcome = RoadTerrainModifier.WriteOutcome.None;
                 RoadTerrainModifier.BakeRoadTerrain(zone, live.m_hmap, live);
@@ -1125,7 +1105,11 @@ public static class ServerTerrainBake
     /// </summary>
     private static Outcome ProcessVegetation(Vector2s zone, bool generated, bool loadedHere)
     {
-        if (!ServerBakePlanner.VegetationOwed(generated, VegetationClearing.IsCleared(zone, s_version), NetworkCutoff.Excludes(zone)))
+        bool beforeNetwork = NetworkCutoff.Excludes(zone);
+        // A zone explored before the network keeps its trees, bushes and rocks, but what lies across the road is still judged.
+        if (ServerBakePlanner.LyingOwed(generated, beforeNetwork, VegetationClearing.LyingJudged(zone, s_version)))
+            return ProcessLyingVegetation(zone);
+        if (!ServerBakePlanner.VegetationOwed(generated, VegetationClearing.IsCleared(zone, s_version), beforeNetwork))
         {
             // Nothing owed here any more. Terrain's give-up, if it has one,
             // stands -- this says the PENDING work is done, not that terrain
@@ -1134,11 +1118,10 @@ public static class ServerTerrainBake
             return Outcome.Done;
         }
         int since = VegetationClearing.OwedSince(zone);
-        List<VegetationClearing.Area> areas = ClearAreasFor(zone, since);
-        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        VegetationClearing.ZoneAreas areas = AreasFor(zone, since);
         List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone, since);
-        bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere, RoadRockPolicy.Clears(RoadRockClearing.Mode));
-        if (areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 || rocks)
+        bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere);
+        if (areas.AnyRoadOrStructure || road.Count > 0 || rocks)
         {
             if (AnyPeerNear(zone))
             {
@@ -1161,7 +1144,7 @@ public static class ServerTerrainBake
                 savedRocks.Clear();
             }
             var vegetationClock = Stopwatch.StartNew();
-            int removed = areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 ? RemoveVegetation(zone, areas, structureAreas, road) : 0;
+            int removed = areas.AnyRoadOrStructure || road.Count > 0 ? RemoveVegetation(zone, areas, road) : 0;
             s_step.Vegetation = vegetationClock.Elapsed.TotalMilliseconds;
             if (removed > 0)
             {
@@ -1193,30 +1176,50 @@ public static class ServerTerrainBake
         return Outcome.Done;
     }
 
-    /// <summary>The road clear areas generation hands PlaceVegetation for this zone. A zone cleared for the roads up to
-    /// <paramref name="sinceAppend"/> appends owes only the later roads' (-1: every road's).</summary>
-    private static List<VegetationClearing.Area> ClearAreasFor(Vector2s zone, int sinceAppend = -1) =>
-        ToAreas(sinceAppend >= 0 ? RoadClearAreaManager.ClearAreasSince(zone, sinceAppend) : RoadClearAreaManager.GetOrCreateClearAreas(zone));
-
-    /// <summary>The structures' clear areas (bridges, staircases) generation hands PlaceVegetation for this zone: a staircase's
-    /// leaves a rock the rock clearing takes to it (VegetationClearing.Area.LeavesRocks), as generation does.</summary>
-    private static List<VegetationClearing.Area> StructureClearAreasFor(Vector2s zone)
+    /// <summary>The lying vegetation of a zone explored before the network (<see cref="ServerBakePlanner.LyingOwed"/>): each
+    /// stump and fallen log is judged by the one rule (VegetationClearing.Decide) and turned off the road or removed.</summary>
+    private static Outcome ProcessLyingVegetation(Vector2s zone)
     {
-        List<VegetationClearing.Area> areas = ToAreas(StructurePlacement.GetClearAreas(zone, staircases: false));
-        areas.AddRange(ToAreas(StructurePlacement.GetClearAreas(zone, staircases: true), leavesRocks: true));
-        return areas;
+        VegetationClearing.ZoneAreas areas = AreasFor(zone);
+        List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
+        if (areas.AnyRoadOrStructure || road.Count > 0)
+        {
+            if (AnyPeerNear(zone))
+            {
+                s_ghostRepair.Defer(zone, Time.time, RetryDelaySeconds);
+                return Outcome.Waiting;
+            }
+            int removed = RemoveVegetation(zone, areas, road, lyingOnly: true);
+            if (removed > 0)
+            {
+                s_counts.VegetationZones++;
+                s_counts.VegetationRemoved += removed;
+                Log.LogDebug($"[BAKE] zone {zone}: removed {removed} lying trees and stumps from the road");
+            }
+        }
+        VegetationClearing.MarkLyingJudged(zone, s_version);
+        s_ghostRepair.PendingWorkDone(zone);
+        return Outcome.Done;
     }
 
-    private static List<VegetationClearing.Area> ToAreas(List<ZoneSystem.ClearArea> clearAreas, bool leavesRocks = false)
+    /// <summary>
+    /// The clear areas generation handed PlaceVegetation for this zone, built the same way
+    /// (RoadClearAreaManager.AddRoadAreas): the game's own first, the zone's location's where it clears its area
+    /// (ZoneSystem.PlaceLocations adds a square of its exterior radius as it places it, so only a placed location's), then the
+    /// roads', the staircases' and the bridges'. A zone cleared for the roads up to <paramref name="sinceAppend"/> appends
+    /// owes only the later roads' (-1: every road's).
+    /// </summary>
+    private static VegetationClearing.ZoneAreas AreasFor(Vector2s zone, int sinceAppend = -1)
     {
-        var areas = new List<VegetationClearing.Area>();
-        foreach (ZoneSystem.ClearArea area in clearAreas)
-            areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius, leavesRocks));
-        return areas;
+        var areas = new List<ZoneSystem.ClearArea>();
+        if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance location) &&
+            location.m_placed && location.m_location != null && location.m_location.m_clearArea)
+            areas.Add(new ZoneSystem.ClearArea(location.m_position, location.m_location.m_exteriorRadius));
+        return RoadClearAreaManager.AddRoadAreas(zone, areas, sinceAppend);
     }
 
     /// <summary>The biome at a saved object's position, as generation saw it.</summary>
-    private static Heightmap.Biome BiomeAt(Vector2 position) => WorldGenerator.instance.GetBiome(position.x, position.y);
+    private static Heightmap.Biome BiomeAt(Vector3 position) => WorldGenerator.instance.GetBiome(position);
 
     /// <summary>The road points generation tests this zone's grown trees against (RoadClearAreaManager.GetOrCreateRoadCentres),
     /// or those of the roads after <paramref name="sinceAppend"/> appends.</summary>
@@ -1247,10 +1250,9 @@ public static class ServerTerrainBake
     /// <summary>road_bake zone: what RemoveVegetation would take from the zone now, without taking it.</summary>
     internal static int CountVegetationOnRoad(Vector2s zone)
     {
-        List<VegetationClearing.Area> areas = ClearAreasFor(zone);
-        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        VegetationClearing.ZoneAreas areas = AreasFor(zone);
         List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
-        if (areas.Count == 0 && structureAreas.Count == 0 && road.Count == 0)
+        if (!areas.AnyRoadOrStructure && road.Count == 0)
             return 0;
         HashSet<int> vegetation = VegetationPrefabs();
         List<VegetationClearing.Footprint> locations = LocationsNear(zone);
@@ -1264,8 +1266,8 @@ public static class ServerTerrainBake
         {
             Vector3 position = zdo.GetPosition();
             if (VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                    structureAreas, RoadRockClearing.Mode, BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
+                    PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                    BiomeAt, zdo.GetRotation().eulerAngles.y, LeanOf(zdo)))
                 count++;
         }
         return count;
@@ -1278,17 +1280,35 @@ public static class ServerTerrainBake
         {
             for (int dx = -1; dx <= 1; dx++)
             {
-                if (ZoneSystem.instance.m_locationInstances.TryGetValue(new Vector2s(zone.x + dx, zone.y + dy),
-                        out ZoneSystem.LocationInstance location) && location.m_location != null)
-                    locations.Add(new VegetationClearing.Footprint(
-                        new Vector2(location.m_position.x, location.m_position.z), location.m_location.m_exteriorRadius));
+                var home = new Vector2s(zone.x + dx, zone.y + dy);
+                if (!ZoneSystem.instance.m_locationInstances.TryGetValue(home, out ZoneSystem.LocationInstance location) ||
+                    location.m_location == null)
+                    continue;
+                var centre = new Vector2(location.m_position.x, location.m_position.z);
+                string prefab = location.m_location.m_prefab.Name;
+                bool placed = location.m_placed;
+                locations.Add(new VegetationClearing.Footprint(centre, location.m_location.m_exteriorRadius,
+                    at => PartOfLocation(home, centre, prefab, placed, at)));
             }
         }
         return locations;
     }
 
-    /// <summary>Whether a player made this object: vanilla stamps what a player builds with its creator.</summary>
-    private static bool IsPlayerCreated(ZDO zdo) => zdo.GetLong(ZDOVars.s_creator, 0L) != 0L;
+    /// <summary>Whether an object at <paramref name="at"/> is one of the networked parts of the location at
+    /// <paramref name="centre"/> (LocationPrefabLevelling.IsPart, at its saved placement: its LocationProxy's root and turn).
+    /// A location not placed yet has none in the world. Its parts are read from its prefab once a session
+    /// (PlacedSiteReader.KeptOps, as a place placed before its roads is read); null where they cannot be.</summary>
+    private static bool? PartOfLocation(Vector2s home, Vector2 centre, string prefab, bool placed, Vector3 at)
+    {
+        if (!placed) return false;
+        if (!PlacedSiteReader.Placed(home, centre, out ZDO? proxy)) return null;
+        Vector3 root = proxy!.GetPosition();
+        Quaternion turn = proxy.GetRotation();
+        bool? part = LocationPrefabLevelling.IsPart(prefab, root, turn, at);
+        if (part == null && PlacedSiteReader.KeptOps(centre, proxy) != null)
+            part = LocationPrefabLevelling.IsPart(prefab, root, turn, at);
+        return part;
+    }
 
     /// <summary>
     /// Ground a player has built on, as a circle around each of their objects,
@@ -1318,7 +1338,7 @@ public static class ServerTerrainBake
                     new HashSet<ZoneSystem.SectorIndex>());
                 foreach (ZDO zdo in zdos)
                 {
-                    if (!IsPlayerCreated(zdo))
+                    if (!PlayerChanges.IsPlayers(zdo))
                         continue;
                     Vector3 position = zdo.GetPosition();
                     ground.Add(new VegetationClearing.Footprint(
@@ -1336,8 +1356,8 @@ public static class ServerTerrainBake
         return new VegetationClearing.Lean(euler.x, euler.z, zdo.GetPosition().y);
     }
 
-    private static int RemoveVegetation(Vector2s zone, List<VegetationClearing.Area> areas, List<VegetationClearing.Area> structureAreas,
-        List<VegetationClearing.RoadCentre> road)
+    private static int RemoveVegetation(Vector2s zone, VegetationClearing.ZoneAreas areas,
+        List<VegetationClearing.RoadCentre> road, bool lyingOnly = false)
     {
         HashSet<int> vegetation = VegetationPrefabs();
         List<VegetationClearing.Footprint> locations = LocationsNear(zone);
@@ -1348,11 +1368,12 @@ public static class ServerTerrainBake
         int removed = 0;
         foreach (ZDO zdo in zdos)
         {
+            if (lyingOnly && !VegetationClearing.IsLying(zdo.GetPrefab())) continue;
             Vector3 position = zdo.GetPosition();
             Vector3 euler = zdo.GetRotation().eulerAngles;
             VegetationClearing.Lying verdict = VegetationClearing.Decide(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
-                structureAreas, RoadRockClearing.Mode, BiomeAt, euler.y, out float turned, LeanOf(zdo));
+                PlayerChanges.IsPlayers(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                BiomeAt, euler.y, out float turned, LeanOf(zdo));
             VegetationClearing.Note(zdo.GetPrefab(), new Vector2(position.x, position.z), verdict, euler.y, turned);
             ZNetView instance = ZNetScene.instance.FindInstance(zdo);
             if (verdict == VegetationClearing.Lying.Turned || verdict == VegetationClearing.Lying.Through)
@@ -1475,11 +1496,15 @@ public static class ServerTerrainBake
                 Release(compiler, bound: saved != null);
             if (root != null)
                 Object.DestroyImmediate(root);
-            // A compiler made for a zone the roads only brush would sit in the
-            // save with nothing in it.
-            if (result == WriteResult.NothingToWrite && made != null)
-                ZDOMan.instance.DestroyZDO(made);
+            DropIfEmpty(result, made);
         }
+    }
+
+    /// <summary>A compiler made for a zone the roads only brush would sit in the save with nothing in it.</summary>
+    private static void DropIfEmpty(WriteResult result, ZDO? made)
+    {
+        if (result == WriteResult.NothingToWrite && made != null)
+            ZDOMan.instance.DestroyZDO(made);
     }
 
     /// <summary>The ghost-generation path: the zone's own heightmap, still alive.</summary>
@@ -1534,8 +1559,7 @@ public static class ServerTerrainBake
             ZDO? made = created && go != null ? go.GetComponent<ZNetView>()?.GetZDO() : null;
             if (go != null)
                 Release(go, bound);
-            if (result == WriteResult.NothingToWrite && made != null)
-                ZDOMan.instance.DestroyZDO(made);
+            DropIfEmpty(result, made);
         }
     }
 

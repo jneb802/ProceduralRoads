@@ -36,7 +36,7 @@ public sealed class StairPiece
 
 /// <summary>
 /// Space a walker on the stair needs clear of rock (its walking box): one stretch of a piece, its walking surface's width,
-/// from just over its walking surface to <see cref="StairLayout.ClearanceHeight"/> above it (StairLayout.AddClearance). <see cref="Centre"/> and <see cref="Half"/> are in the
+/// from just over its walking surface to <see cref="RoadRockPolicy.ClearanceHeight"/> above it (StairLayout.AddClearance). <see cref="Centre"/> and <see cref="Half"/> are in the
 /// box's own frame, turned by <see cref="YawDegrees"/> (local +z along the walk).
 /// </summary>
 public readonly struct StairClearance
@@ -169,6 +169,9 @@ public sealed class StairPlan
     public Vector2? PlaceMeet;
     /// <summary>The sunk step under its foot: its pieces and clearances, first in the lists (0 when there is none).</summary>
     public int SunkPieces, SunkClearances;
+    /// <summary>The height of the road its foot is met at on a stair sunk under it (StairLayout.FootToRoad, a foot carried to
+    /// a crossing's end); null where its foot meets its road within a step.</summary>
+    public float? SunkStairMeets;
     /// <summary>Where its first step's low edge is (its foot), when it has a sunk step under it.</summary>
     public Vector3? Foot;
     /// <summary>Stairs added down from its foot to its road (<see cref="StairLayout.LowerFoot"/>).</summary>
@@ -262,11 +265,15 @@ public static partial class StairLayout
     /// road where the road can be carried over them (RoadStairRuns.CarryRoadOntoStairs). 6: an approach's foot on a place's
     /// landing gets a floor laid out onto the place's ground on its side facing the place where the step off it is not level
     /// but such a floor lands level (AddPlaceFloor).</para>
+    /// The one owner of the saved network (docs/OWNERS.md).
     /// </summary>
     public const int LayoutVersion = 6;
 
+    /// <summary>The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float PieceRun = 2f;
+    /// <summary>The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float PieceRise = 1f;
+
     public const float HeadingStep = 22.5f;
     /// <summary>
     /// A generated staircase keeps this close to the stretch of road it
@@ -313,12 +320,6 @@ public static partial class StairLayout
     /// Just under two pieces: at 2.5 m a stair a step from the top could overshoot it on every heading.</summary>
     public const float ReachRadius = 3.5f;
     public const float ReachHeight = 0.5f;
-    /// <summary>A staircase that may finish anywhere near its goal finishes no lower than this
-    /// below the goal's ground: level with it (<see cref="RoadNetworkGenerator.ArrivalLevel"/>).</summary>
-    public const float ArriveBelow = RoadNetworkGenerator.ArrivalLevel;
-    /// <summary>Headroom kept clear of rock above every walking surface: player height, as a road's (one owner,
-    /// <see cref="RoadRockPolicy.ClearanceHeight"/>).</summary>
-    public const float ClearanceHeight = RoadRockPolicy.ClearanceHeight;
     /// <summary>A stair's clearance is cut into this many stretches along it, so it follows the steps up: one a cut point's
     /// spacing long (<see cref="CutSpacing"/>), 4 to a stair, each rising a quarter of its rise. With 2 a stretch's box reached
     /// 0.4 m under the walk at its high end, into the stair's body and the rock it lies on, and the carve took every chunk
@@ -427,7 +428,7 @@ public static partial class StairLayout
     /// <paramref name="onLanding"/>: the place's landing a top climbing to it arrives on (RoadStairRuns.PlanPlacedSiteApproach):
     /// it is aimed at <paramref name="to"/>, but finishes as soon as it steps onto the landing, however far from its aim
     /// (<see cref="Arrived"/>).
-    public static StairPlan Build(Vector2 from, Vector2 to, Func<float, float, float> ground, float width = 2f, StairKit? kit = null,
+    public static StairPlan Build(Vector2 from, Vector2 to, Func<float, float, float> ground, float width = PieceRun, StairKit? kit = null,
         int maxExpansions = MaxExpansions, float? arriving = null, float? leaving = null, IReadOnlyList<Vector2>? corridor = null,
         int totalExpansions = int.MaxValue, int stallExpansions = int.MaxValue, int topLandings = 0, bool sunkFoot = false,
         float maxBuried = StairCover.RoadStaircase, float? arriveWithin = null, Func<Vector2, bool>? allowed = null, float? footHeight = null,
@@ -667,7 +668,7 @@ public static partial class StairLayout
             if (!final) return n.Goal > 0 && Mathf.Abs(ground(n.Edge.x, n.Edge.y) - n.Height) <= LegEndHeight;
             if (EndsTurnedBack(n) || !Arrived(n, route) || (route.ExitAllowed != null && !route.ExitAllowed(n.Edge))
                 || Mathf.Abs(ground(n.Edge.x, n.Edge.y) - n.Height) > ReachHeight
-                || route.ArriveWithin.HasValue && !TopReachesGround(n.Edge, n.Heading, n.Height, ground)) return false;
+                || route.ArriveWithin.HasValue && !TopReachesGround(n.Edge, n.Heading, n.Height, width, ground)) return false;
             // A finish turned away only for how it arrives at the place (StairPlan.HeldToFace).
             if (ArrivesIntoThePlace(n, route)) return true;
             route.HeldToFace++;
@@ -735,7 +736,7 @@ public static partial class StairLayout
             ? OnTheRing(node, ring, route.TopLandings)
             : (Vector2.Distance(node.Edge, route.Final) <= (route.ArriveWithin ?? ReachRadius)
                || route.OnLanding != null && route.OnLanding(node.Edge + Forward(node.Heading) * ProudReach))) &&
-        (route.ArriveWithin.HasValue && !route.TopRing.HasValue ? node.Height >= route.GoalHeight - ArriveBelow : Mathf.Abs(route.GoalHeight - node.Height) <= ReachHeight) &&
+        (route.ArriveWithin.HasValue && !route.TopRing.HasValue ? node.Height >= route.GoalHeight - StairFitsFrom : Mathf.Abs(route.GoalHeight - node.Height) <= ReachHeight) &&
         (!route.EndHeading.HasValue || Mathf.Abs(Wrap(node.Heading - route.EndHeading.Value + 180f) - 180f) <= AlignSteps * HeadingStep + 0.01f) &&
         (!route.TopFacing.HasValue || Mathf.Abs(Wrap(node.Heading - route.TopFacing.Value + 180f) - 180f) <= FacingSteps * HeadingStep + 0.01f);
 
@@ -796,7 +797,7 @@ public static partial class StairLayout
         /// <summary>Deepest the ground may stand over a walking surface on any piece.</summary>
         public float MaxBuried = StairCover.RoadStaircase;
         /// <summary>Set: the staircase may finish anywhere this close to the goal, at the
-        /// ground's height where it finishes and no more than <see cref="ArriveBelow"/> below
+        /// ground's height where it finishes and no more than <see cref="StairFitsFrom"/> below
         /// the goal's, rather than within <see cref="ReachRadius"/> at the goal's own height.</summary>
         public float? ArriveWithin;
 
@@ -1378,13 +1379,8 @@ public static partial class StairLayout
         if (sunkFoot && steps.Count > 0 && steps[0].Kind == StairPieceKind.Stair)
         {
             Node lowest = steps[0];
-            int below = plan.Pieces.Count;
-            AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, lowest.Start - Forward(lowest.Heading) * PieceRun, lowest.Heading,
-                lowest.Parent!.Height - PieceRise, lanes, ground, mark: false, cut: false);
-            sunkPieces = plan.Pieces.Count;
-            for (int i = below; i < plan.Pieces.Count; i++) plan.Pieces[i].Sunk = true;
-            plan.SunkPieces = sunkPieces; plan.SunkClearances = plan.Clearances.Count;
-            plan.Foot = new Vector3(lowest.Start.x, lowest.Parent!.Height, lowest.Start.y);
+            SinkStep(plan, kit, lowest.Start, lowest.Heading, lowest.Parent!.Height, lanes, ground);
+            sunkPieces = plan.SunkPieces;
         }
         int flight = 0;
         foreach (Node step in steps)
@@ -1453,8 +1449,15 @@ public static partial class StairLayout
 
     /// <summary>Highest a walking surface may stand over the ground a player walks onto it from:
     /// the player has no step-up, so a stair's top over a clearing is climbed only by a jump. 0.2 m (0.3 m before: a top
-    /// floor 0.26 m over a stone tower's landing at 186.31 was within it, and wanted flatter).</summary>
+    /// floor 0.26 m over a stone tower's landing at 186.31 was within it, and wanted flatter). The one owner of step and stair geometry (docs/OWNERS.md).</summary>
     public const float StepUp = 0.2f;
+
+    /// <summary>Whether a player walks between walking surfaces at <paramref name="a"/> and <paramref name="b"/>: no more than a
+    /// step (<see cref="StepUp"/>) apart, either way (a thousandth over it for float rounding). The one rule for every height a
+    /// player walks between a road (or a shared landing) and a staircase, floor, structure end or walkable block, and between a
+    /// staircase's walked pieces and the ground they step off onto. NaN is never walkable. The one owner of a walker's step
+    /// (docs/OWNERS.md).</summary>
+    public static bool Walkable(float a, float b) => Mathf.Abs(a - b) <= StepUp + 1e-3f;
 
     /// <summary>
     /// Whether something within reach holds up every piece of a row <see cref="AddRow"/> would lay (StairSupport.Choose, as
@@ -1480,7 +1483,7 @@ public static partial class StairLayout
     private static StairSupport.Walk PieceWalk(StairKit kit, string prefab, Vector2 back, float heading, float baseHeight, float across, float depth)
     {
         bool stair = prefab == kit.Stair;
-        return new StairSupport.Walk(back, heading, depth, across, stair ? baseHeight : baseHeight - kit.FloorThickness, stair);
+        return new StairSupport.Walk(back, heading, depth, across, stair ? baseHeight : baseHeight - kit.FloorThickness, stair, stair ? 0f : kit.FloorThickness);
     }
 
     /// <summary>One row of pieces across the stair.</summary>
@@ -1527,8 +1530,8 @@ public static partial class StairLayout
     }
 
     /// <summary>The walking box over the piece, in stretches along the walk (the one owner of what a staircase clears of rock): its
-    /// walking surface's width across, from <see cref="RoadRockPolicy.ClearanceLift"/> over the stretch's lowest walk, as a road's
-    /// clearance starts over its surface, up to <see cref="ClearanceHeight"/> over its highest walk, so the whole headroom over
+    /// walking surface's width across, from <see cref="RockClearances.Bottom"/> of the stretch's lowest walk, as a road's
+    /// clearance starts over its surface, up to <see cref="RoadRockPolicy.ClearanceHeight"/> over its highest walk, so the whole headroom over
     /// every tread is in it (over the stretch's middle it fell a quarter of a stretch's rise short at its high end). A stair
     /// rises <see cref="PieceRise"/> / <see cref="ClearanceStretches"/> per stretch, a floor or block is level. Nothing under the walk: the piece's own body, the supports under it
     /// and its handrails may stand in rock (they were cleared from the underside up, so a rock a support stood in was fractured
@@ -1544,8 +1547,8 @@ public static partial class StairLayout
             float surface = stair ? baseHeight + PieceRise * (i + 0.5f) / stretches : baseHeight;
             float lowest = stair ? baseHeight + PieceRise * i / stretches : baseHeight;
             float highest = stair ? baseHeight + PieceRise * (i + 1) / stretches : baseHeight;
-            float bottom = lowest + RoadRockPolicy.ClearanceLift;
-            float top = highest + ClearanceHeight;
+            float bottom = RockClearances.Bottom(lowest);
+            float top = BoxTop(highest);
             Vector2 mid = laneStart + dir * (length * (i + 0.5f));
             plan.Clearances.Add(new StairClearance(
                 new Vector3(mid.x, (bottom + top) / 2f, mid.y),
@@ -1553,6 +1556,18 @@ public static partial class StairLayout
                 heading, surface));
         }
     }
+
+    /// <summary>The top of a stair's walking box over its stretch's highest walk <paramref name="highest"/>: a road's
+    /// (<see cref="RockClearances.Top"/>), a player's headroom (<see cref="RoadRockPolicy.ClearanceHeight"/>) over the lift
+    /// (<see cref="RoadRockPolicy.ClearanceLift"/>) over the walk. The one owner of headroom (docs/OWNERS.md).</summary>
+    internal static float BoxTop(float highest) => RockClearances.Top(highest);
+
+    /// <summary>A stored walking box's highest walk (centre <paramref name="centre"/>, half extents <paramref name="half"/>, middle
+    /// walk <paramref name="surface"/>): its middle walk stands under its highest as far as its lowest (the box's bottom less
+    /// the lift) stands under it. Read from the bottom and surface, stored the same way by every build, so a box saved before
+    /// the headroom became the road's is read as it was laid. The one owner of headroom (docs/OWNERS.md).</summary>
+    internal static float HighestWalk(Vector3 centre, Vector3 half, float surface) =>
+        2f * surface - (centre.y - half.y - RoadRockPolicy.ClearanceLift);
 
     /// <summary>Unity's yaw: 0 faces +z, 90 faces +x.</summary>
     public static Vector2 Forward(float headingDegrees)

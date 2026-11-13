@@ -141,7 +141,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
         ExistingWorldFirstLoad.CanAsk = () => true;
         Open(World(explored: false));
         Assert.False(RoadLifecycleManager.ChoicePending);
-        Assert.True(RoadLifecycleManager.GenerationRunning);
+        Assert.True(RoadLifecycleManager.IsGenerating);
         FinishGeneration();
         Assert.True(RoadNetworkGenerator.RoadsGenerated);
     }
@@ -156,6 +156,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
 
         Assert.True(RoadLifecycleManager.ChoicePending);
         Assert.True(RoadLifecycleManager.HoldsTheWorld, "the host would spawn before answering");
+        Assert.NotNull(JoinHold.Reason);
         Assert.False(RoadLifecycleManager.IsGenerating);
         // Another signal while asking decides nothing.
         RoadLifecycleManager.OnPlayerSpawn(Vector3.zero);

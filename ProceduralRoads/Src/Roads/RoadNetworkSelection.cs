@@ -28,7 +28,7 @@ public static class RoadNetworkSelection
     /// <summary>Destinations an island earns: eight, plus four for every two
     /// square kilometres, capped by MaxLocationsPerIsland. One formula and one
     /// cap - the density multiplier this replaced was a third knob that could
-    /// only be set to a value the other two already expressed.</summary>
+    /// only be set to a value the other two already expressed. The one owner of which places get a road and which connect (docs/OWNERS.md).</summary>
     public static int Quota(float area, int cap)
     {
         double requested = (2 + Math.Floor(Math.Max(0, area) / 2000000d)) * 4;
@@ -129,8 +129,8 @@ public static class RoadNetworkSelection
             // By the zone the place stands in (a location is placed well inside its zone, one to a zone),
             // not its rounded metre: a position read back at 0.1 m (a dump of the world) rounds differently from
             // the game's float, and drew other destinations than the game's on the same world.
-            hash = (hash ^ (uint)Mathf.FloorToInt((position.x + 32f) / 64f)) * 16777619u;
-            hash = (hash ^ (uint)Mathf.FloorToInt((position.z + 32f) / 64f)) * 16777619u;
+            hash = (hash ^ (uint)RoadConstants.ZoneIndex(position.x)) * 16777619u;
+            hash = (hash ^ (uint)RoadConstants.ZoneIndex(position.z)) * 16777619u;
             hash = (hash ^ (uint)seed) * 16777619u;
             hash ^= hash >> 15;
             return Math.Max(1e-6, Math.Min(1 - 1e-6, (hash % 1000003u) / 1000003d));

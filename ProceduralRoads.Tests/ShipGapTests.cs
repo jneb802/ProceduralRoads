@@ -281,7 +281,7 @@ public sealed class ShipGapTests : IDisposable
         RoadCrossing c = RoadCrossing.Between(new Vector2(-47.6f, 0f), new Vector2(47.6f, 0f), 26f, new Vector2(-30f, 0f), 60f, CrossingKind.Bridge);
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(c, w));
         Assert.False(BridgeLayout.IsFreeSpan(c, w));
-        float deck = DvergrWoodBridge.DeckHeight(c, w);
+        float deck = BridgeLayout.WoodDeckHeight(c, w);
         BridgeLayout.ShipWay way = BridgeLayout.NavigationChannel(c, w, deck - DvergrWoodBridge.DeckDepth, deck, BridgeStructures.Kit.DvergrWood)!.Value;
         Assert.Equal(61.6f, way.Centre, 1);
         Assert.Equal(9.8f, way.DeckWidth, 3);

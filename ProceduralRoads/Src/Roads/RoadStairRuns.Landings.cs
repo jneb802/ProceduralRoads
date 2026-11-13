@@ -58,7 +58,7 @@ public static partial class RoadStairRuns
     {
         IReadOnlyList<StairRun> runs = StairStructures.Runs;
         if (points.Count == 0 || OnAFlight(runs, points, heights, out _) is not StairRun run) return null;
-        StairKit kit = run.Kit ?? StairKit.Named(run.KitName) ?? StairKit.Stone;
+        StairKit kit = StairStructures.KitOf(run);
         var steps = run.Pieces.Where(p => p.Kind == StructurePieceKind.StairStep).OrderBy(p => p.Position.y).ToList();
         if (steps.Count < 3) return null;
         float lowest = steps[0].Position.y, highest = steps[steps.Count - 1].Position.y;
@@ -138,7 +138,7 @@ public static partial class RoadStairRuns
             if (Mathf.Abs(raised[i] - heights[i]) < 0.001f) { last = null; continue; }
             Vector2 p = points[i];
             float g = ground(p.x, p.y);
-            if (!Earthwork(raised[i], g, cap, overWater) || RoadSiteProtection.BlocksSegment(last ?? p, p, 1f, null, null)) return null;
+            if (!Earthwork(raised[i], g, cap, overWater) || RoadSiteProtection.BlocksSegment(last ?? p, p, PlaceMargin, null, null)) return null;
             last = p;
         }
         return raised;
@@ -151,8 +151,8 @@ public static partial class RoadStairRuns
     /// (RoadConstants.DryRoadFloor) is filled to it as an ordinary road's is, the cap judged from there.
     /// </summary>
     private static bool Earthwork(float height, float ground, float cap, bool overWater) =>
-        RoadWater.BuiltDry(ground) ? Mathf.Abs(height - ground) <= cap
-        : overWater && Mathf.Max(height, RoadConstants.DryRoadFloor) - ground <= cap;
+        RoadWater.BuiltDry(ground) ? RoadNetworkGenerator.WithinTerrainLimit(height, ground, cap)
+        : overWater && RoadWater.AtLeastDryFloor(height) - ground <= cap;
 
     /// <summary>How far apart two points of one stored road may stand and be walked from one to the other
     /// (<see cref="RaiseOthers"/>): the network's roads are stored a few metres apart at most, and two roads this close
@@ -172,8 +172,8 @@ public static partial class RoadStairRuns
     {
         var changed = new List<(RoadSpatialGrid.RoadPoint at, float to)>();
         if (removed.Count == 0) return changed;
-        float grade = Mathf.Max(RoadGrade.Configured, 0.01f);
-        float ease = 2f * RoadNetworkGenerator.Shaped(cap) / grade;
+        float grade = RoadGrade.Floored;
+        float ease = 2f * RoadGrade.EaseLength(RoadNetworkGenerator.Shaped(cap));
         Vector2 centre = default;
         foreach (Vector2 r in removed) centre += r;
         centre *= 1f / removed.Count;
@@ -209,7 +209,7 @@ public static partial class RoadStairRuns
             if (Mathf.Abs(to - rp.h) < 0.001f) continue;
             float g = ground(rp.p.x, rp.p.y);
             if (Vector2.Distance(rp.p, centre) > spread + OnRoad + ease - AlongOneRoad || !Earthwork(to, g, cap, overWater)
-                || RoadSiteProtection.BlocksSegment(rp.p, rp.p, 1f, null, null)) return null;
+                || RoadSiteProtection.BlocksSegment(rp.p, rp.p, PlaceMargin, null, null)) return null;
             changed.Add((rp, to));
         }
         return changed;

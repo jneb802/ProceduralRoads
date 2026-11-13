@@ -21,8 +21,8 @@ public static partial class RoadStairRuns
     public static int FeetStartedLower;
 
     /// <summary>
-    /// How far the road's ground back along its approach may lie under the line climbing to its staircase's foot at the grade
-    /// cap. Further, and the road held to the foot's height stands on an embankment there: the grade limiter keeps it on that
+    /// How far the road's ground back along its approach may lie under the line climbing to its staircase's foot as its road
+    /// is built to climb there (RoadPitches.ClimbToFoot: its level landing, then the grade cap). Further, and the road held to the foot's height stands on an embankment there: the grade limiter keeps it on that
     /// line all the way down, over the ground at the bottom of the climb (a road climbing to a staircase's foot at
     /// -4764.9,1737.7 stood 6 m over a gully, the ground lower on both sides).
     /// </summary>
@@ -34,8 +34,9 @@ public static partial class RoadStairRuns
 
     /// <summary>
     /// How far the ground of the road arriving at path[<paramref name="foot"/>], walked from it by <paramref name="step"/>
-    /// (+1 or -1) no further than index <paramref name="stop"/>, lies under the line climbing at <paramref name="cap"/> to the
-    /// foot's ground: the most fill the road held to the foot stands on. Read every metre up to <see cref="ApproachReach"/>.
+    /// (+1 or -1) no further than index <paramref name="stop"/>, lies under the line climbing to the foot's ground as the road
+    /// is built to climb there (RoadPitches.ClimbToFoot: its level landing, then <paramref name="cap"/>): the most fill the
+    /// road held to the foot stands on. Read every metre up to <see cref="ApproachReach"/>.
     /// </summary>
     internal static float ApproachUnder(List<Vector2> path, int foot, int step, int stop, Func<Vector2, float> ground, float cap)
     {
@@ -49,7 +50,7 @@ public static partial class RoadStairRuns
             {
                 float d = walked + run * k / samples;
                 if (d > ApproachReach) return under;
-                under = Mathf.Max(under, top - cap * d - ground(Vector2.Lerp(a, b, (float)k / samples)));
+                under = Mathf.Max(under, top - RoadPitches.ClimbToFoot(d, cap) - ground(Vector2.Lerp(a, b, (float)k / samples)));
             }
             walked += run;
         }
@@ -58,7 +59,7 @@ public static partial class RoadStairRuns
 
     /// <summary>
     /// A stair stretch of <paramref name="path"/> started lower, the staircase taking the height its road cannot: where the
-    /// road arriving at its foot (its lower end) cannot climb to it following its ground within the grade cap (its ground more
+    /// road arriving at its foot (its lower end) cannot climb to it following its ground as it is built to (its ground more
     /// than <see cref="ApproachFill"/> under the line to the foot, <see cref="ApproachUnder"/>), the foot moves back along the
     /// road to the nearest path point whose own approach is within it. More stairs and a lower foot instead of a road on an
     /// embankment. Not onto the path's ends, past a crossing, nor within <see cref="StoneGap"/> of the stretch before
@@ -156,8 +157,8 @@ public static partial class RoadStairRuns
     /// <summary>
     /// The index of the nearest point of <paramref name="path"/> back from its end at a placed place (its start where
     /// <paramref name="atStart"/>) that the road climbs to on its ground, as <see cref="StartLower"/> moves a road staircase's
-    /// foot: its ground back along the road within <see cref="ApproachFill"/> of the line climbing to it at the grade cap
-    /// (<see cref="ApproachUnder"/>). Not past the road's nearest structure (<paramref name="structures"/>: a staircase's or
+    /// foot: its ground back along the road within <see cref="ApproachFill"/> of the line climbing to it as the road is built
+    /// to (<see cref="ApproachUnder"/>). Not past the road's nearest structure (<paramref name="structures"/>: a staircase's or
     /// crossing's index nearest that end, -1 for none) nor within <see cref="StoneGap"/> of it, onto the path's other end, nor
     /// further along the road than <paramref name="reach"/>. -1 where no such point is, or the end is one already.
     /// </summary>
@@ -180,6 +181,10 @@ public static partial class RoadStairRuns
     /// (<see cref="EndUnderFoot"/>).</summary>
     public static int FeetLoweredToEnds;
 
+    /// <summary>Of them, feet met on a stair sunk into the road under them (StairLayout.FootToRoad), and of those the sunk
+    /// stairs laid for it (the rest kept their own).</summary>
+    public static int FeetSunkAtEnds, SunkStairsLaid;
+
     /// <summary>How far back along the road from a foot its ground is read for LowerFoot.</summary>
     public const float FootBackReach = 5f;
 
@@ -197,28 +202,30 @@ public static partial class RoadStairRuns
     /// <paramref name="footHeight"/>, stands over by more than the road between can climb, with its index on the path, or
     /// null. The road from the end runs level at the end's height over its last StructureEnds.ApronLength (and on under
     /// its joining piece, RoadSpatialGrid.LevelledEnds), then within the grade cap; a stretch shorter than
-    /// StructureEnds.StubLength is all one level landing (within StructureEnds.StepTolerance). Measured along
+    /// StructureEnds.StubLength is all one level landing (a walker's step of it, StairLayout.Walkable: the lip of a foot over
+    /// its road). Measured along
     /// <paramref name="path"/> from <paramref name="footIndex"/>, stepping by <paramref name="step"/>, to the end's foot,
     /// wherever the end's way of meeting the road (StructureEnds.MeetEnds) put it. The staircase is carried on down to it.
     /// </summary>
     internal static (int index, StructureEnds.End end)? EndUnderFoot(List<Vector2> path, Vector2 foot, int footIndex, int step,
         IReadOnlyList<RoadCrossing> crossings, WorldGenerator world, float footHeight)
     {
-        float cap = RoadGrade.Capped(RoadGrade.Configured) ? RoadGrade.Configured : float.PositiveInfinity;
-        float Climbs(float run) => run < StructureEnds.StubLength ? StructureEnds.StepTolerance
-            : Mathf.Max(StructureEnds.StepTolerance, cap * (run - StructureEnds.ApronLength));
+        float cap = RoadGrade.CapOr(float.PositiveInfinity);
+        // What the road between climbs past a walker's step (StairLayout.Walkable): none on a stub, the grade cap past its apron.
+        float Climbs(float run) => run < StructureEnds.StubLength ? 0f : Mathf.Max(0f, cap * (run - StructureEnds.ApronLength));
+        bool Over(float end, float run) => footHeight - end > Climbs(run) && footHeight > end && !StairLayout.Walkable(footHeight, end);
         float run = Vector2.Distance(foot, path[footIndex]);
         for (int i = footIndex; i >= 0 && i < path.Count; i += step)
         {
             if (i != footIndex) run += Vector2.Distance(path[i - step], path[i]);
             // No end stands under the sea: past where the road could climb from there, none is too low.
-            if (Climbs(run) >= footHeight - RoadConstants.SeaLevel) return null;
+            if (!Over(RoadConstants.SeaLevel, run)) return null;
             foreach (RoadCrossing c in crossings)
             {
                 if ((step < 0 ? c.ToIndex : c.FromIndex) != i) continue;
                 var (near, far) = BridgeStructures.Ends(c, world);
                 StructureEnds.End end = step < 0 ? far : near;
-                if (end.IsStructure && footHeight - end.MeetHeight > Climbs(run)) return (i, end);
+                if (end.IsStructure && Over(end.MeetHeight, run)) return (i, end);
             }
         }
         return null;
@@ -588,7 +595,8 @@ public static partial class RoadStairRuns
     /// Why a road with <paramref name="stairs"/> may not be committed for one of their feet, and where; null when none: a
     /// foot laid against its road's end (its ring) where one of the road's own pieces (<paramref name="own"/>) ends, whose
     /// walked pieces there (within the start pad's reach, RoadEndRing.PadReach, but the steps sunk on purpose) all stand more
-    /// than RoadEndRing.LevelWithRoad over the road's own height at that end (the staircase stands over its road with no way
+    /// than a walker's step over the road's own height at that end, and not met on a stair sunk under the foot
+    /// (StairLayout.FootMeets) (the staircase stands over its road with no way
     /// onto it), or whose lowest stands more than a rise under it (a pit at its foot under the road's bank). Asked before the
     /// commit with the road's other refusals: the road is refused and searched for as any refused road is, never kept with
     /// the staircase hanging (in game a tower's road staircase's foot stood 6.4 m over the road cut under it at -784,-4432,
@@ -635,7 +643,7 @@ public static partial class RoadStairRuns
                 if (Vector2.Distance(new Vector2(p.Position.x, p.Position.z), ring.Centre) > reach) continue;
                 lowest = Mathf.Min(lowest, StairLayout.Footprint(p).height);
             }
-            if (!float.IsPositiveInfinity(lowest) && lowest - height > RoadEndRing.LevelWithRoad)
+            if (!float.IsPositiveInfinity(lowest) && lowest > height && !StairLayout.FootMeets(plan, lowest, height))
             {
                 at = ring.Centre;
                 return FootOverItsRoad;
@@ -661,7 +669,7 @@ public static partial class RoadStairRuns
     /// <summary>Where <paramref name="st"/>'s foot, with no road there, gaps by the end reader (StairEnds.Read: no edge of its
     /// last walked pieces steps off onto <paramref name="ground"/>, the ground a road's staircase is laid out on
     /// (PlanningGround), as its own earthwork leaves it (its cuts, a foot's apron among them: each lowers the ground to its
-    /// height within StairLayout.CutRadius, as the network's cut-only points are written) and with the network's roads on it,
+    /// height within StairLayout.CutRadius and climbs back on its batter, as the writer leaves it, RoadTerrainModifier.GroundAfterCuts) and with the network's roads on it,
     /// nor onto another of <paramref name="all"/>'s staircases): the foot's last stair's exit edge. Null where a walker steps
     /// off it. Read without its cuts, a foot onto the level apron cut for it at the island's start on RoadSeedA was refused.</summary>
     internal static Vector2? FootOffTheGround(RoadStairSpan st, IReadOnlyList<RoadStairSpan> all, Func<float, float, float> ground)
@@ -671,13 +679,7 @@ public static partial class RoadStairRuns
         foreach (RoadStairSpan other in all)
             if (!ReferenceEquals(other, st)) others.AddRange(StairRun.FromPlan(other.FromPoint, other.ToPoint, Width, other.Plan, other.Kit).Pieces);
         List<Vector3> cuts = st.Plan.Cuts;
-        float Cut(float x, float z)
-        {
-            float g = ground(x, z);
-            foreach (Vector3 c in cuts)
-                if (c.y < g && (c.x - x) * (c.x - x) + (c.z - z) * (c.z - z) <= StairLayout.CutRadius * StairLayout.CutRadius) g = c.y;
-            return g;
-        }
+        float Cut(float x, float z) => RoadTerrainModifier.GroundAfterCuts(ground(x, z), cuts, x, z);
         foreach (StairEnds.End end in StairEnds.Read(run, StairEnds.WithRoads(Cut), others))
             if (!end.Top && end.Verdict == StairEnds.Verdict.Gap)
                 return end.Edge is Vector3 e ? new Vector2(e.x, e.z) : st.Plan.Reversed ? st.ToPoint : st.FromPoint;
@@ -698,6 +700,7 @@ public static partial class RoadStairRuns
     /// (a staircase met by the next one on a shared floor has no road there), and none of it lies in water, on another
     /// road at another height or on another staircase's flight; its points inside a place's footprint are left out (the
     /// terrain writer leaves a place's ground alone). Each refusal is counted by why (<see cref="PadsRefused"/>).
+    /// The one owner of staircase starts (docs/OWNERS.md).
     /// </summary>
     internal static List<RoadSpatialGrid.PlannedPath> StartPads(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, IReadOnlyList<RoadStairSpan> stairs,
         WorldGenerator? world, string? label = null)
@@ -743,7 +746,7 @@ public static partial class RoadStairRuns
                 if (piece.Points.Count < 2 || piece.FollowTerrain) continue;
                 foreach (int i in new[] { 0, piece.Points.Count - 1 })
                     meets |= Vector2.Distance(piece.Points[i], pad.End) <= PadMeetsEnd
-                        && Mathf.Abs(piece.Heights[i] - pad.Height) <= StructureEnds.StepTolerance;
+                        && StairLayout.Walkable(piece.Heights[i], pad.Height);
             }
             if (!meets) { Refused(pad, ring, "no road ends there", "no road of its own ends there at its height"); continue; }
             var points = new List<Vector2>();
@@ -755,7 +758,7 @@ public static partial class RoadStairRuns
                 if (RoadSiteProtection.Contains(q)) continue;
                 if (!RoadWater.BuiltDry(world, q)) clash = "in water";
                 else if (RoadSpatialGrid.TryGetRoadHeightWithin(q, RoadEndRing.PadSpacing, out float road)
-                         && Mathf.Abs(road - pad.Heights[i]) > StructureEnds.StepTolerance) clash = "on another road";
+                         && !StairLayout.Walkable(road, pad.Heights[i])) clash = "on another road";
                 points.Add(q);
                 heights.Add(pad.Heights[i]);
             }

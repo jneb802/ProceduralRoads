@@ -9,8 +9,9 @@ namespace ProceduralRoads;
 /// the world's full location list per move. No Unity objects are retained.</summary>
 public static class RoadSiteProtection
 {
-    /// <summary>How far a road's centreline keeps from a protected site's edge: half its width and a margin.</summary>
-    public static float Clearance(float width) => width * 0.5f + 2f;
+    /// <summary>How far a road's centreline keeps from a protected site's edge: half its width and the terrain blend margin
+    /// (<see cref="RoadConstants.TerrainBlendMargin"/>): room for the road's whole terrain blend. The one owner of site protection (docs/OWNERS.md).</summary>
+    public static float Clearance(float width) => width * 0.5f + RoadConstants.TerrainBlendMargin;
 
     public readonly struct Footprint
     {
@@ -118,6 +119,7 @@ public static class RoadSiteProtection
 
     // An endpoint's own footprint is exempt during the centre-to-centre
     // search. Those sections are clipped away before storing the road.
+    /// <summary>The one owner of site protection (docs/OWNERS.md).</summary>
     public static bool BlocksSegment(Vector2 a, Vector2 b, float clearance,
         Vector2? start, Vector2? end) =>
         BlocksSegment(a, b, clearance, start, end, Mode.Exempt, out _);
@@ -127,7 +129,7 @@ public static class RoadSiteProtection
     /// but an endpoint's own footprint is crossed only as the road's departure or arrival: once the line is inside the
     /// end's footprint and clearance it stays there, and once out of the start's it never comes back. The road is trimmed
     /// where it last leaves the end's ring (TrimPathToRadii), so a searched line that came into a place's clearance and left
-    /// it again kept that stretch, and the final road (<see cref="BlocksRoad"/>) was refused for it.</summary>
+    /// it again kept that stretch, and the final road (<see cref="BlocksRoad"/>) was refused for it. The one owner of site protection (docs/OWNERS.md).</summary>
     internal static bool BlocksRoute(Vector2 a, Vector2 b, float clearance, Vector2? start, Vector2? end) =>
         BlocksSegment(a, b, clearance, start, end, Mode.Route, out _);
 
@@ -135,7 +137,7 @@ public static class RoadSiteProtection
     /// step that shapes the line before it (the pull, the sway, the network snap, the bends' fillets and the spline) ask
     /// this, with the road's width and the ends it was planned between, so a shaped line the final check would refuse is
     /// never made. <see cref="Clearance"/> of <paramref name="width"/>; a trimmed arrival may graze its own place's
-    /// clearance (<see cref="BlocksFinalSegment"/>).</summary>
+    /// clearance (<see cref="BlocksFinalSegment"/>). The one owner of site protection (docs/OWNERS.md).</summary>
     internal static bool BlocksRoad(Vector2 a, Vector2 b, float width, Vector2 start, Vector2 end) =>
         BlocksSegment(a, b, Clearance(width), start, end, Mode.Final, out _);
 
@@ -157,6 +159,7 @@ public static class RoadSiteProtection
     // clearance. It may graze that margin while turning towards the site.
     // Unlike the centre-to-centre search exemption, it never permits crossing
     // the authored footprint itself. Use the input ends, before reshaping.
+    /// <summary>The one owner of site protection (docs/OWNERS.md).</summary>
     internal static bool BlocksFinalSegment(Vector2 a, Vector2 b, float clearance,
         Vector2 start, Vector2 end, out Footprint? hit) =>
         BlocksSegment(a, b, clearance, start, end, Mode.Final, out hit);

@@ -162,7 +162,7 @@ public class RoadMeetingTests : IDisposable
                 var world = new Strip();
                 _scope.WithWorld(world);
                 SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f, Fords = false, Bridges = false });
-                RoadNetworkGenerator.EarthworkCap = 8f;
+                RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
                 RoadSpatialGrid.PlannedPath Laid(float x0, float z0, float x1, float z1, float h)
                 {
                     var points = new List<Vector2>();
@@ -210,7 +210,7 @@ public class RoadMeetingTests : IDisposable
             Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
             Assert.True(RoadNetworkGenerator.JoinPlace(finder, world, hints, new RoadConnectionPlanner.Place("Cave", Vector3.zero, 10f)));
             Assert.Equal(laid, RoadSpatialGrid.TotalRoadLength);
-            Assert.False(RoadNetworkGenerator.PlaceServed("SomeBossEntrance", Vector3.zero, 10f));
+            Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f, "SomeBossEntrance"));
         }
         finally { RoadPathfinder.JunctionStep = step; }
     }
@@ -228,7 +228,7 @@ public class RoadMeetingTests : IDisposable
             var world = new Strip();
             _scope.WithWorld(world);
             SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f, Fords = false, Bridges = false });
-            RoadNetworkGenerator.EarthworkCap = 8f;
+            RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
             RoadSpatialGrid.PlannedPath Laid(float x0, float z0, float x1, float z1, float h)
             {
                 var points = new List<Vector2>();

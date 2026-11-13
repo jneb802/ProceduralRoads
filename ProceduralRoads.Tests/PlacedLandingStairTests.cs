@@ -126,7 +126,7 @@ public sealed class PlacedLandingStairTests : IDisposable
             .OrderBy(p => new Vector2(p.Position.x, p.Position.z).magnitude).First();
         Vector2 at = new Vector2(foot.Position.x, foot.Position.z);
         Assert.Equal(StairPieceKind.Landing, foot.Kind);
-        Assert.InRange(foot.Position.y + 0.5f, Lip - 0.05f, Lip + 0.05f);
+        Assert.InRange(foot.Position.y + StairLayout.PieceRise / 2f, Lip - 0.05f, Lip + 0.05f);
         Assert.InRange(at.magnitude, Radius - RoadStairRuns.LipReach - 0.01f, Radius + 0.01f);
         // The flight down onto it heads within the hold of the place's centre.
         var (walk, toward, stair) = TowerPlacedFirstTests.ArrivingStair(plan, at, new Vector2(0f, 0f));

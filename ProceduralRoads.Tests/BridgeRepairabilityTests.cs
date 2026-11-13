@@ -200,7 +200,7 @@ public class BridgeRepairabilityTests
         foreach ((bool near, float drop) in new[] { (true, dropFrom), (false, dropTo) })
         {
             int steps = StairSteps(plan, site.crossing, near, built);
-            int needed = Mathf.CeilToInt(drop / BridgeLayout.StairRise - 0.001f);
+            int needed = Mathf.CeilToInt(drop / StairLayout.PieceRise - 0.001f);
             Assert.True(steps >= needed,
                 $"the {(near ? "near" : "far")} end drops {drop:F2} m but its run is {steps} step(s)");
         }

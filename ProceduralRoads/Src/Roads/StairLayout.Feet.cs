@@ -65,6 +65,22 @@ public static partial class StairLayout
     /// <summary>Most stairs <see cref="LowerFoot"/> adds down from a foot.</summary>
     public const int MostLowered = 2;
 
+    /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise
+    /// the foot stays (the road's landing is filled up to it); from half a rise up, a stair drops
+    /// (<see cref="LowerFoot"/>, <see cref="FootToRoad"/>). Half rounds up, not to even. The one owner of a foot rounding to whole stairs (docs/OWNERS.md).</summary>
+    private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + StairFitsFrom / PieceRise);
+
+    /// <summary>
+    /// How far off a height must be for one stair to be the nearer fit: half a rise (<see cref="PieceRise"/>). Off by less, no
+    /// stair fits and it is the ground's own unevenness; off by this or more, a stair is laid where one may be. The one owner of
+    /// a height rounding to whole stairs, with <see cref="WholeStairsOver"/> (docs/OWNERS.md): a foot over its road, an end's
+    /// stairs (StructureEnds.Decide), and how far over or under a place's landing the network may arrive and still be level with
+    /// it (a road always ends level, even at the cost of a POI, and may end in stairs if needed): the reached test, a road's end
+    /// at its place, an approach staircase's threshold, the landing's level ground (PlacedSiteShape.Aims) and a staircase that
+    /// may finish anywhere near its goal finishing no lower than this under it.
+    /// </summary>
+    public const float StairFitsFrom = PieceRise / 2f;
+
     /// <summary>
     /// A staircase whose foot (the first step's low edge, at the ground's height there) stands over its road's ground
     /// further back more than the road may climb to it: more stairs on down from the foot toward the road, up to
@@ -72,31 +88,89 @@ public static partial class StairLayout
     /// them (at the foot at -9308.1,690.3 the bottom of the stairs was not walkable, the earthworks too steep for a player
     /// to use to get up to the bottom stair; the road climbed 2.3 m in 5 m to it).
     /// <paramref name="back"/>: the road's ground a few metres back from the foot, <paramref name="run"/> metres away;
-    /// <paramref name="cap"/> the road's grade cap. Returns the new foot (low edge, height) or null; null too at a foot the
+    /// <paramref name="cap"/> the road's grade cap. What the road climbs to the foot over them is what it is built to climb
+    /// there (RoadPitches.ClimbToFoot): its level landing, not the cap (a foot 1.1 m over its road's ground 5 m back was left
+    /// as it was, read as climbed at the cap, and its road's landing stood on 1.2 m of fill). Returns the new foot (low edge, height) or null; null too at a foot the
     /// road was carried on to (<see cref="StairPlan.FootFloorsTrimmed"/>), which starts on its kept floor row with no sunk
     /// step: the road there was judged ending where it is.
+    /// The one owner of staircase starts (docs/OWNERS.md).
     /// </summary>
     public static Vector3? LowerFoot(StairPlan plan, Func<float, float, float> ground, float width, float back, float run, float cap)
     {
         if (plan.Foot is not Vector3 foot || plan.SunkPieces <= 0 || plan.FootLowered > 0) return null;
-        float over = foot.y - back - cap * run;
-        if (over <= StepUp) return null;
-        int steps = Mathf.Min(MostLowered, Mathf.CeilToInt((over - StepUp) / PieceRise));
-        return AddFootStairs(plan, ground, width, steps);
+        int steps = Mathf.Min(MostLowered, WholeStairsOver(foot.y - back - RoadPitches.ClimbToFoot(run, cap)));
+        return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
     }
 
     /// <summary>
-    /// A staircase's foot carried on down to the road at <paramref name="height"/>: as many stairs on down from the foot
-    /// along its first heading as bring its low edge to that height within half a rise, the sunk step under the foot
-    /// becoming the first of them (a staircase whose foot is a short stretch of road from a crossing's end, the road there
-    /// level at the end's height). Returns the new foot (low edge, height), or null where the foot is within half a rise
-    /// already, has none, or something within reach would not hold a stair up (<see cref="RowHeld"/>).
+    /// The one owner of a staircase's foot meeting a road held at <paramref name="road"/> (the road levelled at a crossing's
+    /// end, RoadStairRuns.Lay), and of the stair sunk into that road where the two stand apart: the foot carried on down
+    /// toward the road by whole stairs (<see cref="WholeStairsOver"/>). Left within a walker's
+    /// step of the road (<see cref="Walkable"/>), it meets it there. Left more than a step over it (or under it: then one stair
+    /// less, so it stands over it), one stair more is sunk into the road under the foot, as a staircase's own sunk step is laid
+    /// (<see cref="SinkStep"/>: an uncut stair a rise down, out along its first heading, buried in the road but for its top):
+    /// its slope comes up out of the road, so the walk meets the road on it with no step, the foot under a rise over the road
+    /// (<see cref="FootMeets"/>). Nothing is sunk where the foot keeps its own sunk step. Returns the foot (its first stair's low
+    /// edge), the height the road meets it at (the foot's, or the road's on the sunk stair), whether it is met on a sunk
+    /// stair and whether that stair was laid here; null where the foot is not over the road, or a stair added would not be held up (<see cref="RowHeld"/>).
     /// </summary>
-    public static Vector3? LowerFootTo(StairPlan plan, Func<float, float, float> ground, float width, float height)
+    public static (Vector3 foot, float meets, bool sunk, bool laid)? FootToRoad(StairPlan plan, Func<float, float, float> ground, float width, float road)
     {
         if (plan.Foot is not Vector3 foot) return null;
-        int steps = Mathf.RoundToInt((foot.y - height) / PieceRise);
-        return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
+        int steps = WholeStairsOver(foot.y - road);
+        bool sink = !Walkable(foot.y - steps * PieceRise, road);
+        if (sink && foot.y - steps * PieceRise < road) steps--;
+        if (steps < 0) return null;
+        if (steps > 0 && AddFootStairs(plan, ground, width, steps) is null) return null;
+        Vector3 at = plan.Foot!.Value;
+        if (!sink) return (at, at.y, false, false);
+        bool laid = plan.SunkPieces <= 0;
+        if (laid) SinkStep(plan, StairKit.Of(plan.Kit), new Vector2(at.x, at.z), plan.StartHeading, at.y, Lanes(width), ground);
+        if (!SunkStairSpans(at.y, road)) return null;
+        plan.SunkStairMeets = road;
+        return (at, road, true, laid);
+    }
+
+    /// <summary>Whether a staircase's foot at <paramref name="foot"/> (its lowest walked stair's low edge) meets a road at
+    /// <paramref name="road"/>: within a walker's step (<see cref="Walkable"/>), or over it by less than a rise on the stair
+    /// <see cref="FootToRoad"/> sank for that road (<see cref="StairPlan.SunkStairMeets"/>), whose slope comes up out of it. A
+    /// staircase's own sunk step alone is not that: nothing checked it lies over this road.</summary>
+    public static bool FootMeets(StairPlan plan, float foot, float road) =>
+        Walkable(foot, road)
+        || plan.SunkPieces > 0 && plan.SunkStairMeets is float met && Walkable(met, road) && SunkStairSpans(foot, road);
+
+    /// <summary>Whether one stair sunk into the lower of two walking surfaces (<see cref="SunkStair"/>) carries a walk up to the
+    /// higher: <paramref name="high"/> over <paramref name="low"/>, by less than a rise, so the stair's slope comes up out of the
+    /// lower to the higher. The one judgement of the flex, for a foot over a road (<see cref="FootToRoad"/>, <see cref="FootMeets"/>)
+    /// and a clip over a top floor (<see cref="ClipTops"/>); within a step (<see cref="Walkable"/>) none is needed.</summary>
+    internal static bool SunkStairSpans(float high, float low) => high > low && high - low < PieceRise;
+
+    /// <summary>The stair sunk under a foot at <paramref name="foot"/> (<paramref name="height"/>, its low edge), the one way one
+    /// is laid under a foot (<see cref="SunkStair"/>), first in the plan's lists, as a plan lays its pieces from its foot
+    /// (<see cref="StairPlan.SunkPieces"/>).</summary>
+    private static void SinkStep(StairPlan plan, StairKit kit, Vector2 foot, float heading, float height, int lanes, Func<float, float, float> ground)
+    {
+        int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
+        SunkStair(plan, kit, foot, heading, height, lanes, ground);
+        int added = plan.Pieces.Count - pieces, addedClearances = plan.Clearances.Count - clearances;
+        FirstInWalkingOrder(plan.Pieces, new List<int> { pieces, plan.Pieces.Count });
+        FirstInWalkingOrder(plan.Clearances, new List<int> { clearances, plan.Clearances.Count });
+        if (plan.LastRowPieces >= 0) { plan.LastRowPieces += added; plan.LastRowClearances += addedClearances; }
+        plan.SunkPieces = added; plan.SunkClearances = addedClearances;
+        plan.Foot = new Vector3(foot.x, height, foot.y);
+    }
+
+    /// <summary>The one place a stair is sunk into a lower walking surface: a whole stair a rise down from
+    /// <paramref name="height"/> at <paramref name="edge"/> (its top edge's middle), out back along <paramref name="heading"/> (the
+    /// way it climbs), so the walk comes up out of the lower surface rather than meeting a lip (one extra stair clipped down
+    /// into the earth makes it connect better). Under a foot it is sunk into the road (<see cref="SinkStep"/>); under a clip
+    /// into the lower top's floor (<see cref="ClipTops"/>). Buried on purpose: no earthwork uncovers it (uncut, not counted as
+    /// a stair of the flight), marked <see cref="StairPiece.Sunk"/>.</summary>
+    private static void SunkStair(StairPlan plan, StairKit kit, Vector2 edge, float heading, float height, int lanes, Func<float, float, float> ground)
+    {
+        int pieces = plan.Pieces.Count;
+        AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, edge - Forward(heading) * PieceRun, heading, height - PieceRise, lanes, ground, mark: false, cut: false);
+        for (int i = pieces; i < plan.Pieces.Count; i++) plan.Pieces[i].Sunk = true;
     }
 
     /// <summary><paramref name="steps"/> stairs added on down from a plan's foot along its first heading, the sunk step
@@ -104,7 +178,7 @@ public static partial class StairLayout
     private static Vector3? AddFootStairs(StairPlan plan, Func<float, float, float> ground, float width, int steps)
     {
         Vector3 foot = plan.Foot!.Value;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         Vector2 dir = Forward(plan.StartHeading), at = new Vector2(foot.x, foot.z);
         // None where something within reach would not hold one up (RowHeld).
@@ -185,7 +259,7 @@ public static partial class StairLayout
     {
         if (UnpricedLedge) return 0f;
         float drop = 0f;
-        float side = Mathf.Max(half, PieceRun / 2f) - 0.1f;
+        float side = ExitHalf(2f * half);
         foreach (float along in new[] { PieceRun / 4f, PieceRun * 3f / 4f })
         {
             Vector2 mid = start + dir * along;
@@ -347,13 +421,14 @@ public static partial class StairLayout
 
     /// <summary>
     /// Where the ground a walker comes onto a staircase's foot from rises into a bank (straight back from its first stair and
-    /// 45 degrees either side, more than a step over the foot plus what a road climbs per metre), a small level apron cut
+    /// 45 degrees either side, more than a step over the foot plus what its road climbs to it there, RoadPitches.ClimbToFoot:
+    /// its level landing), a small level apron cut
     /// there at the foot's height by the road's earthwork: <see cref="ApronDepth"/> back and the foot's width plus a metre
-    /// either side, blended into the bank, and only where no cut is deeper than <see cref="ApronMaxCut"/> (foot
+    /// either side, blended into the bank, and only where no cut is deeper than <see cref="RoadNetworkGenerator.ShapedLimit"/> (foot
     /// at -8018,-660 against a bank: minor earthworks give it space). Returns the
     /// cut points added; none for a foot that opens onto flat ground.
     /// </summary>
-    public static int CutFootApron(StairPlan plan, Func<float, float, float> ground, float width)
+    public static int CutFootApron(StairPlan plan, Func<float, float, float> ground, float width, float cap)
     {
         if (plan.Foot is not Vector3 foot || !plan.Reached) return 0;
         Vector2 at = new Vector2(foot.x, foot.z), back = Forward(Wrap(plan.StartHeading + 180f)), across = Right(plan.StartHeading);
@@ -365,7 +440,7 @@ public static partial class StairLayout
             foreach (float d in new[] { 1f, 2f, 4f })
             {
                 Vector2 p = at + dir * d;
-                if (ground(p.x, p.y) > height + StepUp + ApronBankGrade * d) bank = true;
+                if (ground(p.x, p.y) > height + StepUp + RoadPitches.ClimbToFoot(d, cap)) bank = true;
             }
         }
         if (!bank) return 0;
@@ -380,7 +455,7 @@ public static partial class StairLayout
                 deepest = Mathf.Max(deepest, g - target);
                 cuts.Add(new Vector3(p.x, target, p.y));
             }
-        if (cuts.Count == 0 || deepest > ApronMaxCut) return 0;
+        if (cuts.Count == 0 || deepest > RoadNetworkGenerator.ShapedLimit) return 0;
         plan.Cuts.AddRange(cuts);
         plan.MaxCut = Mathf.Max(plan.MaxCut, deepest);
         plan.FootApron = cuts.Count;
@@ -389,10 +464,4 @@ public static partial class StairLayout
 
     /// <summary>How far back from a foot its apron is cut (<see cref="CutFootApron"/>).</summary>
     public const float ApronDepth = 3f;
-
-    /// <summary>The deepest an apron may cut: the road's own earthwork cap.</summary>
-    public const float ApronMaxCut = 8f;
-
-    /// <summary>What a road climbs per metre off a foot (the default grade cap): ground behind it steeper than this over a step is a bank.</summary>
-    public const float ApronBankGrade = RoadConstants.DefaultMaxRoadGrade;
 }

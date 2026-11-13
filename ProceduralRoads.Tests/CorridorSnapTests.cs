@@ -33,8 +33,8 @@ public class CorridorSnapTests
         try
         {
             Assert.True(RoadSpatialGrid.AddRoadPath(Line(0f, -200f, 200f), 4f, world));
-            RoadNetworkGenerator.RoadSnap = 6f;
-            RoadNetworkGenerator.CorridorSnap = 14f;
+            RoadNetworkGenerator.RoadSnap = (float)PlainRoads.ModDefaults["road snap"];
+            RoadNetworkGenerator.CorridorSnap = (float)PlainRoads.ModDefaults["corridor snap"];
             body();
         }
         finally { RoadSpatialGrid.Clear(); }
@@ -127,7 +127,7 @@ public class CorridorSnapTests
         // Measured: two roads left one place through a pool, each with its own ford 6.5 m apart.
         using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.CorridorSnap).AndKeep(() => RoadNetworkGenerator.RoadSnap);
         using var scope = new ValheimWorldScope().WithWorld(new Terrace());
-        RoadNetworkGenerator.RoadSnap = 6f; RoadNetworkGenerator.CorridorSnap = 14f;
+        RoadNetworkGenerator.RoadSnap = (float)PlainRoads.ModDefaults["road snap"]; RoadNetworkGenerator.CorridorSnap = (float)PlainRoads.ModDefaults["corridor snap"];
         var a = RoadCrossing.Between(new Vector2(0f, 0f), new Vector2(0f, 20f), 29f, new Vector2(0f, 10f), 0f);
         var beside = RoadCrossing.Between(new Vector2(6.5f, 20f), new Vector2(6.5f, 0f), 29f, new Vector2(6.5f, 10f), 0f);
         Assert.True(RoadNetworkGenerator.SameCorridorCrossing(a, beside, out float d), "6.5 m apart, opposite order");
@@ -147,7 +147,7 @@ public class CorridorSnapTests
         using var scope = new ValheimWorldScope().WithWorld(new Terrace());
         try
         {
-            RoadNetworkGenerator.RoadSnap = 6f; RoadNetworkGenerator.CorridorSnap = 14f;
+            RoadNetworkGenerator.RoadSnap = (float)PlainRoads.ModDefaults["road snap"]; RoadNetworkGenerator.CorridorSnap = (float)PlainRoads.ModDefaults["corridor snap"];
             var bridge = RoadCrossing.Between(new Vector2(0f, 0f), new Vector2(0f, 50f), 28f, new Vector2(0f, 25f), 20f, CrossingKind.Bridge);
             registry.Add(bridge);
             var chain = new List<RoadCrossing>

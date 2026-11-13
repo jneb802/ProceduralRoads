@@ -49,6 +49,24 @@ public class SiteApproachTests
         Assert.All(plan.Points, p => Assert.True(p.magnitude >= 15.9f));
     }
 
+    /// <summary>A place that paints past the ground it shapes (Arrival under Radius) is approached to its arrival edge, as the
+    /// final check holds it: the re-aim is not refused for the paint it only stands in.</summary>
+    [Fact]
+    public void ReaimsAtAPlaceThatPaintsPastItsShapedGround()
+    {
+        RoadSpatialGrid.Clear();
+        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(), 20f, 16f) });
+        using var grade = GradeCap.At(0.35f);
+        try
+        {
+            var world = new Hillside(); var original = Route();
+            var better = Improve(original, world);
+            Assert.NotSame(original, better);
+            Assert.True(Mathf.Abs(better[better.Count - 1].y) > 5f);
+        }
+        finally { RoadSiteProtection.Reset(); }
+    }
+
     private sealed class PlatformSlope : WorldGenerator
     {
         public override float GetHeight(float x, float z) => 52f + Mathf.Max(0, -z) * 0.5f;
@@ -165,7 +183,7 @@ public class SiteApproachTests
         Assert.Equal(68f,LocationLevelling.ApproachHeight(60f,new[] {new LevelOp(2,0,8,8,false)}));
         var world=new Flat(); using var scope=new ValheimWorldScope().WithWorld(world);
         using var overrides = StaticOverride.Keep(() => LocationLevelling.Source);
-        // Ground level with the raised platform (RoadNetworkGenerator.ArrivalLevel) is arrived on as it is; a platform 0.8 m
+        // Ground level with the raised platform (StairLayout.StairFitsFrom) is arrived on as it is; a platform 0.8 m
         // over it is not level with it (1.5 m counted before the end-level rule): no target.
         LocationLevelling.Source=_=>new[] {new LevelOp(2,0,0.4f,8,false)};
         Assert.Equal(60f,RoadNetworkGenerator.ApproachGround(new Vector2(20,0),new Vector2(),16));

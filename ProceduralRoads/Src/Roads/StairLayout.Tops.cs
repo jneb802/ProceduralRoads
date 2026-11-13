@@ -71,6 +71,18 @@ public static partial class StairLayout
     /// RoadStairRuns.SpanTheValley): its half width, a piece's at least, a little in from its corners.</summary>
     internal static float ExitHalf(float width) => Mathf.Max(PieceRun, width) / 2f - 0.1f;
 
+    /// <summary>The walking surface at the centre of a walked piece: a stair by its middle (its origin is its base), a floor by its top.</summary>
+    internal static float CentreSurface(StairPiece piece) =>
+        piece.Position.y + (piece.Kind == StairPieceKind.Stair ? StepMiddle : StairKit.FloorTopOf(piece.Prefab));
+
+    /// <summary>How far over a stair step's base its walking surface is at its middle: half a rise. Add it to a base inline
+    /// (<c>base + StepMiddle</c>, never through a float helper that would round the sum before a further term).</summary>
+    internal const float StepMiddle = PieceRise / 2f;
+
+    /// <summary>The top walking surface of a walked piece: a stair rises a step from its base, a floor stands at its top.</summary>
+    internal static float TopSurface(StairPiece piece) =>
+        piece.Position.y + (piece.Kind == StairPieceKind.Stair ? PieceRise : StairKit.FloorTopOf(piece.Prefab));
+
     /// <summary>How many pieces side by side a row <paramref name="width"/> wide takes: one at least.</summary>
     internal static int Lanes(float width) => Mathf.Max(1, Mathf.RoundToInt(width / PieceRun));
 
@@ -163,19 +175,13 @@ public static partial class StairLayout
 
     /// <summary>
     /// Whether a top finishing anywhere near its aim (an area to reach: a landing, a ledge) leaves the walker on the
-    /// ground it leads onto: the ground just past it (<see cref="TopAhead"/> on) stands no more than a rise and a
+    /// ground it leads onto: the ground just past it (<see cref="StairEnds.OverAhead"/>, the end reader's corners) stands no more than a rise and a
     /// step-up over it, which a crest (<see cref="ClimbOn"/> and <see cref="AddDescent"/>) or a step meets. Finishing within reach of the aim and up
-    /// to <see cref="ArriveBelow"/> under it, two tops stopped under the shoulder they led onto (at the
+    /// to <see cref="StairFitsFrom"/> under it, two tops stopped under the shoulder they led onto (at the
     /// mountain cave entry -9293.7,706.8 and at 3522.0,-5773.6: the top did not fully make it).
     /// </summary>
-    internal static bool TopReachesGround(Vector2 edge, float heading, float height, Func<float, float, float> ground)
-    {
-        Vector2 ahead = edge + Forward(heading) * TopAhead;
-        return ground(ahead.x, ahead.y) - height <= PieceRise + StepUp;
-    }
-
-    /// <summary>How far past a top the ground it leads onto is read.</summary>
-    public const float TopAhead = 2.5f;
+    internal static bool TopReachesGround(Vector2 edge, float heading, float height, float width, Func<float, float, float> ground) =>
+        StairEnds.OverAhead(edge, Forward(heading), height, width, ground) <= PieceRise + StepUp;
 
     /// <summary>
     /// The end rule's stair down (StairEnds.Case.Reverse): where a staircase's top (<see cref="Terminal"/>'s exit edge, facing
@@ -191,7 +197,7 @@ public static partial class StairLayout
     public static (int pieces, int clearances) AddDescent(StairPlan plan, Func<float, float, float> ground, float width)
     {
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         TerminalExit? exit=Terminal(plan);
         Vector2 dir=Forward(plan.EndHeading);
@@ -244,7 +250,7 @@ public static partial class StairLayout
         float top = plan.End.y;
         if (!StairEnds.Lands(edge, dir, top, width, ground)) return (0,0);
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         if (!RowHeld(kit, kit.Floor, edge, plan.EndHeading, top, lanes, ground)) return (0, 0);
         AddRow(plan, kit, StairPieceKind.Landing, kit.Floor, edge, plan.EndHeading, top, lanes, ground, mark: true, cut: false);
@@ -269,7 +275,7 @@ public static partial class StairLayout
         if (!plan.Reached) return null;
         int first = plan.Pieces.FindIndex(plan.SunkPieces, p => p.Kind != StairPieceKind.Support && !p.Sunk);
         if (first < 0 || plan.Pieces[first].Kind != StairPieceKind.Landing) return null;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         var (back, heading, across, depth, height) = Footprint(plan.Pieces[first]);
         Vector2 middle = back + Forward(heading) * (depth / 2f);
         // On the end: as the railing finds a place's landing (StairRailing's AtEnd).
@@ -322,7 +328,7 @@ public static partial class StairLayout
     /// (<see cref="StairPlan.End"/>, facing <see cref="StairPlan.EndHeading"/>) would stand on stands more than a step over it,
     /// more stairs straight on, up to <see cref="MostClimbedOn"/>, until it does not (StairEnds.At, the one reader): the top
     /// then finishes by the rule there, a floor or the crest's stair down (<see cref="FinishTop"/>). The search finishes
-    /// within reach of its aim and up to <see cref="ArriveBelow"/> under it, and two tops stopped under the shoulder they
+    /// within reach of its aim and up to <see cref="StairFitsFrom"/> under it, and two tops stopped under the shoulder they
     /// led onto (the mountain cave entry at -9293.7,706.8, where the top did not fully make it, 1.1 m under the
     /// shoulder 3 m on; and at 3522.0,-5773.6, 1-3 m under the knoll). Each stair added keeps its walk no deeper than
     /// <paramref name="maxCover"/> in the ground; a dip just past the top under it is its supports' to stand over (an approach's
@@ -334,7 +340,7 @@ public static partial class StairLayout
         stairs = 0;
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
         if (!plan.Reached) return (0, 0);
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         Vector2 dir = Forward(plan.EndHeading), edge = new Vector2(plan.End.x, plan.End.z);
         float top = plan.End.y;
@@ -403,6 +409,7 @@ public static partial class StairLayout
     /// <paramref name="fits"/> says the plan may stand so (an approach: out of its place's pit and rock); the climb is kept where
     /// it fits whatever follows it (<paramref name="climbed"/>). Returns the finish laid, if any; with none the plan is as it
     /// was but for a kept climb.
+    /// The one owner of staircase ends (docs/OWNERS.md).
     /// </summary>
     public static TopFinish FinishTop(StairPlan plan, Func<float, float, float> ground, float width, float cover, Func<StairPlan, bool> fits,
         out bool climbed, bool down = false)
@@ -543,7 +550,7 @@ public static partial class StairLayout
             var (at, heading, surface) = ExitOf(piece);
             if (StairEnds.Lands(at, Forward(heading), surface, width, ground))
             {
-                StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+                StairKit kit = StairKit.Of(plan.Kit);
                 if (TrimAbove(plan, previous, false, kit) == 0) return false;
                 plan.End = new Vector3(at.x, surface, at.y);
                 plan.EndHeading = heading;
@@ -577,7 +584,7 @@ public static partial class StairLayout
         // middle, a cave's approach's last floor at 5046.8,-5892.6 stood 0.3-0.6 m over the ground across its way off and was
         // kept; walkable off one side only, replaced by hand with a stair down in its place.
         if (StairEnds.Lands(plan.LastRowStart, dir, plan.LastRowHeight, width, ground)) return false;
-        StairKit kit = StairKit.Named(plan.Kit) ?? StairKit.Stone;
+        StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         if (!RowHeld(kit, kit.Stair, front, Wrap(plan.LastRowHeading + 180f), plan.LastRowHeight - PieceRise, lanes, ground)) return false;
         // Only the row's own pieces (and its columns): supports sunk later for other pieces stay.

@@ -116,7 +116,7 @@ public static class RoadSiteEntry
             if (roadsNear != null && Vector2.Distance(p, roadEnd) > 2f * width)
             {
                 (Vector2 at, float height)? nearest = null;
-                foreach (var q in roadsNear(p, width + 2f * RoadConstants.TerrainBlendMargin))
+                foreach (var q in roadsNear(p, RoadProfile.Footprint(width)))
                     if (nearest == null || (q.at - p).sqrMagnitude < (nearest.Value.at - p).sqrMagnitude) nearest = q;
                 if (nearest is { } n)
                 {

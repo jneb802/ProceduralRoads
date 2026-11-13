@@ -19,7 +19,9 @@ public enum WeatheredStructures
 /// </summary>
 public static class StructureWear
 {
-    public static WeatheredStructures Weathered = WeatheredStructures.Bridges | WeatheredStructures.Stairs;
+    /// <summary>The shipped Structures.Weathered.</summary>
+    public const WeatheredStructures DefaultWeathered = WeatheredStructures.Bridges | WeatheredStructures.Stairs;
+    public static WeatheredStructures Weathered = DefaultWeathered;
 
     public static bool Bridges => (Weathered & WeatheredStructures.Bridges) != 0;
     public static bool Stairs => (Weathered & WeatheredStructures.Stairs) != 0;

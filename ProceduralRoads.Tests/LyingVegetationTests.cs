@@ -57,15 +57,15 @@ public class LyingVegetationTests
     public void TheServerTurnsASavedLogAsGenerationWouldAndLeavesAPlayersGroundAlone()
     {
         int log = "FirTree_oldLog".GetStableHashCode();
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         Assert.Equal(VegetationClearing.Lying.Turned, VegetationClearing.Decide(log, new Vector2(0f, 5f), false, new HashSet<int> { log }, none,
-            nobody, nobody, Road, 1f, null, RockClearingMode.Off, null, 0f, out float turned));
+            nobody, nobody, Road, 1f, null, 0f, out float turned));
         Assert.Equal(70f, turned, 3);
         Assert.False(VegetationClearing.ShouldRemove(log, new Vector2(0f, 5f), false, new HashSet<int> { log }, none, nobody, nobody, Road, 1f, yaw: 0f));
         var hut = new List<VegetationClearing.Footprint> { new(new Vector2(0f, 6f), VegetationClearing.PlayerGroundRadius) };
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(log, new Vector2(0f, 5f), false, new HashSet<int> { log }, none,
-            nobody, hut, Road, 1f, null, RockClearingMode.Off, null, 0f, out _));
+            nobody, hut, Road, 1f, null, 0f, out _));
     }
 
     [Fact]
@@ -83,11 +83,11 @@ public class LyingVegetationTests
         // The server reads a staircase's clear area the same way.
         int log = "FirTree_oldLog".GetStableHashCode();
         var nobody = new List<VegetationClearing.Footprint>();
-        var stairs = new List<VegetationClearing.Area> { new(new Vector2(3f, 7f), 2f) };
+        var stairs = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea> { new(new Vector3(3f, 0f, 7f), 2f) }, 0, 0);
         Assert.Equal(VegetationClearing.Lying.Turned, VegetationClearing.Decide(log, new Vector2(0f, 5f), false, new HashSet<int> { log },
-            new List<VegetationClearing.Area>(), nobody, nobody, Road, 1f, stairs, RockClearingMode.Off, null, 0f, out turned));
+            stairs, nobody, nobody, Road, 1f, null, 0f, out turned));
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("FirTree_oldLog", new Vector2(0f, 5f), turned, 1f, Road, out _,
-            p => VegetationClearing.InsideClearArea(stairs, p)));
+            p => VegetationClearing.InsideClearArea(stairs, new Vector3(p.x, 0f, p.y), log, null)));
     }
 
     [Fact]
@@ -104,12 +104,11 @@ public class LyingVegetationTests
     public void APreviewOrACountNotesNothing()
     {
         int log = "FirTree_oldLog".GetStableHashCode();
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         int turned = VegetationClearing.LyingTurned, noted = VegetationClearing.LyingNoted.Count;
         VegetationClearing.ShouldRemove(log, new Vector2(0f, 5f), false, new HashSet<int> { log }, none, nobody, nobody, Road, 1f, yaw: 0f);
-        VegetationClearing.Decide(log, new Vector2(0f, 5f), false, new HashSet<int> { log }, none, nobody, nobody, Road, 1f, null,
-            RockClearingMode.Off, null, 0f, out _);
+        VegetationClearing.Decide(log, new Vector2(0f, 5f), false, new HashSet<int> { log }, none, nobody, nobody, Road, 1f, null, 0f, out _);
         Assert.Equal(turned, VegetationClearing.LyingTurned);
         Assert.Equal(noted, VegetationClearing.LyingNoted.Count);
     }
@@ -122,8 +121,8 @@ public class LyingVegetationTests
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 8f), turned, 1f, Road, out _));
         // Generation turns it the same way, by the yaw PlaceVegetation drew.
         float yaw = 90f;
-        Assert.False(RoadClearAreaManager.OnRoad(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue, Road, new Vector3(0f, 40f, 8f), "YggdrasilRoot",
-            1f, RockClearingMode.Off, _ => Heightmap.Biome.Mistlands, ref yaw));
+        Assert.False(RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue), Road, new Vector3(0f, 40f, 8f), "YggdrasilRoot",
+            1f, _ => Heightmap.Biome.Mistlands, ref yaw));
         Assert.Equal(turned, yaw, 3);
     }
 
@@ -133,8 +132,8 @@ public class LyingVegetationTests
         // 3 m off the road's middle its trunk, near 2 m thick each side of its origin, lies on the road whichever way.
         Assert.Equal(VegetationClearing.Lying.Remove, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 3f), 90f, 1f, Road, out _));
         float yaw = 90f;
-        Assert.True(RoadClearAreaManager.OnRoad(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue, Road, new Vector3(0f, 40f, 3f), "YggdrasilRoot",
-            1f, RockClearingMode.Off, _ => Heightmap.Biome.Mistlands, ref yaw));
+        Assert.True(RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue), Road, new Vector3(0f, 40f, 3f), "YggdrasilRoot",
+            1f, _ => Heightmap.Biome.Mistlands, ref yaw));
         // 30 m off, pointing at the road at its largest scale, it stops short of it.
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 30f), 90f, 1.5f, Road, out float turned));
         Assert.Equal(90f, turned);
@@ -144,16 +143,16 @@ public class LyingVegetationTests
     public void TheServerTurnsOrRemovesASavedMistlandsRootAsGenerationWould()
     {
         int root = "YggdrasilRoot".GetStableHashCode();
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 8f), 90f, 1f, Road, out float generated);
         Assert.Equal(VegetationClearing.Lying.Turned, VegetationClearing.Decide(root, new Vector2(0f, 8f), false, new HashSet<int> { root }, none,
-            nobody, nobody, Road, 1f, null, RockClearingMode.Off, null, 90f, out float turned));
+            nobody, nobody, Road, 1f, null, 90f, out float turned));
         Assert.Equal(generated, turned, 3);
         Assert.Equal(VegetationClearing.Lying.Remove, VegetationClearing.Decide(root, new Vector2(0f, 3f), false, new HashSet<int> { root }, none,
-            nobody, nobody, Road, 1f, null, RockClearingMode.Off, null, 90f, out _));
+            nobody, nobody, Road, 1f, null, 90f, out _));
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(root, new Vector2(0f, 30f), false, new HashSet<int> { root }, none,
-            nobody, nobody, Road, 1.5f, null, RockClearingMode.Off, null, 90f, out _));
+            nobody, nobody, Road, 1.5f, null, 90f, out _));
     }
 
     /// <summary><see cref="Road"/> with its height: 40 m, or <paramref name="height"/>.</summary>
@@ -180,17 +179,17 @@ public class LyingVegetationTests
         Assert.Equal(turned, again);
         // The server reads the tilt from a saved rotation's Euler angles (0 to 360) and turns it the same way.
         int helmet = "giant_helmet1".GetStableHashCode();
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         Assert.Equal(VegetationClearing.Lying.Through, VegetationClearing.Decide(helmet, new Vector2(0f, 1.6f), false, new HashSet<int> { helmet }, none,
-            nobody, nobody, road, 1f, null, RockClearingMode.Off, null, 0f, out float saved, new VegetationClearing.Lean(334.5f, 355.5f, 40f)));
+            nobody, nobody, road, 1f, null, 0f, out float saved, new VegetationClearing.Lean(334.5f, 355.5f, 40f)));
         Assert.Equal(turned, saved, 3);
         Assert.False(VegetationClearing.ShouldRemove(helmet, new Vector2(0f, 1.6f), false, new HashSet<int> { helmet }, none, nobody, nobody, road, 1f,
             yaw: 0f, lean: TiltedBack));
         // Generation turns it the same way, by the yaw and tilts PlaceVegetation drew.
         float yaw = 0f;
-        Assert.False(RoadClearAreaManager.OnRoad(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue, road, new Vector3(0f, 40f, 1.6f), "giant_helmet1",
-            1f, RockClearingMode.Off, _ => Heightmap.Biome.Mistlands, ref yaw, TiltedBack));
+        Assert.False(RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue), road, new Vector3(0f, 40f, 1.6f), "giant_helmet1",
+            1f, _ => Heightmap.Biome.Mistlands, ref yaw, TiltedBack));
         Assert.Equal(turned, yaw, 3);
     }
 
@@ -229,7 +228,7 @@ public class LyingVegetationTests
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("giant_ribs", new Vector2(0f, 30f), 0f, 1f, RoadAt(), out float turned,
             lean: new VegetationClearing.Lean(0f, 0f, 40f)));
         Assert.Equal(0f, turned);
-        Assert.False(VegetationClearing.ShouldRemove(ribs, new Vector2(0f, 30f), false, new HashSet<int> { ribs }, new List<VegetationClearing.Area>(),
+        Assert.False(VegetationClearing.ShouldRemove(ribs, new Vector2(0f, 30f), false, new HashSet<int> { ribs }, new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>()),
             new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), RoadAt(), 1f, yaw: 90f));
     }
 
@@ -242,14 +241,14 @@ public class LyingVegetationTests
         var areas = new List<ZoneSystem.ClearArea>();
         int tree = "SwampTree1".GetStableHashCode();
         var trees = new HashSet<int> { tree };
-        var none = new List<VegetationClearing.Area>();
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
         var nobody = new List<VegetationClearing.Footprint>();
         System.Func<Vector3, Heightmap.Biome> biome = _ => Heightmap.Biome.Swamp;
         void Ask()
         {
             float yaw = 0f;
-            RoadClearAreaManager.OnRoad(areas, 0, int.MaxValue, Road, new Vector3(0f, 40f, 30f), "SwampTree1", 1f, RockClearingMode.Off, biome, ref yaw);
-            VegetationClearing.Decide(tree, new Vector2(0f, 30f), false, trees, none, nobody, nobody, Road, 1f, none, RockClearingMode.Off, null, 0f, out _);
+            RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(areas, 0, int.MaxValue), Road, new Vector3(0f, 40f, 30f), "SwampTree1", 1f, biome, ref yaw);
+            VegetationClearing.Decide(tree, new Vector2(0f, 30f), false, trees, none, nobody, nobody, Road, 1f, null, 0f, out _);
         }
         Ask();
         long before = System.GC.GetAllocatedBytesForCurrentThread();

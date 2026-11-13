@@ -23,8 +23,8 @@ public class ManualRoadTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         _scope.WithWorld(world).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
-        Heightmap.Registered = null; RoadGrade.Configured = .35f;
-        RoadNetworkGenerator.RoadWidth = 4;
+        Heightmap.Registered = null; RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
+        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
     }
     public void Dispose()
@@ -51,6 +51,17 @@ public class ManualRoadTests : IDisposable
     }
     private void Add(float z) => RoadSpatialGrid.CommitAppend(new[] { Line(z) }, RoadSpatialGrid.RoadNetworkVersion);
 
+    /// <summary>A join aims at no point on a staircase: there is no road on it to join.</summary>
+    [Fact] public void AJoinNeverAimsAtAPointOnAStaircase()
+    {
+        BaseRoad();
+        StairStructures.Replace(new List<StairRun> { new StairRun { From = new Vector2(-8f, -16f), To = new Vector2(8f, -16f), Width = 4f } });
+        Assert.Contains(RoadSpatialGrid.RoadTargets(_ => true), p => Math.Abs(p.x) < 4f);
+        var targets = RoadNetworkGenerator.JoinTargets(_ => true);
+        Assert.DoesNotContain(targets, p => Math.Abs(p.x) < 8f);
+        Assert.Contains(targets, p => Math.Abs(p.x) > 12f);
+    }
+
     [Fact] public void CoordinatesUseInvariantXZAndCanBeCopiedBack()
     {
         using var overrides = StaticOverride.Keep(() => CultureInfo.CurrentCulture);
@@ -58,6 +69,35 @@ public class ManualRoadTests : IDisposable
         var d = new ManualRoadDraft(); d.Add(ManualRoadDraft.ParsePoint("-120.5", "450.25")); d.Add(new Vector2(0, -80));
         Assert.Equal("road_path -120.5,450.25 0,-80", d.Command);
         Assert.Equal(d.Points, ManualRoadDraft.ParsePath(d.Command.Split(' ').Skip(1)));
+    }
+    /// <summary>A command given a point as its first two words (road_regen_island, road_bridge_repairs) reads it as every typed
+    /// coordinate is read (ManualRoadDraft.ParsePoint). Read in the current culture, "120.5" on a de-DE system was 1205 ('.' is
+    /// its group separator), and NaN or a point outside the world went through.</summary>
+    [Fact] public void ACommandsTypedPointIsReadAsEveryTypedCoordinate()
+    {
+        using var overrides = StaticOverride.Keep(() => CultureInfo.CurrentCulture);
+        CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+        var console = new Terminal();
+        Vector2? Typed(string line, out bool ok)
+        {
+            ok = ManualRoadCommands.TryTypedPoint(new Terminal.ConsoleEventArgs(line, console), "Usage: road_regen_island <x> <z>", out Vector2? point);
+            return point;
+        }
+        Assert.Equal(new Vector2(120.5f, -40.25f), Typed("road_regen_island 120.5 -40.25", out bool ok));
+        Assert.True(ok);
+        Assert.Equal(new Vector2(120.5f, -40.25f), Typed("road_regen_island 120.5 -40.25 force", out ok));
+        Assert.True(ok);
+        // No point given: the command acts where the player stands.
+        Assert.Null(Typed("road_regen_island", out ok)); Assert.True(ok);
+        Assert.Null(Typed("road_regen_island force", out ok)); Assert.True(ok);
+        foreach (string line in new[] { "road_regen_island NaN 0", "road_regen_island 20000 0", "road_regen_island 120,5 0" })
+        {
+            int from = console.Output.Count;
+            Assert.Null(Typed(line, out ok));
+            Assert.False(ok);
+            Assert.Equal(new[] { "Usage: road_regen_island <x> <z>: Coordinates must be finite X,Z values inside the playable world." },
+                console.Output.Skip(from));
+        }
     }
     [Theory]
     [InlineData("NaN", "0")][InlineData("Infinity", "2")][InlineData("10000", "0")][InlineData("2,3", "4")][InlineData("a", "b")]
@@ -318,6 +358,28 @@ public class ManualRoadTests : IDisposable
         foreach(var at in new[]{new Vector3(500,0,500),new Vector3(-500,0,-500),new Vector3(500,0,-500),new Vector3(0,0,0)})
             Assert.Contains(ZoneSystem.GetZone(at),zones);
     }
+    /// <summary>A manual road's stair cut writes the zones that gather it and no others (RoadTerrainModifier.StairCutReach and the
+    /// pad the zone gather keeps, RoadSpatialGrid.GetRoadPointsInZone): a cut 4.7 m inside a zone is gathered by the zone next to
+    /// it, so that zone is written; one 8 m inside is not, where the road-width reach (ZoneReach, over 10 m) marked it.</summary>
+    [Fact] public void AStairCutWritesTheZonesThatGatherIt()
+    {
+        float reach=RoadTerrainModifier.StairCutReach+RoadTerrainModifier.CutGatherPad;
+        Assert.Equal(reach,RoadTerrainModifier.CutReach(StairLayout.CutWidth)+RoadTerrainModifier.CutGatherPad);
+        Vector2s Zone(float x)=>ZoneSystem.GetZone(new Vector3(x,0f,0f));
+        HashSet<Vector2s> Written(float x)
+        {
+            var append=new RoadNetworkGenerator.ManualAppend();
+            append.StairCuts.Add(new Vector3(x,30f,0f));
+            return ManualRoads.ZonesReached(append,new List<RoadCrossing>());
+        }
+        float near=32f+reach-0.05f, far=32f+8f;
+        Assert.Contains(Zone(near),Written(near));
+        Assert.Contains(Zone(near-reach),Written(near));
+        Assert.NotEqual(Zone(near),Zone(near-reach));
+        Assert.Contains(Zone(far),Written(far));
+        Assert.DoesNotContain(Zone(31f),Written(far));
+        Assert.True(RoadSpatialGrid.ZoneReach(StairLayout.CutWidth)>8f,"the road-width reach no longer exceeds the cut's");
+    }
     [Fact] public void ProtectedWaypointIsRefusedWithoutExemptingItsOwnFootprint()
     {
         RoadSiteProtection.Set(new[]{new RoadSiteProtection.Footprint(new Vector2(0,0),20)});
@@ -335,7 +397,7 @@ public class ManualRoadTests : IDisposable
         Assert.True(RoadSpatialGrid.TryGetRoadWithin(new Vector2(0,60),100,out var near,p=>p.y<0));
         Assert.True(near.y<0);
         var finder=new RoadPathfinder(world);
-        var path=finder.FindPathToNetwork(new Vector2(0,60),8,new[]{new Vector2(0,-16)},p=>p.y<0);
+        var path=finder.FindPathToNetwork(new Vector2(0,60), RoadPathfinder.CellSize,new[]{new Vector2(0,-16)},p=>p.y<0);
         Assert.NotNull(path); Assert.True(path![path.Count-1].y<0);
     }
     [Fact] public void AlreadyConnectedIsANoop()

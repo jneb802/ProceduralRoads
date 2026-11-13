@@ -35,11 +35,12 @@ public static partial class BridgeLayout
     public const float PostSegment = 2f;      // vertical metres per pole
     public const float LaneOffset = 1f;       // the two lanes' centres, either side of the crossing line
     public const float DeckHalfWidth = 2f;    // two 2 m plates side by side: a 4 m deck, the road's width
+    /// <summary>The end stairs' width: their two lanes, 4 m (the end cuts and the parapets beside them).</summary>
+    public const float EndStairsWidth = 2f * DeckHalfWidth;
     public const int MaxStairSteps = 12;      // a stair marches outward until its foot is in the dirt, at most this far
-    public const float StairRun = 2f;         // one step: 2 m out, 1 m down
-    public const float StairRise = 1f;
-    public const float StairHalfRun = 1f;     // origin at the foot: its LOW snaps are this far OUTWARD
-    public const float StairHalfWidth = 1f;   // ... and this far to either side
+    public const float StairRise = StairLayout.PieceRise;   // read only by the offline maps overlay (vs-overlay Program.cs)
+    public const float StairHalfRun = StairLayout.PieceRun / 2f;     // origin at the foot: its LOW snaps are this far OUTWARD
+    public const float StairHalfWidth = StairLayout.PieceRun / 2f;   // ... and this far to either side
     public const float StairFootTolerance = 0.15f; // a foot this far above the dirt still counts as landed
 
     /// <summary>Bumped whenever the emitted geometry changes shape. Persisted
@@ -108,6 +109,7 @@ public static partial class BridgeLayout
     /// bays the widest of 16, 14 and 12 m that carry the deck (<see cref="DvergrViaduct.BaySpacings"/>; never so close that
     /// two piers' tops overlap, past that the middle of a bay walked on iron; a river viaduct in game). A world explored
     /// partly under layout 15 keeps the pieces it has.</para>
+    /// The one owner of the saved network (docs/OWNERS.md).
     /// </summary>
     public const int LayoutVersion = 16;
     public const float DeckFreeboard = 0.5f;  // deck at least this far above the water
@@ -130,7 +132,7 @@ public static partial class BridgeLayout
 
     /// <summary>The base curve's survival at a point of a span: <see cref="BankSurvival"/> at the banks, falling to
     /// <see cref="MidSurvival"/> at mid-span. <paramref name="midCloseness"/> is 0 at a bank and 1 at mid-span. Each part
-    /// takes its share of the losses this leaves (<see cref="RuinProfile.Survives"/>).</summary>
+    /// takes its share of the losses this leaves (<see cref="RuinProfile.Survives"/>). The one owner of weathering and ruin of stairs and bridges (docs/OWNERS.md).</summary>
     public static float SpanSurvival(float midCloseness) => BridgeRuin.Span(midCloseness);
 
     /// <summary>A column's survival where the base curve's is <paramref name="survival"/>: columns outlive the deck.</summary>
@@ -142,6 +144,10 @@ public static partial class BridgeLayout
     /// game, WearNTear.cs 322-325, ZoneSystem.cs ~2828). Read on a Mistlands_Harbour1 in
     /// game (cli_piece_health on 40 pieces): 10-57 %, median 35 %.</summary>
     public const float LocationDamageMin = 0.1f, LocationDamageMax = 0.6f;
+
+    /// <summary>A piece's location-wear health for a <paramref name="roll"/> in [0, 1): <see cref="LocationDamageMin"/> to
+    /// <see cref="LocationDamageMax"/>. The one owner of weathering and ruin of stairs and bridges (docs/OWNERS.md).</summary>
+    public static float LocationHealth(float roll) => LocationDamageMin + roll * (LocationDamageMax - LocationDamageMin);
 
     /// <summary>
     /// How a bridge ruins: one profile for every kit (<see cref="BridgeRuin"/>), by the part a piece is, not by the kit. The
@@ -295,6 +301,7 @@ public static partial class BridgeLayout
     /// exempt from it: the trim never lowers the deck back under the ceiling,
     /// so a pier that could not stand still cannot, and the span is what gets
     /// built instead.</para>
+    /// The one owner of bridge and viaduct structure (docs/OWNERS.md).
     /// </summary>
     public static bool IsFreeSpan(RoadCrossing crossing, WorldGenerator world)
     {
@@ -317,10 +324,10 @@ public static partial class BridgeLayout
     }
 
     /// <summary>The lowest a deck stands over water at <paramref name="waterLevel"/>: the water plus
-    /// <see cref="DeckFreeboard"/>, and a step (<see cref="StairRise"/>) over the floor every road on land is built up to
+    /// <see cref="DeckFreeboard"/>, and a step (<see cref="StairLayout.PieceRise"/>) over the floor every road on land is built up to
     /// (RoadConstants.DryRoadFloor), so a low deck's end can take a step down to the road
     /// (StructureEnds.OverTheFloor).</summary>
-    public static float MinDeck(float waterLevel) => Mathf.Max(waterLevel + DeckFreeboard, RoadConstants.DryRoadFloor + StairRise);
+    public static float MinDeck(float waterLevel) => Mathf.Max(waterLevel + DeckFreeboard, RoadConstants.DryRoadFloor + StairLayout.PieceRise);
 
     /// <summary>Deck height where it meets each bank: the bank's ground,
     /// lifted to <see cref="MinDeck"/> where the ground is lower.</summary>
@@ -338,6 +345,7 @@ public static partial class BridgeLayout
     /// DeckEndHeights has already lifted both to the water plus a freeboard,
     /// so the deck clears the water by construction, and the lower bank's
     /// stair run walks off the difference.
+    /// The one owner of bridge and viaduct structure (docs/OWNERS.md).
     /// </summary>
     public static float DeckHeight(RoadCrossing crossing, WorldGenerator world)
     {
@@ -726,7 +734,7 @@ public static partial class BridgeLayout
                 int key = unchecked(Mathf.RoundToInt(p.Position.x * 2f) * 73856093 ^ Mathf.RoundToInt(p.Position.z * 2f) * 19349663);
                 int side = Mathf.RoundToInt(p.Position.y * 2f);
                 int extra = StableHash(p.Prefab) ^ Mathf.RoundToInt(p.YawDegrees);
-                p.HealthFraction = LocationDamageMin + Roll(key, side, RoleLocationHealth, extra) * (LocationDamageMax - LocationDamageMin);
+                p.HealthFraction = LocationHealth(Roll(key, side, RoleLocationHealth, extra));
             }
         }
 
@@ -815,8 +823,8 @@ public static partial class BridgeLayout
         // step wholly in the ground (BuriedPieces), which the game breaks.
         for (int k = 0; count.HasValue ? k < count.Value : k < MaxStairSteps && !landed; k++)
         {
-            Vector2 c = anchor - inward * (StairHalfRun + k * StairRun);
-            float foot = deckH - StairRise - k * StairRise;
+            Vector2 c = StructureEnds.StepCentre(anchor, inward, k);
+            float foot = StructureEnds.StepFoot(deckH, k);
             bool bothLanded = true;
             foreach (int lane in new[] { Ruin.Left, Ruin.Right })
             {
@@ -937,12 +945,12 @@ public static partial class BridgeLayout
     /// <summary>A column of <paramref name="segment"/>-long posts (origin at their centre) from topHeight down until one
     /// is buried in the ground (grounded by construction).
     /// <para><paramref name="toFoot"/>: stop instead at the first post whose foot is in the ground (within
-    /// <see cref="BuriedPieces.Growth"/> of it, where the game grounds it), and lay none where the top already is; the
+    /// <see cref="SupportGraph.Reach"/> of it, where the game grounds it), and lay none where the top already is; the
     /// railed kits' columns (<see cref="RailedKit"/>) stand on the ground as the hand-built reference's do.</para></summary>
     private static void EmitColumn(List<StructurePiece> pieces, Vector2 pos, float ground, float topHeight, float yaw, float health,
         string postPrefab = PostPrefab, float segment = PostSegment, bool toFoot = false)
     {
-        if (toFoot ? topHeight <= ground + BuriedPieces.Growth : topHeight <= ground - segment)
+        if (toFoot ? topHeight <= ground + SupportGraph.Reach : topHeight <= ground - segment)
             return;
         for (float top = topHeight; ; top -= segment)
         {
@@ -955,7 +963,7 @@ public static partial class BridgeLayout
                 YawDegrees = yaw,
                 HealthFraction = health,
             });
-            if (toFoot ? top - segment <= ground + BuriedPieces.Growth : center <= ground)
+            if (toFoot ? top - segment <= ground + SupportGraph.Reach : center <= ground)
                 break;
         }
     }

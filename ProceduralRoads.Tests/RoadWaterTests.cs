@@ -10,6 +10,21 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public class RoadWaterTests
 {
+    /// <summary>The sea line's two named cases and the cap's two keep the answers of the comparisons they replaced for an
+    /// unknown (NaN) height: neither wet nor over the sea, neither past the cap nor within it.</summary>
+    [Fact]
+    public void UnknownHeightIsNeitherSide()
+    {
+        Assert.False(RoadWater.Wet(float.NaN));
+        Assert.False(RoadWater.AtOrOverSea(float.NaN));
+        Assert.True(RoadWater.AtOrOverSea(RoadConstants.SeaLevel));
+        Assert.True(RoadWater.Wet(RoadConstants.SeaLevel - 0.001f));
+        Assert.False(RoadNetworkGenerator.PastTerrainLimit(float.NaN, 30f, 8f));
+        Assert.False(RoadNetworkGenerator.WithinTerrainLimit(float.NaN, 30f, 8f));
+        Assert.True(RoadNetworkGenerator.WithinTerrainLimit(38f, 30f, 8f));
+        Assert.True(RoadNetworkGenerator.PastTerrainLimit(38.01f, 30f, 8f));
+    }
+
     /// <summary>Ground at <see cref="Height"/> everywhere; swamp north of z = 0, meadows south; a river's core east of
     /// x = 1000.</summary>
     private sealed class Bands : WorldGenerator
@@ -167,4 +182,37 @@ public class RoadWaterTests
             RoadSiteProtection.Reset();
         }
     }
+}
+
+/// <summary>The dry floor is the shallow line, and raising to it is one rule.</summary>
+public class DryFloorTests
+{
+    [Fact]
+    public void DryFloorIsTheShallowLine() =>
+        Assert.Equal(RoadConstants.ShallowWaterHeight, RoadConstants.DryRoadFloor);
+
+    [Theory]
+    [InlineData(-5f, 30.5f)]
+    [InlineData(0f, 30.5f)]
+    [InlineData(28f, 30.5f)]
+    [InlineData(30f, 30.5f)]
+    [InlineData(30.4999f, 30.5f)]
+    [InlineData(30.5f, 30.5f)]
+    [InlineData(30.5001f, 30.5001f)]
+    [InlineData(31.25f, 31.25f)]
+    [InlineData(120f, 120f)]
+    public void RaisingToTheFloorIsTheHigherOfTheGroundAndTheFloor(float g, float raised) =>
+        Assert.Equal(raised, RoadWater.AtLeastDryFloor(g));
+}
+
+/// <summary>"Wet" is the one sea-line test.</summary>
+public class WetTests
+{
+    [Theory]
+    [InlineData(-100f, true)]
+    [InlineData(29.9999f, true)]
+    [InlineData(30f, false)]
+    [InlineData(30.0001f, false)]
+    [InlineData(31f, false)]
+    public void WetIsUnderTheSeaLevel(float h, bool wet) => Assert.Equal(wet, RoadWater.Wet(h));
 }

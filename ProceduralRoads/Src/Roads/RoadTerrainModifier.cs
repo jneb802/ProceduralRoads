@@ -89,6 +89,7 @@ public static class RoadTerrainModifier
     /// is alive (the roads are queued or written when it comes alive) and no
     /// write is still pending for it. Before that the ground under a road is
     /// the ungraded ground, so anything judged against it is judged wrongly.
+    /// The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).
     /// </summary>
     internal static bool TerrainSettled(Vector3 zonePos)
     {
@@ -144,11 +145,7 @@ public static class RoadTerrainModifier
                 if (terrainComp == null) continue;
             }
             if (terrainComp.m_nview == null || !terrainComp.m_nview.IsValid()) continue;
-            if (!terrainComp.m_nview.IsOwner())
-            {
-                if (terrainComp.m_nview.HasOwner()) continue;   // another peer's; look again next sweep
-                terrainComp.m_nview.ClaimOwnership();           // released by the game: ours to write
-            }
+            if (!TakeIfReleased(terrainComp.m_nview)) continue;   // another peer's; look again next sweep
             if (CarriesCurrentRoads(terrainComp)) { s_swept.Add((zoneID, version)); continue; }
             if (s_pendingWrites.ContainsKey(terrainComp)) continue;
             int writes = s_sweepWrites.TryGetValue((zoneID, version), out int w) ? w + 1 : 1;
@@ -203,12 +200,8 @@ public static class RoadTerrainModifier
         if (roadPoints.Count == 0 || (!forced && (NetworkCutoff.Excludes(zoneID) || CarriesCurrentRoads(terrainComp))))
             return;
 
-        if (!terrainComp.m_nview.IsOwner())
-        {
-            if (terrainComp.m_nview.HasOwner())
-                return;
-            terrainComp.m_nview.ClaimOwnership();
-        }
+        if (!TakeIfReleased(terrainComp.m_nview))
+            return;
 
         QueueWrite(zoneID, roadPoints, terrainComp.m_hmap, terrainComp, forced);
     }
@@ -264,6 +257,16 @@ public static class RoadTerrainModifier
         if (zdo == null) return false;
         return CarriesCurrentRoads(ZoneSystem.GetZone(terrainComp.m_hmap.transform.position),
             zdo.GetInt(AppliedVersionHash, 0));
+    }
+
+    /// <summary>Whether the compiler is ours to write: already ours, or released by the game and now claimed. Another
+    /// peer's is left alone (false): it writes its own zones.</summary>
+    internal static bool TakeIfReleased(ZNetView nview)
+    {
+        if (nview.IsOwner()) return true;
+        if (nview.HasOwner()) return false;
+        nview.ClaimOwnership();
+        return true;
     }
 
     // Saved compilers and live ones must agree: an append elsewhere does not
@@ -424,9 +427,8 @@ public static class RoadTerrainModifier
         // left alone and the request dropped: that peer writes its own zones,
         // and if the compiler comes back to us unwritten the sweep queues it.
         if (request.Version == RoadSpatialGrid.RoadNetworkVersion && terrainComp.m_hmap == heightmap &&
-            terrainComp.m_nview != null && terrainComp.m_nview.IsValid() &&
-            !terrainComp.m_nview.IsOwner() && !terrainComp.m_nview.HasOwner())
-            terrainComp.m_nview.ClaimOwnership();
+            terrainComp.m_nview != null && terrainComp.m_nview.IsValid())
+            TakeIfReleased(terrainComp.m_nview);
         // The network can change between requesting and rebuilding.
         if (request.Version != RoadSpatialGrid.RoadNetworkVersion ||
             terrainComp.m_hmap != heightmap || terrainComp.m_nview == null ||
@@ -669,10 +671,12 @@ public static class RoadTerrainModifier
     /// <summary>The ground a place leaves at <paramref name="p"/> in its footprint, as the game draws it under the
     /// compiler's deltas: a place placed before its roads, its preload (<see cref="PlacedSites.GroundAt"/>, the ground
     /// <see cref="FinishedGround"/> predicts on); any other placed place, rebuilt from its saved placement
-    /// (<see cref="PlacedGround"/>). Null where unknown. The writer and the predictor both read it, so a piece is judged
-    /// on the ground that is written.</summary>
+    /// (<see cref="PlacedGround"/>). Null where unknown. Only the writer reads the second source: the finished-ground predictor
+    /// (<see cref="FinishedGround"/>) reads the preload alone and takes NaN for a place placed after its roads, since
+    /// <see cref="PlacedGround"/> runs on the main thread only.</summary>
     internal static float? PlacedBaseAt(Vector2 p) => PlacedSites.GroundAt(p) ?? PlacedGround?.Invoke(p);
 
+    /// <summary>The one owner of what the terrain writer does: cuts, batter and the ground after a staircase's cuts (docs/OWNERS.md).</summary>
     /// <param name="only">Write only the vertices these points reach (an incremental write of
     /// appended points); null for every vertex any point reaches. Heights always come from all
     /// of <paramref name="roadPoints"/>.</param>
@@ -783,8 +787,7 @@ public static class RoadTerrainModifier
                 }
                 if (blendResult.InfluencingPoints > 0)
                 {
-                    float road = Mathf.Clamp(RoadTarget(blendResult, vertexPos2D, baseHeight) - baseHeight,
-                        RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+                    float road = Clamped(RoadTarget(blendResult, vertexPos2D, baseHeight) - baseHeight);
                     // The road's change as the fade writes it, so its paint is held to the ground just written.
                     if (Writes(road, blendResult.MaxBlend)) stats.RoadDeltas[index] = Faded(held ?? 0f, seam, road);
                 }
@@ -799,6 +802,9 @@ public static class RoadTerrainModifier
     /// the shared border, to <paramref name="to"/>, this zone's own, past the fade. Both the ground written and the road's
     /// change its paint is held to (<see cref="ModificationStats.RoadDeltas"/>) read it, so paint follows the ground.</summary>
     private static float Faded(float from, float seam, float to) => from + Mathf.Clamp01(seam) * (to - from);
+
+    /// <summary>A level change as the game keeps it: clamped to its terrain edit limit.</summary>
+    private static float Clamped(float delta) => Mathf.Clamp(delta, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
 
     /// <summary>
     /// The delta <see cref="ModifyVertexHeights"/> writes at a vertex, null where it writes none: the road's earthwork
@@ -817,7 +823,7 @@ public static class RoadTerrainModifier
         if (StructureGround.Held(vertex) is not float held) return road;
         // The road's own delta where it leaves the held ground exactly: the ground a structure was laid on by this writer.
         if (road is float same && baseHeight + same == held) return same;
-        float delta = Mathf.Clamp(held - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        float delta = Clamped(held - baseHeight);
         return road.HasValue || Writes(delta, 0f) ? delta : null;
     }
 
@@ -835,7 +841,7 @@ public static class RoadTerrainModifier
         bool cutHere = cut < finalHeight;
         if (blend.InfluencingPoints == 0 && !cutHere) return null;
         if (cutHere) finalHeight = cut;
-        float delta = Mathf.Clamp(finalHeight - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
+        float delta = Clamped(finalHeight - baseHeight);
         return Writes(delta, blend.MaxBlend) || cutHere ? delta : null;
     }
 
@@ -846,6 +852,7 @@ public static class RoadTerrainModifier
     /// staircases' cuts, exactly as <see cref="ModifyVertexHeights"/> writes them from the zone's points. NaN inside
     /// any other place's footprint, whose own levelling is not known until it spawns. Cached per vertex and per
     /// zone; one caller at a time (built for a pass after generation, or an append on the main thread).
+    /// The one owner of ground readers (docs/OWNERS.md).
     /// </summary>
     internal static System.Func<int, int, float> FinishedGround(System.Func<int, int, float> natural)
     {
@@ -889,7 +896,7 @@ public static class RoadTerrainModifier
     /// <summary>The height the staircases' cuts take the ground to at this vertex (infinity for none): the lowest any cut within
     /// reach asks for (<see cref="LowestCut"/>), but never below a walk over it: under a walked piece no lower than just under
     /// its walking surface (StairStructures.CutFloor). A cut uncovers a walk and the headroom over it; the ground under a
-    /// flight, which its supports stand in, stays.</summary>
+    /// flight, which its supports stand in, stays. The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     internal static float CutAt(List<RoadSpatialGrid.RoadPoint> cuts, Vector2 vertex)
     {
         float cut = LowestCut(cuts, vertex);
@@ -904,13 +911,51 @@ public static class RoadTerrainModifier
         float lowest = float.PositiveInfinity;
         foreach (var c in cuts)
         {
-            float reach = Mathf.Sqrt(c.w2) * 0.5f;
-            float d = (c.p - vertex).magnitude;
-            if (d > reach + CutBatterReach) continue;
-            float h = c.h + Mathf.Max(0f, d - reach) * CutBatterSlope;
+            float h = CutHeightAt(c.p, c.h, Mathf.Sqrt(c.w2) * 0.5f, vertex);
             if (h < lowest) lowest = h;
         }
         return lowest;
+    }
+
+    /// <summary>The height one cut at <paramref name="at"/>, <paramref name="height"/> high within <paramref name="reach"/>, asks of
+    /// <paramref name="vertex"/>: its own height within its reach, climbing on the batter beyond it, infinity past that
+    /// (<see cref="CutBatterReach"/>). The one formula of a cut's ground, for the writer and for what predicts it. The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
+    private static float CutHeightAt(Vector2 at, float height, float reach, Vector2 vertex)
+    {
+        float d = (at - vertex).magnitude;
+        if (d > reach + CutBatterReach) return float.PositiveInfinity;
+        return height + Mathf.Max(0f, d - reach) * CutBatterSlope;
+    }
+
+    /// <summary>How far from a staircase's cut its ground is changed: the cut's own reach and its batter (the writer's reach,
+    /// <see cref="LowestCut"/>). The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
+    internal const float StairCutReach = StairLayout.CutRadius + CutBatterReach;
+
+    /// <summary>How far from a cut-only point of stored width <paramref name="width"/> its ground is changed (half the width and the
+    /// batter): <see cref="StairCutReach"/> for a staircase's cut (<see cref="StairLayout.CutWidth"/>), more for a wider crossing cut.</summary>
+    internal static float CutReach(float width) => width * 0.5f + CutBatterReach;
+
+    /// <summary>A vertex spacing past a cut's reach that a zone still gathers it, so the zone next door, holding the same border
+    /// vertices, sees it too.</summary>
+    internal const float CutGatherPad = 1f;
+
+    /// <summary>
+    /// The ground <paramref name="ground"/> at (<paramref name="x"/>, <paramref name="z"/>) as the writer leaves it under the
+    /// not yet written staircase cuts <paramref name="cuts"/> (a plan's, each a point and its height, at the staircase cut's
+    /// radius): lowered to the lowest cut within reach, climbing back on the batter, as <see cref="RoadDelta"/> does. Read-only,
+    /// for what predicts the writer (the walking floor a built staircase holds the cut above is not read: nothing stands yet).
+    /// The one owner of what the terrain writer does (docs/OWNERS.md).
+    /// </summary>
+    internal static float GroundAfterCuts(float ground, IReadOnlyList<Vector3> cuts, float x, float z)
+    {
+        var vertex = new Vector2(x, z);
+        float g = ground;
+        foreach (Vector3 c in cuts)
+        {
+            float h = CutHeightAt(new Vector2(c.x, c.z), c.y, StairLayout.CutRadius, vertex);
+            if (h < g) g = h;
+        }
+        return g;
     }
 
     /// <summary>The fill spread per road point (null when it is off): it samples the
@@ -949,15 +994,13 @@ public static class RoadTerrainModifier
     /// <summary>
     /// The height a road's earthwork leaves at a vertex outside every footprint, from
     /// <paramref name="baseHeight"/>: what <see cref="ModifyVertexHeights"/> writes there
-    /// on a zone no player has dug and no staircase cuts. For a ground rebuilt before its
-    /// zone loads (<see cref="PlacedSiteGround"/>). Any thread: reads only its arguments.
+    /// on a zone no player has dug and no staircase cuts (the writer's own <see cref="RoadDelta"/>, with no cuts).
+    /// Any thread: reads only its arguments.
     /// </summary>
     internal static float ModelledHeight(List<RoadSpatialGrid.RoadPoint> roadPoints, Vector2 vertex, float baseHeight, float[]? fillExtra)
     {
-        BlendResult blend = CalculateBlendedHeight(roadPoints, vertex, baseHeight, fillExtra);
-        if (blend.InfluencingPoints == 0) return baseHeight;
-        float delta = Mathf.Clamp(RoadTarget(blend, vertex, baseHeight) - baseHeight, RoadConstants.TerrainDeltaMin, RoadConstants.TerrainDeltaMax);
-        return Writes(delta, blend.MaxBlend) ? baseHeight + delta : baseHeight;
+        var none = new List<RoadSpatialGrid.RoadPoint>();
+        return RoadDelta(vertex, baseHeight, baseHeight, false, roadPoints, fillExtra, none, none, out _) is float delta ? baseHeight + delta : baseHeight;
     }
 
     private struct BlendResult
@@ -994,7 +1037,7 @@ public static class RoadTerrainModifier
     /// <summary>How much the batter widens the release for a given divergence:
     /// nothing at all until <see cref="BatterThreshold"/>, then
     /// <see cref="BatterPerMetre"/> per metre beyond it, never more than
-    /// <see cref="BatterMaxExtra"/>.</summary>
+    /// <see cref="BatterMaxExtra"/>. The one owner of what the terrain writer does (docs/OWNERS.md).</summary>
     internal static float BatterExtra(float divergence) =>
         Mathf.Min(BatterMaxExtra, BatterPerMetre * Mathf.Max(0f, divergence - BatterThreshold));
 
@@ -1222,7 +1265,7 @@ public static class RoadTerrainModifier
         return false;
     }
 
-    /// <summary>Paint the road into the compiler; returns how many of its texels were written.</summary>
+    /// <summary>Paint the road into the compiler; returns how many of its texels were written. The one owner of the painted edge and footprint of a road (docs/OWNERS.md).</summary>
     /// <param name="roadDeltas">Per vertex, the level delta the road's own earthwork asks for
     /// (<see cref="ModificationStats.RoadDeltas"/>).</param>
     private static int ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells,
@@ -1247,7 +1290,7 @@ public static class RoadTerrainModifier
             // the neighbouring texels; a 2 m road paints 0.85 m out on 1 m
             // texels, so each point paints its own texel only and skipping any
             // of them would leave the texels between bare. Then every point paints.
-            float paintReach = roadPoint.w * 0.5f * RoadConstants.RoadPaintOuterRatio;
+            float paintReach = RoadProfile.PaintEdge(roadPoint.w);
             if (paintReach >= scale)
             {
                 float dedupeInterval = Mathf.Min(RoadConstants.PaintDedupeInterval, paintReach);

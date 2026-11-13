@@ -72,7 +72,7 @@ public class StairPlanCacheTests : IDisposable
             n++;
             if (f.IsInitOnly) continue;
             object value = f.FieldType == typeof(string) ? "kit" + n : f.FieldType == typeof(bool) ? true : f.FieldType == typeof(int) ? 100 + n
-                : f.FieldType == typeof(float) ? 0.5f + n : f.FieldType == typeof(Vector3) || f.FieldType == typeof(Vector3?) ? new Vector3(n, n, n)
+                : f.FieldType == typeof(float) || f.FieldType == typeof(float?) ? 0.5f + n : f.FieldType == typeof(Vector3) || f.FieldType == typeof(Vector3?) ? new Vector3(n, n, n)
                 : f.FieldType == typeof(Vector2) || f.FieldType == typeof(Vector2?) ? new Vector2(n, n) : f.FieldType == typeof(StairPieceKind) ? StairPieceKind.Landing
                 : f.FieldType == typeof(RoadEndRing?) ? new RoadEndRing(new Vector2(n, n), n, n)
                 : throw new InvalidOperationException($"{f.Name}: {f.FieldType} not covered by this test");

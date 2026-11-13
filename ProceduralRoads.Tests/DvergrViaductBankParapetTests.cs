@@ -198,7 +198,7 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
     {
         var level = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 30f, 0);
         // The bank two steps down, whatever the ledge: black marble stands under the parapet piece only if its foot is over a drop.
-        float drop = 2f * BridgeLayout.StairRise;
+        float drop = 2f * StairLayout.PieceRise;
         Func<int, int, float> ground = (x, z) => Mathf.Abs(z) <= 2 ? 30f : 30f - under * drop;
         List<(Vector2 outward, List<StructurePiece> pieces)> sides = StairRailing.LayBankParapet(level, 4f, ground);
         Assert.Equal(2, sides.Count);
@@ -379,6 +379,24 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
         foreach (StructurePiece c in inside.Where(p => p.Prefab == StairRailing.ParapetHalfCoursePrefab))
             Assert.Contains(inside, r => r.Prefab != StairRailing.ParapetHalfCoursePrefab && r.Position.y > c.Position.y
                 && Mathf.Abs(r.Position.x - c.Position.x) < DvergrViaduct.Extents(r.Prefab).u + DvergrViaduct.Extents(c.Prefab).u - 1e-3f);
+    }
+
+    /// <summary>A bank parapet's piece is on the road over the road's headroom box (RockClearances.Bottom to Top: a lift over
+    /// the surface to a player's headroom over that, 2.1 m), the box the rock clearing and a stair keep clear: a piece 1.95 m
+    /// over the road is on it (it stood clear from 1.85), one wholly over 2.1 m is not.</summary>
+    [Theory]
+    [InlineData(1.95f, true)]
+    [InlineData(1.0f, true)]
+    [InlineData(2.2f, false)]
+    [InlineData(-1.5f, false)]
+    public void ABankParapetsRoadBandIsTheRoadsHeadroomBox(float above, bool onTheRoad)
+    {
+        var road = new List<Vector2>();
+        for (float x = -10f; x <= 10f; x += 1f) road.Add(new Vector2(x, 0f));
+        RoadSpatialGrid.CommitLevelled(road, road.Select(_ => 30f).ToList(), RoadConstants.DefaultRoadWidth);
+        // An unknown prefab is a unit box (half 0.5): its underside is `above` over the surface.
+        var piece = new StructurePiece { Prefab = "unit", Position = new Vector3(0f, 30f + above + 0.5f, 0f) };
+        Assert.Equal(onTheRoad, DvergrViaduct.OnTheRoad(piece, new Vector2(1f, 0f), new Vector2(0f, 1f)));
     }
 
     // ------------------------------------------------------------ helpers

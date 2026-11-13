@@ -201,35 +201,6 @@ public static class LocationLevelling
     }
 
     /// <summary>
-    /// The height a location will level the ground to at <paramref name="point"/>,
-    /// or null when the point is outside every footprint this can place.
-    ///
-    /// Operations are applied in order and each sets the height outright, so
-    /// where several cover a point the last one wins - the same order the game
-    /// applies them in.
-    /// </summary>
-    public static float? GroundAt(Vector2 point, Vector2 centre, float centreGround, IReadOnlyList<LevelOp>? ops)
-    {
-        if (ops == null || ops.Count == 0)
-            return null;
-
-        float? height = null;
-        Vector2 offset = point - centre;
-        for (int i = 0; i < ops.Count; i++)
-        {
-            LevelOp op = ops[i];
-            if (op.Radius <= 0f || !op.Concentric)
-                continue;
-            bool covered = op.Square
-                ? Mathf.Abs(offset.x) <= op.Radius && Mathf.Abs(offset.y) <= op.Radius
-                : offset.sqrMagnitude <= op.Radius * op.Radius;
-            if (covered)
-                height = centreGround + op.Height;
-        }
-        return height;
-    }
-
-    /// <summary>
     /// How far out a road to a place stops, from its centre: the ground the place SHAPES, its
     /// exterior radius and each levelling and smoothing reach, but not the ground it only paints out to
     /// <paramref name="footprint"/> (its whole reach, paint included). A Crypt4 paints cleared ground out to
@@ -262,34 +233,5 @@ public static class LocationLevelling
     {
         float r = yaw * Mathf.Deg2Rad, c = Mathf.Cos(r), s = Mathf.Sin(r);
         return new Vector2(op.OffsetX * c + op.OffsetZ * s, -op.OffsetX * s + op.OffsetZ * c);
-    }
-
-    /// <summary>
-    /// The ground a placed location leaves at <paramref name="point"/>, from the
-    /// <paramref name="natural"/> ground there: each concentric operation in turn
-    /// levels inside its radius and blends towards its height out to its
-    /// smoothing radius, as Heightmap.ApplyModifier does. Offset operations are
-    /// left out (their place depends on the location's rotation), as in
-    /// <see cref="GroundAt"/>. Smoothing is always round: the game ignores
-    /// m_square there.
-    /// </summary>
-    public static float PlacedGroundAt(Vector2 point, Vector2 centre, float centreGround, IReadOnlyList<LevelOp>? ops, float natural)
-    {
-        if (ops == null) return natural;
-        float h = natural;
-        Vector2 offset = point - centre;
-        float d = offset.magnitude;
-        foreach (LevelOp op in ops)
-        {
-            if (!op.Concentric) continue;
-            float level = centreGround + op.Height;
-            if (op.Radius > 0f && (op.Square
-                    ? Mathf.Abs(offset.x) <= op.Radius && Mathf.Abs(offset.y) <= op.Radius
-                    : d <= op.Radius))
-                h = level;
-            if (op.SmoothRadius > 0f && d <= op.SmoothRadius)
-                h = Mathf.Lerp(h, level, 1f - Mathf.Pow(d / op.SmoothRadius, op.SmoothPower));
-        }
-        return h;
     }
 }

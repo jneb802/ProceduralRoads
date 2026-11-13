@@ -418,7 +418,7 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         var (_, low) = Low();
         RoadCrossing ford = SpanFord();
         float deck = BridgeLayout.SpanDeckHeight(ford, low);
-        Assert.Equal(deck, DvergrWoodBridge.DeckHeight(ford, low));
+        Assert.Equal(deck, BridgeLayout.WoodDeckHeight(ford, low));
         var dvergr = BridgeStructures.Solve(ford, low, 1);
         Assert.Contains(dvergr, p => p.Prefab == DvergrWoodBridge.Plank && p.Kind == StructurePieceKind.Deck);
         Assert.All(dvergr, p => Assert.StartsWith("dvergrprops_", p.Prefab));
@@ -472,7 +472,7 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         var w = new MistRiver { Bank = 50f };
         _scope.WithWorld(w);
         RoadCrossing c = River();
-        float deck = DvergrWoodBridge.DeckHeight(c, w);
+        float deck = BridgeLayout.WoodDeckHeight(c, w);
         float length = BridgeLayout.BuiltLength(c.Width);
         Assert.True(deck - w.Bed > BridgeLayout.RailedMaxColumn, $"deck {deck:F1} m over a {w.Bed:F0} m bed");
         foreach (bool complete in new[] { true, false })
@@ -742,7 +742,7 @@ public sealed class DvergrWoodBridgeCutoffTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
         for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
         ManualRoads.Commit(ManualRoads.Prepare(new[] { new Vector2(-160, 0), new Vector2(160, 0) }, false, new[] { island }));

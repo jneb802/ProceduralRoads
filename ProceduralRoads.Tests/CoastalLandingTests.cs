@@ -40,7 +40,7 @@ public class CoastalLandingTests
         Assert.Equal(3,found.Count);
         Assert.All(found,p=> { Assert.InRange(p.x,0,32); Assert.Equal(33,p.y); });
         foreach (var p in found) foreach (var q in found.Where(q=>!q.Equals(p)))
-            Assert.True(Vector3.Distance(p,q)>=400);
+            Assert.True(Vector3.Distance(p,q)>=RoadCoastalLandings.Separation);
         coast.island.Cells.Reverse();
         Assert.Equal(found,Find(coast));
         coast.island.ApproxArea=1_000_000;

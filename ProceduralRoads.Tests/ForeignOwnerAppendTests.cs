@@ -27,7 +27,7 @@ public sealed class ForeignOwnerAppendTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
     }
     public void Dispose() { RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); _plain.Dispose(); _world.Dispose(); }
 
@@ -76,5 +76,19 @@ public sealed class ForeignOwnerAppendTests : IDisposable
         Assert.True(RoadTerrainModifier.CarriesCurrentRoads(compiler));
         float reach = RoadTerrainModifier.MaxInfluenceRadius(4f) + hm.m_scale;
         TerrainAssert.OnlyChangedWithin(before, compiler, (x, z) => Mathf.Abs(z) <= reach, "the released zone");
+    }
+
+    [Fact]
+    public void ACompilerIsOursWhenWeOwnItOrTheGameReleasedItAndNotWhenAnotherPeerHasIt()
+    {
+        var nview = _world.RegisterHeightmap(new Vector2s(1, 0)).m_terrainComp!.m_nview;
+        var zdo = nview.GetZDO();
+        zdo.SetOwner(OtherPeer);
+        Assert.False(RoadTerrainModifier.TakeIfReleased(nview));
+        Assert.Equal(OtherPeer, zdo.GetOwner());
+        zdo.SetOwner(0);
+        Assert.True(RoadTerrainModifier.TakeIfReleased(nview));
+        Assert.True(nview.IsOwner());
+        Assert.True(RoadTerrainModifier.TakeIfReleased(nview));
     }
 }

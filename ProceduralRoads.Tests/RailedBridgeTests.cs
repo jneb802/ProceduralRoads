@@ -485,7 +485,7 @@ public sealed class RailedBridgeTests : IDisposable
             foreach (var column in stairColumns.GroupBy(p => (Mathf.Round(p.At.x), p.At.y > 0f)))
             {
                 FramePiece low = column.OrderBy(p => p.At.z).First();
-                Assert.True(low.At.z - 1f <= LongBank(Mathf.Abs(low.At.x)) + BuriedPieces.Growth, $"{low} stops over the ground");
+                Assert.True(low.At.z - 1f <= LongBank(Mathf.Abs(low.At.x)) + SupportGraph.Reach, $"{low} stops over the ground");
             }
         }
     }
@@ -496,7 +496,7 @@ public sealed class RailedBridgeTests : IDisposable
     {
         var (near, far) = BridgeStructures.Ends(c, w);
         var at = new Vector2(p.At.x, -p.At.y);
-        float half = BridgeLayout.DeckHalfWidth + BuriedPieces.Growth;
+        float half = BridgeLayout.DeckHalfWidth + SupportGraph.Reach;
         return near.UnderTheJoint(at, half) || far.UnderTheJoint(at, half);
     }
 
@@ -658,13 +658,13 @@ public sealed class RailedBridgeTests : IDisposable
                 Assert.True(Vector2.Distance(foot, end.Meet) < 0.02f, $"{which}: the stairs' foot {foot}, the end's meeting point {end.Meet}");
                 Assert.Equal(end.MeetHeight, lowest, 3);
             }
-            // The paint stops at the foot of the stairs laid; with none, at the deck's edge.
+            // The paint stops at the foot of the stairs laid; with none, the road under the deck's end is painted.
             var points = Enumerable.Range(-12, 33).Select(i => foot + end.Up * (i * 0.25f)).ToList();
             List<bool>? unpainted = StructureEnds.Unpainted(points, new[] { end }, 2f);
             for (int i = 0; i < points.Count; i++)
             {
                 float along = (i - 12) * 0.25f;
-                bool under = along > 0.25f + 1e-3f && along <= StructureEnds.JoinOverlap + 0.25f - 1e-3f;
+                bool under = end.Steps > 0 && along > 0.25f + 1e-3f && along <= StructureEnds.JoinOverlap + 0.25f - 1e-3f;
                 bool edge = Mathf.Abs(along - 0.25f) < 1e-3f || Mathf.Abs(along - StructureEnds.JoinOverlap - 0.25f) < 1e-3f;
                 if (!edge) Assert.True(under == (unpainted?[i] ?? false), $"{which}: the road {along:F2} m past the end's meeting point is {(under ? "painted" : "unpainted")}");
             }
@@ -703,7 +703,7 @@ public sealed class RailedBridgeTests : IDisposable
             for (int k = 0; k < poles.Count; k++)
                 Assert.Equal(34.9f - 1f - 2f * k, poles[k].At.z, 2);
             float foot = poles[poles.Count - 1].At.z - 1f;
-            Assert.True(foot <= ground + BuriedPieces.Growth, $"column at ({along}, {across}) stops {foot - ground:F2} m over the ground");
+            Assert.True(foot <= ground + SupportGraph.Reach, $"column at ({along}, {across}) stops {foot - ground:F2} m over the ground");
             Assert.True(foot + 2f > ground, $"column at ({along}, {across}) ends in a pole wholly under the ground");
         }
         // The middle columns: eight poles, 16 m.

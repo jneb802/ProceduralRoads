@@ -42,7 +42,6 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | IslandRoadPercentage | 33 | Percentage of islands selected for roads (0 disables generation) |
 | MaxLocationsPerIsland | 48 | Destinations selected per island (2-128) |
 | PathfindingMaxIterations | 30000 | Search budget per road; higher finds more roads, slower |
-| RockClearing | Carve | Rocks in the road: Off, Remove or Carve |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 | ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
 | ExistingWorldFirstLoadRoads | Ask | First load of a world explored before it had roads: Ask, IncludeExplored, NewZonesOnly or Skip |

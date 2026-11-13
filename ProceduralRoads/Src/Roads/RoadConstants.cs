@@ -1,3 +1,4 @@
+using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
@@ -7,12 +8,14 @@ public static class RoadConstants
 {
     public const float ZoneSize = 64f;
     public const float HalfZoneSize = ZoneSize / 2f;
+    /// <summary>The zone a world coordinate falls in along one axis: the game's ZoneSystem.GetZone. The one owner of Zone, grid and cell arithmetic (docs/OWNERS.md).</summary>
+    public static int ZoneIndex(float coordinate) => Mathf.FloorToInt((coordinate + HalfZoneSize) / ZoneSize);
     public const float SeaLevel = 30f;
     /// <summary>No road on land (and no raised shallow ford) stands lower than this: a cut into
     /// ground at the water line would flood (measured: a swamp road cut 4.8 m into a
     /// hummock ran 105 m under up to 4 m of water). A constant floor never steepens a profile,
     /// so it keeps the grade cap.</summary>
-    public const float DryRoadFloor = SeaLevel + 0.5f;
+    public const float DryRoadFloor = ShallowWaterHeight;
     public const float DeepWaterHeight = 28f;
     public const float ShallowWaterHeight = 30.5f;
     public const float TerrainDeltaMin = -8f;
@@ -53,6 +56,8 @@ public static class RoadConstants
     // detours to share it when the detour costs less than the saving and
     // makes its own crossing beyond that.
     public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
+    /// <summary>The longest ford jump, in metres. The one owner of the longest ford and bridge span (docs/OWNERS.md).</summary>
+    public const float MaxFordSpan = MaxRiverCrossingCells * PathfindingCellSize;
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;
     public const float FordWadeMaxDepth = 0.5f;
@@ -77,6 +82,8 @@ public static class RoadConstants
     // defaults make a 100 m bridge worth roughly 1 km of rough detour; a
     // bridge appears where the way around is long or there is none.
     public const int MaxBridgeCrossingCells = 16; // 16 * 8 m = 128 m, dry cell to dry cell
+    /// <summary>The longest bridge jump, in metres. The one owner of the longest ford and bridge span (docs/OWNERS.md).</summary>
+    public const float MaxBridgeSpan = MaxBridgeCrossingCells * PathfindingCellSize;
     public const float MaxBridgeBankDelta = 2.5f;
     public const float DefaultBridgeCostFixed = 60000f;
     public const float DefaultBridgeCostPerMeter = 600f;
@@ -194,7 +201,12 @@ public static class RoadConstants
     public const float HeightFitRidgeMetres = 0.02f;
     public const float HeightFitMaxGradient = 1.5f;
     
-    public const float SpatialGridSize = 64f;
+    /// <summary>The radius of the land the world generates: where the island scan stops and a typed point is refused.</summary>
+    public const float WorldRadius = 10000f;
+    /// <summary>The edge of the game's world, past <see cref="WorldRadius"/>: how far out a saved crossing's point may lie.</summary>
+    public const float WorldEdge = 10500f;
+
+    public const float SpatialGridSize = ZoneSize;
     public const float DefaultRoadWidth = 4f;
     public const float EdgeFalloffStart = 0.6f;
     public const int HeightSmoothingWindow = 41;

@@ -208,10 +208,11 @@ public static class ManualRoads
     {
         if (append.Zones != null) return append.Zones;
         var zones = new HashSet<Vector2s>();
-        void Reach(Vector2 p, float width)
+        void Reach(Vector2 p, float width) => ReachBy(p, RoadSpatialGrid.ZoneReach(width));
+        void ReachBy(Vector2 p, float reach)
         {
-            // As far as a zone gathers the point (RoadSpatialGrid.ZoneReach), at the width the append stores.
-            float reach = RoadSpatialGrid.ZoneReach(width);
+            // As far as a zone gathers the point (RoadSpatialGrid.ZoneReach at the width the append stores; a cut-only point's
+            // cut and batter, RoadTerrainModifier.CutReach).
             Vector2s low = ZoneSystem.GetZone(new Vector3(p.x - reach, 0f, p.y - reach));
             Vector2s high = ZoneSystem.GetZone(new Vector3(p.x + reach, 0f, p.y + reach));
             for (int x = low.x; x <= high.x; x++)
@@ -226,7 +227,7 @@ public static class ManualRoads
         foreach (RoadSpatialGrid.PlannedPath path in append.WithFills.Concat(append.IntoSite))
             for (int i = 0; i < path.Points.Count; i++)
                 Reach(path.Points[i], path.Widths != null && i < path.Widths.Count ? path.Widths[i] : path.Width);
-        foreach (Vector3 cut in append.StairCuts) Reach(new Vector2(cut.x, cut.z), RoadNetworkGenerator.ManualAppend.StairCutWidth);
+        foreach (Vector3 cut in append.StairCuts) ReachBy(new Vector2(cut.x, cut.z), RoadTerrainModifier.StairCutReach + RoadTerrainModifier.CutGatherPad);
         foreach (Vector3 cut in append.Ground.Cuts) Reach(new Vector2(cut.x, cut.z), RoadNetworkGenerator.CrossingGround.CutWidth);
         foreach (var (at, _) in append.Ground.Raised) Reach(at.p, at.w);
         var world = WorldGenerator.instance;
@@ -302,7 +303,6 @@ public static class ManualRoads
         }
         else ManualRoadDraft.Validate(points);
         float width = RoadNetworkGenerator.RoadWidth;
-        if (!ManualRoadDraft.IsFinite(width) || width < 1 || width > 32) throw new InvalidOperationException("Road width must be between 1 and 32 metres.");
         foreach (var point in points)
         {
             // From a place, its point is in it (PlaceAt): the road leaves from the place, as the generator's does.
@@ -335,7 +335,7 @@ public static class ManualRoads
         RoadNetworkGenerator.PlaceEnds? ends = null;
         if (connect)
         {
-            var targets = RoadSpatialGrid.RoadTargets(OnIsland);
+            var targets = RoadNetworkGenerator.JoinTargets(OnIsland);
             if (targets.Count == 0) throw new InvalidOperationException("No road network exists on this island.");
             if (fromPlace == null && RoadSpatialGrid.TryGetRoadWithin(points[0], width * 0.5f, out _, OnIsland))
             { plan.AlreadyConnected = true; return plan; }
@@ -349,7 +349,7 @@ public static class ManualRoads
             Vector2 centre = fromPlace?.Centre ?? points[0];
             float radius = fromPlace?.Radius ?? 0f;
             Func<bool>? served = fromPlace == null ? null
-                : () => RoadNetworkGenerator.PlaceServed(fromPlace.Name, new Vector3(centre.x, 0f, centre.y), radius);
+                : () => RoadNetworkGenerator.Reached(new Vector3(centre.x, 0f, centre.y), radius, fromPlace.Name);
             var capture = new RoadNetworkGenerator.RoadCapture();
             bool joined;
             using (RoadNetworkGenerator.PlanningWith(finder, capture))
@@ -452,7 +452,6 @@ public static partial class RoadNetworkGenerator
     /// read off it (ManualRoads.ZonesReached): one list of both.</summary>
     internal sealed class ManualAppend
     {
-        public static float StairCutWidth => StairLayout.CutRadius * 2f;
         /// <summary>Its roads with the junctions' fill where its ends meet the network (RoadJunctionFillet), its staircases'
         /// start pads and the ground under its decks' ends.</summary>
         public readonly List<RoadSpatialGrid.PlannedPath> WithFills = new();
@@ -518,11 +517,10 @@ public static partial class RoadNetworkGenerator
             append.IntoSite.AddRange(ends.IntoSite);
             append.Landed.AddRange(ends.Landed);
         }
-        append.Ground = GroundOf(crossings, paths.Count > 0 ? paths[0].Width : RoadWidth);
+        append.Ground = GroundOf(crossings);
         append.WithFills.AddRange(paths);
         append.WithFills.AddRange(RoadJunctionFillet.For(paths, WorldGenerator.instance, crossings, own));
         append.WithFills.AddRange(RoadStairRuns.StartPads(paths, own, WorldGenerator.instance));
-        if (append.Ground.UnderDecks != null) append.WithFills.Add(append.Ground.UnderDecks);
         return append;
     }
 
@@ -545,7 +543,7 @@ public static partial class RoadNetworkGenerator
             RoadNetworkPersistence.EnsureMetadataInstance();
             // All or none: the road, its fills and pads, its cuts and the other roads it raises.
             RoadSpatialGrid.CommitAppend(append.WithFills, expectedVersion, intoSitePlans: append.IntoSite,
-                cuts: new (IReadOnlyList<Vector3>, float)[] { (append.StairCuts, ManualAppend.StairCutWidth), (append.Ground.Cuts, CrossingGround.CutWidth) },
+                cuts: new (IReadOnlyList<Vector3>, float)[] { (append.StairCuts, StairLayout.CutWidth), (append.Ground.Cuts, CrossingGround.CutWidth) },
                 raised: append.Ground.Raised);
             // In the network from here on: saved with the world even if a step below throws.
             m_networkDirty = true;

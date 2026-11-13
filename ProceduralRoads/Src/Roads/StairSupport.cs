@@ -56,7 +56,7 @@ public static class StairSupport
     /// another way (StairCorniceDepthTests).
     /// </summary>
     public const int MostHungCourses = 6;
-    /// <summary>A wall's courses go on until the lowest is sunk this far into the ground at every corner (as columns were).</summary>
+    /// <summary>A wall's courses go on until the lowest is sunk this far into the ground at every corner (as columns were). The one owner of Supports, foundations and burial (docs/OWNERS.md).</summary>
     public const float Bury = 0.25f;
     /// <summary>Most courses a wall cell stands: a wall's height of air under its piece (<see cref="WallHeight"/>) and the
     /// deepest a road's earthwork lowers the ground under it (<see cref="RoadConstants.TerrainDeltaMin"/>), and some.
@@ -133,18 +133,26 @@ public static class StairSupport
     {
         public readonly Vector2 Back;
         public readonly float Heading, Depth, Across, Underside;
+        /// <summary>How thick the piece is under its walking surface (a stair's none, 0: its slope is its walking surface).</summary>
+        public readonly float Thickness;
         public readonly bool Stair;
         /// <summary>Its heading's forward and right, worked out once: <see cref="Choose"/> asks for a point on it a few dozen
         /// times a piece the search tries, each a sine and a cosine when worked out afresh.</summary>
         public readonly Vector2 Dir, Right;
-        public Walk(Vector2 back, float heading, float depth, float across, float underside, bool stair)
+        public Walk(Vector2 back, float heading, float depth, float across, float underside, bool stair, float thickness)
         {
-            Back = back; Heading = heading; Depth = depth; Across = across; Underside = underside; Stair = stair;
+            Thickness = thickness; Back = back; Heading = heading; Depth = depth; Across = across; Underside = underside; Stair = stair;
             Dir = StairLayout.Forward(heading); Right = StairLayout.Right(heading);
         }
         public Vector2 At(float along, float across) => Back + Dir * along + Right * across;
-        /// <summary>The walking surface <paramref name="along"/> it: a stair's rises its metre over its run.</summary>
-        public float Surface(float along, StairKit kit) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + kit.FloorThickness;
+        /// <summary>The walking surface <paramref name="along"/> it: a stair's rises its metre over its run; a floor's stands a
+        /// thickness over its underside, by <paramref name="thickness"/>. The one formula of a walk's surface.</summary>
+        private float SurfaceBy(float along, float thickness) => Stair ? Underside + StairLayout.PieceRise * along / Depth : Underside + thickness;
+        /// <summary>The walking surface <paramref name="along"/> it by the piece's own thickness (<see cref="Thickness"/>).</summary>
+        public float Walking(float along) => SurfaceBy(along, Thickness);
+        /// <summary>The walking surface <paramref name="along"/> it by the thickness of <paramref name="kit"/>'s floors: where a
+        /// rail or a support is judged by the kit it is laid in, not the piece's own.</summary>
+        public float Surface(float along, StairKit kit) => SurfaceBy(along, kit.FloorThickness);
     }
 
     /// <summary>The walking pieces of a staircase's layout as footprints, null for any other piece.</summary>
@@ -158,7 +166,7 @@ public static class StairSupport
                 // Origin at its foot's height, centred; it climbs toward its local -z (StairLayout.AddPiece).
                 float heading = StairLayout.Wrap(piece.YawDegrees + 180f);
                 return new Walk(at - StairLayout.Forward(heading) * (StairLayout.PieceRun / 2f), heading, StairLayout.PieceRun,
-                    StairLayout.PieceRun, piece.Position.y, true);
+                    StairLayout.PieceRun, piece.Position.y, true, 0f);
             }
             case StructurePieceKind.StairFloor:
             case StructurePieceKind.StairFiller:
@@ -166,7 +174,7 @@ public static class StairSupport
                 FillerKind flat = kit.FlatOf(piece.Prefab);
                 float heading = piece.Prefab == kit.Floor ? piece.YawDegrees : StairLayout.Wrap(piece.YawDegrees + 180f);
                 float underside = piece.Position.y + kit.FloorTop - kit.FloorThickness;
-                return new Walk(at - StairLayout.Forward(heading) * (flat.Depth / 2f), heading, flat.Depth, flat.Across, underside, false);
+                return new Walk(at - StairLayout.Forward(heading) * (flat.Depth / 2f), heading, flat.Depth, flat.Across, underside, false, kit.FloorThickness);
             }
             default: return null;
         }
@@ -178,6 +186,7 @@ public static class StairSupport
     /// the downhill side the other. Black marble is priced by its deepest cornice course whether the piece turns out a square
     /// turn's corner or not (which the pieces after it decide): a corner's column of outcorners, stepping back from its
     /// open end too, goes down to its own block in the ground (CornerCourse), about as deep.
+    /// The one owner of Supports, foundations and burial (docs/OWNERS.md).
     /// </summary>
     public static Choice Choose(StairKit kit, Walk w, Func<float, float, float> ground)
     {
@@ -397,7 +406,7 @@ public static class StairSupport
     /// there at the viaduct's <see cref="DvergrViaduct.VineCurtainChance"/>, a vine on each course; ornaments only, hung
     /// after the support rule has read the staircase (<see cref="HoldUp"/>) and never read by it. A vine is hung only on a
     /// cornice still laid, with its origin at or over the finished ground (none inside it), and with no part of it in the
-    /// headroom over any walked surface (<see cref="StairLayout.ClearanceHeight"/>). Its leaves may reach down to the
+    /// headroom over any walked surface (<see cref="RoadRockPolicy.ClearanceHeight"/>). Its leaves may reach down to the
     /// ground and lie on it, as vanilla's Mistlands Dvergr structures drape theirs to the grass at the foot of the stone:
     /// the viaduct's <see cref="DvergrViaduct.VineGroundClear"/> is not read here. A vine grows only where the game's biome at
     /// its own place is one vanilla's vines grow in (<see cref="DvergrViaduct.VineBiomes"/>): a staircase climbing out of the
@@ -424,7 +433,7 @@ public static class StairSupport
     private const float VineHalfAcross = 1.15f, VineBelow = 1.17f, VineAbove = 1.26f, VineFront = 0.15f;
 
     /// <summary>Whether any part of a vine's leaves (a grid over them) stands over a walked piece's footprint between its
-    /// walking surface and <see cref="StairLayout.ClearanceHeight"/> over it. Only the walks the leaves can reach are read:
+    /// walking surface and the top of a walker's box over it (<see cref="RockClearances.Top"/>, as over a road). Only the walks the leaves can reach are read:
     /// a walk whose footprint lies farther from the vine than its leaves reach (each of their half-extents added, a bound past
     /// any of their points) and its own half-extents (and <see cref="Over"/>'s slack) holds none of them.</summary>
     private static bool InHeadroom(StairKit kit, IReadOnlyList<Walk> walks, StructurePiece vine)
@@ -449,7 +458,7 @@ public static class StairSupport
                 {
                     if (!Over(w, at)) continue;
                     float surface = w.Surface(Mathf.Clamp(Vector2.Dot(at - w.Back, w.Dir), 0f, w.Depth), kit);
-                    if (q.y > surface - 0.01f && q.y < surface + StairLayout.ClearanceHeight) return true;
+                    if (q.y > surface - 0.01f && q.y < RockClearances.Top(surface)) return true;
                 }
             }
         return false;
@@ -934,11 +943,8 @@ public static class StairSupport
     }
 
     /// <summary>Whether a point lies within a walking piece's footprint, seen from above.</summary>
-    private static bool Over(Walk w, Vector2 point)
-    {
-        float along = Vector2.Dot(point - w.Back, w.Dir), across = Vector2.Dot(point - w.Back, w.Right);
-        return along >= -0.01f && along <= w.Depth + 0.01f && Mathf.Abs(across) <= w.Across / 2f + 0.01f;
-    }
+    private static bool Over(Walk w, Vector2 point) =>
+        StairLayout.OnFootprint(w.Back, w.Dir, w.Right, w.Depth, w.Across, point, 0.01f);
 
     /// <summary>A staircase piece's centre of mass on its own axes (WearNTear.m_comOffset, read off the game's prefabs): a
     /// stair's half a metre over its foot, stone's arch 0.6 m toward its tall end; every other piece's at its transform.</summary>

@@ -36,6 +36,8 @@ public static class SupportGraph
         }
     }
 
+    /// <summary>MaterialType.Wood: the railed bridge kits' posts and decks.</summary>
+    public static readonly Material Wood = new(100f, 10f, 0.2f, 0.125f);
     /// <summary>MaterialType.Marble: the black marble pieces.</summary>
     public static readonly Material Marble = new(1500f, 100f, 0.5f, 0.125f);
     /// <summary>MaterialType.Stone: a staircase's stone pieces (stone_stair, stone_floor_2x2, stone_wall_2x1, stone_arch).</summary>
@@ -45,7 +47,7 @@ public static class SupportGraph
 
     /// <summary>The 0.1 m WearNTear adds to every distance it charges.</summary>
     public const float DistanceMargin = 0.1f;
-    /// <summary>What UpdateSupport grows a piece's bounds by, a side, to find what it touches (0.3 m a box).</summary>
+    /// <summary>How far WearNTear grows each collider box, a side, for its overlaps (0.3 m a box): what UpdateSupport touches and what the ground contact test meets.</summary>
     public const float Reach = 0.15f;
     /// <summary>A support point counts if it lies no higher than this over the piece's centre.</summary>
     public const float LevelTolerance = 0.05f;
@@ -160,7 +162,7 @@ public static class SupportGraph
         return (float)(Math.Acos(cos) * 180.0 / Math.PI);
     }
 
-    /// <summary>The support each piece settles at, in the order given.</summary>
+    /// <summary>The support each piece settles at, in the order given. The one owner of Supports, foundations and burial (docs/OWNERS.md).</summary>
     public static float[] Settle(IReadOnlyList<Piece> pieces)
     {
         int n = pieces.Count;

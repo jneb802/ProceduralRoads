@@ -18,7 +18,7 @@ public class TurnLimitTests
         {
             Vector2 a = (path[i] - path[i - 1]).normalized, b = (path[i + 1] - path[i]).normalized;
             float d = Mathf.Clamp(a.x * b.x + a.y * b.y, -1f, 1f);
-            worst = Mathf.Max(worst, (float)System.Math.Acos(d) * 57.29578f);
+            worst = Mathf.Max(worst, (float)System.Math.Acos(d) * Mathf.Rad2Deg);
         }
         return worst;
     }
@@ -27,7 +27,7 @@ public class TurnLimitTests
     public void WithALimitNoStepTurnsSharperThanIt()
     {
         RoadSiteProtection.Reset(); RoadSpatialGrid.Clear();
-        var finder = new RoadPathfinder(new Slope()) { SlopeMultiplier = 150f, TurnLimitDegrees = 100f, MaxGrade = 0.35f };
+        var finder = new RoadPathfinder(new Slope()) { SlopeMultiplier = 150f, TurnLimitDegrees = 100f, MaxGrade = RoadConstants.DefaultMaxRoadGrade };
         var path = finder.FindPath(new Vector2(0, 0), new Vector2(0, 160));
         Assert.NotNull(path);
         // The two end points are the exact start and end, not cell centres;

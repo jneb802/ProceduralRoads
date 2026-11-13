@@ -166,7 +166,7 @@ public partial class NoFlatLandingTests : IDisposable
         Assert.Null(RoadNetworkGenerator.ApproachGround(off, Origin, Radius));
     }
 
-    /// <summary>A place with a flat is unchanged: its end held at its ground only within ArrivalLevel of its flat, as before.</summary>
+    /// <summary>A place with a flat is unchanged: its end held at its ground only within StairLayout.StairFitsFrom of its flat, as before.</summary>
     [Fact]
     public void APlaceWithAFlatIsUnchanged()
     {
@@ -178,8 +178,8 @@ public partial class NoFlatLandingTests : IDisposable
         {
             Vector2 at = new(0f, y);
             float natural = _world.GetHeight(at.x, at.y);
-            float? before = LocationLevelling.GroundAt(at, Origin, 50f, Flat)
-                ?? (Mathf.Abs(natural - platform!.Value) <= RoadNetworkGenerator.ArrivalLevel ? natural : null);
+            float? before = (at.magnitude <= Flat[0].Radius ? 50f + Flat[0].Height : (float?)null)
+                ?? (Mathf.Abs(natural - platform!.Value) <= StairLayout.StairFitsFrom ? natural : null);
             Assert.Equal(before, RoadNetworkGenerator.ApproachGround(at, Origin, Radius));
         }
     }

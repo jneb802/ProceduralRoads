@@ -103,6 +103,25 @@ public class RoadIslandDetectorTests
         Assert.NotEqual(islands[0].ContainsPoint(-64,0), islands[0].ContainsPoint(64,0));
     }
 
+    /// <summary>A point at an island's tip is on it: the membership test takes a point into the cell nearest it, half a cell
+    /// either side of the cell's centre, and its bounding box reaches as far. The box was the outermost cells' centres, so a
+    /// point in the last half cell at each of the island's four extreme extents was refused though its cell is the island's
+    /// (a place centred there was no destination).</summary>
+    [Fact]
+    public void APointInTheHalfCellPastTheOutermostCellCentreIsOnTheIsland()
+    {
+        var islands = RoadIslandDetector.Detect(new ChannelWorld(), worldRadius:128, minArea:1);
+        var east = Assert.Single(islands, i => i.ContainsPoint(64, 0));
+        // The easternmost cell centre, and the southernmost.
+        Assert.Equal(120f, east.Max.x);
+        Assert.Equal(-120f, east.Min.y);
+        Assert.True(east.ContainsPoint(123, 0));
+        Assert.True(east.ContainsPoint(32, -123));
+        // Past the half cell is the next cell, which is not the island's.
+        Assert.False(east.ContainsPoint(125, 0));
+        Assert.False(east.ContainsPoint(32, -125));
+    }
+
     [Fact]
     public void RiverCanGroupBothBanks()
     {

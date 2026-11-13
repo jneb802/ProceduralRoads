@@ -287,7 +287,7 @@ public class StairEndsTests : IDisposable
         Assert.Equal(RoadStairRuns.FootOverTheGround, RoadStairRuns.FootLeftOver(new[] { span }, none, out _, bank));
         span.Plan.Foot = low;
         span.Plan.StartHeading = heading;
-        Assert.True(StairLayout.CutFootApron(span.Plan, bank, RoadStairRuns.Width) > 0, "no apron cut against the bank");
+        Assert.True(StairLayout.CutFootApron(span.Plan, bank, RoadStairRuns.Width, RoadGrade.Configured) > 0, "no apron cut against the bank");
         Assert.Null(RoadStairRuns.FootLeftOver(new[] { span }, none, out _, bank));
     }
 
@@ -566,5 +566,42 @@ public class StairEndsTests : IDisposable
         var (l, r) = StairEnds.Drops(new Vector2(0f, 0f), new Vector2(0f, 1f), 0f, StairLayout.PieceRun, Ground);
         Assert.Equal(StairLayout.StepUp / 2f, l, 3);
         Assert.Equal((StairLayout.StepUp + StairRailing.LedgeDrop) / 2f, r, 3);
+    }
+
+    /// <summary>The ground ahead of a top is read once, at the end reader's two far corners (StairEnds.OverAhead, the gentler of
+    /// the two, as Choose combines them), by both gates: the search's arrival (StairLayout.TopReachesGround, a rise and a step-up)
+    /// and a road top's finish (RoadStairRuns.TopOntoSurface, TopFloorBand). A wall of ground 2.25 m on stands beyond the corners
+    /// (a floor out, 2 m) though a point 2.5 m on read it; and the corner nearer level stands for the two.</summary>
+    [Fact]
+    public void TheGroundAheadOfATopIsReadAtTheEndReadersCorners()
+    {
+        Vector2 edge = new(0f, 0f), dir = new(1f, 0f);
+        float Wall(float x, float z) => 10f + (x >= 2.25f ? 3f : 0f);
+        Assert.Equal(0f, StairEnds.OverAhead(edge, dir, 10f, 2f, Wall), 3);
+        // Heading 90 degrees is +x in StairLayout.Forward: the wall is beyond the corners (read from 2.5 m on it was 3 m over,
+        // more than a rise and a step-up), so the top reaches the ground.
+        Assert.True(StairLayout.TopReachesGround(edge, 90f, 10f, 2f, Wall));
+        // One side standing a rise and more over, the other level: the level corner stands for the two.
+        float Side(float x, float z) => 10f + (z > 0f ? 4f : 0f);
+        Assert.Equal(0f, StairEnds.OverAhead(edge, dir, 10f, 2f, Side), 3);
+        Assert.Equal(0.5f, StairEnds.Gentler(-3f, 0.5f));
+        Assert.Equal(0.5f, StairEnds.Gentler(float.NaN, 0.5f));
+        Assert.True(float.IsNaN(StairEnds.Gentler(float.NaN, float.NaN)));
+    }
+
+    /// <summary>A road top whose ground stands over it only past the end reader's corners is not finished out over a lip
+    /// (RoadStairRuns.TopOntoSurface): the road's earthwork meets it, as for ground within TopFloorBand.</summary>
+    [Fact]
+    public void ARoadTopWhoseGroundRisesOnlyPastTheCornersIsLeftToTheRoad()
+    {
+        float Ramp(float x, float z) => z < 0f ? 0f : z < 8f ? z : 8f;
+        StairPlan plan = StairLayout.Build(new Vector2(0f, -4f), new Vector2(0f, 12f), Ramp, sunkFoot: true);
+        Assert.True(plan.Reached, plan.Reason);
+        float topZ = plan.End.z, pieces = plan.Pieces.Count;
+        float Wall(float x, float z) => Ramp(x, z) + (z >= topZ + 2.25f ? 3f : 0f);
+        var path = new List<Vector2> { new(0f, topZ), new(0f, topZ + 20f) };
+        Assert.False(RoadStairRuns.TopOntoSurface(plan, path, 1, Wall, out _, out _));
+        Assert.Equal(pieces, plan.Pieces.Count);
+        Assert.Null(plan.TopCrested);
     }
 }

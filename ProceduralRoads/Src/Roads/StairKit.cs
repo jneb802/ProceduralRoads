@@ -158,12 +158,12 @@ public sealed class StairKit
     /// support sideways and black marble half, so a tall column leaves its top nearly unsupported.</summary>
     public const float WalkwayCap = 5f;
 
-    public static readonly StairKit Stone = new(1, "stone", "stone_stair", "stone_floor_2x2", 0.5f, 1f,
-        new[] { new FillerKind("stone_wall_2x1", 2f, 1f), new FillerKind("stone_wall_1x1", 1f, 1f), new FillerKind("stone_floor_2x2", 2f, 2f) },
+    public static readonly StairKit Stone = new(1, "stone", BridgeLayout.StoneStairPrefab, BridgeLayout.StoneFloorPrefab, 0.5f, 1f,
+        new[] { new FillerKind("stone_wall_2x1", 2f, 1f), new FillerKind("stone_wall_1x1", 1f, 1f), new FillerKind(BridgeLayout.StoneFloorPrefab, 2f, 2f) },
         holdsOut: true);
 
     /// <summary>Mistlands. Every piece here is a 1 m thick block like stone's.</summary>
-    public static readonly StairKit BlackMarble = new(2, "blackmarble", "blackmarble_stair", "blackmarble_floor", 0.5f, 1f,
+    public static readonly StairKit BlackMarble = new(2, "blackmarble", DvergrViaduct.StepPrefab, "blackmarble_floor", 0.5f, 1f,
         new[] { new FillerKind("blackmarble_2x1x1", 2f, 1f), new FillerKind("blackmarble_1x1", 1f, 1f), new FillerKind("blackmarble_floor", 2f, 2f) },
         holdsOut: true);
 
@@ -179,7 +179,7 @@ public sealed class StairKit
 
     /// <summary>The walking surface of a floor piece over its origin, by the kit its prefab names (stone and black marble
     /// floors stand half a metre under their surface, wood floors at it): the one owner every caller asks.</summary>
-    public static float FloorTopOf(string prefab) => (Named(prefab.Split('_')[0]) ?? Stone).FloorTop;
+    public static float FloorTopOf(string prefab) => OfPrefab(prefab).FloorTop;
 
     /// <summary>The kit with this record number (<see cref="Number"/>), null for none this build has.</summary>
     public static StairKit? Numbered(int number) => Array.Find(All, k => k.Number == number);
@@ -192,19 +192,37 @@ public sealed class StairKit
         _ => null,
     };
 
-    /// <summary>The kit for a staircase in <paramref name="biome"/>: black marble in the Mistlands, stone everywhere else.</summary>
-    public static StairKit ForSite(Heightmap.Biome biome) => biome == Heightmap.Biome.Mistlands ? BlackMarble : Stone;
+    /// <summary>The kit named <paramref name="name"/>; stone for none: the one default every caller reads. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
+    public static StairKit Of(string name) => Named(name) ?? Stone;
+
+    /// <summary>The kit a piece's prefab names (the part before its first underscore); stone for none.</summary>
+    public static StairKit OfPrefab(string prefab) => Of(prefab.Split('_')[0]);
+
+    /// <summary>Where the black-marble and Dvergr kits belong: the Mistlands. Read by the share rule (<see cref="LeansTo"/>)
+    /// for staircases and bridges, and by <see cref="ForSite"/>.</summary>
+    public static bool MistlandsKitBelongs(Heightmap.Biome biome) => biome == Heightmap.Biome.Mistlands;
+
+    /// <summary>Where a stone bridge belongs over a wooden one: outside the Meadows (<see cref="LeansTo"/>).</summary>
+    public static bool StoneOverWoodBelongs(Heightmap.Biome biome) => biome != Heightmap.Biome.Meadows;
+
+    /// <summary>The kit for a staircase at one place in <paramref name="biome"/> (the search's per-cell prediction, before a
+    /// staircase has places to share): the share rule over that one place.</summary>
+    public static StairKit ForSite(Heightmap.Biome biome) => MistlandsKitBelongs(biome) ? BlackMarble : Stone;
 
     /// <summary>Share of a staircase in the Mistlands from which it is black marble.</summary>
-    public const float MistlandsShare = 0.4f;
+    public const float BiomeShare = 0.4f;
 
     /// <summary>
     /// The kit for a staircase over <paramref name="line"/>, sampled every 2 m: black marble where at
-    /// least <see cref="MistlandsShare"/> of it is in the Mistlands, stone otherwise. Before a staircase is laid this is
+    /// least <see cref="BiomeShare"/> of it is in the Mistlands, stone otherwise. Before a staircase is laid this is
     /// a guess from the line it is expected to take (its road, or its ends); the kit it is built in is the one its own
     /// pieces stand in (<see cref="ForPlan"/>).
     /// </summary>
-    public static StairKit ForLine(IReadOnlyList<Vector2> line, Func<float, float, Heightmap.Biome> biomeAt)
+    public static StairKit ForLine(IReadOnlyList<Vector2> line, Func<float, float, Heightmap.Biome> biomeAt) =>
+        ForPlaces(Samples(line), biomeAt);
+
+    /// <summary><paramref name="line"/> sampled every 2 m.</summary>
+    public static List<Vector2> Samples(IReadOnlyList<Vector2> line)
     {
         var samples = new List<Vector2>();
         for (int i = 0; i < line.Count; i++)
@@ -214,7 +232,7 @@ public sealed class StairKit
             for (int k = 0; k < n; k++) samples.Add(Vector2.Lerp(a, b, k / (float)n));
             if (i + 1 >= line.Count) break;
         }
-        return ForPlaces(samples, biomeAt);
+        return samples;
     }
 
     /// <summary>
@@ -233,13 +251,24 @@ public sealed class StairKit
         return ForPlaces(walked, biomeAt);
     }
 
-    /// <summary>The one rule: black marble where at least <see cref="MistlandsShare"/> of <paramref name="places"/> are in
+    /// <summary>The one rule: black marble where at least <see cref="BiomeShare"/> of <paramref name="places"/> are in
     /// the Mistlands, stone otherwise (and for none).</summary>
-    private static StairKit ForPlaces(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt)
+    private static StairKit ForPlaces(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt) =>
+        InMistlands(places, biomeAt) ? BlackMarble : Stone;
+
+    /// <summary>The one owner of "this structure is Mistlands": at least <see cref="BiomeShare"/> of
+    /// <paramref name="places"/> (a staircase's walked pieces, a bridge's length) are in the Mistlands; none are not. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
+    public static bool InMistlands(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt) =>
+        LeansTo(places, biomeAt, MistlandsKitBelongs);
+
+    /// <summary>The one rule for a structure across a biome edge: it takes the more advanced kit where at least
+    /// <see cref="BiomeShare"/> of <paramref name="places"/> stand where that kit belongs (<paramref name="advanced"/>), so a
+    /// structure on a boundary leans to the more advanced kit (black marble over stone, stone over wood).</summary>
+    public static bool LeansTo(IReadOnlyList<Vector2> places, Func<float, float, Heightmap.Biome> biomeAt, Func<Heightmap.Biome, bool> advanced)
     {
-        int mist = 0;
+        int count = 0;
         foreach (Vector2 p in places)
-            if (biomeAt(p.x, p.y) == Heightmap.Biome.Mistlands) mist++;
-        return places.Count > 0 && mist >= MistlandsShare * places.Count ? BlackMarble : Stone;
+            if (advanced(biomeAt(p.x, p.y))) count++;
+        return places.Count > 0 && count >= BiomeShare * places.Count;
     }
 }

@@ -58,6 +58,13 @@ public static class RoadProfile
     public static float FaceWidth(float roadWidth, float blendMargin) =>
         roadWidth * 0.5f * (1f - FlatCoreRatio) + Mathf.Max(0f, blendMargin);
 
+    /// <summary>The width two roads' levelled ground meets at: a road's width and the blend past each edge. The one owner of the painted edge and footprint of a road (docs/OWNERS.md).</summary>
+    public static float Footprint(float width) => width + 2f * RoadConstants.TerrainBlendMargin;
+
+    /// <summary>How far from the centre line a road of <paramref name="roadWidth"/> is painted: <see cref="RoadConstants.RoadPaintOuterRatio"/>
+    /// of its half width. The one owner of the painted edge and footprint of a road (docs/OWNERS.md).</summary>
+    public static float PaintEdge(float roadWidth) => roadWidth * 0.5f * RoadConstants.RoadPaintOuterRatio;
+
     /// <summary>
     /// Paint intensity at a lateral distance: solid inside the flat core,
     /// fading to zero at RoadPaintOuterRatio of the half-width — strictly
@@ -67,7 +74,7 @@ public static class RoadProfile
     {
         float halfWidth = roadWidth * 0.5f;
         float solidEdge = halfWidth * RoadConstants.RoadFlatCoreRatio;
-        float paintEdge = halfWidth * RoadConstants.RoadPaintOuterRatio;
+        float paintEdge = PaintEdge(roadWidth);
 
         if (distFromCenter <= solidEdge)
             return 1f;

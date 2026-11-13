@@ -248,7 +248,7 @@ public class StairLayoutTests
         Assert.All(plan.Clearances, c =>
         {
             // Over a floor's walk, or a stair stretch's highest (half its rise over its middle).
-            float over = c.Centre.y + c.Half.y - StairLayout.ClearanceHeight - c.Surface;
+            float over = StairLayout.HighestWalk(c.Centre, c.Half, c.Surface) - c.Surface;
             Assert.True(Mathf.Abs(over) < 1e-3f || Mathf.Abs(over - StairLayout.PieceRise / StairLayout.ClearanceStretches / 2f) < 1e-3f, $"top {over:F3} over the headroom");
             Assert.True(c.Centre.y - c.Half.y > c.Surface - StairLayout.PieceRise / StairLayout.ClearanceStretches / 2f,
                 "the box starts over the stretch's lowest walk, never under the piece's body");

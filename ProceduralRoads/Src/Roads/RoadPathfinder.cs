@@ -15,6 +15,9 @@ public class RoadPathfinder
     public const float CellSize = RoadConstants.PathfindingCellSize;
     public static int MaxIterations = RoadConstants.PathfindingMaxIterations;
 
+    /// <summary>The iteration limit of a pricing search (half the building budget, at least 1000).</summary>
+    internal static int PricingIterations => System.Math.Max(1000, MaxIterations / 2);
+
     /// <summary>
     /// Price of steepness per step, times the step's grade squared. At 10 an
     /// 8 m step at 0.33 cost about 1.1 over its 8 for length, so a straight
@@ -59,10 +62,10 @@ public class RoadPathfinder
     /// buys the jump where DvergrViaduct.ValleyCrossing builds it, at DvergrViaduct.Price: dearer
     /// the lower its piers and the more end stairs it has. The road is brought to each end's foot
     /// as the one owner of a crossing's ends decides (StructureEnds.MeetEnds). Needs
-    /// <see cref="Bridges"/>. On by default; PROCEDURALROADS_VIADUCTS=off for a control run.
+    /// <see cref="Bridges"/>. On by default.
     /// </summary>
     public bool Viaducts = ConfiguredViaducts;
-    public static bool ConfiguredViaducts = DebugSwitches.Flag("VIADUCTS", true);
+    public static bool ConfiguredViaducts = true;
     public float ViaductCostFixed = RoadConstants.DefaultViaductCostFixed;
     public float ViaductCostPerMeter = RoadConstants.DefaultViaductCostPerMeter;
     /// <summary>Per metre of a viaduct's end stairs, bank to deck, both ends together (DvergrViaduct.Price).</summary>
@@ -227,7 +230,7 @@ public class RoadPathfinder
     /// dear. Nothing may buy its way past this one.</summary>
     public const float Impassable = float.PositiveInfinity;
 
-    private static readonly Vector2Int[] Directions = new Vector2Int[]
+    internal static readonly Vector2Int[] Directions = new Vector2Int[]
     {
         new Vector2Int(1, 0), new Vector2Int(-1, 0), new Vector2Int(0, 1), new Vector2Int(0, -1),
         new Vector2Int(1, 1), new Vector2Int(-1, 1), new Vector2Int(1, -1), new Vector2Int(-1, -1),
@@ -247,7 +250,7 @@ public class RoadPathfinder
     private WorldGenerator m_worldGen;
     private readonly RoadTerrainSamples m_terrain;
     private Vector2? m_searchStart, m_searchEnd;
-    public float SiteClearance = 4f;
+    public float SiteClearance = RoadSiteProtection.Clearance(RoadConstants.DefaultRoadWidth);
 
     /// <summary>Roughness about a quadratic surface; see RoadTerrainSamples.QuadVariance.</summary>
     internal bool QuadVariance { get => m_terrain.QuadVariance; set => m_terrain.QuadVariance = value; }
@@ -270,6 +273,7 @@ public class RoadPathfinder
     internal RoadIslandActivity.Token? Activity;
     public bool AlreadyOnNetwork { get; private set; }
 
+    /// <summary>The one owner of where a road may go (docs/OWNERS.md).</summary>
     public List<Vector2>? FindPath(Vector2 start, Vector2 end) => FindPath(start, end, null);
 
     public List<Vector2>? FindPath(Vector2 start, Vector2 end, int? iterationLimit)
@@ -293,6 +297,7 @@ public class RoadPathfinder
     /// <see cref="LastStartIndex"/> and <see cref="LastEndIndex"/> say which. <paramref name="exemptStart"/> and
     /// <paramref name="exemptEnd"/>: the points whose footprints and cut-off zones the search may cross, as a search's own
     /// ends' are (RoadSiteProtection.BlocksSegment, NetworkCutoff.AvoidsSegment).
+    /// The one owner of where a road may go (docs/OWNERS.md).
     /// </summary>
     public List<Vector2>? FindPathBetween(IReadOnlyList<(Vector2 at, float cost)> starts, IReadOnlyList<(Vector2 at, float cost)> ends,
         Vector2? exemptStart, Vector2? exemptEnd)
@@ -349,15 +354,15 @@ public class RoadPathfinder
             goalCells[e] = WorldToGrid(ends[e].at);
             if (!goalAt.TryGetValue(goalCells[e], out int had) || ends[e].cost < ends[had].cost) goalAt[goalCells[e]] = e;
             leastCost = Mathf.Min(leastCost, ends[e].cost);
-            mx += GridToWorld(goalCells[e]).x / ends.Count;
-            mz += GridToWorld(goalCells[e]).y / ends.Count;
+            mx += CellCentre(goalCells[e]).x / ends.Count;
+            mz += CellCentre(goalCells[e]).y / ends.Count;
         }
         var middle = new Vector2(mx, mz);
-        for (int e = 0; e < ends.Count; e++) far = Mathf.Max(far, (GridToWorld(goalCells[e]) - middle).magnitude);
+        for (int e = 0; e < ends.Count; e++) far = Mathf.Max(far, (CellCentre(goalCells[e]) - middle).magnitude);
         float Bound(Vector2i from)
         {
             if (ends.Count == 1) return Heuristic(from, endGrid) + leastCost;
-            Vector2 at = GridToWorld(from);
+            Vector2 at = CellCentre(from);
             return Mathf.Max(0f, (at - middle).magnitude - far) + leastCost;
         }
         var startAt = new Dictionary<Vector2i, int>(RoadGridComparer.Instance);
@@ -495,9 +500,9 @@ public class RoadPathfinder
     /// <summary>Search from a destination towards any existing road. Sampled hints
     /// guide the search; they do not promise a globally cheapest junction.
     /// <paramref name="served"/>: whether the place the search starts from is already served by the network
-    /// (RoadNetworkGenerator.PlaceServed), the caller's own test of it, asked first in place of a junction at the first cell
+    /// (RoadNetworkGenerator.Reached), the caller's own test of it, asked first in place of a junction at the first cell
     /// (AlreadyOnNetwork). Not served, a junction at the first cell is one the search finds like any other: a path from the
-    /// start to it.</summary>
+    /// start to it. The one owner of where a road may go (docs/OWNERS.md).</summary>
     public List<Vector2>? FindPathToNetwork(Vector2 start, float reach, IReadOnlyList<Vector2>? hints = null, System.Func<Vector2, bool>? targetAllowed = null,
         System.Func<bool>? served = null)
     {
@@ -537,7 +542,7 @@ public class RoadPathfinder
         }
         float HintDistance(Vector2i cell)
         {
-            Vector2 world = GridToWorld(cell);
+            Vector2 world = CellCentre(cell);
             float best = float.MaxValue;
             for (int i = 0; i < hints.Count; i++)
             {
@@ -558,18 +563,18 @@ public class RoadPathfinder
         var grounds = state.Grounds;
         float Ground(Vector2i cell)
         {
-            if (!grounds.TryGetValue(cell, out float h)) grounds[cell] = h = RoadSpatialGrid.JunctionGround(GridToWorld(cell), m_worldGen);
+            if (!grounds.TryGetValue(cell, out float h)) grounds[cell] = h = RoadSpatialGrid.JunctionGround(CellCentre(cell), m_worldGen);
             return h;
         }
         bool Join(Vector2i cell, out Vector2 junction)
         {
-            Vector2 at = GridToWorld(cell);
+            Vector2 at = CellCentre(cell);
             if (!RoadSpatialGrid.TryGetRoadWithin(at, reach, out junction, targetAllowed)) return false;
             return JunctionStep <= 0f
                 || RoadSpatialGrid.TryGetRoadAtGradeWithin(at, reach, Ground(cell), JunctionStep, out junction, targetAllowed);
         }
         bool ArrivesLevel(Vector2 junction, Vector2i before) =>
-            !RoadSpatialGrid.TryGetRoadHeightWithin(junction, 1f, out float surface)
+            !RoadSpatialGrid.TryGetRoadHeightWithin(junction, RoadBeside.OnRoad, out float surface)
             || Mathf.Abs(surface - Ground(before)) <= 2f * JunctionStep;
 
         if (served != null ? served() : Join(startGrid, out _))
@@ -846,10 +851,9 @@ public class RoadPathfinder
         return new Vector2i(Mathf.RoundToInt(world.x / CellSize), Mathf.RoundToInt(world.y / CellSize));
     }
 
-    private Vector2 GridToWorld(Vector2i grid)
-    {
-        return new Vector2(grid.x * CellSize, grid.y * CellSize);
-    }
+    /// <summary>The world position of a search cell: the one place cell indices become metres (the shared per-cell
+    /// height cache is valid only while every reader agrees). The one owner of Zone, grid and cell arithmetic (docs/OWNERS.md).</summary>
+    internal static Vector2 CellCentre(Vector2i grid) => new(grid.x * CellSize, grid.y * CellSize);
 
     private float Heuristic(Vector2i from, Vector2i to)
     {
@@ -885,7 +889,7 @@ public class RoadPathfinder
             for (int dz = -r; dz <= r; dz++)
             {
                 var cell = new Vector2i(centre.x + dx, centre.y + dz);
-                if (Vector2.Distance(GridToWorld(cell), world) <= radius + CellSize * 0.5f) m_earthworkPenalty.Add(cell);
+                if (Vector2.Distance(CellCentre(cell), world) <= radius + CellSize * 0.5f) m_earthworkPenalty.Add(cell);
             }
     }
     internal int EarthworkPenaltyCells => m_earthworkPenalty.Count;
@@ -904,8 +908,8 @@ public class RoadPathfinder
     /// <summary>Settable for tests; 0 is no meander.</summary>
     internal static float DefaultMeander = 3f;
     /// <summary>Slope at which the meander field has faded out: the top of the 20-28 % climbs,
-    /// below <see cref="RoadPitches.Sustained"/>. Validation switch MEANDER_FLAT.</summary>
-    public static readonly float MeanderFlat = DebugSwitches.Number("MEANDER_FLAT", 0.28f, 0.02f, 1f);
+    /// below <see cref="RoadPitches.Sustained"/>. </summary>
+    public static readonly float MeanderFlat = 0.28f;
     internal float MeanderCost(Vector2 from, Vector2 to, Vector2i toCell, float slope, float dist)
     {
         if (slope >= MeanderFlat || Meander <= 0f) return 0f;
@@ -915,7 +919,7 @@ public class RoadPathfinder
     }
 
     /// <summary>How much a biome's roads wander: open country most, none where
-    /// the ground already bends every road.</summary>
+    /// the ground already bends every road. The one owner of sway and meander (docs/OWNERS.md).</summary>
     internal static float MeanderBiome(Heightmap.Biome biome) => biome switch
     {
         Heightmap.Biome.Meadows => 1f,
@@ -964,14 +968,17 @@ public class RoadPathfinder
         return Mathf.Lerp(Mathf.Lerp(a, b, fx), Mathf.Lerp(c, d, fx), fy);
     }
 
-    private static float Lattice(int x, int y)
+    private static float Lattice(int x, int y) => (HashCell(x, y) & 0xFFFFFF) / (float)0xFFFFFF;
+
+    /// <summary>The one integer hash of a cell: the lattice values of <see cref="ValueNoise"/>, and a ford's style
+    /// (RoadCrossing.SiteHash). The one owner of seeded hashing of cells (docs/OWNERS.md).</summary>
+    internal static uint HashCell(int x, int y)
     {
         unchecked
         {
             uint h = (uint)x * 374761393u + (uint)y * 668265263u;
             h = (h ^ (h >> 13)) * 1274126177u;
-            h ^= h >> 16;
-            return (h & 0xFFFFFF) / (float)0xFFFFFF;
+            return h ^ (h >> 16);
         }
     }
 
@@ -998,7 +1005,7 @@ public class RoadPathfinder
         float cos = Mathf.Clamp((incoming.x * outgoing.x + incoming.y * outgoing.y) /
                                 (Mathf.Sqrt(incoming.sqrMagnitude) * Mathf.Sqrt(outgoing.sqrMagnitude)), -1f, 1f);
         float angle = (float)System.Math.Acos(cos);
-        if (TurnLimitDegrees > 0f && angle * 57.29578f > TurnLimitDegrees + 0.01f) return Impassable;
+        if (TurnLimitDegrees > 0f && angle * Mathf.Rad2Deg > TurnLimitDegrees + 0.01f) return Impassable;
         return TurnWeight * angle;
     }
 
@@ -1049,7 +1056,7 @@ public class RoadPathfinder
         if (SqueezeCorridor <= 0f) return false;
         if (!m_squeezed.TryGetValue(cell, out bool squeezed))
         {
-            Vector2 p = GridToWorld(cell);
+            Vector2 p = CellCentre(cell);
             m_squeezed[cell] = squeezed = SiteShoreSqueeze(p);
             // Let through only because the shallows beside it are built out: counted once per cell.
             if (!squeezed && RoadShoreFill.FillDepth > 0f && RoadShoreFill.Squeezed(m_worldGen, p, buildable: false, out _, Fords))
@@ -1104,7 +1111,7 @@ public class RoadPathfinder
     {
         stair = 0;
         // A banned crossing walked cell by cell (a ford over shallow water) is banned as its jump is.
-        if (m_noJumps.Count > 0 && Banned(GridToWorld(from), GridToWorld(to))) return float.PositiveInfinity;
+        if (m_noJumps.Count > 0 && Banned(CellCentre(from), CellCentre(to))) return float.PositiveInfinity;
         float road = RoadMoveCost(from, to, directionIndex, arriving, out float stairCost, out int climb, out bool tooSteep);
         // A staircase only where the road cannot climb: where it can, it
         // traverses and switches back as it always did (where it is steep we
@@ -1124,8 +1131,8 @@ public class RoadPathfinder
         climb = 0;
         tooSteep = false;
         stairCost = float.PositiveInfinity;
-        Vector2 fromWorld = GridToWorld(from);
-        Vector2 toWorld = GridToWorld(to);
+        Vector2 fromWorld = CellCentre(from);
+        Vector2 toWorld = CellCentre(to);
         if (RoadSiteProtection.BlocksRoute(fromWorld, toWorld, SiteClearance, m_searchStart, m_searchEnd))
             return Impassable;
         // Explored land players built in or dug, when the network includes the explored land: round it, not through.
@@ -1150,7 +1157,7 @@ public class RoadPathfinder
 
         if (SqueezedCell(to))
         {
-            RecordSqueeze(GridToWorld(to), landing: false);
+            RecordSqueeze(CellCentre(to), landing: false);
             return Impassable;
         }
 
@@ -1291,7 +1298,7 @@ public class RoadPathfinder
         }
         if (!found.HasValue) return false;
         (Vector2i to, float price) = found.Value;
-        Vector2 a = GridToWorld(from), b = GridToWorld(to);
+        Vector2 a = CellCentre(from), b = CellCentre(to);
         if (m_noJumps.Count > 0 && Banned(a, b)) return false;
         // Clear of the viaducts other roads laid (DvergrViaduct.TooClose, the one owner): never back to back, nor in one's
         // deck or approach. A shared viaduct (both banks the same) is the same structure.
@@ -1327,20 +1334,21 @@ public class RoadPathfinder
     {
         if (byViaduct.Count == 0) return true;
         List<(Vector2, Vector2)>? before = null;
-        Vector2 start = GridToWorld(from);
+        Vector2 start = CellCentre(from);
         Vector2i at = from;
-        for (int guard = 0; guard < 64 && Vector2.Distance(GridToWorld(at), start) <= JumpLookBack; guard++)
+        for (int guard = 0; guard < 64 && Vector2.Distance(CellCentre(at), start) <= JumpLookBack; guard++)
         {
             if (!cameFrom.TryGetValue(at, out Vector2i prev)) break;
-            if (byViaduct.Contains(at)) (before ??= new List<(Vector2, Vector2)>()).Add((GridToWorld(prev), GridToWorld(at)));
+            if (byViaduct.Contains(at)) (before ??= new List<(Vector2, Vector2)>()).Add((CellCentre(prev), CellCentre(at)));
             at = prev;
         }
-        return before == null || !DvergrViaduct.IsTooClose(start, GridToWorld(landing), before);
+        return before == null || !DvergrViaduct.IsTooClose(start, CellCentre(landing), before);
     }
 
     private (Vector2i landing, float cost)? ViaductOverTerrain(Vector2i from, Vector2Int step)
     {
-        if (m_terrain.Biome(from) != Heightmap.Biome.Mistlands) return null;
+        // No biome test here: whether the valley is Mistlands is the viaduct's own share rule (ValleyCrossing, through
+        // DvergrViaduct's refusal), so a valley whose near rim is just outside the Mistlands is still offered.
         float rim = m_terrain.Height(from);
         // A valley starts here: the next cell on is well below the rim.
         if (m_terrain.Height(new Vector2i(from.x + step.x, from.y + step.y)) > rim - ViaductRimDrop) return null;
@@ -1353,7 +1361,7 @@ public class RoadPathfinder
             if (h < RoadWater.LandingFloor) return null;
             if (h < rim - RoadConstants.MaxBridgeBankDelta) continue;
             if (h > rim + RoadConstants.MaxBridgeBankDelta) return null;
-            Vector2 a = GridToWorld(from), b = GridToWorld(check);
+            Vector2 a = CellCentre(from), b = CellCentre(check);
             RoadCrossing? viaduct = DvergrViaduct.ValleyCrossing(a, b, m_worldGen, out _);
             if (viaduct == null) return null;
             float length = Vector2.Distance(a, b);
@@ -1365,10 +1373,10 @@ public class RoadPathfinder
     /// <summary>
     /// Scans cell by cell from a dry cell across river water in one of the
     /// eight principal directions and lands on the first dry ground outside
-    /// the river band. A jump within the ford cap over water no deeper than
-    /// wading is a FORD at a small cost (with fords on); anything longer or
-    /// deeper is a BRIDGE at the bridge cost (with bridges on), held to
-    /// near-level banks. Water without a
+    /// the river band. A jump the crossing builder fords
+    /// (RoadCrossingDetector.IsFordJump, the one rule) is a FORD at a small
+    /// cost (with fords on); anything else is a BRIDGE at the bridge cost
+    /// (with bridges on), held to near-level banks. Water without a
     /// river core under it (a lake, the sea) is not crossed; neither is a dry
     /// river valley.
     /// </summary>
@@ -1382,7 +1390,7 @@ public class RoadPathfinder
         if (Mathf.Abs(direction.x) > 1 || Mathf.Abs(direction.y) > 1)
             return false;
 
-        Vector2 fromWorld = GridToWorld(from);
+        Vector2 fromWorld = CellCentre(from);
 
         // The cells' height and river weight are the search memo's own facts (the same
         // generator calls at the same cell centres): read through it, a scan repeated from
@@ -1390,13 +1398,12 @@ public class RoadPathfinder
         // cache, whose every miss takes a write lock all workers share.
         float fromHeight = m_terrain.Height(from);
         bool sawRiverWater = false;
-        float deepest = float.MaxValue;
         int maxCells = Bridges ? RoadConstants.MaxBridgeCrossingCells : RoadConstants.MaxRiverCrossingCells;
 
         for (int step = 1; step <= maxCells; step++)
         {
             Vector2i check = new Vector2i(from.x + direction.x * step, from.y + direction.y * step);
-            Vector2 world = GridToWorld(check);
+            Vector2 world = CellCentre(check);
             float height = m_terrain.Height(check);
             float riverWeight = m_terrain.River(check);
             bool water = height < RoadWater.LandingFloor;
@@ -1407,7 +1414,6 @@ public class RoadPathfinder
             if (water || riverCore)
             {
                 sawRiverWater |= water && riverCore;
-                deepest = Mathf.Min(deepest, height);
                 continue;
             }
 
@@ -1415,27 +1421,25 @@ public class RoadPathfinder
             if (!sawRiverWater)
                 return false;
 
-            bool bridgesAllowed = Bridges;
+            // Ford or bridge as the crossing builder judges this jump (its water's
+            // edges, the river between them at 1 m, the swamp rule): the class
+            // priced here is the class built.
+            bool bridge = !RoadCrossingDetector.IsFordJump(fromWorld, world, m_worldGen);
+            if (bridge ? !Bridges : !Fords)
+                return false;
             Vector2 fromBank = fromWorld;
             Vector2 toBank = world;
-            // In a swamp the detector walks a wet bank out over the wade shelf
-            // until it finds dry ground, which can add a great deal of deck.
-            // Do it HERE, before the span is measured against the cap and
-            // before the crossing is priced, so the search judges the bridge it
-            // will actually get. Deciding afterwards would leave a route
-            // accepted at one length and built at another.
-            if (bridgesAllowed && m_worldGen.GetBiome(
+            // In a swamp the detector walks a bridge's wet bank out over the
+            // wade shelf until it finds dry ground, which can add a great deal
+            // of deck. Do it HERE, before the span is measured against the cap
+            // and before the crossing is priced, so the search judges the
+            // bridge it will actually get. Deciding afterwards would leave a
+            // route accepted at one length and built at another.
+            if (bridge && m_worldGen.GetBiome(
                     (fromWorld.x + world.x) * 0.5f, (fromWorld.y + world.y) * 0.5f) == Heightmap.Biome.Swamp)
                 (fromBank, toBank) = RoadCrossingDetector.ExtendOverSwampShelf(fromWorld, world, m_worldGen);
 
             float distance = Vector2.Distance(fromBank, toBank);
-            // The cells are 8 m apart and a channel can hide between them:
-            // the whole jump is sampled every 2 m before its depth is trusted.
-            deepest = Mathf.Min(deepest, DeepestAlong(fromWorld, world));
-            bool bridge = distance > RoadConstants.MaxRiverCrossingCells * CellSize
-                || deepest < RoadConstants.SeaLevel - RoadConstants.FordWadeDepth;
-            if (bridge ? !Bridges : !Fords)
-                return false;
             if (distance > maxCells * CellSize)
                 return false;
 
@@ -1449,7 +1453,7 @@ public class RoadPathfinder
             // either: the road off the bridge would run along the shore there.
             if (SqueezedCell(check))
             {
-                RecordSqueeze(GridToWorld(check), landing: true);
+                RecordSqueeze(CellCentre(check), landing: true);
                 return false;
             }
             // Nor is a deck that runs along the shore past a place: a 104 m bridge was measured
@@ -1481,23 +1485,6 @@ public class RoadPathfinder
         return false;
     }
 
-    /// <summary>The lowest ground on the line between two points, sampled
-    /// every 2 m at the biome-blended height the game renders (a biome edge
-    /// can move the ground metres from the raw generator height), so the
-    /// pathfinder and the crossing detector judge the same water.</summary>
-    private float DeepestAlong(Vector2 a, Vector2 b)
-    {
-        float length = Vector2.Distance(a, b);
-        int samples = Mathf.Max(1, Mathf.CeilToInt(length / 2f));
-        float deepest = float.MaxValue;
-        for (int i = 0; i <= samples; i++)
-        {
-            float t = (float)i / samples;
-            deepest = Mathf.Min(deepest, BiomeBlendedHeight.GetBlendedHeight(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, m_worldGen));
-        }
-        return deepest;
-    }
-
     /// <summary>Whether a finished road already runs through this point.</summary>
     private static bool OnExistingRoad(Vector2 world) =>
         RoadSpatialGrid.IsInitialized && RoadSpatialGrid.AnyRoadAt(world.x, world.y);
@@ -1525,9 +1512,9 @@ public class RoadPathfinder
 
         while (cameFrom.ContainsKey(current))
         {
-            path.Add(GridToWorld(current));
-            if (byStair.ContainsKey(current)) LastStairSteps.Add((GridToWorld(cameFrom[current]), GridToWorld(current)));
-            if (byViaduct.Contains(current)) LastViaductJumps.Add((GridToWorld(cameFrom[current]), GridToWorld(current)));
+            path.Add(CellCentre(current));
+            if (byStair.ContainsKey(current)) LastStairSteps.Add((CellCentre(cameFrom[current]), CellCentre(current)));
+            if (byViaduct.Contains(current)) LastViaductJumps.Add((CellCentre(cameFrom[current]), CellCentre(current)));
             current = cameFrom[current];
         }
         LastStairSteps.Reverse();

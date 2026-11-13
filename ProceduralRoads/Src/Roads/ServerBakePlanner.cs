@@ -126,16 +126,24 @@ public static class ServerBakePlanner
         generated && !cleared && !generatedBeforeNetwork;
 
     /// <summary>
+    /// Whether a zone explored before the network is owed the judgement of what lies along the ground (a stump, a fallen log:
+    /// <see cref="VegetationClearing.IsLying"/>) and nothing else of the vegetation pass: such a piece across the road is turned
+    /// off it or removed there as in any zone (<see cref="VegetationClearing.Decide"/>), once per zone and network, while the
+    /// trees, bushes and rocks its players grew up with stay (<see cref="VegetationOwed"/>).
+    /// </summary>
+    public static bool LyingOwed(bool generated, bool generatedBeforeNetwork, bool done) =>
+        generated && generatedBeforeNetwork && !done;
+
+    /// <summary>
     /// Whether a zone owed its vegetation pass also has its saved rocks
-    /// cleared: only when rocks are cleared at all, and only where the server
-    /// does not have the zone loaded (a loaded zone's rocks are live objects,
+    /// cleared: only where the server does not have the zone loaded (a loaded zone's rocks are live objects,
     /// which the half-second pass of RoadRockClearing clears).
     /// </summary>
-    public static bool SavedRocksOwed(bool loadedHere, bool clearsRocks) => clearsRocks && !loadedHere;
+    public static bool SavedRocksOwed(bool loadedHere) => !loadedHere;
 
-    /// <summary>Which saved objects the rock pass brings alive: the clearable rocks, never a player's.</summary>
-    public static bool BringsRockAlive(string prefab, bool playerCreated) =>
-        !playerCreated && RoadRockPolicy.IsClearableRock(prefab);
+    /// <summary>Which saved objects the rock pass brings alive: the clearable rocks and their fractured copies (a mined or carved rock), never a player's.</summary>
+    public static bool BringsRockAlive(string prefab, bool playerCreated, IReadOnlyDictionary<string, List<string>> fracturedFrom) =>
+        !playerCreated && RoadRockPolicy.IsClearableRock(prefab, fracturedFrom);
 
     /// <summary>What the server knows about one saved compiler ZDO.</summary>
     public readonly struct Compiler
@@ -147,15 +155,16 @@ public static class ServerBakePlanner
         /// <summary>Whether that owner is connected and has the zone in its active area.</summary>
         public readonly bool OwnerActiveHere;
 
-        /// <summary>The saved stamp is an ancestor, with no new road points in this zone.</summary>
-        public readonly bool UnchangedByAppends;
+        /// <summary>It carries the current roads (<see cref="RoadTerrainModifier.CarriesCurrentRoads"/>): stamped
+        /// with the network's version, or with an ancestor of it and no new road points in this zone.</summary>
+        public readonly bool Current;
 
-        public Compiler(int appliedVersion, long owner, bool ownerActiveHere, bool unchangedByAppends = false)
+        public Compiler(int appliedVersion, long owner, bool ownerActiveHere, bool current = false)
         {
             AppliedVersion = appliedVersion;
             Owner = owner;
             OwnerActiveHere = ownerActiveHere;
-            UnchangedByAppends = unchangedByAppends;
+            Current = current;
         }
     }
 
@@ -177,7 +186,7 @@ public static class ServerBakePlanner
             return loadedHere ? Action.LeaveToLiveZone : Action.CreateCompiler;
 
         Compiler compiler = compilers[0];
-        if (compiler.AppliedVersion == networkVersion || (compiler.AppliedVersion != 0 && compiler.UnchangedByAppends))
+        if (compiler.Current)
             return Action.AlreadyCurrent;
         // A live compiler of another owner is never taken (its owner may be
         // editing it); a saved one is taken unless its owner is active here.

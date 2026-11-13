@@ -31,8 +31,15 @@ public static class RoadGrade
     /// holds the stored profile to it. They were briefly two - the grid read
     /// the pathfinder's copy - which is a coupling with nothing to say for
     /// itself and two values to get out of step.
+    /// The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).
     /// </summary>
     public static float Configured = RoadConstants.DefaultMaxRoadGrade;
+
+    /// <summary>The cap as a divisor: never under 0.01, so a test with no cap (0) does not divide by zero.</summary>
+    public static float Floored => Mathf.Max(Configured, 0.01f);
+
+    /// <summary>The metres of road that ease a rise of <paramref name="rise"/> at the grade cap.</summary>
+    public static float EaseLength(float rise) => rise / Floored;
 
     /// <summary>
     /// The steepest step of any road planned since the last reset, as rise
@@ -69,6 +76,10 @@ public static class RoadGrade
 
     /// <summary>A cap at or below zero is no cap at all.</summary>
     public static bool Capped(float maxGrade) => maxGrade > 0f;
+
+    /// <summary>The cap in force, or <paramref name="uncapped"/> where there is none (a test with the cap at 0). The one place a
+    /// caller that needs a number without a cap picks it; at the default settings every caller reads <see cref="Configured"/>.</summary>
+    public static float CapOr(float uncapped) => Capped(Configured) ? Configured : uncapped;
 
     /// <summary>
     /// The steepest step in a profile, as rise over run. Steps shorter than a
@@ -108,6 +119,7 @@ public static class RoadGrade
     /// clamping one by the others keeps it there, so the three-way clamp is
     /// inside the cap too - and it equals the end heights at the ends, because
     /// there the two cones meet.
+    /// The one owner of the road grade cap, pitches, and the landing at a road's end (docs/OWNERS.md).
     /// </summary>
     public static bool Limit(IReadOnlyList<Vector2> points, IList<float> heights, float maxGrade, IReadOnlyList<float>? edgeGrades = null)
     {

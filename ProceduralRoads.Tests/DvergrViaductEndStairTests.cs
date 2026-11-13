@@ -208,7 +208,8 @@ public sealed class DvergrViaductEndStairTests : IDisposable
     // ------------------------------------------------- rule 4: the foot on the road
 
     /// <summary>A road coming at the valley from the side, its far flat 1 m lower: the far end, low over the road, has its
-    /// one step (StructureEnds.Low).
+    /// one step (StructureEnds.Low), and the near end, at grade, a step up for looks too, the two ends chosen as a pair
+    /// (StructureEnds.Pair: both stepped, not one stepped and one flush).
     /// The road has to arrive at their foot along their line, with every step over it. On plain roads, and with the
     /// mod's own shaping (the pull, which skipped the foot, and the sway's resampling, which cut past it, until the
     /// foot was held: RoadSpatialGrid.HeldPoints).</summary>
@@ -231,9 +232,15 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-110f, 0f, -50f), 0f, new Vector3(110f, 0f, 50f), 0f, 4f, "side on"));
         RoadCrossing viaduct = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), c => c.ValleyJump);
         var (near, far) = DvergrViaduct.Ends(viaduct, world);
-        StructureEnds.End stairs = near.Steps > 0 ? near : far;
-        Assert.Equal(1, stairs.Steps);
-        Assert.Equal(0, (near.Steps > 0 ? far : near).Steps);
+        Assert.Equal((1, 1), (near.Steps, far.Steps));
+        foreach (StructureEnds.End stairs in new[] { near, far })
+            FootOnTheRoad(stairs, roads);
+        Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { viaduct }, world));
+    }
+
+    /// <summary>The road meets <paramref name="stairs"/>' foot (TheEndStairsFootLandsOnTheRoadsArrival).</summary>
+    private static void FootOnTheRoad(StructureEnds.End stairs, List<RoadSpatialGrid.PlannedPath> roads)
+    {
         // (StructureEnds) the road ends at the stairs' foot at its height, having come in along the flight's line
         // over its last ApronLength, levelled to the foot; it does not run on under the flight. Within a metre of the line
         // (a quarter of the road's width): the mod's bend shaping rounds the turn just past the apron.
@@ -246,18 +253,17 @@ public sealed class DvergrViaductEndStairTests : IDisposable
             Assert.True(ToRoad(at) <= 1f, $"{s:F1} m out from the foot the road is {ToRoad(at):F1} m off the flight's line");
         }
         var (plan, k) = roads.SelectMany(r => new[] { (r, 0), (r, r.Points.Count - 1) }).OrderBy(x => Vector2.Distance(x.r.Points[x.Item2], stairs.Meet)).First();
-        Assert.True(StructureEnds.Reachable(plan.Heights[k], stairs), $"the road at the foot stands {plan.Heights[k]:F2}, the foot {stairs.MeetHeight:F2}");
+        Assert.True(StairLayout.Walkable(plan.Heights[k], stairs.MeetHeight), $"the road at the foot stands {plan.Heights[k]:F2}, the foot {stairs.MeetHeight:F2}");
         for (int i = 0; i < plan.Points.Count; i++)
             if (Vector2.Distance(plan.Points[i], stairs.Meet) <= StructureEnds.ApronLength)
                 Assert.True(Mathf.Abs(plan.Heights[i] - stairs.MeetHeight) <= 0.05f, $"apron at {plan.Points[i]} stands {plan.Heights[i]:F2}, not level at {stairs.MeetHeight:F2}");
         // No road under the flight past its bottom step (the road runs on under the bottom step, the joining piece,
         // StructureEnds.JoinOverlap, levelled at the foot's height, and stops there).
         Vector2 across = new(-stairs.Up.y, stairs.Up.x);
-        float flight = stairs.Steps * BridgeLayout.StairRun;
+        float flight = stairs.Steps * StairLayout.PieceRun;
         Assert.True(roads.All(r => r.Points.All(p => Vector2.Dot(p - stairs.Meet, stairs.Up) <= StructureEnds.JoinOverlap + 0.3f
             || Vector2.Dot(p - stairs.Meet, stairs.Up) > flight + 0.5f || Mathf.Abs(Vector2.Dot(p - stairs.Meet, across)) > 3f)), "road under the flight");
         Assert.True(roads.All(r => r.Points.Select((p, i) => (p, h: r.Heights[i])).All(x => !stairs.UnderTheJoint(x.p, 1.5f) || Mathf.Abs(x.h - stairs.MeetHeight) <= 0.05f)), "road under the bottom step not at the foot's height");
-        Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { viaduct }, world));
     }
 
     private static float ToSegment(Vector2 p, Vector2 a, Vector2 b)
@@ -278,10 +284,12 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         _scope.WithWorld(world);
         RoadCrossing Fresh() { RoadCrossing c = Across(world, 0f)!; c.FromIndex = 1; c.ToIndex = 2; return c; }
         var probe = Fresh();
-        var (near, far) = DvergrViaduct.Ends(probe, world);
+        var (natural, far) = DvergrViaduct.Ends(probe, world);
         Assert.Equal(1, far.Steps);
-        Assert.Equal(0, near.Steps);
-        Assert.Equal(StructureEnds.ApronLength + 1f * BridgeLayout.StairRun, Vector2.Distance(far.Apron, far.Edge), 3);
+        Assert.Equal(0, natural.Steps);
+        // The near end, at grade, is met by a step up for looks, as the far end's (StructureEnds.Pair).
+        var near = new StructureEnds.End(natural.Edge, natural.Up, natural.Height, 1);
+        Assert.Equal(StructureEnds.ApronLength + 1f * StairLayout.PieceRun, Vector2.Distance(far.Apron, far.Edge), 3);
         Vector2 dir = probe.Direction;
         Vector2 Mid(StructureEnds.End e) => e.Meet - e.Up * (StructureEnds.ApronLength * 0.5f);
         void Brought(List<Vector2> path, Vector2[] past, string what)
@@ -310,6 +318,59 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         Assert.Same(under, StructureEnds.MeetEnds(shortEnd, new List<RoadCrossing> { under }, world, float.PositiveInfinity, null));
     }
 
+    // ------------------------------------------------- a structure's two ends as a pair
+
+    /// <summary>The road across <paramref name="world"/> along z = 0 to its viaduct, its two ends met by the one owner
+    /// (StructureEnds.MeetEnds) within the earthwork cap: the crossing, its ends set.</summary>
+    private static RoadCrossing MetAlongTheLine(StepValley world)
+    {
+        RoadCrossing c = Across(world, 0f)!;
+        c.FromIndex = 1; c.ToIndex = 2;
+        var path = new List<Vector2> { new(-90f, 0f), c.FromBank, c.ToBank, new(90f, 0f) };
+        Assert.Null(StructureEnds.MeetEnds(path, new List<RoadCrossing> { c }, world, RoadConstants.TerrainDeltaMax, null));
+        return c;
+    }
+
+    /// <summary>A viaduct at grade whose far flat lies 1.2 m under the near one: its deck stands 1.2 m over the far road, a
+    /// low end (StructureEnds.Low) met by its one step up, its foot on the road. The near end the bank takes at grade, no
+    /// stairs; a structure looks best a bit symmetrical, so its two ends are chosen as a pair (StructureEnds.Pair) and the
+    /// near end is met by a step up for looks too, the road cut a rise down to its foot (StructureEnds.Ways), not flush.</summary>
+    [Fact]
+    public void ALowStructureWhoseBanksBothTakeStepsIsSteppedAtBoth()
+    {
+        var world = new StepValley { FarDrop = _ => 1.2f };
+        _scope.WithWorld(world);
+        var (near, far) = DvergrViaduct.Ends(Across(world, 0f)!, world);
+        Assert.Equal((0, 1), (near.Steps, far.Steps));
+        RoadCrossing c = MetAlongTheLine(world);
+        StructureEnds.End n = c.FromEnd!.Value, f = c.ToEnd!.Value;
+        Assert.Equal((1, 1), (n.Steps, f.Steps));
+        Assert.Equal(world.Top - 1.2f, f.MeetHeight, 0.5f);
+        Assert.Equal(near.Height - StairLayout.PieceRise, n.MeetHeight, 3);
+        Assert.False(c.FromPad || c.ToPad);
+    }
+
+    /// <summary>The viaduct of <see cref="ALowStructureWhoseBanksBothTakeStepsIsSteppedAtBoth"/> with its far flat a
+    /// metre lower and a place on the near bank's apron, where a step up for looks would cut the road down into it: the
+    /// near end cannot take a step, so the far end is met flush too, the road filled a metre up to the deck, rather than
+    /// one end stepped and the other flush (StructureEnds.OneSidedPrice).</summary>
+    [Fact]
+    public void ALowStructureWhoseOtherEndCannotTakeStepsIsFlushAtBoth()
+    {
+        var world = new StepValley { FarDrop = _ => 1f };
+        _scope.WithWorld(world);
+        var (near, far) = DvergrViaduct.Ends(Across(world, 0f)!, world);
+        Assert.Equal((0, 1), (near.Steps, far.Steps));
+        try
+        {
+            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(near.Edge - near.Up * 5f, 4f) });
+            RoadCrossing c = MetAlongTheLine(world);
+            Assert.Equal((0, 0), (c.FromEnd!.Value.Steps, c.ToEnd!.Value.Steps));
+            Assert.Equal(far.Height, c.ToEnd!.Value.MeetHeight, 3);
+        }
+        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
+    }
+
     [Fact]
     public void AtDeckHeightBanksThereAreNoStairsAndTheRoadRunsOntoTheDeck()
     {
@@ -330,7 +391,7 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         {
             var (plan, i) = roads.SelectMany(r => r.Points.Select((p, k) => (r, k))).OrderBy(x => Vector2.Distance(x.r.Points[x.k], bank)).First();
             Assert.True(Vector2.Distance(plan.Points[i], bank) <= 2f, $"the road does not come to the bank at {bank}");
-            Assert.True(Mathf.Abs(plan.Heights[i] - deck) <= BridgeLayout.StairRise * 0.5f, $"road at {plan.Heights[i]:F2} against the deck at {deck:F2}");
+            Assert.True(Mathf.Abs(plan.Heights[i] - deck) <= StairLayout.PieceRise * 0.5f, $"road at {plan.Heights[i]:F2} against the deck at {deck:F2}");
         }
     }
 }

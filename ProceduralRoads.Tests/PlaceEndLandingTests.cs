@@ -105,6 +105,7 @@ public class PlaceEndLandingTests : IDisposable
         RoadPitches.Enabled = true;
         RoadSpatialGrid.FollowGround = true;
         const float held = 38.83f;
+        float landing = (float)PlainRoads.ModDefaults["junction landing"];
 
         // As it was: no landing anywhere, the end clamped onto the cap.
         RoadPitches.JunctionLanding = 0f;
@@ -112,18 +113,18 @@ public class PlaceEndLandingTests : IDisposable
         Assert.NotNull(before);
         var b = before![0];
         Assert.Equal(held, b.Heights[0], 2);
-        Assert.True(GradeOver(b, 0f, 6f) > 0.15f, $"the end already level: {GradeOver(b, 0f, 6f):P1}");
+        Assert.True(GradeOver(b, 0f, landing) > 0.15f, $"the end already level: {GradeOver(b, 0f, landing):P1}");
         Assert.InRange(GradeOver(b, 0f, 36f), 0.25f, RoadGrade.Configured + 0.005f);
 
         // With the landing (the mod's own length).
-        RoadPitches.JunctionLanding = 6f;
+        RoadPitches.JunctionLanding = landing;
         var after = RoadNetworkGenerator.PlanRoadPathWithCrossings(Line(64f), new List<RoadCrossing>(), 4f, held, null);
         Assert.NotNull(after);
         var a = after![0];
         Assert.Equal(held, a.Heights[0], 2);
         Assert.True(a.PlaceLandingStart, "the place end was not marked as landed");
         Assert.False(a.PlaceLandingEnd, "the free end got a landing");
-        Assert.True(Steepest(a, 0f, 6f) <= RoadPitches.JunctionLandingGrade + 1e-3f, $"landing at {Steepest(a, 0f, 6f):P1}");
+        Assert.True(Steepest(a, 0f, landing) <= RoadPitches.JunctionLandingGrade + 1e-3f, $"landing at {Steepest(a, 0f, landing):P1}");
         // The pitch beside it and the rest of the climb within the cap's allowance; the crest still met.
         Assert.True(Steepest(a, 0f, 64f) <= RoadPitches.PitchGrade + 1e-3f, $"steepest {Steepest(a, 0f, 64f):P1}");
         Assert.True(Steepest(a, 14f, 64f) <= RoadGrade.Configured + 1e-3f, $"past the pitch {Steepest(a, 14f, 64f):P1}");
@@ -143,7 +144,7 @@ public class PlaceEndLandingTests : IDisposable
         RoadPitches.JunctionLanding = 0f;
         Assert.NotNull(RoadNetworkGenerator.PlanRoadPathWithCrossings(Line(20f), new List<RoadCrossing>(), 4f, 40f, 46.8f));
 
-        RoadPitches.JunctionLanding = 6f;
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
         Assert.Null(RoadNetworkGenerator.PlanRoadPathWithCrossings(Line(20f), new List<RoadCrossing>(), 4f, 40f, 46.8f));
         Assert.StartsWith("grade:", RoadSpatialGrid.LastRefusal);
     }

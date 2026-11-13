@@ -35,9 +35,13 @@ public static class BiomeBlendedHeight
     // Zone size for calculating heightmap centers
     private const float ZoneSize = RoadConstants.ZoneSize;
     
+    /// <summary>The zone index along one axis, as a float: the heightmap that contains <paramref name="w"/>.</summary>
+    private static float ZoneFloor(float w) => Mathf.Floor((w + HeightmapHalfSize) / ZoneSize);
+
     /// <summary>
     /// Get terrain height with biome blending that matches rendered terrain.
     /// This replicates HeightmapBuilder.Build()'s biome blending logic exactly.
+    /// The one owner of ground readers (docs/OWNERS.md).
     /// </summary>
     public static float GetBlendedHeight(float wx, float wy, WorldGenerator worldGen) => GetBlendedHeight(wx, wy, worldGen, null);
 
@@ -59,8 +63,8 @@ public static class BiomeBlendedHeight
         // To find which zone contains point wx:
         // - Shift by half heightmap size (32m) so the floor division aligns with heightmap boundaries
         // - Floor divide by zone size
-        float zoneX = Mathf.Floor((wx + HeightmapHalfSize) / ZoneSize) * ZoneSize;
-        float zoneZ = Mathf.Floor((wy + HeightmapHalfSize) / ZoneSize) * ZoneSize;
+        float zoneX = ZoneFloor(wx) * ZoneSize;
+        float zoneZ = ZoneFloor(wy) * ZoneSize;
         
         // HeightmapBuilder calculates corner from center:
         // corner = center + new Vector3(m_width * m_scale * -0.5f, 0, m_width * m_scale * -0.5f)
@@ -78,8 +82,8 @@ public static class BiomeBlendedHeight
         Heightmap.Biome biome00, biome10, biome01, biome11;
         if (corners != null)
         {
-            int ix = (int)Mathf.Floor((wx + HeightmapHalfSize) / ZoneSize);
-            int iz = (int)Mathf.Floor((wy + HeightmapHalfSize) / ZoneSize);
+            int ix = (int)ZoneFloor(wx);
+            int iz = (int)ZoneFloor(wy);
             biome00 = corners.Get(worldGen, ix, iz, x0, z0);
             biome10 = corners.Get(worldGen, ix + 1, iz, x1, z0);
             biome01 = corners.Get(worldGen, ix, iz + 1, x0, z1);
@@ -224,8 +228,8 @@ public static class BiomeBlendedHeight
             return info;
         
         // Find containing heightmap using same logic as GetBlendedHeight
-        float zoneX = Mathf.Floor((wx + HeightmapHalfSize) / ZoneSize) * ZoneSize;
-        float zoneZ = Mathf.Floor((wy + HeightmapHalfSize) / ZoneSize) * ZoneSize;
+        float zoneX = ZoneFloor(wx) * ZoneSize;
+        float zoneZ = ZoneFloor(wy) * ZoneSize;
         float cornerX = zoneX - HeightmapHalfSize;
         float cornerZ = zoneZ - HeightmapHalfSize;
         

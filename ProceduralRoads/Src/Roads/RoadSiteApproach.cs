@@ -16,9 +16,6 @@ public static class RoadSiteApproach
 {
     public const float Reach = 64f;
 
-    /// <summary>An arrival this close to the site's height is level with it: the one level a road arrives at a place on
-    /// (<see cref="RoadNetworkGenerator.ArrivalLevel"/>).</summary>
-    private const float Level = RoadNetworkGenerator.ArrivalLevel;
 
     /// <summary>The point <paramref name="t"/> (0 to 1) of the way from <paramref name="anchor"/> to
     /// <paramref name="end"/> round the site's outside: straight to the tangent of a circle about
@@ -93,7 +90,7 @@ public static class RoadSiteApproach
                 // must not cut through the location or sneak across water.
                 if (requireClear && Vector2.Distance(point, centre) < radius - 0.1f) return Reject("spline enters footprint");
                 Vector2 previous = plan.Points[Math.Max(0, i - 1)];
-                if (requireClear && RoadSiteProtection.BlocksSegment(previous, point, RoadSiteProtection.Clearance(width), null, null))
+                if (requireClear && RoadSiteProtection.BlocksRoad(previous, point, width, tail[0], tail[tail.Count - 1]))
                     return Reject("spline enters protected clearance");
                 world.GetRiverWeight(point.x, point.y, out float river, out _);
                 if (!RoadWater.BuiltDry(Ground(point), river))
@@ -117,7 +114,7 @@ public static class RoadSiteApproach
         // prevent searching for a valid replacement; clearance gates candidates.
         float oldScore = Score(oldTail, out float oldWorst, false);
         float oldMismatch = desiredHeight.HasValue ? Mathf.Abs(Ground(oldEnd) - desiredHeight.Value) : 0f;
-        if (float.IsInfinity(oldScore) || (oldWorst < 2f && oldMismatch <= Level)) return path;
+        if (float.IsInfinity(oldScore) || (oldWorst < 2f && oldMismatch <= StairLayout.StairFitsFrom)) return path;
         float bestScore = oldScore;
         List<Vector2>? best = null;
         Vector2 radial = oldEnd - centre;
@@ -146,9 +143,9 @@ public static class RoadSiteApproach
                 if (length > oldLength + Mathf.PI * radius) continue;
                 // This was already an acceptance rule. Apply it before
                 // smoothing, grading and sampling an unusable trial profile.
-                if (desiredHeight.HasValue && Mathf.Abs(Ground(candidate[candidate.Count - 1]) - desiredHeight.Value) > Level) continue;
+                if (desiredHeight.HasValue && Mathf.Abs(Ground(candidate[candidate.Count - 1]) - desiredHeight.Value) > StairLayout.StairFitsFrom) continue;
                 float score = Score(candidate, out float worst);
-                float limit = oldMismatch > Level ? Mathf.Max(2f, oldWorst + oldMismatch * 0.5f) : oldWorst - 0.5f;
+                float limit = oldMismatch > StairLayout.StairFitsFrom ? Mathf.Max(2f, oldWorst + oldMismatch * 0.5f) : oldWorst - 0.5f;
                 if (worst > limit || score >= bestScore || score > oldScore * 0.8f) continue;
                 bestScore = score;
                 best = candidate;
@@ -163,20 +160,16 @@ public static class RoadSiteApproach
         // edge. Arrivals up to 9 m past the margin counted two Crypt4s unreached that
         // were built to (42.7 and 43.6 m out against 42 m).
         float farthest = radius + RoadNetworkGenerator.ReachPastEdge;
-        for (int margin = 1; best == null && desiredHeight.HasValue && oldMismatch > Level && radius + margin < farthest; margin += 4)
+        for (int margin = 1; best == null && desiredHeight.HasValue && oldMismatch > StairLayout.StairFitsFrom && radius + margin < farthest; margin += 4)
         {
             const float step = 4f;
-            var directions = new[] { new Vector2i(1,0), new Vector2i(-1,0), new Vector2i(0,1), new Vector2i(0,-1),
-                new Vector2i(1,1),new Vector2i(1,-1),new Vector2i(-1,1),new Vector2i(-1,-1),
-                new Vector2i(2,1),new Vector2i(2,-1),new Vector2i(-2,1),new Vector2i(-2,-1),
-                new Vector2i(1,2),new Vector2i(1,-2),new Vector2i(-1,2),new Vector2i(-1,-2) };
             var frontier = new SortedSet<(float cost,int x,int z)>();
             var costs = new Dictionary<Vector2i,float>();
             var parents = new Dictionary<Vector2i,Vector2i>();
             var origin = new Vector2i(0,0);
             costs[origin]=0f; frontier.Add((0f,0,0));
             float maxRadius = Mathf.Min(192f, Vector2.Distance(anchor,centre)+Reach);
-            float maxGrade = RoadGrade.Configured > 0f ? RoadGrade.Configured : 0.35f;
+            float maxGrade = RoadGrade.Configured > 0f ? RoadGrade.Configured : RoadConstants.DefaultMaxRoadGrade;
             Vector2 Point(Vector2i node) => anchor + new Vector2(node.x*step,node.y*step);
             int visited=0, goals=0;
             while (frontier.Count > 0 && visited++ < 4096 && goals < 8)
@@ -187,7 +180,7 @@ public static class RoadSiteApproach
                 Vector2 here=Point(key); float height=Ground(here);
                 float distanceToSite=Vector2.Distance(here,centre);
                 if (parents.ContainsKey(key) && distanceToSite >= radius+margin && distanceToSite <= Mathf.Min(radius+margin+9f,farthest) &&
-                    Mathf.Abs(height-desiredHeight.Value) <= Level)
+                    Mathf.Abs(height-desiredHeight.Value) <= StairLayout.StairFitsFrom)
                 {
                     goals++;
                     var candidate=new List<Vector2> { here };
@@ -200,7 +193,7 @@ public static class RoadSiteApproach
                     if (worst <= Mathf.Max(2f,oldWorst+oldMismatch*0.5f) && score < bestScore && score <= oldScore*0.8f)
                     { best=candidate; bestScore=score; }
                 }
-                foreach (var direction in directions)
+                foreach (var direction in RoadPathfinder.Directions)
                 {
                     var next=new Vector2i(key.x+direction.x,key.y+direction.y);
                     Vector2 there=Point(next), delta=there-here;
@@ -208,7 +201,7 @@ public static class RoadSiteApproach
                     if (nextRadius < radius+margin || nextRadius > maxRadius) continue;
                     float t=Mathf.Clamp01(((centre.x-here.x)*delta.x+(centre.y-here.y)*delta.y)/delta.sqrMagnitude);
                     if (Vector2.Distance(here+delta*t,centre) < radius+margin ||
-                        RoadSiteProtection.BlocksSegment(here,there,RoadSiteProtection.Clearance(width)+margin,null,null)) continue;
+                        RoadSiteProtection.BlocksFinalSegment(here,there,RoadSiteProtection.Clearance(width)+margin,anchor,there,out _)) continue;
                     float nextHeight=Ground(there), middleHeight=Ground((here+there)*0.5f);
                     if (float.IsNaN(nextHeight) || float.IsInfinity(nextHeight) ||
                         float.IsNaN(middleHeight) || float.IsInfinity(middleHeight) || !RoadWater.BuiltDry(nextHeight)) continue;

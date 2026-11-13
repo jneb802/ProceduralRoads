@@ -252,8 +252,9 @@ public sealed class ConnectedLandingStairTests : IDisposable
         var plan=new StairPlan { Kit="stone",Reached=true,EndHeading=202.5f,End=new Vector3(-4803.04248f,186.810776f,1737.78943f) };
         plan.Pieces.Add(new StairPiece { Kind=StairPieceKind.Landing,Prefab="stone_floor_2x2",Position=new Vector3(-4802.66f,186.310776f,1738.71338f),YawDegrees=202.5f });
         var walked=PlacedLandingStairTests.Walk(plan).ToArray();
-        // Its walked surface clear of the ground, nearest 0.30 m over it (a step when the step was 0.3 m; over it at 0.2 m).
-        Assert.InRange(walked.Min(s=>s.height-f.Ground(s.at.x,s.at.y)),0.29f,0.31f);
+        // Its walked surface clear of the ground, nearest 0.24 m over it (0.30 m when the captured ground was joined bilinearly
+        // between its vertices; now it is joined as the game's mesh joins them, two triangles a cell).
+        Assert.InRange(walked.Min(s=>s.height-f.Ground(s.at.x,s.at.y)),0.23f,0.25f);
         // Independent observed forward edge and just beyond it are more than a step below the floor.
         Assert.InRange(186.810776f-f.Ground(-4803.04248f,1737.78943f),0.45f,0.47f);
         Assert.InRange(186.810776f-f.Ground(-4803.13815f,1737.55846f),0.44f,0.46f);

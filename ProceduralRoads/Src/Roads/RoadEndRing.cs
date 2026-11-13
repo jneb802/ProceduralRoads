@@ -31,10 +31,6 @@ public readonly struct RoadEndRing
     /// the ring (RoadStairRuns.JoiningStep). Past it the rest of the road is OverRoad's.</summary>
     public const float CorridorLength = RoadStairRuns.JoiningStep;
 
-    /// <summary>At a top, a floor this near the road's height is where the road comes onto it, level (a top landing the road
-    /// meets from any side): not a crossing. Only its flight counts there.</summary>
-    public const float LevelWithRoad = 0.5f;
-
     /// <summary>A walked piece's sample this far over the lane's or the inner circle's edge is on it (a piece placed on the
     /// line, not over it).</summary>
     public const float Margin = 0.05f;
@@ -124,7 +120,7 @@ public readonly struct RoadEndRing
     /// hammer's sixteen headings that leaves the circle outward (within <see cref="MostSkew"/> of the arc point's radial: a
     /// flight does not set off across the front of the ring), whose first piece of <paramref name="width"/> keeps out of
     /// the circle and the lane and whose foot is not walked off across the road (<see cref="WalksOffAcross"/>), cheapest
-    /// first.</summary>
+    /// first. The one owner of staircase starts (docs/OWNERS.md).</summary>
     public List<Start> Starts(float width)
     {
         var starts = new List<Start>();
@@ -148,7 +144,7 @@ public readonly struct RoadEndRing
     /// <summary>Whether a first piece of <paramref name="width"/> may set off from <paramref name="at"/> on the circle on
     /// <paramref name="heading"/>, as <see cref="Starts"/> takes a start: not from a cut arc, within <see cref="MostSkew"/> of
     /// its arc point's radial, its footprint out of the circle and the lane, not walked off across the road. For a start the
-    /// ring did not lay out itself (RoadStairRuns.CarryRoadOntoStairs: a ring put a radius behind a staircase's first stair).</summary>
+    /// ring did not lay out itself (RoadStairRuns.CarryRoadOntoStairs: a ring put a radius behind a staircase's first stair). The one owner of staircase starts (docs/OWNERS.md).</summary>
     public bool Allows(Vector2 at, float heading, float width)
     {
         if (Mathf.Abs(Vector2.Distance(at, Centre) - Radius) > 0.05f) return false;
@@ -227,9 +223,11 @@ public readonly struct RoadEndRing
         {
             StairPiece p = plan.Pieces[i];
             if (p.Kind == StairPieceKind.Support) continue;
-            float surface = p.Position.y + (p.Kind == StairPieceKind.Stair ? StairLayout.PieceRise / 2f : StairKit.FloorTopOf(p.Prefab));
+            float surface = StairLayout.CentreSurface(p);
             if (Mathf.Abs(surface - Height) > RoadStairRuns.JunctionHeight) continue;
-            if (top && p.Kind != StairPieceKind.Stair && Mathf.Abs(surface - Height) <= LevelWithRoad) continue;
+            // At a top, a floor a walker's step off the road's height (StairLayout.Walkable) is where the road comes onto it,
+            // level (a top landing the road meets from any side): not a crossing. Only its flight counts there.
+            if (top && p.Kind != StairPieceKind.Stair && StairLayout.Walkable(surface, Height)) continue;
             foreach (Vector3 s in StairLayout.WalkingSurface(p))
             {
                 var at = new Vector2(s.x, s.z);
@@ -381,10 +379,10 @@ public readonly struct RoadEndRing
             if (Vector2.Distance(new Vector2(p.Position.x, p.Position.z), end) > reach) break;
             if (stair)
             {
-                if (!top && Mathf.Abs(fp.height - height) <= LevelWithRoad) under.Add((fp.back, fp.heading, fp.across, fp.depth, height));
+                if (!top && StairLayout.Walkable(fp.height, height)) under.Add((fp.back, fp.heading, fp.across, fp.depth, height));
                 break;
             }
-            if (Mathf.Abs(fp.height - height) > LevelWithRoad) break;
+            if (!StairLayout.Walkable(fp.height, height)) break;
             under.Add((fp.back, fp.heading, fp.across, fp.depth, fp.height - PadUnderFloor));
         }
         // A top whose flight goes down straight off the circle: the road's end alone.

@@ -28,7 +28,7 @@ public sealed class ManualRoadCommandsTests : IDisposable
     public ManualRoadCommandsTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
-        RoadNetworkGenerator.MarkLocationsReady(); RoadNetworkGenerator.RoadWidth = 4;
+        RoadNetworkGenerator.MarkLocationsReady(); RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
         ManualRoadCommands.Register();
     }

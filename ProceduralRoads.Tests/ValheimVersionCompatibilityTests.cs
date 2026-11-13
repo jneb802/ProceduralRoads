@@ -20,22 +20,11 @@ public class ValheimVersionCompatibilityTests
     /// <summary>
     /// A road network exactly as the code before Valheim 1.0 wrote one:
     /// version 1, one grid cell at (0,0), two points. Written out by hand
-    /// rather than round-tripped, so a change to the writer cannot quietly
+    /// rather than round-tripped (Released144.Blob), so a change to the writer cannot quietly
     /// change what this test is comparing against.
     /// </summary>
-    private static byte[] NetworkAsSavedBefore1Point0()
-    {
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-        writer.Write(1);                     // format version
-        writer.Write(1);                     // cells
-        writer.Write(0); writer.Write(0);    // cell (0,0) -- the mod's own road grid
-        writer.Write(2);                     // points in the cell
-        writer.Write(0f); writer.Write(0f); writer.Write(4f); writer.Write(41.5f);
-        writer.Write(8f); writer.Write(0f); writer.Write(4f); writer.Write(42.5f);
-        writer.Flush();
-        return stream.ToArray();
-    }
+    private static byte[] NetworkAsSavedBefore1Point0() =>
+        Released144.Blob(0, 0, (0f, 0f, 4f, 41.5f), (8f, 0f, 4f, 42.5f));
 
     [Fact]
     public void ARoadNetworkSavedBeforeValheim1PointOStillLoads()

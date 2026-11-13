@@ -15,8 +15,6 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadRockClearing
 {
-    /// <summary>Set from the "Roads/RockClearing" setting.</summary>
-    internal static RockClearingMode Mode = RockClearingMode.Carve;
     private static float s_next;
     private static int s_cursor;
     /// <summary>
@@ -65,7 +63,7 @@ public static class RoadRockClearing
     public static void Tick()
     {
         RoadRockStats.MaybeLog();
-        if (!RoadRockPolicy.Clears(Mode) || !RoadNetworkGenerator.RoadsAvailable || ZoneSystem.instance == null || ZNetScene.instance == null) return;
+        if (!RoadNetworkGenerator.RoadsAvailable || ZoneSystem.instance == null || ZNetScene.instance == null) return;
         if (s_pass != null) { CarveSome(s_pass); return; }
         if (Time.unscaledTime < s_next) return;
         s_next = Time.unscaledTime + 0.5f;
@@ -95,8 +93,8 @@ public static class RoadRockClearing
             // collider, and its road terrain must be written, or the road is
             // judged on the ungraded ground. Looked at again when it is ready.
             if (s_retryAt.TryGetValue(candidate.GetInstanceID(), out float retry) && Time.unscaledTime < retry) { RoadRockStats.NotReady++; continue; }
-            if (candidate.HaveQueuedRebuild() || !ZNetScene.instance.IsAreaReady(candidate.transform.position) ||
-                !RoadTerrainModifier.TerrainSettled(candidate.transform.position)) { RoadRockStats.NotReady++; continue; }
+            if (!TerrainWritten(candidate, candidate.transform.position, zone, orRoadless: false) ||
+                !ZNetScene.instance.IsAreaReady(candidate.transform.position)) { RoadRockStats.NotReady++; continue; }
             map = candidate;
         }
         if (map == null) return;
@@ -108,8 +106,7 @@ public static class RoadRockClearing
         RoadRockStats.SyncTicks += RoadRockStats.Now - sync;
         s_carves.Clear();
         s_carveNext = 0;
-        var lines = RoadRockProbe.Run(map.transform.position, RoadRockPolicy.ZoneCornerReach, apply: true, sites: false, mist: RoadRockPolicy.PassClearsMistlandsRocks, cliffs: RoadRockPolicy.PassClearsMistlandsCliffs,
-            partial: true, carve: RoadRockPolicy.Carves(Mode), s_carves, out int cleared);
+        var lines = RoadRockProbe.RunPass(map.transform.position, RoadRockPolicy.ZoneCornerReach, s_carves, out int cleared);
         var pass = new Pass
         {
             Map = map, Zone = zone, Line = lines[0], Version = version, Cleared = cleared,
@@ -119,6 +116,15 @@ public static class RoadRockClearing
         if (s_carves.Count > 0) { s_pass = pass; return; }
         Finish(pass);
     }
+
+    /// <summary>Whether a zone's road terrain is written, the one owner of the test: its heightmap <paramref name="map"/> has
+    /// no rebuild queued, and the road's terrain at <paramref name="zonePos"/> is written
+    /// (<see cref="RoadTerrainModifier.TerrainSettled"/>) or, <paramref name="orRoadless"/>, <paramref name="zone"/> has no
+    /// road point for it to write. The pass asks it without (and waits for the zone's objects too); the carve's fragment
+    /// ground with it. The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).</summary>
+    internal static bool TerrainWritten(Heightmap map, Vector3 zonePos, Vector2s zone, bool orRoadless) =>
+        !map.HaveQueuedRebuild() &&
+        (RoadTerrainModifier.TerrainSettled(zonePos) || orRoadless && RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
 
     /// <summary>This frame's share of the pending carves, then the zone judged once the last is done. A zone unloaded
     /// meanwhile (its heightmap gone) drops what is left: its next heightmap is a new zone to the pass.</summary>
@@ -276,19 +282,16 @@ public static class RoadRockClearing
 
     /// <summary>
     /// Where StaticPhysics will move an object on its next check, if anywhere:
-    /// down to its fall height (StaticPhysics.GetFallHeight: the solid height
-    /// round it with m_checkSolids, else the ground) when it is above it, or up
-    /// to the ground when it is below it (PushUp). False when it stays put.
+    /// down to its fall height (the game's own StaticPhysics.GetFallHeight: the solid
+    /// height round it with m_checkSolids, else the ground) when it is above it, or up
+    /// to the ground when it is below it (PushUp, copied: the game's moves the object).
+    /// False when it stays put.
     /// </summary>
     internal static bool FallTarget(StaticPhysics physics, out float y)
     {
         Vector3 p = physics.transform.position;
         y = p.y;
-        float floor;
-        if (physics.m_checkSolids)
-            floor = ZoneSystem.instance.GetSolidHeight(p, physics.m_fallCheckRadius, out float solid, physics.transform) ? solid : p.y;
-        else
-            floor = ZoneSystem.instance.GetGroundHeight(p, out float ground) ? ground : p.y;
+        float floor = physics.GetFallHeight();
         if (physics.m_fall && p.y > floor + 0.05f) { y = floor; return true; }
         if (physics.m_pushUp && ZoneSystem.instance.GetGroundHeight(p, out float under) && p.y < under - 0.05f) { y = under; return true; }
         return false;
@@ -304,7 +307,7 @@ public static class RoadRockClearing
         var zone = ZoneSystem.GetZone(point);
         var map = Heightmap.FindHeightmap(point);
         int version = RoadSpatialGrid.RoadNetworkVersion;
-        lines.Add($"zone {zone}: mode {Mode}, roads available {RoadNetworkGenerator.RoadsAvailable}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
+        lines.Add($"zone {zone}: roads available {RoadNetworkGenerator.RoadsAvailable}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
         if (map == null) { lines.Add("no heightmap here"); return lines; }
         bool listed = Heightmap.GetAllHeightmaps().Contains(map);
         bool done = s_done.TryGetValue(map.GetInstanceID(), out int doneFor);

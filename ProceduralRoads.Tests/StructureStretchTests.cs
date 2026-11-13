@@ -39,23 +39,51 @@ public sealed class StructureStretchTests : IDisposable
         public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
     }
 
-    /// <summary>A landing two structures' ends share (StructureEnds.Share), 12 m from foot to foot, the feet 0.4 m apart in
-    /// height: both levelled stretches cover all of it, and it is levelled at their common height, as the landing was laid,
-    /// not at the end levelled last with a step at the other.</summary>
-    [Fact]
-    public void ASharedLandingIsLevelledAtItsEndsCommonHeight()
+    /// <summary>A landing two structures' ends share (StructureEnds.Share), 12 m from foot to foot, the feet 0.3 m or 0.4 m
+    /// apart in height: both levelled stretches cover all of it, and it is levelled at their common height, as the landing was
+    /// laid, each end within a step of it (0.15 m, 0.2 m), not at the end levelled last with a step at the other. Feet 0.5 m
+    /// apart share no landing (each 0.25 m off the common height, over a step): refused, not levelled with a step in it.</summary>
+    [Theory]
+    [InlineData(40.9f, 40.75f)]
+    [InlineData(41f, 40.8f)]
+    [InlineData(41.1f, float.NaN)]
+    public void ASharedLandingIsLevelledAtItsEndsCommonHeight(float other, float landing)
     {
         var world = new Level();
         _scope.WithWorld(world);
         Vector2 a = new(0f, 0f), b = new(12f, 0f);
-        RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (a, 40.6f), (b, 41f) };
+        RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (a, 40.6f), (b, other) };
         try
         {
-            var plan = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { a, b }, 4f, world, 40.6f, 41f);
-            Assert.NotNull(plan);
-            Assert.All(plan!.Heights, h => Assert.Equal(40.8f, h, 3));
+            var plan = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { a, b }, 4f, world, 40.6f, other);
+            if (float.IsNaN(landing))
+            {
+                Assert.Null(plan);
+                Assert.Equal(RoadSpatialGrid.LevelledOverHeldEnd, RoadSpatialGrid.LastRefusal);
+                return;
+            }
+            Assert.True(plan != null, RoadSpatialGrid.LastRefusal);
+            Assert.All(plan!.Heights, h => Assert.Equal(landing, h, 3));
+            Assert.True(StairLayout.Walkable(plan.Heights[0], 40.6f) && StairLayout.Walkable(plan.Heights[plan.Heights.Count - 1], other));
         }
         finally { RoadSpatialGrid.LevelledEnds = null; }
+    }
+
+    /// <summary>The road a shared landing is levelled at (its ends' common height) runs on under a viaduct's joining piece at a
+    /// flush end: within a step of the deck (StairLayout.Walkable), so it is the deck's own joint road, not road under the deck.
+    /// The landing between ends 0.4 m apart stands 0.2 m (0.2000008 in float) under the deck; 0.45 m apart, 0.225 m: not a step.</summary>
+    [Theory]
+    [InlineData(40.6f, false)]
+    [InlineData(40.55f, true)]
+    public void TheJointRoadOfASharedLandingAtAFlushDeckEndIsNotUnderTheDeck(float other, bool under)
+    {
+        var world = new Level();
+        _scope.WithWorld(world);
+        Vector2 b = new(12f, 0f);
+        var near = new StructureEnds.End(b, new Vector2(1f, 0f), 41f, 0);
+        var far = new StructureEnds.End(b + new Vector2(20f, 0f), new Vector2(-1f, 0f), 41f, 0);
+        float landing = 0.5f * (other + 41f);
+        Assert.Equal(under, StructureEnds.UnderTheDeck(b + near.Up * 1f, landing, 4f, near, far, 41f, 3f));
     }
 
     private static void SetPathfinder(RoadPathfinder? pathfinder) =>
@@ -286,14 +314,27 @@ public sealed class StructureStretchTests : IDisposable
         Assert.True(stubbed == null, "a tilted stub of road was planned between the viaduct's end and the staircase 2 m under it");
         Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
 
+        // 0.45 m apart, each end over a step off their common height: no landing either.
+        RoadSpatialGrid.LastRefusal = null;
+        var (_, apart) = ViaductThenStairs(world, world.Top - 0.45f);
+        Assert.True(apart == null, "a landing was planned between the viaduct's end and the staircase 0.45 m under it");
+        Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
+
+        // 0.3 m apart: one level landing at their common height, each within a step of it.
         RoadSpatialGrid.LastRefusal = null;
         var (c, landing) = ViaductThenStairs(world, world.Top - 0.3f);
         Assert.True(landing != null, RoadSpatialGrid.LastRefusal);
         var (_, far) = DvergrViaduct.Ends(c, world);
+        bool met = false;
         foreach (var r in landing!)
             for (int i = 0; i < r.Points.Count; i++)
                 if (Vector2.Distance(r.Points[i], far.Meet) <= 5f)
-                    Assert.InRange(r.Heights[i], world.Top - 0.31f, world.Top + 0.01f);
+                {
+                    met = true;
+                    Assert.Equal(world.Top - 0.15f, r.Heights[i], 2);
+                    Assert.True(StairLayout.Walkable(r.Heights[i], world.Top) && StairLayout.Walkable(r.Heights[i], world.Top - 0.3f));
+                }
+        Assert.True(met, "no road between the viaduct's end and the staircase");
     }
 
     /// <summary>A road across a Mistlands river on a ford's spanned footbridge or a bridge, then a staircase whose foot
@@ -333,9 +374,14 @@ public sealed class StructureStretchTests : IDisposable
             foreach (var r in plans)
                 for (int i = 0; i < r.Points.Count; i++)
                     if (Vector2.Distance(r.Points[i], foot) <= 0.75f)
-                        Assert.True(Mathf.Abs(r.Heights[i] - footHeight) <= StructureEnds.StepTolerance,
+                        Assert.True(StairLayout.Walkable(r.Heights[i], footHeight),
                             $"the staircase's foot at {foot} stands at {footHeight:F2}, the road under it at {r.Heights[i]:F2}");
         Assert.True(plans == null, "a stub of road between the crossing's end and the staircase 4.4 m over it was planned");
+        Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
+
+        RoadSpatialGrid.LastRefusal = null;
+        var (_, _, _, apart) = CrossingThenStairs(ford, 6.5f, 0.45f);
+        Assert.True(apart == null, "a landing was planned between the crossing's end and the staircase 0.45 m over it");
         Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
 
         RoadSpatialGrid.LastRefusal = null;
@@ -344,12 +390,14 @@ public sealed class StructureStretchTests : IDisposable
         foreach (var r in landing!)
             for (int i = 0; i < r.Points.Count; i++)
                 if (Vector2.Distance(r.Points[i], far.Meet) <= 6.5f && Vector2.Dot(r.Points[i] - far.Meet, -far.Up) >= 0f)
-                    Assert.InRange(r.Heights[i], far.MeetHeight - 0.01f, far.MeetHeight + 0.31f);
+                    Assert.True(StairLayout.Walkable(r.Heights[i], far.MeetHeight) && StairLayout.Walkable(r.Heights[i], far.MeetHeight + 0.3f),
+                        $"the landing at {r.Points[i]} stands {r.Heights[i]:F2}, the end {far.MeetHeight:F2}, the foot {far.MeetHeight + 0.3f:F2}");
     }
 
     /// <summary>A piece of road wholly within a structure's levelled stretch (RoadSpatialGrid.LevelledEnds) whose other end
-    /// is held at another height (a staircase's foot 4 m up) is refused, never levelled over that end; within a step it is
-    /// levelled.</summary>
+    /// is held at another height (a staircase's foot 4 m up, or 0.45 m) is refused, never levelled over that end; close
+    /// enough to share a landing (0.3 m, StructureEnds.SharesLanding: each within a step of their common height) it is
+    /// levelled at the common height, and held there once the grade is limited, not put back at the structure's end.</summary>
     [Fact]
     public void ALevelledEndNeverTakesAHeldEndAtAnotherHeight()
     {
@@ -361,9 +409,15 @@ public sealed class StructureStretchTests : IDisposable
         {
             Assert.Null(RoadSpatialGrid.PlanRoadPath(new List<Vector2>(piece), 4f, world, world.Top, world.Top + 4f));
             Assert.Equal(RoadSpatialGrid.LevelledOverHeldEnd, RoadSpatialGrid.LastRefusal);
+            Assert.Null(RoadSpatialGrid.PlanRoadPath(new List<Vector2>(piece), 4f, world, world.Top, world.Top + 0.45f));
+            Assert.Equal(RoadSpatialGrid.LevelledOverHeldEnd, RoadSpatialGrid.LastRefusal);
             var level = RoadSpatialGrid.PlanRoadPath(new List<Vector2>(piece), 4f, world, world.Top, world.Top + 0.3f);
             Assert.True(level != null, RoadSpatialGrid.LastRefusal);
-            Assert.All(level!.Heights, h => Assert.Equal(world.Top, h, 2));
+            Assert.All(level!.Heights, h => Assert.Equal(world.Top + 0.15f, h, 2));
+            // Within a step already (0.15 m): levelled at the structure's end, as before, not moved to the common height.
+            var within = RoadSpatialGrid.PlanRoadPath(new List<Vector2>(piece), 4f, world, world.Top, world.Top + 0.15f);
+            Assert.True(within != null, RoadSpatialGrid.LastRefusal);
+            Assert.All(within!.Heights, h => Assert.Equal(world.Top, h, 2));
         }
         finally { RoadSpatialGrid.LevelledEnds = null; }
     }
@@ -392,12 +446,56 @@ public sealed class StructureStretchTests : IDisposable
     /// The same ford's end as laid (RoadStairRuns.Lay): the road search bought its stair step a few metres past the end,
     /// where the ground has already climbed metres over the end's foot. The two ends meet: the staircase is carried on
     /// down toward the end to its height, on its line, and the road between is one level landing at that height, the
-    /// staircase's first step on it.
+    /// staircase's first step on it. Carried by whole stairs a foot is left up to half a rise off the end (on this world, the
+    /// hill's foot 1 m on, 0.25 m under it). Not within a walker's step, and not laid again from the end's height (that layout
+    /// lies on its road), it stands on a stair sunk into the road under it (StairLayout.FootToRoad), one stair less carried
+    /// down so the foot stands 0.75 m over the road: the sunk stair's slope comes up out of the road, and the road meets the
+    /// staircase at the end's height.
     /// </summary>
     [Fact]
     public void AStaircaseAShortStretchFromACrossingsEndIsCarriedDownToIt()
     {
-        var world = new BankThenHill();
+        var (far, span, plans) = CarriedToACrossingsEnd(1f);
+        AssertMetOnASunkStair(far, span, 0.75f);
+        AssertTheRoadMeetsTheFoot(span, plans);
+    }
+
+    /// <summary>A foot carried down to a crossing's end by whole stairs is left up to half a rise off it (the hill's foot
+    /// <paramref name="rise"/> metres on: +0.25, -0.45, +0.45, +0.35 m over the end). Never a lip a player can't walk up
+    /// (0.45 m): within a walker's step of the end it meets the road there; else it is laid again from the end's height
+    /// (+0.45, +0.35: <paramref name="over"/> 0); else it stands on a stair sunk into the road under it, the foot
+    /// <paramref name="over"/> the road, under a rise (+0.25 where no layout from the end's height fits; -0.45 one stair less
+    /// carried down, so 0.55 over).</summary>
+    [Theory]
+    [InlineData(0f, 0.25f)]
+    [InlineData(1.4f, 0.55f)]
+    [InlineData(1.6f, 0f)]
+    [InlineData(1.8f, 0f)]
+    public void AFootCarriedToACrossingsEndIsMetWithinAStep(float rise, float over)
+    {
+        var (far, span, plans) = CarriedToACrossingsEnd(rise);
+        if (over > 0f) AssertMetOnASunkStair(far, span, over);
+        else Assert.Equal(far.MeetHeight, span.FromHeight, 3);
+        AssertTheRoadMeetsTheFoot(span, plans);
+    }
+
+    /// <summary><paramref name="span"/>'s foot stands <paramref name="over"/> over <paramref name="far"/>'s height on a stair sunk
+    /// into the road under it, which meets it at the end's height.</summary>
+    private static void AssertMetOnASunkStair(StructureEnds.End far, RoadStairSpan span, float over)
+    {
+        Assert.True(RoadStairRuns.FeetSunkAtEnds > 0, "the foot was not met on a stair sunk into the road");
+        Assert.True(span.Plan.SunkPieces > 0 && span.Plan.Foot is Vector3, "no stair sunk under the foot");
+        Assert.Equal(far.MeetHeight + over, span.Plan.Foot!.Value.y, 2);
+        Assert.True(StairLayout.FootMeets(span.Plan, span.Plan.Foot.Value.y, far.MeetHeight));
+        Assert.Equal(far.MeetHeight, span.FromHeight, 3);
+    }
+
+    /// <summary>A ford's end, then a staircase a short stretch on whose foot stands over the end: carried down to it
+    /// (RoadStairRuns.Lay) on <see cref="BankThenHill"/> with its hill's foot <paramref name="rise"/> metres on. The end, the
+    /// staircase and the road planned with it.</summary>
+    private (StructureEnds.End far, RoadStairSpan span, List<RoadSpatialGrid.PlannedPath> plans) CarriedToACrossingsEnd(float rise)
+    {
+        var world = new BankThenHill { Rise = rise };
         _scope.WithWorld(world);
         RoadCrossing c = RoadCrossing.Between(new Vector2(-31f, 0f), new Vector2(31f, 0f), 26f, new Vector2(-6f, 0f), 20f, CrossingKind.Ford, FordStyle.Span);
         var (_, far) = BridgeStructures.Ends(c, world);
@@ -414,19 +512,22 @@ public sealed class StructureStretchTests : IDisposable
         var stairs = RoadStairRuns.Lay(path, new List<(Vector2 from, Vector2 to)> { (foot, top) }, crossings, world);
         Assert.True(stairs != null && stairs.Count == 1, "the staircase was not laid");
         RoadStairSpan span = stairs![0];
-        Assert.True(Mathf.Abs(span.FromHeight - far.MeetHeight) <= StructureEnds.StepTolerance,
-            $"the staircase's foot stands at {span.FromHeight:F2}, the end's at {far.MeetHeight:F2}");
         Assert.True(RoadStairRuns.FeetLoweredToEnds > 0, "the foot was not carried down to the end");
-
         var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, crossings, 4f, null, null, stairs);
         Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        return (far, span, plans!);
+    }
+
+    /// <summary>The road comes to <paramref name="span"/>'s foot within a walker's step of where the road meets it.</summary>
+    private static void AssertTheRoadMeetsTheFoot(RoadStairSpan span, List<RoadSpatialGrid.PlannedPath> plans)
+    {
         bool met = false;
-        foreach (var r in plans!)
+        foreach (var r in plans)
             for (int i = 0; i < r.Points.Count; i++)
                 if (Vector2.Distance(r.Points[i], span.FromPoint) <= 0.75f)
                 {
                     met = true;
-                    Assert.True(Mathf.Abs(r.Heights[i] - span.FromHeight) <= StructureEnds.StepTolerance,
+                    Assert.True(StairLayout.Walkable(r.Heights[i], span.FromHeight),
                         $"the staircase's foot at {span.FromPoint} stands at {span.FromHeight:F2}, the road under it at {r.Heights[i]:F2}");
                 }
         Assert.True(met, $"no road comes to the staircase's foot at {span.FromPoint}");
@@ -488,7 +589,7 @@ public sealed class StructureStretchTests : IDisposable
         var stairs = new List<RoadStairSpan> { new() { FromIndex = 1, ToIndex = 2, FromPoint = path[1], ToPoint = stairTop, FromHeight = world.Top, ToHeight = world.Top } };
         var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing>(), 4f, null, null, stairs);
         Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
-        bool Near(Vector2 at) => plans!.Any(r => r.Points.Select((p, i) => (p, i)).Any(x => Vector2.Distance(x.p, at) <= 0.75f && Mathf.Abs(r.Heights[x.i] - world.Top) <= StructureEnds.StepTolerance));
+        bool Near(Vector2 at) => plans!.Any(r => r.Points.Select((p, i) => (p, i)).Any(x => Vector2.Distance(x.p, at) <= 0.75f && StairLayout.Walkable(r.Heights[x.i], world.Top)));
         Assert.True(Near(stairTop), $"no road at the staircase's end {stairTop}: its top stops short of the road it joins");
         Assert.True(Near(path[2]), "no road from the staircase's end to the junction");
     }
@@ -536,7 +637,7 @@ public sealed class StructureStretchTests : IDisposable
         {
             var at = roads.SelectMany(r => r.Points.Select((p, i) => (p, h: r.Heights[i]))).OrderBy(x => Vector2.Distance(x.p, end.Meet)).First();
             Assert.True(Vector2.Distance(at.p, end.Meet) <= 0.75f, $"{which} end: no road at its foot {end.Meet} (nearest {at.p})");
-            Assert.True(StructureEnds.Reachable(at.h, end), $"{which} end: the road at its foot stands {at.h:F2}, the foot {end.MeetHeight:F2}");
+            Assert.True(StairLayout.Walkable(at.h, end.MeetHeight), $"{which} end: the road at its foot stands {at.h:F2}, the foot {end.MeetHeight:F2}");
         }
         AssertNoStairsLeadingNowhere(c, world, roads, "wooden bridge");
         Assert.Equal(0, RoadNetworkGenerator.BridgeEndsUnmet);

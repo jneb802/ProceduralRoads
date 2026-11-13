@@ -145,17 +145,16 @@ public sealed class ApproachGroundFile
         return (plan, goal, RoadStairRuns.Turn(Request.RoadEnd, target, Ground));
     }
 
-    /// <summary>Where the approach aims, best first (<see cref="PlacedSiteShape.Aims"/>).</summary>
-    public List<(string name, Vector2 at)> Aims()
+    /// <summary>The place's shape on this ground, as the approach reads it.</summary>
+    public PlacedSiteShape Shape()
     {
         LevelOp flat = RoadStairRuns.FlatOf(Ops) ?? throw new InvalidOperationException("no flat");
-        return PlacedSiteShape.Of(Request.Centre, Yaw, flat, RockRadius, Rocks, Ground, KeepSmallRocks, Root).Aims(Ground, Request.RoadEnd, 1f, RoadStairRuns.AimTries);
+        return PlacedSiteShape.Of(Request.Centre, Yaw, flat, RockRadius, Rocks, Ground, KeepSmallRocks, Root);
     }
 
+    /// <summary>Where the approach aims, best first (<see cref="PlacedSiteShape.Aims"/>).</summary>
+    public List<(string name, Vector2 at)> Aims() => Shape().Aims(Ground, Request.RoadEnd, 1f, RoadStairRuns.AimTries);
+
     /// <summary>The landings the approach aims at (<see cref="PlacedSiteShape.Landings"/>), as the game picks them.</summary>
-    public List<(Vector2 at, float height)> Landings()
-    {
-        LevelOp flat = RoadStairRuns.FlatOf(Ops) ?? throw new InvalidOperationException("no flat");
-        return PlacedSiteShape.Of(Request.Centre, Yaw, flat, RockRadius, Rocks, Ground, KeepSmallRocks, Root).Landings(Ground, 1f);
-    }
+    public List<(Vector2 at, float height)> Landings() => Shape().Landings(Ground, 1f);
 }

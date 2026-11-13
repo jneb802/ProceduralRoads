@@ -78,29 +78,6 @@ public sealed class RoadStatisticsTests : IDisposable
         AssertStatistics(0,0); var saved=Bytes(); RoadSpatialGrid.Clear();
         Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved)); AssertStatistics(0,0);
     }
-    [Fact]
-    public void ZoneImportsCountOnlyInsertedRecordsAndNoOpDoesNotInvalidateKnownLength()
-    {
-        Commit(); int records=RoadSpatialGrid.StoredPointRecords;
-        byte[] same=Zone(new Vector2(31,0));
-        RoadSpatialGrid.DeserializeZoneRoadPoints(new Vector2s(0,0),same);
-        AssertStatistics(records,2);
-        byte[] added=Zone(new Vector2(2000,2000));
-        RoadSpatialGrid.DeserializeZoneRoadPoints(new Vector2s(31,31),added);
-        AssertStatistics(records+1,null);
-        RoadSpatialGrid.DeserializeZoneRoadPoints(new Vector2s(31,31),added); AssertStatistics(records+1,null);
-        var saved=Bytes(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved)); AssertStatistics(records+1,null);
-    }
-    [Fact]
-    public void MalformedZoneImportCannotPublishGeometryOrInvalidateLength()
-    {
-        Commit(); byte[] before=Bytes(); var valid=Zone(new Vector2(2000,2000));
-        foreach(var malformed in new[]{valid.Take(valid.Length-1).ToArray(),valid.Concat(new byte[]{0}).ToArray(),Zone(new Vector2(float.NaN,0))})
-        {
-            RoadSpatialGrid.DeserializeZoneRoadPoints(new Vector2s(31,31),malformed);
-            Assert.Equal(before,Bytes()); Assert.True(RoadSpatialGrid.Statistics.LengthKnown);
-        }
-    }
     [Theory]
     [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)] [InlineData(4)]
     [InlineData(5)] [InlineData(6)] [InlineData(7)] [InlineData(8)] [InlineData(9)] [InlineData(10)] [InlineData(11)] [InlineData(12)]
@@ -343,12 +320,6 @@ public sealed class RoadStatisticsTests : IDisposable
                 if(version>=3) writer.Write(badAddition?2:1);
             }
         if(version>=3) { writer.Write(duplicateParents?2:1); writer.Write(77); if(duplicateParents) writer.Write(77); }
-    }
-    private static byte[] Zone(Vector2 position)
-    {
-        using var stream=new MemoryStream(); using var writer=new BinaryWriter(stream);
-        writer.Write(1); writer.Write(position.x); writer.Write(position.y); writer.Write(4f); writer.Write(40f);
-        return stream.ToArray();
     }
     private static byte[] Envelope(int defect)
     {

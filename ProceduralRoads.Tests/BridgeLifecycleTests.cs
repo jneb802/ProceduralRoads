@@ -22,7 +22,7 @@ public sealed class BridgeLifecycleTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
-        RoadGrade.Configured = .35f; RoadNetworkGenerator.RoadWidth = 4;
+        RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
         for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
         ManualRoads.Commit(ManualRoads.Prepare(new[] { new Vector2(-160, 0), new Vector2(160, 0) }, false, new[] { island }));
@@ -209,6 +209,34 @@ public sealed class BridgeLifecycleTests : IDisposable
         Assert.NotNull(BuiltBridges.Of(site));
     }
 
+    /// <summary>A second addition to a zone still owed pieces by the first brings no old plan again: the first queued it, and a
+    /// piece a player destroyed since must not come back.</summary>
+    [Fact] public void ASecondAppendToAZoneStillOwedDoesNotAddItsOldPlanAgain()
+    {
+        List<Vector2s> zones = GeneratedPlanZones();
+        Vector3 at = StructurePlans.PlanFor(zones[0])![0].Position;
+        var first = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = at };
+        var second = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = new Vector3(at.x, at.y + 1f, at.z) };
+        StructureAppendQueue.Enqueue(StructureAppendQueue.Prepare(new[] { first }));
+        Assert.NotNull(StructureAppendQueue.ForZone(zones[0]));
+        List<StructurePiece> again = StructureAppendQueue.Prepare(new[] { second })[ZoneSystem.GetZone(at)];
+        Assert.Same(second, Assert.Single(again));
+    }
+
+    /// <summary>A join aims at the network as generation's hints do: never at a point on a crossing, its banks included (a join aimed at a bridge's
+    /// waypoint in mid-river built a second bridge out to it).</summary>
+    [Fact] public void AJoinNeverAimsAtAPointOnACrossing()
+    {
+        RoadCrossing bridge = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), c => c.Kind == CrossingKind.Bridge);
+        Vector2 bank = bridge.ToBank;
+        float reach = RoadNetworkGenerator.RoadWidth * 0.5f;
+        Assert.Contains(RoadSpatialGrid.RoadTargets(_ => true), p => Vector2.Distance(p, bank) <= reach);
+        List<Vector2> targets = RoadNetworkGenerator.JoinTargets(_ => true);
+        Assert.NotEmpty(targets);
+        Assert.DoesNotContain(targets, p => Vector2.Distance(p, bank) <= reach);
+        Assert.Contains(targets, p => p.x < bridge.FromBank.x - 8f || p.x > bridge.ToBank.x + 8f || p.y < Mathf.Min(bridge.FromBank.y, bridge.ToBank.y) - 8f);
+    }
+
     /// <summary>A site with pieces standing in a zone whose record was lost is started: reaching another of its zones lays it
     /// zone by zone as before, saving no fresh solve that could disagree with what stands.</summary>
     [Fact] public void ASiteWithPiecesStandingAndNoRecordIsNotSavedAfresh()
@@ -249,9 +277,9 @@ public sealed class BridgeLifecycleTests : IDisposable
         Assert.Equal(planned, Assert.IsType<BuiltBridge>(BuiltBridges.Of(site)).Pieces.Select(StructureAppendQueue.Key).OrderBy(k => k));
     }
 
-    /// <summary>A site is saved with the layout that solved it, which a save and reload keep; a record 1 site (written
-    /// before sites carried it) reads as layout 0.</summary>
-    [Fact] public void ASavedSiteKeepsItsLayoutAndRecordOneStillReads()
+    /// <summary>A site is saved with the layout that solved it, which a save and reload keep. A record of another
+    /// version is refused, for bridges and for staircases.</summary>
+    [Fact] public void ASavedSiteKeepsItsLayoutAndAnotherVersionIsRefused()
     {
         BuiltBridges.Reset();
         List<Vector2s> zones = GeneratedPlanZones();
@@ -263,15 +291,13 @@ public sealed class BridgeLifecycleTests : IDisposable
 
         byte[] v2 = BuiltBridges.Serialize();
         Assert.Equal(2, BitConverter.ToInt32(v2, 0));
-        // Format 1: format 2 without the site's layout (after its banks and kit).
-        var v1 = new List<byte>(v2);
-        v1.RemoveRange(4 + 4 + 16 + 4, 4);
-        v1.RemoveRange(0, 4);
-        v1.InsertRange(0, BitConverter.GetBytes(1));
-        BuiltBridge one = Assert.Single(BuiltBridges.Parse(v1.ToArray()));
-        Assert.Equal(0, one.Layout);
-        Assert.Equal(saved.Pieces.Count, one.Pieces.Count);
-        Assert.Equal(saved.Ground, one.Ground);
+        foreach (int other in new[] { 0, 1, 3 })
+        {
+            byte[] changed = (byte[])v2.Clone();
+            BitConverter.GetBytes(other).CopyTo(changed, 0);
+            Assert.Throws<System.IO.InvalidDataException>(() => BuiltBridges.Parse(changed));
+            Assert.Throws<System.IO.InvalidDataException>(() => BuiltStairs.Parse(changed));
+        }
     }
 
     /// <summary>road_bridges respawn older solves again only the sites an older layout built, replacing their saved pieces

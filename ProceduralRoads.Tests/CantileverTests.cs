@@ -4,6 +4,7 @@ using System.Linq;
 using UnityEngine;
 using Xunit;
 using Xunit.Abstractions;
+using Valheim.Testing;
 using Valheim.Testing.Doubles;
 
 namespace ProceduralRoads.Tests;
@@ -424,12 +425,12 @@ public class CantileverTests
         StairPlan banked = StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Corner, sunkFoot: true);
         Assert.True(banked.Reached, banked.Reason);
         int before = banked.Cuts.Count;
-        Assert.True(StairLayout.CutFootApron(banked, Corner, 2f) > 0, "no apron against the bank");
+        Assert.True(StairLayout.CutFootApron(banked, Corner, 2f, RoadGrade.Configured) > 0, "no apron against the bank");
         Vector3 foot = banked.Foot!.Value;
         Assert.All(banked.Cuts.Skip(before), c => Assert.Equal(foot.y - StairLayout.CutBelowSurface, c.y, 3));
         Assert.All(banked.Cuts.Skip(before), c => Assert.True(Vector2.Distance(new Vector2(c.x, c.z), new Vector2(foot.x, foot.z)) <= StairLayout.ApronDepth + 2.5f));
         StairPlan flat = StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Flat, sunkFoot: true);
-        Assert.Equal(0, StairLayout.CutFootApron(flat, Flat, 2f));
+        Assert.Equal(0, StairLayout.CutFootApron(flat, Flat, 2f, RoadGrade.Configured));
     }
 
     /// <summary>No switchback in a staircase's first five stairs from its foot (Hildir_cave 1664,768): up a narrow gully, the first
@@ -701,5 +702,131 @@ public class CantileverTests
         Assert.Equal(2, walked.Count);
         Assert.Equal(low!.Value.y, walked[0], 2);
         Assert.Equal(low.Value.y + StairLayout.PieceRise, walked[1], 2);
+    }
+    /// <summary>A foot lowers to the nearest whole stair, as a foot carried to a crossing's end does (StairLayout.FootToRoad): over
+    /// its road by less than half a rise it stays (the road's landing is filled up to it), and from half a rise up one stair
+    /// drops. The mound's foot stands 2.3 m up, the plain road 5 m back climbing at the cap.</summary>
+    [Theory]
+    [InlineData(0.40f, 0)]   // over 0.3: stays
+    [InlineData(0.35f, 1)]   // over 0.55: one stair
+    [InlineData(0.20f, 1)]   // over 1.3: one stair, not two
+    [InlineData(0.10f, 2)]   // over 1.8: two
+    public void AFootLowersToTheNearestWholeStair(float cap, int stairs)
+    {
+        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
+        Assert.True(plan.Reached, plan.Reason);
+        Vector3? foot = StairLayout.LowerFoot(plan, Mound, 2f, 0f, 5f, cap);
+        Assert.Equal(stairs, plan.FootLowered);
+        Assert.Equal(stairs > 0, foot.HasValue);
+    }
+
+    /// <summary>A foot carried to a road held at a height (a crossing's end, StairLayout.FootToRoad) by whole stairs: left
+    /// within a walker's step it meets the road there (1.15 m over: one stair, 0.15 over). Left 0.45 m over it (a step a player
+    /// can't walk up), one stair more is sunk into the road under the foot, uncut, its top at the foot, so the walk meets the
+    /// road on its slope; left 0.3 m under it (1.7 m over: two stairs would bury the foot), one stair is carried, a stair sunk under it
+    /// (the one the foot was laid with goes with the stairs added), the foot 0.7 m over the road. Never further over than under a rise.</summary>
+    [Theory]
+    [InlineData(1.15f, 1, false, false)]
+    [InlineData(1.45f, 1, true, true)]
+    [InlineData(1.7f, 1, true, true)]
+    public void AFootOverARoadHeldAtAHeightStandsOnAStairSunkIntoIt(float over, int lowered, bool sunk, bool laid)
+    {
+        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
+        Assert.True(plan.Reached && plan.SunkPieces > 0 && plan.Foot.HasValue, plan.Reason);
+        float road = plan.Foot!.Value.y - over;
+        var met = StairLayout.FootToRoad(plan, Mound, 2f, road);
+        Assert.True(met.HasValue, "the foot does not meet the road");
+        var (foot, meets, onSunk, laidHere) = met!.Value;
+        Assert.Equal(lowered, plan.FootLowered);
+        Assert.Equal((sunk, laid), (onSunk, laidHere));
+        Assert.True(StairLayout.FootMeets(plan, foot.y, road));
+        Assert.True(foot.y - road < StairLayout.PieceRise);
+        if (!sunk)
+        {
+            Assert.True(StairLayout.Walkable(foot.y, road));
+            Assert.Equal(foot.y, meets, 3);
+            return;
+        }
+        Assert.Equal(road, meets, 3);
+        Assert.False(StairLayout.Walkable(foot.y, road));
+        // The sunk stair: first in the plan's pieces, marked sunk, its base a rise under the foot, a run out from it.
+        Assert.True(plan.SunkPieces > 0);
+        for (int i = 0; i < plan.SunkPieces; i++)
+        {
+            Assert.True(plan.Pieces[i].Sunk && plan.Pieces[i].Kind == StairPieceKind.Stair);
+            Assert.Equal(foot.y - StairLayout.PieceRise, plan.Pieces[i].Position.y, 3);
+        }
+        Assert.DoesNotContain(plan.Pieces.Skip(plan.SunkPieces), p => p.Sunk);
+    }
+
+    /// <summary>A staircase's own sunk step (Emit's, laid along its first heading whichever way its road comes) is not a
+    /// meeting with a road 0.5 m under its foot: nothing checked it lies over that road. Only the stair FootToRoad sank for
+    /// that road is (a foot turned off its road would meet it side on, over a lip a player can't walk up).</summary>
+    [Fact]
+    public void AStaircasesOwnSunkStepAloneDoesNotMeetARoadUnderItsFoot()
+    {
+        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
+        Assert.True(plan.Reached && plan.SunkPieces > 0 && plan.Foot.HasValue, plan.Reason);
+        float foot = plan.Foot!.Value.y;
+        Assert.Null(plan.SunkStairMeets);
+        Assert.False(StairLayout.FootMeets(plan, foot, foot - 0.5f));
+        Assert.True(StairLayout.FootMeets(plan, foot, foot - 0.15f));
+    }
+
+    /// <summary>A foot 1.12 m over its road's ground 5 m back (-5353.5,2896.1). The road ends there on its level landing
+    /// (6 m at 5 %, RoadPitches.ClimbToFoot), climbing 0.25 m over those 5 m, not 1.75 m at the cap: one stair more down
+    /// from the foot toward the road. Read climbing at the cap, the foot was left as it was and its road's landing stood on
+    /// 1.2 m of fill. On plain roads (no landing) the cap line still says the road climbs to it.</summary>
+    private static float Shoulder(float x, float z) => z < -5f ? 0f : z < 0f ? 0.224f * (z + 5f) : 1.12f + 0.5f * z;
+
+    [Fact]
+    public void AFootOverItsRoadsLandingIsLowered()
+    {
+        StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Shoulder, arriving: 0f, sunkFoot: true);
+        StairPlan plain = Lay();
+        Assert.True(plain.Reached, plain.Reason);
+        Assert.Equal(1.12f, plain.Foot!.Value.y, 2);
+        Assert.Null(StairLayout.LowerFoot(plain, Shoulder, 2f, 0f, 5f, 0.35f));
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        StairPlan plan = Lay();
+        Vector3? foot = StairLayout.LowerFoot(plan, Shoulder, 2f, 0f, 5f, 0.35f);
+        Assert.NotNull(foot);
+        Assert.Equal(1, plan.FootLowered);
+        Assert.Equal(0.12f, foot!.Value.y, 2);
+        Assert.Equal(-2f, foot.Value.z, 2);
+    }
+
+    /// <summary>A foot whose road's ground rises 0.15 m per metre behind it: within what a road climbs at the cap, but its
+    /// road ends there on its level landing (RoadPitches.ClimbToFoot), so the ground 4 m back stands 0.4 m over the landing
+    /// and more than a step over the foot: a bank, and an apron is cut behind the foot. On plain roads (no landing) the cap
+    /// line climbs over it and none is cut.</summary>
+    [Fact]
+    public void AFootWhoseRoadLandsBelowItsGroundGetsAnApron()
+    {
+        float Rising(float x, float z) => 40f + Mathf.Max(0f, -x) * 0.5f + Mathf.Max(0f, x) * 0.15f;
+        StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Rising, sunkFoot: true);
+        StairPlan plain = Lay();
+        Assert.True(plain.Reached, plain.Reason);
+        Assert.Equal(0, StairLayout.CutFootApron(plain, Rising, 2f, RoadGrade.Configured));
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        StairPlan banked = Lay();
+        Assert.True(StairLayout.CutFootApron(banked, Rising, 2f, RoadGrade.Configured) > 0, "no apron where the road's landing meets rising ground");
+    }
+
+    /// <summary>A foot's apron reads the cap its caller gives it, as LowerFoot does (no fallback of its own), and a road with no
+    /// cap (0) is built to climb nothing to a foot (RoadPitches.ClimbToFoot): the bank over it is judged against that.</summary>
+    [Fact]
+    public void AnApronReadsTheCapItsCallerGives()
+    {
+        float Rising(float x, float z) => 40f + Mathf.Max(0f, -x) * 0.5f + Mathf.Max(0f, x) * 0.15f;
+        StairPlan Lay() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(-16f, 0f), Rising, sunkFoot: true);
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        Assert.Equal(0f, RoadPitches.ClimbToFoot(10f, 0f));
+        RoadPitches.JunctionLanding = 0f;
+        Assert.Equal(0, StairLayout.CutFootApron(Lay(), Rising, 2f, RoadConstants.DefaultMaxRoadGrade));
+        Assert.True(StairLayout.CutFootApron(Lay(), Rising, 2f, 0f) > 0, "a road with no cap climbs nothing to the foot: the bank stands");
     }
 }

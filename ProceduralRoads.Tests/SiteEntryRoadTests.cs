@@ -536,11 +536,9 @@ public class SiteEntryRoadTests : IDisposable
 
 
     /// <summary>The staircase record is written as format 7, a number no earlier build wrote, with the layout that laid each
-    /// run, where the road meets each end and an approach's place; records 1 (no kept-rocks flag), 2 (no kit, no cantilever
-    /// flag), 3 (no ground), 4 (no layout), 5 (no meeting points: the ends themselves) and 6 (no approach's place) still
-    /// load.</summary>
+    /// run, where the road meets each end and an approach's place; it is the only version read.</summary>
     [Fact]
-    public void StairRecordsOneToSixStillLoadAndSevenIsWritten()
+    public void StairRecordSevenIsWrittenAndTheOnlyOneRead()
     {
         StairStructures.Reset();
         StairStructures.Add(new StairRun { From = new Vector2(1f, 2f), To = new Vector2(3f, 4f), Width = 2f, KeepsSiteRocks = true, ToMeet = new Vector2(5f, 6f) });
@@ -550,60 +548,13 @@ public class SiteEntryRoadTests : IDisposable
         StairRun seven = Assert.Single(StairStructures.Parse(v7));
         Assert.Null(seven.ExpectedPlace);
         Assert.Equal(v7, Reserialized(seven));
-        // Format 6: format 7 without an approach's place (its flag, false, at the run's end).
-        var v6List = new List<byte>(v7);
-        v6List.RemoveAt(v6List.Count - 1);
-        v6List.RemoveRange(0, 4);
-        v6List.InsertRange(0, BitConverter.GetBytes(6));
-        byte[] v6 = v6List.ToArray();
-        StairRun six = Assert.Single(StairStructures.Parse(v6));
-        Assert.Equal(new Vector2(1f, 2f), six.Ends[0].Meet);
-        Assert.Equal(new Vector2(5f, 6f), six.Ends[1].Meet);
-        Assert.True(six.Ends[1].Place);
-        Assert.Null(six.ExpectedPlace);
-        // Format 5: format 6 without the meeting points (four floats at the run's end).
-        var v5List = new List<byte>(v6);
-        v5List.RemoveRange(v5List.Count - 16, 16);
-        v5List.RemoveRange(0, 4);
-        v5List.InsertRange(0, BitConverter.GetBytes(5));
-        byte[] v5 = v5List.ToArray();
-        StairRun five = Assert.Single(StairStructures.Parse(v5));
-        Assert.Null(five.ToMeet);
-        Assert.Equal(new Vector2(3f, 4f), five.Ends[1].Meet);
-        Assert.Equal(StairLayout.LayoutVersion, five.Layout);
-        // Format 4: format 5 without the run's layout (after its kit, an empty string's one length byte).
-        var v4 = new List<byte>(v5);
-        v4.RemoveRange(4 + 4 + 8 + 8 + 4 + 1 + 1, 4);
-        v4.RemoveRange(0, 4);
-        v4.InsertRange(0, BitConverter.GetBytes(4));
-        StairRun four = Assert.Single(StairStructures.Parse(v4.ToArray()));
-        Assert.True(four.KeepsSiteRocks);
-        Assert.Equal(0, four.Layout);
-        // Format 3: format 4 without the run's ground (its count, none, at the record's end).
-        var v3 = new List<byte>(v4);
-        v3.RemoveRange(v3.Count - 4, 4);
-        v3.RemoveRange(0, 4);
-        v3.InsertRange(0, BitConverter.GetBytes(3));
-        StairRun three = Assert.Single(StairStructures.Parse(v3.ToArray()));
-        Assert.True(three.KeepsSiteRocks);
-        Assert.Empty(three.Ground);
-        // Format 2: format 3 without the run's kit (an empty string, one length byte after the flag; no pieces).
-        var v2 = new List<byte>(v3);
-        v2.RemoveAt(4 + 4 + 8 + 8 + 4 + 1);
-        v2.RemoveRange(0, 4);
-        v2.InsertRange(0, BitConverter.GetBytes(2));
-        StairRun two = Assert.Single(StairStructures.Parse(v2.ToArray()));
-        Assert.True(two.KeepsSiteRocks);
-        Assert.Null(two.Kit);
-        // Format 1: format 2 without the kept-rocks flag.
-        var v1 = new List<byte>(v2);
-        v1.RemoveAt(4 + 4 + 8 + 8 + 4);
-        v1.RemoveRange(0, 4);
-        v1.InsertRange(0, BitConverter.GetBytes(1));
-        StairRun one = Assert.Single(StairStructures.Parse(v1.ToArray()));
-        Assert.False(one.KeepsSiteRocks);
-        Assert.Equal(new Vector2(3f, 4f), one.To);
-        Assert.Equal(2f, one.Width);
+        // No other version is read.
+        foreach (int version in new[] { 0, 1, 2, 3, 4, 5, 6, 8 })
+        {
+            byte[] other = (byte[])v7.Clone();
+            BitConverter.GetBytes(version).CopyTo(other, 0);
+            Assert.Throws<System.IO.InvalidDataException>(() => StairStructures.Parse(other));
+        }
     }
 
     private static byte[] Reserialized(StairRun run)

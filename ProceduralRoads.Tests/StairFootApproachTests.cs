@@ -63,7 +63,7 @@ public sealed class StairFootApproachTests : IDisposable
         RoadNetworkGenerator.Reset();
         _scope.WithWorld(world);
         // The mod's earthwork cap (the suite runs with it off, PlainRoads).
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         var finder = new RoadPathfinder(world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
         SetPathfinder(finder);
         var path = new List<Vector2>();
@@ -106,6 +106,24 @@ public sealed class StairFootApproachTests : IDisposable
     /// held to the foot, the road stood on the line climbing to it at the cap, up to 6 m over the floor at the bottom of the
     /// climb and over the ground on both sides for 25 m. The staircase starts at the bottom of the climb instead, and the road
     /// runs on the gully's floor to it: on no ridge.</summary>
+    /// <summary>The road's ground falling 0.25 m per metre back from a staircase's foot (at -4376,1368 the road to a foot read
+    /// 0 m under the cap line stood on 1.1 m of fill): under the line climbing at the cap, it is never under the road; but the
+    /// road ends at the foot on its level landing (6 m at 5 %, RoadPitches.ClimbToFoot), and 6 m back that stands 1.2 m over
+    /// the ground, past ApproachFill. On plain roads (no landing) the cap line is the road's.</summary>
+    [Fact]
+    public void TheApproachToAFootIsReadOnItsRoadsLanding()
+    {
+        var path = new List<Vector2>();
+        for (int x = 0; x <= 40; x += 2) path.Add(new Vector2(x, 0f));
+        float Falling(Vector2 p) => 100f - 0.25f * p.x;
+        Assert.Equal(0f, RoadStairRuns.ApproachUnder(path, 0, 1, path.Count - 1, Falling, 0.35f), 3);
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        float under = RoadStairRuns.ApproachUnder(path, 0, 1, path.Count - 1, Falling, 0.35f);
+        Assert.Equal(1.2f, under, 2);
+        Assert.True(under > RoadStairRuns.ApproachFill);
+    }
+
     [Fact]
     public void AStaircaseStartsLowerThanARoadOnAnEmbankmentToItsFoot()
     {

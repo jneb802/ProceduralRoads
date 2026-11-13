@@ -58,7 +58,7 @@ public static partial class RoadNetworkGenerator
             Vector2 from=Ground(a),to=Ground(b);
             if (OpenSeaOnLine(world,from,to)) return null;
             var pricer = RoadParallel.PricingWorkers > 1 ? pricers.Value! : finder;
-            var path=pricer.FindPath(from,to,System.Math.Max(1000,RoadPathfinder.MaxIterations/2));
+            var path=pricer.FindPath(from,to,RoadPathfinder.PricingIterations);
             float? cost = path != null && path.Count>=2 ? pricer.LastPathCost : null;
             if (cost is float c && !float.IsNaN(c) && !float.IsInfinity(c)) prices[(a.Position, b.Position)] = c;
             return cost;
@@ -103,15 +103,7 @@ public static partial class RoadNetworkGenerator
         foreach (var pricer in pricers.Values) pricer.FoldTerrainMemoCounters();
     }
 
-    /// <summary>
-    /// Whether the network serves a place: the one test for the planner's join and its search's start
-    /// (<see cref="JoinPlace"/>), and the same as the count of places reached (<see cref="Reached"/>).
-    /// A boss's entrance is served only by a road onto its own landing, never by a road passing within reach of it.
-    /// </summary>
-    internal static bool PlaceServed(string name, Vector3 position, float radius) =>
-        Reached(position, radius, name);
-
-    /// <summary>The planner's join: the place already served (<see cref="PlaceServed"/>), else a road from it to the
+    /// <summary>The planner's join: the place already served (<see cref="Reached"/>, as the count of places reached), else a road from it to the
     /// nearest junction its search finds; where that road is refused or not found, to the next junction the search finds
     /// away from it, up to <see cref="JoinRetries"/> more times. The search returns only its cheapest level junction: a road
     /// there that could not be built (its ends too steep once its turns were flattened, a ridge at the junction, the junction
@@ -121,7 +113,7 @@ public static partial class RoadNetworkGenerator
         if (hints.Count==0) return false;
         Vector2 from=RoadEndpoint.FindGround(world,new Vector2(place.Position.x,place.Position.z),place.Radius);
         return JoinTo(finder,from,hints,place.Name,place.Position,place.Radius,null,
-            () => PlaceServed(place.Name, place.Position, place.Radius),hints);
+            () => Reached(place.Position, place.Radius, place.Name),hints);
     }
 
     /// <summary>
@@ -131,6 +123,7 @@ public static partial class RoadNetworkGenerator
     /// <paramref name="allowed"/> admits; where that road is refused or not found, to the next junction the search finds away
     /// from it, up to <see cref="JoinRetries"/> more times. True where one is built, or where the network already serves it
     /// (<paramref name="served"/>, or within the search's reach of a road where none is given).
+    /// The one owner of joining a network (docs/OWNERS.md).
     /// </summary>
     internal static bool JoinTo(RoadPathfinder finder, Vector2 from, IReadOnlyList<Vector2> hints, string name,
         Vector3 position, float radius, System.Func<Vector2, bool>? allowed, System.Func<bool>? served, List<Vector2>? networkHints)
@@ -141,7 +134,7 @@ public static partial class RoadNetworkGenerator
         for (int attempt=0; attempt<=JoinRetries; attempt++)
         {
             // Served already: the search says so at its start and goes no further.
-            var path=finder.FindPathToNetwork(from,8,hints,tried.Count==0 ? allowed : Allowed,served: served);
+            var path=finder.FindPathToNetwork(from,RoadPathfinder.CellSize,hints,tried.Count==0 ? allowed : Allowed,served: served);
             if (finder.AlreadyOnNetwork) return true;
             if (path==null || path.Count<2) { t_capture?.Refused("no route to the network",from); return false; }
             Vector2 end=path[path.Count-1];
@@ -197,7 +190,7 @@ public static partial class RoadNetworkGenerator
         float span=Vector2.Distance(from,to);
         int samples=Mathf.Max(1,Mathf.CeilToInt(span/RoadPathfinder.CellSize));
         float run=0; bool river=false;
-        float reach=RoadConstants.MaxBridgeCrossingCells*RoadPathfinder.CellSize;
+        float reach=RoadConstants.MaxBridgeSpan;
         bool Blocked() => run>reach && !river;
         for (int i=0;i<=samples;i++)
         {

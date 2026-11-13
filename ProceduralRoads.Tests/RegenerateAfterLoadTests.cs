@@ -26,19 +26,7 @@ public class RegenerateAfterLoadTests : System.IDisposable
     /// points, at a height nothing generated here would produce.</summary>
     private const float SavedHeight = 4242f;
 
-    private static byte[] SavedNetwork()
-    {
-        using var stream = new MemoryStream();
-        using var writer = new BinaryWriter(stream);
-        writer.Write(1);            // version
-        writer.Write(1);            // cell count
-        writer.Write(0); writer.Write(0);   // cell coordinates
-        writer.Write(2);            // points in the cell
-        writer.Write(0f); writer.Write(0f); writer.Write(4f); writer.Write(SavedHeight);
-        writer.Write(8f); writer.Write(0f); writer.Write(4f); writer.Write(SavedHeight);
-        writer.Flush();
-        return stream.ToArray();
-    }
+    private static byte[] SavedNetwork() => Released144.Blob(0, 0, (0f, 0f, 4f, SavedHeight), (8f, 0f, 4f, SavedHeight));
 
     private static void SetPrivateFlag(string name, bool value) =>
         typeof(RoadNetworkGenerator).GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!

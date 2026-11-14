@@ -36,17 +36,19 @@ public class RoadPathfinderTests
     }
 
     [Fact]
-    public void RiverBlocksPathInCurrentImplementation()
+    public void ARiverIsCrossedNowThatRoadsMayFordAndBridge()
     {
-        // Characterization test: documents upstream master behavior — a river
-        // spanning the island makes the far side unreachable. The planned
-        // cost-model rework + crossings should flip this expectation.
+        // This was a characterization test for upstream master, where a river
+        // spanning the island made the far side unreachable, and it said the
+        // crossings work should flip the expectation. It has: a road now fords
+        // or bridges the river instead of stopping at it.
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        var pathfinder = new RoadPathfinder(world);
 
-        var path = pathfinder.FindPath(new Vector2(-300f, 0f), new Vector2(400f, 0f));
+        Assert.NotNull(new RoadPathfinder(world).FindPath(new Vector2(-300f, 0f), new Vector2(400f, 0f)));
 
-        Assert.Null(path);
+        // ...and with neither crossing allowed, the river blocks it as before.
+        var noCrossings = new RoadPathfinder(world) { Fords = false, Bridges = false };
+        Assert.Null(noCrossings.FindPath(new Vector2(-300f, 0f), new Vector2(400f, 0f)));
     }
 
     [Fact]

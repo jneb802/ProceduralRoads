@@ -1,0 +1,237 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace ProceduralRoads;
+
+/// <summary>
+/// One levelling operation a location carries, as the road generator needs it.
+///
+/// A location is a prefab with TerrainModifier components in it. When the game
+/// places the location, Heightmap.ApplyModifier levels every vertex inside
+/// m_levelRadius of the modifier to the modifier's own world height plus
+/// m_levelOffset - absolutely, with no clamp, because the +/-8 m clamp applies
+/// only to player modifications and a location's are not. That is how a road
+/// end can sit nine metres off the height the world generator reports there:
+/// the generator is not what the player walks on.
+///
+/// Heights here are relative to the ground under the location's centre, which
+/// is where the game reads its placement height. A location only ever rotates
+/// about Y, so this height does not depend on the rotation - only the footprint
+/// does.
+/// </summary>
+public readonly struct LevelOp
+{
+    /// <summary>Horizontal offset from the location's centre, in the prefab's
+    /// own frame. A location's rotation turns this, so an operation with a
+    /// non-zero offset sits somewhere on a circle we cannot pin down.</summary>
+    public readonly float OffsetX;
+    public readonly float OffsetZ;
+
+    /// <summary>Metres above the ground under the location's centre.</summary>
+    public readonly float Height;
+
+    public readonly float Radius;
+    public readonly bool Square;
+
+    /// <summary>How far round the operation the game blends the ground towards
+    /// its height after levelling it (0: no smoothing), and how sharply: at
+    /// distance d the ground moves by 1 - (d / SmoothRadius)^SmoothPower of the
+    /// way (Heightmap.SmoothTerrain2).</summary>
+    public readonly float SmoothRadius;
+    public readonly float SmoothPower;
+    /// <summary>TerrainModifier.m_sortOrder: the game applies lower first (then, for a
+    /// location's own, which carry no creation time, the one nearer the world's origin).</summary>
+    public readonly int SortOrder;
+
+    /// <summary><paramref name="radius"/> 0: the modifier only smooths.</summary>
+    public LevelOp(float offsetX, float offsetZ, float height, float radius, bool square,
+        float smoothRadius = 0f, float smoothPower = 3f, int sortOrder = 0)
+    {
+        OffsetX = offsetX; OffsetZ = offsetZ; Height = height; Radius = radius; Square = square;
+        SmoothRadius = smoothRadius; SmoothPower = smoothPower; SortOrder = sortOrder;
+    }
+
+    /// <summary>Whether this operation sits on the location's own centre, so
+    /// its footprint is the same whichever way the location is turned.</summary>
+    public bool Concentric => Mathf.Abs(OffsetX) <= ConcentricTolerance
+                           && Mathf.Abs(OffsetZ) <= ConcentricTolerance;
+
+    public const float ConcentricTolerance = 0.5f;
+}
+
+/// <summary>
+/// What ground a location will leave behind once it is placed.
+///
+/// Road generation runs at world load; locations are placed later, zone by
+/// zone, and level the ground under themselves when they are. A road built to
+/// the generator's height therefore meets a doorstep that has since moved.
+/// This works out where that doorstep will be, ahead of time.
+///
+/// It answers only where it can be right. A location's rotation is drawn from
+/// the global random stream at placement and is not reproducible from world
+/// data, so an operation offset from the location's centre could be anywhere
+/// on a circle: those are declined rather than guessed at. The caller then
+/// falls back to the natural terrain under the road's own end, which is where
+/// a road that stops outside the levelled ground should meet it anyway.
+/// </summary>
+public static class LocationLevelling
+{
+    /// <summary>
+    /// Where the levelling of the location centred at a point comes from.
+    /// Set once by LocationPrefabLevelling, which reads it off the prefab; left
+    /// null wherever prefabs cannot be read - the test suite, or a headless
+    /// server without the asset bundles - and the road then falls back to the
+    /// natural terrain under its own end, as it did before any of this.
+    /// </summary>
+    public static System.Func<Vector2, IReadOnlyList<LevelOp>?>? Source;
+
+    /// <summary>Saved placement, when the location has already spawned.
+    /// Its root can differ from a fresh procedural query (other modifiers or
+    /// a saved world). Copy only the numeric height, never a live component.</summary>
+    public static System.Func<Vector2, float?>? PlacementHeightSource;
+    public static System.Action? ResetPlacements;
+
+    /// <summary>Build every lazy cache behind Source and PlacementHeightSource
+    /// NOW, on the calling thread. Islands are planned on worker threads and
+    /// these caches read Unity assets and the ZDO table, neither of which may
+    /// be touched off the main thread or filled by two threads at once.</summary>
+    public static System.Action? Prime;
+    internal static System.Func<RoadPreparation,System.Collections.Generic.IEnumerable<bool>>? PrimeIncremental;
+    internal static System.Func<bool>? CanPrimeIncrementally;
+
+    /// <summary>Set once Prime has run, on the main thread, before any island
+    /// worker starts; cleared when they are all finished.
+    ///
+    /// While it is set, preparation is closed: a lookup that misses must not
+    /// load a Unity asset or write into a shared dictionary (both fatal off the
+    /// main thread); it names what it could not find and gives up.</summary>
+    public static volatile bool Sealed;
+
+    /// <summary>Lookups that missed after preparation was closed. Reported at
+    /// the end of a generation: a miss that nothing counts is a miss nobody
+    /// hears about.</summary>
+    public static int MissesAfterSealing;
+
+    private static readonly System.Collections.Generic.HashSet<string> m_reported = new();
+    private static readonly object m_reportGate = new object();
+
+    /// <summary>How many times preparation was closed (<see cref="Seal"/>): what was read while it stays closed holds for
+    /// that generation's islands, and a cache of it is good only while this is unchanged.</summary>
+    public static int SealCount => s_sealCount;
+    private static int s_sealCount;
+
+    public static void Seal()
+    {
+        System.Threading.Interlocked.Increment(ref s_sealCount);
+        MissesAfterSealing = 0;
+        lock (m_reportGate) m_reported.Clear();
+        Sealed = true;
+    }
+    public static void Unseal() => Sealed = false;
+
+    /// <summary>Set when a lookup on THIS thread was refused for want of
+    /// preparation. An island worker builds one road at a time, so this says
+    /// "the road being built now is missing something it needed": it is
+    /// refused rather than built through a POI it could not see.</summary>
+    [System.ThreadStatic] public static bool PreparationMissedHere;
+
+    /// <summary>Called as a road starts, so the flag describes that road.</summary>
+    public static void BeginRoad() => PreparationMissedHere = false;
+
+    /// <summary>Record a lookup that arrived too late to be served, naming it
+    /// once per generation however often it is asked for. Returns true if the
+    /// caller should give up rather than build anything.</summary>
+    public static bool RefuseAfterSealing(string what)
+    {
+        if (!Sealed) return false;
+        PreparationMissedHere = true;
+        System.Threading.Interlocked.Increment(ref MissesAfterSealing);
+        bool first;
+        lock (m_reportGate) first = m_reported.Add(what);
+        if (first)
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogError(
+                $"'{what}' was not prepared before road generation started, and cannot be read now: " +
+                "roads near it meet natural terrain. This is a gap in preparation, not in the world.");
+        return true;
+    }
+
+    public static float CentreHeight(Vector2 centre, WorldGenerator world)
+    {
+        float? saved = PlacementHeightSource?.Invoke(centre);
+        return saved.HasValue && !float.IsNaN(saved.Value) && !float.IsInfinity(saved.Value)
+            ? saved.Value : BiomeBlendedHeight.GetBlendedHeight(centre.x, centre.y, world);
+    }
+
+    /// <summary>Whether any of a location's terrain modifiers levels (the others only smooth).</summary>
+    public static bool Levels(IReadOnlyList<LevelOp>? ops)
+    {
+        if (ops == null) return false;
+        foreach (LevelOp op in ops) if (op.Radius > 0f) return true;
+        return false;
+    }
+
+    /// <summary>The levelling a location at this centre will do, or null.</summary>
+    public static IReadOnlyList<LevelOp>? OpsAt(Vector2 centre) => Source?.Invoke(centre);
+
+    /// <summary>A single authored platform elevation, when all levelling
+    /// operations agree. Offsets affect its footprint but not its height.
+    /// Multi-level locations deliberately have no guessed common doorstep.</summary>
+    public static float? PlatformHeight(float centreGround, IReadOnlyList<LevelOp>? ops)
+    {
+        float? height = null;
+        if (ops == null) return null;
+        foreach (var op in ops)
+        {
+            if (op.Radius <= 0f) continue;
+            float candidate = centreGround + op.Height;
+            if (float.IsNaN(candidate) || float.IsInfinity(candidate)) return null;
+            if (height.HasValue && Mathf.Abs(candidate - height.Value) > 0.25f) return null;
+            height = candidate;
+        }
+        return height;
+    }
+
+    /// <summary>An exterior arrival should reach the location, not descend into
+    /// its excavation. Raised platforms matter, but a below-root modifier
+    /// (a cave cut, well or pit) is not an instruction to lower its access road.</summary>
+    public static float? ApproachHeight(float rootHeight, IReadOnlyList<LevelOp>? ops)
+    {
+        float? level = PlatformHeight(rootHeight, ops);
+        return level.HasValue ? Mathf.Max(rootHeight, level.Value) : null;
+    }
+
+    /// <summary>
+    /// How far out a road to a location stops, from its centre: the ground the location SHAPES, its
+    /// exterior radius and each levelling and smoothing reach, but not the ground it only paints out to
+    /// <paramref name="footprint"/> (its whole reach, paint included). A Crypt4 paints cleared ground out to
+    /// 30 m round a structure 18 m across and levels 5 m; its roads all stopped 34 m out or more (median 37 m
+    /// on one world, against 18 m for a Crypt2), on flat ground with nothing to show why.
+    /// The whole footprint where any operation is off the centre: where that ground lies turns with the location,
+    /// which is only known once it is placed (such locations are come to on their landing, <see cref="PlacedLocations"/>),
+    /// and where the operations are not known at all.
+    /// </summary>
+    public static float ArrivalReach(IReadOnlyList<LevelOp>? ops, float exterior, float footprint)
+    {
+        if (ops == null) return footprint;
+        float shaped = exterior;
+        foreach (LevelOp op in ops)
+        {
+            if (!op.Concentric) return footprint;
+            shaped = Mathf.Max(shaped, Mathf.Max(op.Square ? op.Radius * Mathf.Sqrt(2f) : op.Radius, op.SmoothRadius));
+        }
+        return Mathf.Min(shaped, footprint);
+    }
+
+    /// <summary>Whether the location centred at a point turns to face downhill when
+    /// it is placed (ZoneLocation.m_slopeRotation). Set by LocationPrefabLevelling;
+    /// null: none does.</summary>
+    public static System.Func<Vector2, bool>? FacesDownhillSource;
+    public static bool FacesDownhill(Vector2 centre) => FacesDownhillSource?.Invoke(centre) ?? false;
+
+    /// <summary>Where an operation stands from the location's centre once it is turned to <paramref name="yaw"/>.</summary>
+    public static Vector2 OffsetAt(LevelOp op, float yaw)
+    {
+        float r = yaw * Mathf.Deg2Rad, c = Mathf.Cos(r), s = Mathf.Sin(r);
+        return new Vector2(op.OffsetX * c + op.OffsetZ * s, -op.OffsetX * s + op.OffsetZ * c);
+    }
+}

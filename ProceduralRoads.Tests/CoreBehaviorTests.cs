@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -15,13 +16,12 @@ public class CoreBehaviorTests
 {
     private static void WithWorld(SyntheticWorld world, System.Action body)
     {
-        WorldGenerator.instance = world;
+        using var scope = new ValheimWorldScope().WithWorld(world);
         RoadSpatialGrid.Clear();
         try { body(); }
         finally
         {
             RoadSpatialGrid.Clear();
-            WorldGenerator.instance = null;
         }
     }
 
@@ -31,6 +31,49 @@ public class CoreBehaviorTests
         for (float x = x0; x <= x1; x += step)
             path.Add(new Vector2(x, y));
         return path;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PointDebugRecordsAreKeptOnlyWhenAsked(bool record)
+    {
+        // The records outlive generation, one per point with an array of
+        // window heights, so an ordinary session must not keep them.
+        var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
+        bool before = RoadSpatialGrid.RecordPointDebugInfo;
+        RoadSpatialGrid.RecordPointDebugInfo = record;
+        try
+        {
+            WithWorld(world, () =>
+            {
+                Assert.True(RoadSpatialGrid.AddRoadPath(StraightPath(-200f, 200f, 10f), 4f, world), "Setup produced no road");
+                List<RoadSpatialGrid.RoadPoint> points = RoadSpatialGrid.SnapshotAllRoadPoints();
+                Assert.NotEmpty(points);
+
+                int kept = 0;
+                foreach (RoadSpatialGrid.RoadPoint point in points)
+                {
+                    if (!RoadSpatialGrid.TryGetDebugInfo(point.p, out RoadPointDebugInfo info))
+                        continue;
+                    kept++;
+                    Assert.NotNull(info.WindowHeights);
+                    Assert.Equal(info.ActualWindowSize, info.WindowHeights.Length);
+                    // The window is the unsmoothed heights around the point,
+                    // so the point's own height sits at its offset in it.
+                    Assert.Equal(info.OriginalHeight, info.WindowHeights[info.PointIndex - info.WindowStart]);
+                }
+
+                if (record)
+                    Assert.Equal(points.Count, kept);
+                else
+                    Assert.Equal(0, kept);
+            });
+        }
+        finally
+        {
+            RoadSpatialGrid.RecordPointDebugInfo = before;
+        }
     }
 
     [Fact]
@@ -57,12 +100,8 @@ public class CoreBehaviorTests
 
             Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(data), "Deserialize failed");
 
-            // FINDING (upstream master): TotalRoadPoints after a round trip
-            // differs from before (e.g. 552 -> 628) — the counter measures
-            // different things on the two paths. The invariants that MUST
-            // hold: road queries are functionally identical, and a second
-            // serialize produces a byte-identical blob (no accumulation
-            // across save/load cycles — the historical persistence bug class).
+            Assert.Equal(points,RoadSpatialGrid.TotalRoadPoints);
+            Assert.Equal(length,RoadSpatialGrid.TotalRoadLength);
             RoadSpatialGrid.GetRoadWeight(0f, 10f, out float weightAfter, out float widthAfter);
             Assert.Equal(weightBefore, weightAfter, 3);
             Assert.Equal(widthBefore, widthAfter, 3);

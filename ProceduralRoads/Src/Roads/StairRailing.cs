@@ -21,7 +21,7 @@ namespace ProceduralRoads;
 /// fillers, another staircase met end to end); never across a flight's side, beside another flight (a switchback's legs,
 /// each railed along the line they share; in game: railed by hand at -1904,6608) or a switchback's join filler alike;</item>
 /// <item>where what the staircase ends on takes the walk over (<see cref="TakenOver"/>): the road, on every edge at walking
-/// height (within <see cref="LedgeDrop"/>) of a floor the road's end meets, within its ring's reach, and a place's landing
+/// height (within <see cref="LedgeDrop"/>) of a floor the road's end meets, within its ring's reach, and a location's landing
 /// alike, on every edge at walking height of a floor its end meets (<see cref="Ways.Road"/>, one rule for both ends; not the
 /// floors laid on past it, railed as any floor; none where another staircase meets the landing end to end, which no road
 /// comes onto); and the ground straight on off a floor the walk ends on (<see cref="WalkOut"/>), where it stands at walking
@@ -48,8 +48,36 @@ public static class StairRailing
     /// <summary>The one owner of railings and parapets (docs/OWNERS.md).</summary>
     /// <param name="beside">The walking pieces of the staircases meeting this one end to end
     /// (<see cref="StairStructures.MetAtEnds"/>): walked on across, never railed here.</param>
+    /// <param name="steps">The blocks filling the staircase's sideways steps (<see cref="StepBlocks"/>), laid with its walking
+    /// pieces: read with the staircase for burial, not walked by its railing (its steps are railed as the floors leave them).</param>
     public static List<StructurePiece> Lay(StairKit kit, IReadOnlyList<StructurePiece> walking, IReadOnlyList<StairEnd> ends,
-        Func<int, int, float> finished, IReadOnlyList<StructurePiece>? supports = null, IReadOnlyList<StructurePiece>? beside = null)
+        Func<int, int, float> finished, IReadOnlyList<StructurePiece>? supports = null, IReadOnlyList<StructurePiece>? beside = null,
+        IReadOnlyCollection<StructurePiece>? steps = null)
+    {
+        var (walks, railed, own, flanks) = WalksOf(kit, walking.Where(p => steps == null || !steps.Contains(p)), beside);
+        // The staircase its railing stands with, for the one burial omission (BuriedPieces.Omit): its walking pieces and supports.
+        var structure = new List<StructurePiece>(walking);
+        if (supports != null) structure.AddRange(supports);
+        return Lay(kit, walks, railed, own, ends, finished, supports, null, structure, flanks: flanks);
+    }
+
+    /// <summary>
+    /// The blocks a staircase's sideways steps are filled with (<see cref="Step"/>, <see cref="FillStep"/>), from its walking
+    /// pieces as its layout laid them and those met end to end <paramref name="beside"/> it: walking pieces of its own, laid
+    /// with the rest before its kit's burial and support pass (<see cref="StairKit.Dress"/>), so each is left out where buried
+    /// and held as any filler is. The step's rails are laid with the railing (<see cref="Lay"/>, given these as its steps).
+    /// </summary>
+    public static List<StructurePiece> StepBlocks(StairKit kit, IReadOnlyList<StructurePiece> walking, IReadOnlyList<StairEnd> ends,
+        Func<int, int, float> finished, IReadOnlyList<StructurePiece>? beside = null)
+    {
+        var (walks, railed, own, _) = WalksOf(kit, walking, beside);
+        return Lay(kit, walks, railed, own, ends, finished, null, null, null, blocks: true);
+    }
+
+    /// <summary>The walks of a staircase's walking pieces (railed but its fillers) and, after them (from own on), those of
+    /// the staircases met end to end with it, walked but railed by their own.</summary>
+    private static (List<StairSupport.Walk> walks, List<bool> railed, int own, HashSet<int> flanks) WalksOf(StairKit kit,
+        IEnumerable<StructurePiece> walking, IReadOnlyList<StructurePiece>? beside)
     {
         // Every walking piece closes the edges it touches, a turn's wedge filler too; fillers get no rail of their own.
         var walks = new List<StairSupport.Walk>();
@@ -58,9 +86,16 @@ public static class StairRailing
             if (StairSupport.WalkOf(piece, kit) is StairSupport.Walk w) { walks.Add(w); railed.Add(piece.Kind != StructurePieceKind.StairFiller); }
         // Another staircase's pieces after its own (from own on): walked, railed by their own staircase.
         int own = walks.Count;
+        // Of those, the stairs and floors (not a turn's fillers): a wedge between the two staircases is closed from their corners.
+        var flanks = new HashSet<int>();
         foreach (StructurePiece piece in beside ?? Array.Empty<StructurePiece>())
-            if (StairSupport.WalkOf(piece, StairKit.Named(piece.Prefab.Split('_')[0]) ?? kit) is StairSupport.Walk w) { walks.Add(w); railed.Add(false); }
-        return Lay(kit, walks, railed, own, ends, finished, supports, null);
+            if (StairSupport.WalkOf(piece, StairKit.Named(piece.Prefab.Split('_')[0]) ?? kit) is StairSupport.Walk w)
+            {
+                if (piece.Kind != StructurePieceKind.StairFiller) flanks.Add(walks.Count);
+                walks.Add(w);
+                railed.Add(false);
+            }
+        return (walks, railed, own, flanks);
     }
 
     /// <summary>
@@ -107,9 +142,11 @@ public static class StairRailing
     /// <summary>The railing of <paramref name="walks"/>: the staircases' wooden posts and rails, or with
     /// <paramref name="parapet"/> a structure's end stairs' black marble parapet (<see cref="LayParapet"/>), which has
     /// stairs only. Those from <paramref name="own"/> on are another staircase's met end to end, walked on across, never
-    /// railed here.</summary>
+    /// railed here. With <paramref name="blocks"/>, only the blocks its sideways steps are filled with (<see cref="StepBlocks"/>);
+    /// else its railing, its steps railed but not filled.</summary>
     private static List<StructurePiece> Lay(StairKit kit, List<StairSupport.Walk> walks, List<bool> railed, int own, IReadOnlyList<StairEnd> ends,
-        Func<int, int, float> finished, IReadOnlyList<StructurePiece>? supports, ParapetCourses? parapet)
+        Func<int, int, float> finished, IReadOnlyList<StructurePiece>? supports, ParapetCourses? parapet, IReadOnlyList<StructurePiece>? structure = null,
+        bool blocks = false, IReadOnlyCollection<int>? flanks = null)
     {
         var laid = new List<StructurePiece>();
         var posts = new Dictionary<(int, int, int), Spot>();
@@ -138,7 +175,7 @@ public static class StairRailing
                     {
                         float low = w.Underside + tier * BridgeLayout.RailHeight;
                         if (Rail(laid, BridgeLayout.StairRailPrefab, w.At(w.Depth / 2f, side * half), low, StairLayout.Wrap(w.Heading - 90f),
-                            low + StairLayout.PieceRise, finished) is StructurePiece rail)
+                            finished) is StructurePiece rail)
                             sloped.Add((rail, w.Underside));
                     }
                 }
@@ -160,24 +197,68 @@ public static class StairRailing
                         Post(posts, i, to, surface, w.Heading, surface);
                         Level(laid, ShortRailPrefab, from, to, surface, finished);
                     }
+                    // The walk goes on across the edge's middle, but past a stretch at either end nothing is walked onto: two
+                    // floors met out of line (set aside or turned), whose outer sides stand apart. That stretch is railed post to
+                    // post, so the outer rails close round the join.
+                    else
+                        foreach (var (end, bare) in Exposed(walks, i, edge - along * (run / 2f), edge + along * (run / 2f), outward, surface))
+                        {
+                            if (!Railed(walks, ways, i, end, bare, outward, surface)) continue;
+                            Post(posts, i, end, surface, w.Heading, surface);
+                            // A sideways step between two floors in line (a clipped join set aside more than a joint): railed
+                            // across it from corner to corner, its wedge filled, no post at its inner corner.
+                            if (Step(walks, kit, i, end, bare, surface) is var (partner, corner, owns))
+                            {
+                                if (!owns) continue;
+                                if (partner < own) Post(posts, partner, corner, surface, walks[partner].Heading, surface);
+                                FillStep(laid, kit, end, corner, bare, surface, finished, blocks);
+                                continue;
+                            }
+                            // Where the other floor's edge is railed to the same crossing (RunsInto), its post stands for both.
+                            Post(posts, i, NearPost(posts, bare, surface) ?? bare, surface, w.Heading, surface);
+                            float span = Vector2.Distance(end, bare);
+                            if (span > Joint) Level(laid, ClosingRail(span), end, bare, surface, finished);
+                        }
+                    continue;
+                }
+                // An edge whose far end stands on another floor (a jog too shallow for the walk to carry on across it) is railed
+                // from its clear corner to where it meets that floor's edge, never on into its walk.
+                if (RunsInto(walks, railed, own, i, edge - along * (run / 2f), edge + along * (run / 2f), surface) is var (clear, meets))
+                {
+                    if (Vector2.Distance(clear, meets) < StairLayout.EndReach) continue;
+                    Post(posts, i, clear, surface, w.Heading, surface);
+                    Post(posts, i, meets, surface, w.Heading, surface);
+                    Level(laid, ClosingRail(Vector2.Distance(clear, meets)), clear, meets, surface, finished);
                     continue;
                 }
                 Post(posts, i, edge - along * (run / 2f), surface, w.Heading, surface);
                 Post(posts, i, edge + along * (run / 2f), surface, w.Heading, surface);
                 for (int tier = 0; tier < 2; tier++)
-                    Rail(laid, LevelRailPrefab, edge, surface + tier * BridgeLayout.RailHeight, StairLayout.Wrap(edgeHeading - 90f),
-                        surface + tier * BridgeLayout.RailHeight, finished);
+                    Rail(laid, LevelRailPrefab, edge, surface + tier * BridgeLayout.RailHeight, StairLayout.Wrap(edgeHeading - 90f), finished);
             }
         }
-        CloseWedges(laid, walks, railed, own, posts, kit, finished);
-        Cross(laid, sloped);
+        if (blocks) return laid.FindAll(p => p.Kind == StructurePieceKind.StairFiller);
+        CloseWedges(laid, walks, railed, own, posts, kit, finished, flanks);
         foreach (Spot post in posts.Values)
         {
-            if (BuriedPieces.MeshHeight(post.At.x, post.At.y, finished) >= post.Bottom + BridgeLayout.RailHeight) continue;
+            var position = new Vector3(post.At.x, post.Bottom + BridgeLayout.RailHeight * 0.5f, post.At.y);
             if (supports != null && InASupport(post, supports)) continue;
             laid.Add(new StructurePiece { Kind = StructurePieceKind.Post, Prefab = BridgeLayout.RailPostPrefab,
-                Position = new Vector3(post.At.x, post.Bottom + BridgeLayout.RailHeight * 0.5f, post.At.y), YawDegrees = post.Yaw });
+                Position = position, YawDegrees = post.Yaw });
         }
+        // A rail or post wholly in the finished ground left out where the staircase stands without it (BuriedPieces.Omit, the
+        // one owner, as the staircase's own walking pieces and supports are): read with the staircase by the support rule,
+        // a buried post a rail rests on is kept. Before the crossed rails are made: a rail left out crosses none.
+        if (structure != null)
+        {
+            var all = new List<StructurePiece>(structure);
+            all.AddRange(laid);
+            var railing = new HashSet<StructurePiece>(laid);
+            var left = new HashSet<StructurePiece>(BuriedPieces.Omit(all, finished, pieces => StairSupport.Holding(pieces, finished), railing.Contains));
+            laid.RemoveAll(left.Contains);
+            sloped.RemoveAll(s => left.Contains(s.rail));
+        }
+        Cross(laid, sloped);
         return laid;
     }
 
@@ -197,8 +278,8 @@ public static class StairRailing
     /// the step's middle half a metre over the tread there, its slope down the flight; a <see cref="ParapetCapPrefab"/>
     /// on from its high end, half a metre up the flight past the step's top, under the next step's piece's slope (on the
     /// top step, on the deck), so the parapet climbs a metre a step with them. Where the step's edge has nothing to stand
-    /// on (the finished ground under the parapet's middle more than <see cref="BridgeLayout.StairFootTolerance"/> under its
-    /// foot), black marble under it down to the ground in the 2 m courses of <paramref name="top"/>: a
+    /// on (its foot not sunk <see cref="StairSupport.Bury"/> into the lowest finished ground under the walk's edge beside it,
+    /// as <see cref="Courses"/> reads it), black marble under it down to the ground in the 2 m courses of <paramref name="top"/>: a
     /// <see cref="ParapetHalfCoursePrefab"/> under the parapet where its foot stands between two, then
     /// <see cref="ParapetCoursePrefab"/>s under the step's edge and the parapet both, until one stands on the ground (as
     /// the stairs' columns, BridgeLayout.LayEndStairs). A piece wholly in the ground is left out.
@@ -218,7 +299,7 @@ public static class StairRailing
     /// (the parapet's middle) where the foot stands between two, then <see cref="ParapetCoursePrefab"/>s under
     /// <paramref name="edge"/> (the walk's edge beside it), by the staircases' walls' rule for a foundation (StairSupport's
     /// walls, one owner): on until the lowest is sunk <see cref="StairSupport.Bury"/> into the lowest finished ground under the
-    /// column (<see cref="BuriedPieces.LowestOver"/>, a 2 x 2 course's footprint at <paramref name="edge"/>), so none stands
+    /// column (<see cref="BuriedPieces.RangeOver"/>, a 2 x 2 course's footprint at <paramref name="edge"/>), so none stands
     /// over a gap on a bank falling away across it (in game: two blocks added by hand under a viaduct's bank parapet at
     /// (9082, 126)); none where that ground is not known. On a bank (<paramref name="onBank"/>, a viaduct's parapet run on past its edge) the course is
     /// instead the <see cref="ParapetHalfCoursePrefab"/> alone, a metre at a time, under <paramref name="strip"/> only, so none reaches over the road. A course wholly in the ground is left out (<see cref="Place"/>).</summary>
@@ -232,11 +313,11 @@ public static class StairRailing
             // 2026: a 2 x 2 x 2 under the walk's edge left a gap in the road): ParapetHalfCoursePrefab, 2 m long and 1 m
             // thick, laid along the parapet's line under its middle, a course a metre on down to the ground by the same rule.
             var (su, sv, sy) = DvergrViaduct.Extents(ParapetHalfCoursePrefab);
-            float low = BuriedPieces.LowestOver(new[]
+            float low = BuriedPieces.RangeOver(new[]
             {
                 strip - along * su - across * sv, strip + along * su - across * sv,
                 strip + along * su + across * sv, strip - along * su + across * sv,
-            }, finished);
+            }, finished).lowest;
             for (int n = 0; bottom > low - StairSupport.Bury && n < MaxParapetCourses; n++)
             {
                 Place(laid, ParapetHalfCoursePrefab, strip, bottom - sy, yaw, finished);
@@ -245,11 +326,11 @@ public static class StairRailing
             return;
         }
         var (hu, hv, _) = DvergrViaduct.Extents(ParapetCoursePrefab);
-        float ground = BuriedPieces.LowestOver(new[]
+        float ground = BuriedPieces.RangeOver(new[]
         {
             edge - along * hu - across * hv, edge + along * hu - across * hv,
             edge + along * hu + across * hv, edge - along * hu + across * hv,
-        }, finished);
+        }, finished).lowest;
         for (int n = 0; bottom > ground - StairSupport.Bury && n < MaxParapetCourses; n++)
         {
             if (Mathf.RoundToInt(top - bottom) % 2 != 0)
@@ -309,11 +390,11 @@ public static class StairRailing
     /// <summary>The most pieces under one parapet piece: 32, at least 32 m, deeper than any end stairs' bank falls.</summary>
     private const int MaxParapetCourses = 32;
 
-    /// <summary>A piece of the parapet laid, but where it would lie wholly in the ground (<see cref="BuriedPieces"/>).</summary>
+    /// <summary>A piece of the parapet laid; one wholly in the ground is left out with the rest of the viaduct's where it
+    /// stands without it (DvergrViaduct.LeaveOutBuried, BuriedPieces.Omit, the one owner).</summary>
     private static void Place(List<StructurePiece> laid, string prefab, Vector2 at, float y, float yaw, Func<int, int, float> finished)
     {
         var position = new Vector3(at.x, y, at.y);
-        if (BuriedPieces.Buried(prefab, position, yaw, finished)) return;
         laid.Add(new StructurePiece { Kind = StructurePieceKind.Beam, Prefab = prefab, Position = position, YawDegrees = yaw });
     }
 
@@ -322,9 +403,9 @@ public static class StairRailing
     private sealed class Ways
     {
         public readonly HashSet<int> Bare = new();
-        /// <summary>Floors at an end the road or the place's landing takes the walk over from, the floors that end meets: open on
+        /// <summary>Floors at an end the road or the location's landing takes the walk over from, the floors that end meets: open on
         /// every edge at walking height (within <see cref="LedgeDrop"/>), railed only over the ledge, one rule for a road's end
-        /// and a place's (in game: a black marble staircase's top at -5380.9,5364.4 where the road carries on, bare; a cave's
+        /// and a location's (in game: a black marble staircase's top at -5380.9,5364.4 where the road carries on, bare; a cave's
         /// approach's last floor at 5046.8,-5892.6, on its landing 0.4-0.7 m over the ground beside it, railed on both sides,
         /// though it stands on the flat landing). Not a landing another staircase
         /// meets end to end, where the walk carries on across it onto that one: no road comes onto it from any side, however
@@ -334,11 +415,14 @@ public static class StairRailing
         public readonly HashSet<int> Road = new();
         /// <summary>Floors the walk ends on (<see cref="WalkOut"/>), each with the way out across the edges it leaves by.</summary>
         public readonly Dictionary<int, List<Vector2>> Out = new();
+        /// <summary>The exit of each floor at an end (<see cref="Road"/>, <see cref="Out"/>) that has one, the way out across
+        /// it (<see cref="Exit"/>). Left open, always (<see cref="TakenOver"/>).</summary>
+        public readonly Dictionary<int, Vector2> Exits = new();
         public Func<int, int, float> Finished = (x, z) => float.NaN;
         public StairKit? Kit;
     }
 
-    /// <summary>The <see cref="Ways"/> of a staircase with these <paramref name="ends"/>: at each end, a road's or a place's, the
+    /// <summary>The <see cref="Ways"/> of a staircase with these <paramref name="ends"/>: at each end, a road's or a location's, the
     /// floors it meets taken over by it (<see cref="AtEnd"/>); and the end steps in the ground bare (<see cref="InTheGround"/>).</summary>
     private static Ways WaysOn(List<StairSupport.Walk> walks, List<bool> railed, int own, IReadOnlyList<StairEnd> ends, StairKit kit,
         Func<int, int, float> finished)
@@ -351,7 +435,7 @@ public static class StairRailing
             // The landing a staircase met there end to end carries the walk on from (the 2x2 connector with a flight on each
             // side; two floors at the top of two staircases, the second one's top stair onto the first; a ridge's row of floors
             // between them): the road comes onto none of its floors from any side, and takes nothing over there. Else the road
-            // or the place's landing takes the walk over on the floors its end meets, not on those laid on past them level with
+            // or the location's landing takes the walk over on the floors its end meets, not on those laid on past them level with
             // them, out of its reach: railed as any floor (in game: six flat floors from a black marble staircase's
             // foot at 1807.9,-6613.5 to its first stair railed on one side only, four at its top at 1776.4,-6554.4 on neither).
             if (at.Any(i => MeetsAnother(walks, own, i, kit))) joined.UnionWith(at);
@@ -362,7 +446,38 @@ public static class StairRailing
         ways.Road.ExceptWith(joined);
         for (int i = 0; i < own; i++)
             if (railed[i] && !walks[i].Stair && WalkOut(walks, railed, own, i, kit) is List<Vector2> leaves) ways.Out[i] = leaves;
+        foreach (int i in ways.Road.Concat(ways.Out.Keys).Distinct())
+            if (Exit(walks, i, kit, finished) is Vector2 exit) ways.Exits[i] = exit;
         return ways;
+    }
+
+    /// <summary>The exit of floor <paramref name="i"/> on the finished ground, the way out across it: the one rule's choice
+    /// (StairEnds.Exit over StairEnds.FloorDrops: the first free edge, straight on, its right, its left, with both corners within
+    /// a step of the ground), its edges walked on across (<see cref="Open"/>) joined, and its ground built dry at both corners
+    /// (RoadWater.BuiltDry: a walker never steps off into the water). Null where it has none.</summary>
+    private static Vector2? Exit(List<StairSupport.Walk> walks, int i, StairKit kit, Func<int, int, float> finished)
+    {
+        StairSupport.Walk w = walks[i];
+        float surface = w.Surface(0f, kit);
+        float Ground(float x, float z) => BuriedPieces.MeshHeight(x, z, finished);
+        var joined = new HashSet<StairEnds.FloorEdge>();
+        for (int e = 0; e < 4; e++)
+        {
+            (Vector2 a, Vector2 b, Vector2 outward) = EdgeOf(w, e);
+            if (!Open(walks, i, a + outward * StairLayout.EndReach, b + outward * StairLayout.EndReach, surface, outward)) continue;
+            if (Vector2.Dot(outward, w.Dir) > 0.99f) joined.Add(StairEnds.FloorEdge.Front);
+            else if (Vector2.Dot(outward, w.Right) > 0.99f) joined.Add(StairEnds.FloorEdge.Right);
+            else if (Vector2.Dot(outward, w.Right) < -0.99f) joined.Add(StairEnds.FloorEdge.Left);
+        }
+        bool Dry(float a, float b) => (float.IsNaN(a) || RoadWater.BuiltDry(surface - a)) && (float.IsNaN(b) || RoadWater.BuiltDry(surface - b));
+        StairEnds.FloorEdge exit = StairEnds.Exit(StairEnds.FloorDrops(w.Back, w.Dir, surface, w.Across, Ground), joined.Contains, also: Dry);
+        return exit switch
+        {
+            StairEnds.FloorEdge.Front => w.Dir,
+            StairEnds.FloorEdge.Right => w.Right,
+            StairEnds.FloorEdge.Left => -w.Right,
+            _ => null,
+        };
     }
 
     /// <summary>
@@ -381,14 +496,17 @@ public static class StairRailing
     }
 
     /// <summary>
-    /// Whether the road, a place's landing or the ground takes the walk over across the edge of floor <paramref name="i"/> whose
+    /// Whether the road, a location's landing or the ground takes the walk over across the edge of floor <paramref name="i"/> whose
     /// middle is <paramref name="middle"/>, the way out across it <paramref name="outward"/>: where the staircase ends.
     /// <list type="bullet">
-    /// <item>The road or the place's landing, on a floor its end meets (<see cref="Ways.Road"/>): on every edge but one over
+    /// <item>The floor's exit (<see cref="Ways.Exits"/>: a free edge with both corners within a step of the finished ground,
+    /// StairEnds.EdgeLands, the one rule of whether a floor lands), always (in game: an approach's top floor at 5704.6,3590.9,
+    /// level on its right side, the ground falling away on its left and past its far edge, is walked off its right side).</item>
+    /// <item>The road or the location's landing, on a floor its end meets (<see cref="Ways.Road"/>): on every edge but one over
     /// the ledge, the ground half a metre out more than <see cref="LedgeDrop"/> under it (in game: the top floor at
     /// -9341.6,-792.2, laid on past the road's end over a drop, railed by hand on both its sides).</item>
-    /// <item>The ground straight on off a floor the walk ends on (<see cref="WalkOut"/>), judged from the walk itself, not from
-    /// where the end was recorded, where the ground there stands at walking height (in game: the top floor of an approach to
+    /// <item>The ground straight on off a floor the walk ends on (<see cref="WalkOut"/>) with no exit (its ground not read),
+    /// judged from the walk itself, not from where the end was recorded, where the ground there stands at walking height (in game: the top floor of an approach to
     /// a stone tower at -1930.0,6720.0, laid on past the end recorded at the last stair's top, was railed across the way off
     /// it onto the landing as well as on its sides).</item>
     /// </list>
@@ -396,11 +514,16 @@ public static class StairRailing
     private static bool TakenOver(List<StairSupport.Walk> walks, Ways ways, int i, Vector2 middle, Vector2 outward)
     {
         if (walks[i].Stair) return false;
+        // The floor's exit (StairEnds.EdgeLands, the one rule of whether a floor lands): open, whatever else is read.
+        bool hasExit = ways.Exits.TryGetValue(i, out Vector2 exit);
+        if (hasExit && Vector2.Dot(exit, outward) > 0.99f) return true;
         float drop = Drop(walks[i].Surface(0f, ways.Kit!), middle + outward * 0.5f, ways.Finished);
-        // One rule both ways: over the ledge only where the ground is known to drop past it; ground not known (NaN: a place
-        // placed after the staircase, a run with no expected place) leaves the walk open, as at a road's end.
+        // One rule both ways: over the ledge only where the ground is known to drop past it; ground not known (NaN: a location
+        // placed after the staircase, a run with no expected location) leaves the walk open, as at a road's end.
         if (drop > LedgeDrop) return false;
-        return ways.Road.Contains(i) || ways.Out.TryGetValue(i, out List<Vector2>? leaves) && leaves.Exists(o => Vector2.Dot(o, outward) > 0.99f);
+        // Where the road or the location's landing takes the walk over, every edge at walking height; where the walk ends on the
+        // floor, its exit alone, and straight on only where it has none (the ground there not read, or a floor not landing).
+        return ways.Road.Contains(i) || !hasExit && ways.Out.TryGetValue(i, out List<Vector2>? leaves) && leaves.Exists(o => Vector2.Dot(o, outward) > 0.99f);
     }
 
     /// <summary>How far the finished ground just outside a floor's edge may stand under its walking surface and the walk still
@@ -568,23 +691,35 @@ public static class StairRailing
     /// still gives the wedge's run its corner, and gets its post where a run starts or ends on it (in game: a black marble
     /// staircase's foot at 5769.1,5651.4, its last stair turning square onto the floor the road comes onto, the 2 x 2 filler
     /// between them bare round its outer corner over a 6 m drop; railed by hand round that corner, posts at the corner and
-    /// the floor's, the path between the two left open).</para></summary>
+    /// the floor's, the path between the two left open).</para>
+    /// <para>A wedge between two staircases met end to end is closed by the one whose layout holds its filler, from the other's
+    /// corners too (<paramref name="flanks"/>: its stairs and floors; their posts are its own railing's), and the other's
+    /// pieces stop a run as this one's do. Two met at a pit's bottom (RoadStairRuns.JoinHigh: the first's last stair walked
+    /// down to the join, the second's floor turned off its foot) are both walked down to the wedge: the other's stair's foot
+    /// corner stands for the lower flight's front (in game: the outside of such a square turn at -9387.3,-1427.7 stood open
+    /// over the pit).</para></summary>
     private static void CloseWedges(List<StructurePiece> laid, List<StairSupport.Walk> walks, List<bool> railed, int own,
-        Dictionary<(int, int, int), Spot> posts, StairKit kit, Func<int, int, float> finished)
+        Dictionary<(int, int, int), Spot> posts, StairKit kit, Func<int, int, float> finished, IReadOnlyCollection<int>? flanks = null)
     {
         // The corners the wedges are closed from: the posts laid, and every other corner of a railed piece of this staircase
-        // where a post would stand had its side been railed, a post only once a run uses it.
+        // where a post would stand had its side been railed, a post only once a run uses it; and the corners of the stairs and
+        // floors of a staircase met end to end (flanks), whose own railing posts them.
+        // What stops a run: this staircase's walked pieces and those of one met end to end alike.
+        List<bool> solid = flanks == null ? railed : railed.Select((r, i) => r || flanks.Contains(i)).ToList();
         var spots = new Dictionary<(int, int, int), Spot>(posts);
         var spare = new HashSet<(int, int, int)>();
-        for (int i = 0; i < own; i++)
+        var theirs = new HashSet<(int, int, int)>();
+        for (int i = 0; i < walks.Count; i++)
         {
-            if (!railed[i]) continue;
+            if (i < own ? !railed[i] : flanks == null || !flanks.Contains(i)) continue;
             StairSupport.Walk w = walks[i];
             float middle = w.Underside + StairLayout.StepMiddle, surface = w.Surface(0f, kit);
             foreach (var (at, bottom) in Corners(w, kit))
             {
                 var key = Key(at, bottom);
                 if (posts.ContainsKey(key)) continue;
+                if (i >= own && !spare.Contains(key)) theirs.Add(key);
+                else if (i < own) theirs.Remove(key);
                 if (spare.Add(key)) spots[key] = new Spot { At = at, Bottom = bottom, Yaw = w.Heading, Rank = w.Stair ? middle : surface };
                 if (!spots[key].Owners.Contains(i)) spots[key].Owners.Add(i);
             }
@@ -607,48 +742,58 @@ public static class StairRailing
             {
                 Spot p = spots[keys[a]], q = spots[keys[b]];
                 if (a == b || Mathf.Abs(p.Bottom - q.Bottom) > 0.05f || p.Owners.Intersect(q.Owners).Any()) continue;
-                // p the lower flight's outer front corner, q the upper's outer back corner.
+                // p the lower flight's outer front corner, q the upper's outer back corner; on (the walk out of the lower
+                // across its edge at p) and back (out of the upper across its edge at q). Two staircases met at a pit's bottom
+                // (RoadStairRuns.JoinHigh) are both walked down to the wedge: the other staircase's last stair stands with its
+                // foot's corner at p, walked out of across its foot.
                 int below = Owner(p, o => Mathf.Abs(Along(walks[o], p.At) - walks[o].Depth) < 0.05f);
                 int above = Owner(q, o => Mathf.Abs(Along(walks[o], q.At)) < 0.05f);
+                bool down = below < 0;
+                if (down) below = Owner(p, o => o >= own && Mathf.Abs(Along(walks[o], p.At)) < 0.05f);
                 float gap = Vector2.Distance(p.At, q.At);
                 Vector2 mid = (p.At + q.At) * 0.5f;
-                float turn = below >= 0 && above >= 0 ? Apart(walks[below].Heading, walks[above].Heading) : 0f;
-                bool square = Mathf.Abs(turn - 90f) < 1f;
+                Vector2 on = below < 0 ? default : down ? walks[below].Dir * -1f : walks[below].Dir;
+                Vector2 back = above < 0 ? default : walks[above].Dir * -1f;
+                float turn = below < 0 || above < 0 ? 0f
+                    : down ? Apart(StairLayout.Wrap(walks[below].Heading + 180f), walks[above].Heading) : Apart(walks[below].Heading, walks[above].Heading);
+                bool square = Mathf.Abs(turn - 90f) < SameHeading;
+                // Two pieces in line have no turn, so no wedge between them: a jog's floor two back and the next flight stand in line
+                // across the jog's own floors (their edges are railed by the edge pass, not closed across the walk).
+                if (below >= 0 && above >= 0 && turn < SameHeading) continue;
                 // A walked piece stops a rail only where it stands at the rail's heights: not a switchback's other leg
                 // passing over or under the turn (in game: run on under the upper leg at -1858.5,261.7,6889.9 and back over
                 // the lower leg at -1858.0,240.7,6911.4; the wedge at -6894.6,-3680.4 over a lower leg).
                 float lo = p.Bottom - 0.3f, hi = p.Bottom + BridgeLayout.RailHeight + 0.3f;
                 if (below < 0 || above < 0 || gap < 0.3f || gap > (square ? 2.9f : 2.4f) || !Covers(filler, mid, 0.25f)
-                    || Walked(walks, railed, mid, 0.05f, kit, lo, hi) || !done.Add((Math.Min(a, b), Math.Max(a, b)))) continue;
+                    || Walked(walks, solid, mid, 0.05f, kit, lo, hi) || !done.Add((Math.Min(a, b), Math.Max(a, b)))) continue;
                 if (turn > 91f)
                 {
                     // A switchback's join (its legs turned more than square): the lower leg's top corner and the upper leg's
                     // back corner a joint or more apart beside the join's filler, closed post to post by a handrail, and a
                     // lower rail where it has air under it (in game: at -1868.8,249.7,6898.8, its lower rail
                     // left out, which would have lain on the join's filler).
-                    if (gap > 0.45f && gap <= 1.25f)
+                    if (gap > Joint && gap <= 1.25f)
                     {
                         Level(laid, ShortRailPrefab, p.At, q.At, p.Bottom, finished, !Floored(walks, kit, mid, p.Bottom));
                         used.Add(keys[a]); used.Add(keys[b]);
                     }
                     continue;
                 }
-                Vector2 on = walks[below].Dir, back = walks[above].Dir * -1f;
                 if (gap > 2.4f)
                 {
                     Vector2 corner = p.At + on * Vector2.Dot(q.At - p.At, on);
-                    if (Walked(walks, railed, (p.At + corner) * 0.5f, -0.05f, kit, lo, hi) || Walked(walks, railed, (q.At + corner) * 0.5f, -0.05f, kit, lo, hi)) continue;
+                    if (Walked(walks, solid, (p.At + corner) * 0.5f, -0.05f, kit, lo, hi) || Walked(walks, solid, (q.At + corner) * 0.5f, -0.05f, kit, lo, hi)) continue;
                     Level(laid, LevelRailPrefab, p.At, corner, p.Bottom, finished);
                     Level(laid, LevelRailPrefab, q.At, corner, p.Bottom, finished);
                     added.Add(new Spot { At = corner, Bottom = p.Bottom, Yaw = walks[above].Heading, Rank = Mathf.Max(p.Rank, q.Rank) });
                     used.Add(keys[a]); used.Add(keys[b]);
                     continue;
                 }
-                bool lowerRuns = !Walked(walks, railed, p.At + on, -0.05f, kit, lo, hi);
+                bool lowerRuns = !Walked(walks, solid, p.At + on, -0.05f, kit, lo, hi);
                 bool upperRuns = !lowerRuns || gap > 1.25f;
                 Spot? lowerEnd = null, upperEnd = null;
                 if (lowerRuns) lowerEnd = RunOn(laid, added, p, on, walks[below].Heading, finished);
-                if (upperRuns && !Walked(walks, railed, q.At + back, -0.05f, kit, lo, hi)) upperEnd = RunOn(laid, added, q, back, walks[above].Heading, finished);
+                if (upperRuns && !Walked(walks, solid, q.At + back, -0.05f, kit, lo, hi)) upperEnd = RunOn(laid, added, q, back, walks[above].Heading, finished);
                 // A short turn's single run ends by the other flight's corner: its post stands in for that corner's.
                 // What still stands apart, the two runs' ends or a run's end and the other flight's corner, is closed by a rail
                 // from post to post; within a joint's reach the single run's post stands in for that corner's.
@@ -656,20 +801,20 @@ public static class StairRailing
                 float apart = Vector2.Distance(from, to);
                 if (lowerEnd != null) used.Add(keys[a]);
                 if (upperEnd != null) used.Add(keys[b]);
-                if (apart <= 0.45f)
+                if (apart <= Joint)
                 {
                     if (lowerEnd != null && upperEnd == null) dropped.Add(keys[b]);
                     if (upperEnd != null && lowerEnd == null) dropped.Add(keys[a]);
                 }
-                else if ((lowerEnd != null || upperEnd != null) && apart <= 2.25f && !Walked(walks, railed, (from + to) * 0.5f, -0.05f, kit, lo, hi))
+                else if ((lowerEnd != null || upperEnd != null) && apart <= 2.25f && !Walked(walks, solid, (from + to) * 0.5f, -0.05f, kit, lo, hi))
                 {
-                    Level(laid, apart <= 1.25f ? ShortRailPrefab : LevelRailPrefab, from, to, p.Bottom, finished, !Floored(walks, kit, (from + to) * 0.5f, p.Bottom));
+                    Level(laid, ClosingRail(apart), from, to, p.Bottom, finished, !Floored(walks, kit, (from + to) * 0.5f, p.Bottom));
                     used.Add(keys[a]); used.Add(keys[b]);
                 }
             }
         }
-        // A spare corner a run starts or ends on gets its post.
-        foreach (var key in used) if (spare.Contains(key)) posts[key] = spots[key];
+        // A spare corner a run starts or ends on gets its post; the other staircase's corners are its own railing's.
+        foreach (var key in used) if (spare.Contains(key) && !theirs.Contains(key)) posts[key] = spots[key];
         foreach (var key in dropped) posts.Remove(key);
         foreach (Spot spot in added) posts[Key(spot.At, spot.Bottom)] = spot;
     }
@@ -693,7 +838,7 @@ public static class StairRailing
         for (int tier = lower ? 0 : 1; tier < 2; tier++)
         {
             float y = bottom + tier * BridgeLayout.RailHeight;
-            Rail(laid, prefab, (a + b) * 0.5f, y, yaw, y, finished);
+            Rail(laid, prefab, (a + b) * 0.5f, y, yaw, finished);
         }
     }
 
@@ -733,21 +878,18 @@ public static class StairRailing
         return false;
     }
 
-    /// <summary>How far the ground stands over a rail's line at both ends where the rail is wholly in it (a beam 0.2 m deep).</summary>
-    private const float RailBuried = 0.2f;
-
-    /// <summary>Half a post's width (wood_pole, 0.2 m square).</summary>
-    private const float PostHalf = 0.1f;
-
     /// <summary>Whether a post stands wholly in the staircase's supports (a wall's courses): its four corners at its foot and
-    /// its top each in one. A post partly clear stands, the corner post a rail ends on (in game: none at the end of the
+    /// its top each in one, the post's measured box (<see cref="BuriedPieces.DataOf"/>) turned as it stands. A post partly
+    /// clear stands, the corner post a rail ends on (in game: none at the end of the
     /// rail run on by hand into the upper leg's wall at -1858.9,6889.5; one clear of the wall at -1869.2,6898.6).</summary>
     private static bool InASupport(Spot post, IReadOnlyList<StructurePiece> supports)
     {
+        BuriedPieces.Measured pole = BridgeLayout.Measured(BridgeLayout.RailPostPrefab);
+        Vector2 right = StairLayout.Right(post.Yaw), forward = StairLayout.Forward(post.Yaw);
         foreach (float y in new[] { post.Bottom + 0.05f, post.Bottom + BridgeLayout.RailHeight - 0.05f })
-        foreach (Vector2 c in new[] { new Vector2(-PostHalf, -PostHalf), new Vector2(PostHalf, -PostHalf), new Vector2(PostHalf, PostHalf), new Vector2(-PostHalf, PostHalf) })
+        foreach (Vector2 c in new[] { new Vector2(pole.Min.x, pole.Min.z), new Vector2(pole.Max.x, pole.Min.z), new Vector2(pole.Max.x, pole.Max.z), new Vector2(pole.Min.x, pole.Max.z) })
         {
-            Vector2 at = post.At + c;
+            Vector2 at = post.At + right * c.x + forward * c.y;
             bool inside = false;
             foreach (StructurePiece s in supports)
             {
@@ -761,12 +903,12 @@ public static class StairRailing
         return true;
     }
 
-    /// <summary>The floors at a staircase's <paramref name="end"/>: each one its recorded point or where the road (or the place's
+    /// <summary>The floors at a staircase's <paramref name="end"/>: each one its recorded point or where the road (or the location's
     /// ground) meets it touches, then the floors level with one of those beside it, and so on (a landing's whole row: at a
-    /// place, every floor of its landing; at a road's end, the row read for another staircase meeting it end to end, while
+    /// location, every floor of its landing; at a road's end, the row read for another staircase meeting it end to end, while
     /// the road takes the walk over only on the floors it meets, <paramref name="met"/>). Where the road meets it, not only its recorded point: a road's
     /// own staircase is recorded at a path point, and its top landing laid on past it (staircase -1880,6632: the landing
-    /// railed across the road coming onto it at -1882.8,6634.0). At a place, where the place's ground meets it on past the
+    /// railed across the road coming onto it at -1882.8,6634.0). At a location, where the location's ground meets it on past the
     /// landing's lip, the floor nearest that ground. A stair is never among them: railed along its sides, it leaves its end
     /// open to the road. A road's end is met a ring's radius off the staircase (RoadEndRing): within the ring's outer edge.</summary>
     /// A floor the walk passes through from one of its flights to another (<see cref="PassedThrough"/>: a flight's rest) is never
@@ -777,11 +919,11 @@ public static class StairRailing
         var bare = new HashSet<int>();
         // A road's end is the centre of the ring the staircase meets it on (RoadEndRing): the road comes onto the floors within
         // the ring's outer edge of it.
-        float meets = end.Place ? StairLayout.EndReach : new RoadEndRing(end.Meet, 0f, 0f).Radius + RoadEndRing.Delta + 0.3f;
+        float meets = end.AtLocation ? StairLayout.EndReach : new RoadEndRing(end.Meet, 0f, 0f).Radius + RoadEndRing.Delta + 0.3f;
         for (int i = 0; i < walks.Count; i++)
             if (railed[i] && !walks[i].Stair && !PassedThrough(walks, own, i, kit)
                 && (Covers(walks[i], end.At, StairLayout.EndReach) || Covers(walks[i], end.Meet, meets))) bare.Add(i);
-        if (end.Place && bare.Count == 0 && walks.Count > 0)
+        if (end.AtLocation && bare.Count == 0 && walks.Count > 0)
         {
             int nearest = Enumerable.Range(0, walks.Count).OrderBy(i => Off(walks[i], end.Meet)).First();
             if (railed[nearest] && !walks[nearest].Stair) bare.Add(nearest);
@@ -902,6 +1044,241 @@ public static class StairRailing
         return (from, to);
     }
 
+    /// <summary>
+    /// The clear part of floor <paramref name="self"/>'s railed edge from <paramref name="a"/> to <paramref name="b"/> where one
+    /// of its ends stands well inside another floor at its walking height, this staircase's or one met end to end: a jog too
+    /// shallow for the walk to carry on across the edge (<see cref="Open"/> reads nothing past it), whose inner edges cross
+    /// inside each other's walk (in game: two black marble staircases met end to end, the first floor of the upper one turned
+    /// 22.5 degrees onto the next, both their inner rails and corner posts standing up to 0.4 m into the other's walk at
+    /// -6592.6,-3488.3). From the end standing clear to where the edge meets that floor's edge, the inner edges' crossing,
+    /// where both are railed to; null for any other edge: both ends clear, or both on other floors.
+    /// </summary>
+    private static (Vector2 clear, Vector2 meets)? RunsInto(List<StairSupport.Walk> walks, List<bool> railed, int own, int self,
+        Vector2 a, Vector2 b, float height)
+    {
+        int Under(Vector2 p)
+        {
+            for (int j = 0; j < walks.Count; j++)
+                if (j != self && !walks[j].Stair && (railed[j] || j >= own) && WalkedOn(walks[j], p, height, -0.05f)) return j;
+            return -1;
+        }
+        int atA = Under(a), atB = Under(b);
+        if (atA >= 0 == atB >= 0) return null;
+        Vector2 clear = atA >= 0 ? b : a, inside = atA >= 0 ? a : b;
+        StairSupport.Walk other = walks[Math.Max(atA, atB)];
+        // Its footprint is convex: the edge goes in across its edge once.
+        float lo = 0f, hi = 1f;
+        for (int k = 0; k < 24; k++)
+        {
+            float mid = (lo + hi) * 0.5f;
+            if (Covers(other, Vector2.Lerp(clear, inside, mid), 0f)) hi = mid; else lo = mid;
+        }
+        return (clear, Vector2.Lerp(clear, inside, hi));
+    }
+
+    /// <summary>
+    /// The stretches at either end of floor <paramref name="self"/>'s edge from <paramref name="a"/> to <paramref name="b"/> past
+    /// which nothing is walked onto (<see cref="Beside"/> just past the edge, <see cref="Margin"/>) and that stand on no other
+    /// walking piece: where <see cref="Open"/> found the edge walked on across by its middle,
+    /// the part of it left on the outline. Two floors met in line but set aside from each other (in a clipped join, up to half
+    /// the width aside), or turned off each other across two staircases, overlap; each one's edge runs on past the other's
+    /// side, and the walk goes on across it only where the other floor stands past it. From the end corner to where the
+    /// other floor's edge crosses it, each longer than half a post (<see cref="PostHalf"/>), which the corner's post closes.
+    /// </summary>
+    private static List<(Vector2 from, Vector2 to)> Exposed(List<StairSupport.Walk> walks, int self, Vector2 a, Vector2 b, Vector2 outward,
+        float height)
+    {
+        bool Bare(Vector2 p)
+        {
+            if (Beside(walks, self, p + outward * (2f * Margin), height, outward)) return false;
+            for (int j = 0; j < walks.Count; j++)
+                if (j != self && WalkedOn(walks[j], p, height, -0.05f)) return false;
+            return true;
+        }
+        var stretches = new List<(Vector2, Vector2)>();
+        float length = Vector2.Distance(a, b), half = PostHalf;
+        foreach (var (corner, other) in new[] { (a, b), (b, a) })
+        {
+            // Within half a post of the corner the corner's own post closes it (two floors turned off each other on the corner
+            // they share leave a sliver past it, as wide as the line is read past the edge, a floor abutting there its margin).
+            float lo = half / length, hi = 1f;
+            if (!Bare(Vector2.Lerp(corner, other, lo)) || Bare(Vector2.Lerp(corner, other, 0.99f))) continue;   // 0.99: walked on across somewhere
+            // From there on to where the edge is first walked past: one crossing, found by halving.
+            for (int k = 0; k < 24; k++)
+            {
+                float mid = (lo + hi) * 0.5f;
+                if (Bare(Vector2.Lerp(corner, other, mid))) lo = mid; else hi = mid;
+            }
+            stretches.Add((corner, Vector2.Lerp(corner, other, lo)));
+        }
+        return stretches;
+    }
+
+    /// <summary>
+    /// Where the bare stretch of floor <paramref name="self"/>'s edge from its corner <paramref name="end"/> to
+    /// <paramref name="bare"/> (<see cref="Exposed"/>) is one leg of a sideways step: two floors in line, level, the other one
+    /// set aside and run back over this one (a clipped join), whose bare stretch on the other side of the step meets this one's
+    /// at the step's inner corner (their inner ends within half a post), each leg longer than a joint (<see cref="Joint"/>:
+    /// within it two posts close a step) and no longer than the kit's block (<see cref="StepBlock"/>), the line from corner to
+    /// corner no longer than the longest closing rail (<see cref="ClosingRail"/>): one block and one rail pair close it. Railed by hand in game across a black marble join set half a metre aside: no post at
+    /// the inner corner, a rail pair across from this leg's corner to the other's on the build grid, and the wedge between
+    /// filled with the kit's 1 m block (<see cref="FillStep"/>). One of the two floors lays them (<paramref name="owns"/>): the longer
+    /// leg's, a tie the corner first by x then z, whichever staircase is dressed, so two staircases met there lay it once.
+    /// Null for any other stretch (railed post to post as before): floors turned off each other, a step a joint or less aside,
+    /// or one wider than a block and a rail close, or a kit with no such block.
+    /// </summary>
+    /// <returns>The other floor, its leg's corner, and whether this floor lays the step.</returns>
+    private static (int partner, Vector2 corner, bool owns)? Step(List<StairSupport.Walk> walks, StairKit kit, int self, Vector2 end,
+        Vector2 bare, float surface)
+    {
+        if (StepBlock(kit) is not FillerKind block) return null;
+        for (int j = 0; j < walks.Count; j++)
+        {
+            StairSupport.Walk o = walks[j];
+            // In line: turned a whole number of quarter turns off this one (a floor is square), level, walked within half a post of the inner end.
+            float turn = Apart(walks[self].Heading, o.Heading) % 90f;
+            if (j == self || o.Stair || Mathf.Min(turn, 90f - turn) >= SameHeading || !WalkedOn(o, bare, surface, PostHalf)) continue;
+            for (int e = 0; e < 4; e++)
+            {
+                var (a, b, outward) = EdgeOf(o, e);
+                foreach (var (corner, inner) in Exposed(walks, j, a, b, outward, surface))
+                {
+                    if (Vector2.Distance(inner, bare) > PostHalf) continue;
+                    // The inner corner: where the two legs' lines cross (square to each other).
+                    Vector2 along = (bare - end).normalized;
+                    Vector2 at = end + along * Vector2.Dot(corner - end, along);
+                    float mine = Vector2.Distance(end, at), theirs = Vector2.Distance(corner, at);
+                    // Within a joint two posts close it; past one block or past the longest closing rail, one block and
+                    // one rail pair would leave it open: posts as at any bare stretch.
+                    if (mine <= Joint || theirs <= Joint || mine > block.Depth + Tie || theirs > block.Depth + Tie
+                        || Vector2.Distance(end, corner) > RailLength(LevelRailPrefab) + Tie) return null;
+                    bool owns = mine - theirs > Tie || Mathf.Abs(mine - theirs) <= Tie && First(end, corner);
+                    return (j, corner, owns);
+                }
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// A sideways step (<see cref="Step"/>) railed and filled as built by hand in game (a black marble join set half a metre
+    /// aside: its rails and blocks turned 292.5 degrees), between the longer leg's corner <paramref name="end"/> and the
+    /// shorter leg's <paramref name="corner"/>, its inner corner by <paramref name="inner"/>. The heading across it is the
+    /// game's build grid's nearest the line from corner to corner (<see cref="StairLayout.HeadingStep"/>, the hammer's
+    /// turn). The rail pair (<see cref="ClosingRail"/>, at the floors' walking surface and a metre over it) starts at the
+    /// longer leg's corner and runs on at that heading toward the other; a rail longer than the line (the 2 m one over a
+    /// line of 1.25 to 2 m) stands on its middle instead, as a closing rail does, so it overhangs neither corner alone. The wedge holds the kit's 1 m block (its flat piece one by one,
+    /// <see cref="StairKit.Fillers"/>; none where it has none), level with the floors as a turn's fillers are, at that
+    /// heading, its outer face's corner on the shorter leg's corner and the face running on toward the other.
+    /// </summary>
+    private static void FillStep(List<StructurePiece> laid, StairKit kit, Vector2 end, Vector2 corner, Vector2 inner, float surface,
+        Func<int, int, float> finished, bool block)
+    {
+        Vector2 d = end - corner, middle = (end + corner) * 0.5f;
+        float heading = Mathf.Round(Mathf.Atan2(d.x, d.y) * Mathf.Rad2Deg / StairLayout.HeadingStep) * StairLayout.HeadingStep;
+        float yaw = StairLayout.Wrap(heading - 90f);
+        Vector2 along = StairLayout.Forward(heading), outward = StairLayout.Right(heading);
+        string rail = ClosingRail(d.magnitude);
+        float railHalf = RailLength(rail) / 2f;
+        Vector2 railAt = 2f * railHalf <= d.magnitude ? end - along * railHalf : middle;
+        if (!block)
+        {
+            for (int tier = 0; tier < 2; tier++)
+                Rail(laid, rail, railAt, surface + tier * BridgeLayout.RailHeight, yaw, finished);
+            return;
+        }
+        if (StepBlock(kit) is not FillerKind flat) return;
+        if (Vector2.Dot(middle - inner, outward) < 0f) outward = -outward;
+        Vector2 at = corner + along * (flat.Depth / 2f) - outward * (flat.Across / 2f);
+        laid.Add(new StructurePiece
+        {
+            Kind = StructurePieceKind.StairFiller, Prefab = flat.Prefab, Position = new Vector3(at.x, surface - kit.FloorTop, at.y),
+            YawDegrees = yaw,
+        });
+    }
+
+    /// <summary>The kit's 1 m block a sideways step's wedge is filled with (its flat piece one by one, <see cref="StairKit.Fillers"/>);
+    /// null for a kit with none.</summary>
+    private static FillerKind? StepBlock(StairKit kit)
+    {
+        foreach (FillerKind f in kit.Fillers) if (f.Across == 1f && f.Depth == 1f) return f;
+        return null;
+    }
+
+    /// <summary>A level rail's length along its local x, its measured box (<see cref="BridgeLayout.Measured"/>).</summary>
+    private static float RailLength(string prefab)
+    {
+        BuriedPieces.Measured m = BridgeLayout.Measured(prefab);
+        return m.Max.x - m.Min.x;
+    }
+
+    /// <summary>How far apart two pieces' headings may be, in degrees, and be read as the same heading (a square turn's,
+    /// <see cref="CloseWedges"/>; two floors a whole number of quarter turns apart, <see cref="Step"/>): float noise, the layouts
+    /// turning in <see cref="StairLayout.HeadingStep"/>s.</summary>
+    private const float SameHeading = 1f;
+
+    /// <summary>How near two lengths may be, in metres, and be read as equal (a sideways step's legs, against each other and
+    /// against its block and rail, <see cref="Step"/>): float noise.</summary>
+    private const float Tie = 0.01f;
+
+    /// <summary>A joint's reach (<see cref="CloseWedges"/>'s): two posts within it close what stands between them, no rail.</summary>
+    private const float Joint = 0.45f;
+
+    /// <summary><see cref="WalkedOn"/>'s margin: <see cref="Exposed"/> reads whether the walk goes on just past an edge, twice
+    /// it out (clear of the margin another piece is read with), not <see cref="StairLayout.EndReach"/> out (which reads a
+    /// turn's outer corner as open).</summary>
+    private const float Margin = 0.05f;
+
+    /// <summary>Half a railing post's width (its measured box, <see cref="BridgeLayout.Measured"/>).</summary>
+    private static float PostHalf
+    {
+        get
+        {
+            BuriedPieces.Measured pole = BridgeLayout.Measured(BridgeLayout.RailPostPrefab);
+            return (pole.Max.x - pole.Min.x) / 2f;
+        }
+    }
+
+    /// <summary>A post already standing within half a post of <paramref name="at"/> on <paramref name="bottom"/>, where it is.</summary>
+    private static Vector2? NearPost(Dictionary<(int, int, int), Spot> posts, Vector2 at, float bottom)
+    {
+        foreach (Spot spot in posts.Values)
+            if (OneSpot(spot.At, spot.Bottom, at, bottom)) return spot.At;
+        return null;
+    }
+
+    /// <summary>Whether two posts stand at one spot, one post standing for both: within half a post of each other, on the
+    /// same height.</summary>
+    private static bool OneSpot(Vector2 a, float aBottom, Vector2 b, float bBottom) =>
+        Mathf.Abs(aBottom - bBottom) < 0.05f && Vector2.Distance(a, b) <= PostHalf;
+
+    /// <summary>The tie-break of which of two lays what they share, where nothing else decides: the one whose point comes first,
+    /// by x then z. A sideways step's legs of one length (<see cref="Step"/>) and two staircases met end to end
+    /// (<see cref="LaysShared"/>) alike.</summary>
+    private static bool First(Vector2 a, Vector2 b) => a.x < b.x || a.x == b.x && a.y < b.y;
+
+    /// <summary>Whether staircase <paramref name="run"/> lays the posts it shares with <paramref name="other"/>, met end to end
+    /// with it (<see cref="LeaveShared"/>): the one whose start comes first (<see cref="First"/>, the tie-break by which one of two
+    /// floors lays a sideways step), then its end; so of two staircases met there one lays them, whichever is dressed.</summary>
+    internal static bool LaysShared(StairRun run, StairRun other) =>
+        run.From != other.From ? First(run.From, other.From) : First(run.To, other.To);
+
+    /// <summary>The posts of a staircase's pieces <paramref name="mine"/> standing where a staircase met end to end with it lays
+    /// one too (<paramref name="theirs"/>, its pieces as dressed), left out: at a corner the two share each railing lays a post,
+    /// and one stands for both (<see cref="OneSpot"/>), the one of the staircase that lays shared posts
+    /// (<see cref="LaysShared"/>). Where that one lays none (buried, in a support), this one's stands.</summary>
+    internal static void LeaveShared(List<StructurePiece> mine, IReadOnlyList<StructurePiece> theirs)
+    {
+        static (Vector2 at, float bottom) SpotOf(StructurePiece post) =>
+            (new Vector2(post.Position.x, post.Position.z), post.Position.y - BridgeLayout.RailHeight * 0.5f);
+        var posts = theirs.Where(p => p.Kind == StructurePieceKind.Post).Select(SpotOf).ToList();
+        mine.RemoveAll(p => p.Kind == StructurePieceKind.Post && SpotOf(p) is var (at, bottom)
+            && posts.Exists(q => OneSpot(q.at, q.bottom, at, bottom)));
+    }
+
+    /// <summary>The level rail closing a span post to post: the 1 m rail up to a joint and a quarter, the 2 m one past it.</summary>
+    private static string ClosingRail(float span) => span <= 1.25f ? ShortRailPrefab : LevelRailPrefab;
+
     /// <summary>Whether another walking piece of the staircase covers <paramref name="p"/> near <paramref name="height"/>.</summary>
     private static bool Beside(List<StairSupport.Walk> walks, int self, Vector2 p, float height, Vector2? outward = null)
     {
@@ -951,15 +1328,12 @@ public static class StairRailing
         spot.Owners.Add(owner);
     }
 
-    /// <summary>A rail at <paramref name="at"/>, left out where the ground stands over it end to end (low end
-    /// <paramref name="y"/>, high end <paramref name="top"/>), over its top by <see cref="RailBuried"/> (a lower rail along a
-    /// step resting on a slope lies half out of it: laid, as laid by hand down a last flight); the
-    /// rail laid, or null.</summary>
-    private static StructurePiece? Rail(List<StructurePiece> laid, string prefab, Vector2 at, float y, float yaw, float top, Func<int, int, float> finished)
+    /// <summary>A rail at <paramref name="at"/> (its origin's height <paramref name="y"/>: a sloped one's low end), laid; one
+    /// wholly in the ground is left out with the staircase's where it stands without it (<see cref="Lay"/>, BuriedPieces.Omit,
+    /// the one owner: a lower rail along a step resting on a slope lies half out of it, and is laid, as laid by hand down a
+    /// last flight).</summary>
+    private static StructurePiece Rail(List<StructurePiece> laid, string prefab, Vector2 at, float y, float yaw, Func<int, int, float> finished)
     {
-        Vector2 dir = StairLayout.Right(yaw);
-        if (BuriedPieces.MeshHeight(at.x - dir.x, at.y - dir.y, finished) >= y + RailBuried
-            && BuriedPieces.MeshHeight(at.x + dir.x, at.y + dir.y, finished) >= top + RailBuried) return null;
         var rail = new StructurePiece { Kind = StructurePieceKind.Beam, Prefab = prefab, Position = new Vector3(at.x, y, at.y), YawDegrees = yaw };
         laid.Add(rail);
         return rail;

@@ -18,7 +18,10 @@ public static class StructureAppendQueue
     public static void Reset() => pending.Clear();
     public static void Forget(IEnumerable<Vector2s> zones) { foreach (Vector2s zone in zones) pending.Remove(zone); }
     public static List<StructurePiece>? ForZone(Vector2s zone) => pending.TryGetValue(zone, out var p) ? p : null;
-    public static void Complete(Vector2s zone) { pending.Remove(zone); StructurePlans.MarkSpawned(zone); }
+    /// <summary>The zone's owed pieces are all out: it owes the queue nothing more. Its own plan is not the queue's to certify
+    /// (StructurePlacement marks the zone spawned once its plan is all out, which an append's pieces may or may not be).
+    /// The one owner of placing pieces into zones, and whether a zone's structure is started (docs/OWNERS.md).</summary>
+    public static void Complete(Vector2s zone) => pending.Remove(zone);
     public static void Acknowledge(Vector2s zone, string key)
     {
         if (!pending.TryGetValue(zone, out var pieces)) return;
@@ -34,32 +37,33 @@ public static class StructureAppendQueue
         Prepare(BridgeLayout.DistinctSites(crossings.ToList())
             .SelectMany(crossing => BridgeStructures.Build(crossing, WorldGenerator.instance, WorldGenerator.instance.GetSeed())));
 
-    /// <summary>New structure pieces, by zone, as the queue owes them: a zone not
-    /// yet built also gets its existing plan, since the zone is recorded as spawned
-    /// once the addition completes.</summary>
+    /// <summary>
+    /// The pieces of the requested work, by zone, as the queue owes them: those pieces only. A zone's other structures are
+    /// not the request's: one built stays as it stands (a piece a player destroyed since does not come back), and one
+    /// withheld (StructurePlans.BuildablePlanFor) is not built because the request made one of its zones writable; only once
+    /// the request makes the last of them writable is it owed, whole (StructurePlans.ReleasedBy). A zone not
+    /// generated yet whose own plan is still to be laid gets none here: generation lays its plan whole as it spawns it
+    /// (StructurePlacement.SpawnInZone), these pieces with it, since the plans read them from now on; queued, they would
+    /// mark the zone built and its plan would never be laid. The one owner of placing pieces into zones, and whether a
+    /// zone's structure is started (docs/OWNERS.md).
+    /// </summary>
     internal static Dictionary<Vector2s, List<StructurePiece>> Prepare(IEnumerable<StructurePiece> newPieces)
     {
         var result = new Dictionary<Vector2s, List<StructurePiece>>();
+        var leftToGeneration = new HashSet<Vector2s>();
         foreach (var piece in newPieces)
         {
             var zone = ZoneSystem.GetZone(piece.Position);
+            if (leftToGeneration.Contains(zone)) continue;
             if (!result.TryGetValue(zone, out var pieces))
             {
-                pieces = new List<StructurePiece>(); result.Add(zone, pieces);
-                // An unspawned zone must receive its old plans too, since we
-                // will mark the zone spawned when this operation completes. One owed pieces by an earlier append
-                // has them queued already, and a piece a player destroyed since must not come back.
-                if (!StructurePlans.Started(zone))
+                if (ZoneSystem.instance is ZoneSystem zones && !zones.IsZoneGenerated(zone) && !StructurePlans.Started(zone) &&
+                    StructurePlans.BuildablePlanFor(zone) != null)
                 {
-                    // Not the pieces of a generated bridge withheld for reaching an explored zone.
-                    var old = StructurePlans.BuildablePlanFor(zone);
-                    if (old != null)
-                    {
-                        // A bridge of the network whose first zone this is is saved as it goes out, as a zone spawn saves it.
-                        if (WorldGenerator.instance is WorldGenerator world) StructureSites.KeepFirstBuilt(old, world);
-                        pieces.AddRange(old);
-                    }
+                    leftToGeneration.Add(zone);
+                    continue;
                 }
+                pieces = new List<StructurePiece>(); result.Add(zone, pieces);
             }
             pieces.Add(piece);
         }
@@ -113,7 +117,7 @@ public static class StructureAppendQueue
                     string prefab = reader.ReadString();
                     var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     float pitch = reader.ReadSingle(), yaw = reader.ReadSingle(), roll = reader.ReadSingle(), health = reader.ReadSingle();
-                    if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) ||
+                    if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !RoadConstants.InWorld(new Vector2(pos.x, pos.z)) ||
                         !ManualRoadDraft.IsFinite(pos.y) || !ManualRoadDraft.IsFinite(pitch) || !ManualRoadDraft.IsFinite(yaw) ||
                         !ManualRoadDraft.IsFinite(roll) || !ManualRoadDraft.IsFinite(health) || health < 0 || health > 1)
                         throw new InvalidDataException("Invalid pending bridge piece.");

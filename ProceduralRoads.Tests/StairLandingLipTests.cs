@@ -7,7 +7,7 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// An approach climbing to a place's landing is aimed where the landing meets the slope, but stops as soon as its top steps
+/// An approach climbing to a location's landing is aimed where the landing meets the slope, but stops as soon as its top steps
 /// onto the landing (StairLayout.Build's onLanding): in game, a cave's approach at 1600.2,6920.2 reached the landing's lip
 /// level with its top stair, went on along it to come nearer its aim, turned onto a floor out over the drop and stepped
 /// back down off it; one floor laid by hand on from the top stair, open onto the landing, ended it.
@@ -36,13 +36,14 @@ public class StairLandingLipTests
     }
 
     /// <summary>A climb whose top is a road's end (its ring there, RoadEndRing) arrives on that ring only: a landing to step
-    /// onto first is a place's, and does not stop it short of the road.</summary>
+    /// onto first is a location's, and does not stop it short of the road.</summary>
     [Fact]
     public void AClimbToARoadsEndArrivesOnItsRingNotOnALanding()
     {
+        // From a foot whole pieces short of the circle (the ring's arrival is the start's precise target, RoadEndRing.Allows).
         var ring = new RoadEndRing(new Vector2(0f, 12f), 180f, Ground(0f, 12f));
-        StairPlan free = StairLayout.Build(new Vector2(0f, -20f), new Vector2(0f, 12f), Ground, 2f, StairKit.Stone, ring: ring);
-        StairPlan held = StairLayout.Build(new Vector2(0f, -20f), new Vector2(0f, 12f), Ground, 2f, StairKit.Stone, ring: ring,
+        StairPlan free = StairLayout.Build(new Vector2(0f, -19.5f), new Vector2(0f, 12f), Ground, 2f, StairKit.Stone, ring: ring);
+        StairPlan held = StairLayout.Build(new Vector2(0f, -19.5f), new Vector2(0f, 12f), Ground, 2f, StairKit.Stone, ring: ring,
             onLanding: p => true);
         Assert.True(free.Reached, free.Reason);
         Assert.False(free.Reversed);
@@ -74,6 +75,103 @@ public class StairLandingLipTests
     private static StairPlan FourStairs() =>
         StairLayout.LayFlight(new Vector2(0f, 0f), 10f, new[] { 0f, 0f, 0f, 0f }, StairKit.Stone, Falling);
 
+    /// <summary>The one acceptance of a stair down off a top (StairLayout.TerminalExit.StepsDownOnto), checked before the finish
+    /// is kept, as a placed approach's onto its raised landing is: the four stairs' top over ground falling 0.6 m to the far
+    /// corners of a floor off it (<see cref="Falling"/>), but on its left a bank standing 0.3 m over the top's edge for half a
+    /// metre. The stair down in the floor's place (no floor fitting) stands on the ground at its low end (TerminalExit.Grounded,
+    /// all that was asked), its high edge in the bank on that side: not laid (decision 6j, the finish's high and low edges).
+    /// With no bank it is laid. Nor is the floor then a stair down off its far edge: the floor's back corner 0.3 m under the
+    /// bank, more than a step (RoadStairRuns.SurfaceUnderGroundAllowed).</summary>
+    [Fact]
+    public void AStairDownOffATopIsNotLaidWithItsHighEdgeInTheBank()
+    {
+        static float Bank(float x, float z) => x < 0f && z >= 8f && z < 8.5f ? 14.3f : Falling(x, z);
+        static bool NoFloor(StairPlan p) => !p.Pieces.Exists(q => q.Kind == StairPieceKind.Landing);
+        StairPlan banked = StairLayout.LayFlight(new Vector2(0f, 0f), 10f, new[] { 0f, 0f, 0f, 0f }, StairKit.Stone, Bank);
+        int pieces = banked.Pieces.Count;
+        Assert.Equal(StairLayout.TopFinish.None, RoadStairRuns.FinishOverLedge(banked, Bank, 2f, NoFloor));
+        Assert.Equal(pieces, banked.Pieces.Count);
+        Assert.Equal(StairLayout.TopFinish.LandingThenDown, RoadStairRuns.FinishOverLedge(FourStairs(), Falling, 2f, NoFloor));
+        StairPlan floored = StairLayout.LayFlight(new Vector2(0f, 0f), 10f, new[] { 0f, 0f, 0f, 0f }, StairKit.Stone, Bank);
+        Assert.Equal(StairLayout.TopFinish.None, RoadStairRuns.FinishOverLedge(floored, Bank, 2f, _ => true));
+    }
+
+    /// <summary>A floor that need not land by its own edges, carrying the walk to its stair down (the floor then a stair down),
+    /// sinks at most a step under the ground at any corner ("up to a step", the owner's of 12 Nov 2026, the raised landing's
+    /// allowance: RoadStairRuns.SurfaceUnderGroundAllowed): the four stairs' top over <see cref="Falling"/>, a bank standing over
+    /// the floor's back left corner alone, at the top's edge. A step under it (0.15 m) the floor then the stair down is laid. At
+    /// 0.3 m, the floor is refused and the finish goes on through its case's order: the stair down in the floor's place has its
+    /// high edge in the bank there (StepsDownOnto), no step back (not over a ledge), no floor that lands; with none laid, the
+    /// approach refuses its bare top (FinishApproachTop) and tries its next aim, as for every top no finish fits.</summary>
+    [Theory]
+    [InlineData(0.15f)]
+    [InlineData(0.3f)]
+    public void AFloorCarryingTheWalkToItsStairDownSinksAtMostAStepUnderTheGround(float over)
+    {
+        float Corner(float x, float z) => x <= -0.95f && z >= 7.9f && z <= 8.1f ? 14f + over : Falling(x, z);
+        StairPlan Laid() => StairLayout.LayFlight(new Vector2(0f, 0f), 10f, new[] { 0f, 0f, 0f, 0f }, StairKit.Stone, Corner);
+        bool sinks = !RoadStairRuns.SurfaceUnderGroundAllowed(14f, 14f + over);
+        Assert.Equal(over > StairLayout.StepUp, sinks);
+        Assert.Equal(sinks ? 0 : 1, StairLayout.AddTopFloor(Laid(), Corner, 2f, StairEnds.FloorEdge.Front).pieces > 0 ? 1 : 0);
+        StairPlan plan = Laid();
+        int pieces = plan.Pieces.Count;
+        var (finish, bare) = RoadStairRuns.FinishApproachTop(plan, Corner, _ => true, refuseBare: true);
+        if (!sinks)
+        {
+            Assert.Equal(StairLayout.TopFinish.FloorThenDown, finish);
+            StairEnds.End top = RoadStairRuns.TopEnd(plan, Corner)!;
+            Assert.True(top.Verdict == StairEnds.Verdict.Ok && top.FloorsPast == 1 && top.StairsPast == 1 && StairEnds.Unfinished(top) == null, StairEnds.Line(top));
+        }
+        else
+        {
+            Assert.True(finish == StairLayout.TopFinish.None && bare, $"finished {finish}");
+            Assert.Equal(pieces, plan.Pieces.Count);
+        }
+    }
+
+    /// <summary>The walk-under-the-ground allowance (RoadStairRuns.SurfaceUnderGroundAllowed) refuses ground not read: a
+    /// floor carrying the walk to its stair down, with a corner over ground not read (NaN), is not laid.</summary>
+    [Fact]
+    public void AFloorCarryingTheWalkToItsStairDownIsNotLaidOverGroundNotRead()
+    {
+        Assert.False(RoadStairRuns.SurfaceUnderGroundAllowed(14f, float.NaN));
+        Assert.True(RoadStairRuns.SurfaceUnderGroundAllowed(14f, 14f + StairLayout.StepUp));
+        Assert.False(RoadStairRuns.SurfaceUnderGroundAllowed(14f, 14f + StairLayout.StepUp + 0.01f));
+        float Unread(float x, float z) => x <= -0.95f && z >= 7.9f && z <= 8.1f ? float.NaN : Falling(x, z);
+        StairPlan plan = StairLayout.LayFlight(new Vector2(0f, 0f), 10f, new[] { 0f, 0f, 0f, 0f }, StairKit.Stone, Falling);
+        Assert.Equal(0, StairLayout.AddTopFloor(plan, Unread, 2f, StairEnds.FloorEdge.Front).pieces);
+        Assert.True(StairLayout.AddTopFloor(FourStairs(), Falling, 2f, StairEnds.FloorEdge.Front).pieces > 0);
+    }
+
+    /// <summary>"Flight, 2x2 landing, then the stair down" (the owner, 25 Oct 2026): the four stairs' top over the landing
+    /// falling away 0.6 m to the far corners of a floor off it (<see cref="Falling"/>), so no edge of that floor has both corners
+    /// within a step: it does not land by its own edges. Laid with a stair down off its far edge, that stair is its exit
+    /// (StairEnds.Exit's onward edge), landing by its low edge (TerminalExit.StepsDownOnto): the approach's finisher lays the
+    /// floor then the stair down, landing first, not the stair down in the floor's place. The end reader walks off the stair
+    /// down's low edge, and the railing leaves the stair down's edge open and rails the floor's sides over the ground.</summary>
+    [Fact]
+    public void AFloorThenAStairDownHasTheStairDownForItsExit()
+    {
+        Assert.False(StairEnds.Lands(new Vector2(0f, 8f), new Vector2(0f, 1f), 14f, 2f, Falling));
+        StairPlan plan = FourStairs();
+        Assert.Equal(StairLayout.TopFinish.FloorThenDown, RoadStairRuns.FinishOverLedge(plan, Falling, 2f, _ => true));
+        StairPiece floor = Assert.Single(plan.Pieces, p => p.Kind == StairPieceKind.Landing);
+        Assert.True(Vector3.Distance(floor.Position, new Vector3(0f, 14f - StairKit.Stone.FloorTop, 9f)) < 0.01f, $"floor at {floor.Position}");
+        StairLayout.TerminalExit down = StairLayout.Terminal(plan)!;
+        Assert.True(down.Descending && down.StepsDownOnto(Falling));
+        StairEnds.End top = RoadStairRuns.TopEnd(plan, Falling)!;
+        Assert.True(top.Verdict == StairEnds.Verdict.Ok && top.FloorsPast == 1 && top.StairsPast == 1 && StairEnds.Unfinished(top) == null, StairEnds.Line(top));
+
+        var run = StairRun.FromPlan(new Vector2(0f, -1f), new Vector2(0f, 12f), 2f, plan, StairKit.Stone);
+        run.KeepsLocationRocks = true;
+        List<StructurePiece> rails = StairRailingTests.Railing(run, StairKit.Stone, (i, k) => Falling(i, k), natural: Falling)
+            .Where(p => p.Prefab is StairRailing.LevelRailPrefab or StairRailing.ShortRailPrefab).ToList();
+        bool RailedAt(float x, float z) => rails.Any(r => Vector2.Distance(new Vector2(r.Position.x, r.Position.z), new Vector2(x, z)) < 0.05f);
+        Assert.False(RailedAt(0f, 10f));   // onto the stair down, open
+        Assert.True(RailedAt(1f, 9f));     // its sides over the ground falling away
+        Assert.True(RailedAt(-1f, 9f));
+    }
+
     [Fact]
     public void ATopFloorIsLaidWhereTheGroundAtItsFarCornersIsWithinAStep()
     {
@@ -82,7 +180,7 @@ public class StairLandingLipTests
         // rule's stair down, not a floor, a road's and an approach's alike.
         Assert.Equal(0, StairLayout.AddTopFloor(FourStairs(), Falling, 2f).pieces);
         StairPlan plan = FourStairs();
-        Assert.Equal(StairLayout.TopFinish.LandingThenDown, RoadStairRuns.FinishOverLedge(plan, Falling, 2f, _ => true));
+        Assert.Equal(StairLayout.TopFinish.FloorThenDown, RoadStairRuns.FinishOverLedge(plan, Falling, 2f, _ => true));
         // Within a step under them: laid, level with the top.
         float Near(float x, float z) => z < 8f ? -50f : 14f - 0.75f * StairLayout.StepUp;
         plan = FourStairs();
@@ -116,8 +214,9 @@ public class StairLandingLipTests
         StairPiece floor = Assert.Single(plan.Pieces, p => p.Kind == StairPieceKind.Landing);
         Assert.True(Vector3.Distance(floor.Position, new Vector3(0f, 14f - StairKit.Stone.FloorTop, 9f)) < 0.01f, $"floor at {floor.Position}");
         var run = StairRun.FromPlan(new Vector2(0f, -1f), new Vector2(0f, 10f), 2f, plan, StairKit.Stone);
-        run.KeepsSiteRocks = true;
-        List<StructurePiece> rails = StairKit.Stone.Dress(run, ground, (i, k) => OneSided(i, k, left), false)
+        run.KeepsLocationRocks = true;
+        // The railing the kit lays round its supports (the flight hangs over a drop here: the railing's fixture).
+        List<StructurePiece> rails = StairRailingTests.Railing(run, StairKit.Stone, (i, k) => OneSided(i, k, left), natural: ground)
             .Where(p => p.Prefab is StairRailing.LevelRailPrefab or StairRailing.ShortRailPrefab).ToList();
         bool RailedAt(float x, float z) => rails.Any(r => Vector2.Distance(new Vector2(r.Position.x, r.Position.z), new Vector2(x, z)) < 0.05f);
         Assert.False(RailedAt(1f, 9f));            // its level side, open
@@ -145,10 +244,10 @@ public class StairLandingLipTests
 
     /// <summary>A Mountain cave placed before its roads (Fixtures/cave-approach-lip.txt): its record and the planning ground
     /// read from the game round its approach's top, ground not read far below.</summary>
-    private static (PlacedSiteRecord record, Func<float, float, float> ground) CaveAtTheLip()
+    private static (PlacedLocationRecord record, Func<float, float, float> ground) CaveAtTheLip()
     {
         string[] lines = System.IO.File.ReadAllLines(System.IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", "cave-approach-lip.txt"));
-        PlacedSiteRecord record = PlacedSites.Read(string.Join("\n", lines.Where(l => !l.StartsWith("#") && !l.StartsWith("ground\t")))).Single();
+        PlacedLocationRecord record = PlacedLocations.Read(string.Join("\n", lines.Where(l => !l.StartsWith("#") && !l.StartsWith("ground\t")))).Single();
         var heights = new System.Collections.Generic.Dictionary<(int, int), float>();
         foreach (string l in lines.Where(l => l.StartsWith("ground\t")))
         {
@@ -170,9 +269,9 @@ public class StairLandingLipTests
         // a floor and a stair back down toward the cave's mouth. The lip is where that top stair ends (in game: one floor laid
         // by hand on from it at 1600.15,6919.23, level with the ground, and nothing past it).
         var (record, ground) = CaveAtTheLip();
-        PlacedSiteShape shape = PlacedSiteShape.Of(record.Centre, record.Yaw, RoadStairRuns.FlatOf(record.Ops)!.Value, record.RockRadius, record.Rocks,
+        PlacedLocationShape shape = PlacedLocationShape.Of(record.Centre, record.Yaw, RoadStairRuns.FlatOf(record.Ops)!.Value, record.RockRadius, record.Rocks,
             ground, record.KeepSmallRocks, record.Root, record.Prefab);
-        PlacedSiteShape.LandingRegion landing = shape.ConnectedLanding(ground, 1f);
+        PlacedLocationShape.LandingRegion landing = shape.ConnectedLanding(ground, 1f);
         // The landing reaches the approach's side: the step off the top stair is onto it, a metre inside its lip.
         Vector2 off = new(1600.15f, 6919.73f);
         Assert.True(landing.Contains(off));
@@ -214,7 +313,7 @@ public class StairLandingLipTests
     {
         // In game: a cave's approach's last floor at 5046.8,-5892.6 (surface 255.76), the ground across its way off 0.11, 0.32
         // and 0.62 m under it, 0.26 m a metre past its middle: walkable off one side only; replaced by hand with a stair down
-        // in its own place, onto the landing. By the end rule (5 Nov) a floor is read at its own far corners (StairEnds.Lands):
+        // in its own location, onto the landing. By the end rule (5 Nov) a floor is read at its own far corners (StairEnds.Lands):
         // within a step at either, it stays a floor (the sides disagree, one is within a step); more than a step and up to a
         // ledge under both, it becomes the rule's stair down. Here a floor facing +x at 10 m, its corners in steps
         // (StairLayout.StepUp; the numbers at 0.2), so the rule holds whatever StepUp is set to.

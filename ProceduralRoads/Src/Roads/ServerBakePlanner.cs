@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using UnityEngine;
 
 namespace ProceduralRoads;
 
@@ -17,6 +19,29 @@ namespace ProceduralRoads;
 /// </summary>
 public static class ServerBakePlanner
 {
+    /// <summary>The ghost pass's probe boundary: a roadless zone is still probed when a nearby structure needs rock
+    /// cleared. The callback runs the native rock pass once eligibility is known.</summary>
+    internal static int ProbeGhostRocks(Vector3 centre, float radius, bool settle, Func<int> probe)
+    {
+        if (!settle && RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius).Count == 0 &&
+            !StructurePlans.AnyStructureNear(centre, radius)) return 0;
+        return probe();
+    }
+
+    /// <summary>Every zone the network owes work: the zones its roads write terrain into (<paramref name="roadZones"/> of them),
+    /// those its structures stand in, and those whose vegetation its roads or structures reach (RoadClearAreaManager.ZonesReached,
+    /// StructurePlans.ZonesWithWalks): the bake's queue and road_bake vegetation alike.</summary>
+    internal static HashSet<Vector2s> NetworkZones(out int roadZones)
+    {
+        HashSet<Vector2s> zones = RoadSpatialGrid.GetZonesWithRoadPoints();
+        roadZones = zones.Count;
+        foreach (Vector2s zone in StructurePlans.PlannedZones)
+            zones.Add(zone);
+        zones.UnionWith(RoadClearAreaManager.ZonesReached());
+        zones.UnionWith(StructurePlans.ZonesWithWalks());
+        return zones;
+    }
+
     public enum Action
     {
         /// <summary>No road network: nothing to write.</summary>
@@ -59,6 +84,20 @@ public static class ServerBakePlanner
         NothingToWrite,
         Failed,
     }
+
+    /// <summary>
+    /// What a write the bake asked of the terrain writer did (<paramref name="carries"/>: the compiler carries the current
+    /// roads after it; <paramref name="outcome"/>: RoadTerrainModifier.LastWriteOutcome), for every compiler it writes
+    /// through (a live one, a saved or new one on a temporary terrain, a ghost zone's): stamped with nothing to write (the
+    /// writer stamps that too, RoadTerrainModifier.AppliedVersionHash), nothing to write; stamped, written; anything else, a
+    /// failed write. A compiler with nothing to write is kept, stamped and empty, so no later load writes the zone again.
+    /// Ground not known inside a location is no outcome of its own: the writer says it as an error and writes the rest
+    /// (RoadTerrainModifier.SayUnknownGround); nothing waits for it.
+    /// </summary>
+    public static WriteReport ReportOf(bool carries, RoadTerrainModifier.WriteOutcome outcome) =>
+        !carries ? WriteReport.Failed
+        : outcome == RoadTerrainModifier.WriteOutcome.NothingToWrite ? WriteReport.NothingToWrite
+        : WriteReport.Written;
 
     /// <summary>
     /// What the queue owes a zone it is repairing, once it has looked at it.
@@ -117,22 +156,34 @@ public static class ServerBakePlanner
     }
 
     /// <summary>
-    /// Whether a zone still owes the vegetation pass anything: generated,
-    /// not yet cleared for this network, and not explored before the network
-    /// reached the world (NetworkCutoff). A zone explored before keeps every
-    /// tree, bush and rock its players grew up with, planted or not.
+    /// Whether a zone still owes the vegetation pass anything: generated, not yet cleared for this network, and not a zone
+    /// the network protects (<paramref name="excluded"/>: NetworkCutoff.Excludes). A protected zone keeps everything that
+    /// grows or lies in it, a stump or log on an old road too: automatic work leaves it alone.
     /// </summary>
-    public static bool VegetationOwed(bool generated, bool cleared, bool generatedBeforeNetwork) =>
-        generated && !cleared && !generatedBeforeNetwork;
+    public static bool VegetationOwed(bool generated, bool cleared, bool excluded) =>
+        generated && !cleared && !excluded;
+
+    /// <summary>Where a zone's clearing stands, each a distinct answer: stopped after a fault, protected (the network
+    /// leaves it as it is), not generated (generation clears it), completed, owed now, or owed and waiting for players near
+    /// it to leave.</summary>
+    public enum Clearing { Stopped, Protected, NotGenerated, Completed, Owed, WaitingForPlayer }
 
     /// <summary>
-    /// Whether a zone explored before the network is owed the judgement of what lies along the ground (a stump, a fallen log:
-    /// <see cref="VegetationClearing.IsLying"/>) and nothing else of the vegetation pass: such a piece across the road is turned
-    /// off it or removed there as in any zone (<see cref="VegetationClearing.Decide"/>), once per zone and network, while the
-    /// trees, bushes and rocks its players grew up with stay (<see cref="VegetationOwed"/>).
+    /// The bake's current assessment of a zone's clearing, read only: the server bake acts on it (ServerTerrainBake's
+    /// vegetation pass) and road_bake zone and road_bake vegetation report it, so the report says what the pass would do
+    /// now. <paramref name="work"/> (whether the owed clearing reaches anything: road areas, road points, saved rocks)
+    /// and <paramref name="playerNear"/> are asked only of a zone that owes it (<see cref="VegetationOwed"/>), the
+    /// player only where there is work. Not a promise: the pass assesses again when it runs. The one owner of the bake
+    /// assessment (docs/OWNERS.md).
     /// </summary>
-    public static bool LyingOwed(bool generated, bool generatedBeforeNetwork, bool done) =>
-        generated && generatedBeforeNetwork && !done;
+    public static Clearing AssessClearing(bool stopped, bool generated, bool cleared, bool excluded, Func<bool> work,
+        Func<bool> playerNear)
+    {
+        if (stopped) return Clearing.Stopped;
+        if (!VegetationOwed(generated, cleared, excluded))
+            return excluded ? Clearing.Protected : !generated ? Clearing.NotGenerated : Clearing.Completed;
+        return work() && playerNear() ? Clearing.WaitingForPlayer : Clearing.Owed;
+    }
 
     /// <summary>
     /// Whether a zone owed its vegetation pass also has its saved rocks

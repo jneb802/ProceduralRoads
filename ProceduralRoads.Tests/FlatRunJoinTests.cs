@@ -418,8 +418,8 @@ public sealed class FlatRunJoinTests
     /// floor (<paramref name="sunk"/>), its slope coming up out of it. Walkable at the walker's step: no tread covered, no step
     /// over 0.2 m (until 6 Nov a clip stood up to half a rise over the top it met, and this walked at a rise: the half-rise
     /// row was a clip with a 0.5 m step, now it meets on a sunk stair; the rows 0.6 apart between two top stairs and 1.4
-    /// apart half a metre aside left a 0.4 m step, and the rise and a half a 0.5 m one: refused now, see
-    /// TopsAClipCannotJoinAreRefused).</summary>
+    /// apart half a metre aside left a 0.4 m step: refused now, see TopsAClipCannotJoinAreRefused; the rise and a half
+    /// between two top floors is joined in line: AClipTheCapRefusesGivesWayToTheOneItTiedWith).</summary>
     [Theory]
     [InlineData(0f, 4f, 0.5f, true, true, 1, 1)]
     [InlineData(0.6f, 1f, 0f, true, true, 0, 0)]
@@ -531,14 +531,43 @@ public sealed class FlatRunJoinTests
         Assert.Contains(WalkFaults(pieces, new[] { floor }, kit, new Vector2(0f, 5f), new Vector2(0f, 7f), 44.5f), f => f.Contains("a step of"));
     }
 
+    /// <summary>
+    /// Two top floors facing each other 6 m apart, a rise and a half apart (45 and 46.5, the ground at 41): the clip ranked
+    /// first, on from the lower top to the higher one's edge with a stair sunk into that floor, has its floors 6 m over the
+    /// ground, over the walkway cap, and is refused; the one it ties with (the same length), in line with the higher top
+    /// from the lower one's edge with a stair sunk into the lower floor, stands within the cap and is laid. Until the join
+    /// tried the next run in rank it kept the first and lost the pair. The walk is checked down from the higher top: the
+    /// walk check follows the nearest surface, so it cannot climb a sunk stair's slope out of the floor it is sunk into.
+    /// </summary>
+    [Fact]
+    public void AClipTheCapRefusesGivesWayToTheOneItTiedWith()
+    {
+        StairKit kit = StairKit.BlackMarble;
+        static float Ground(float x, float z) => 41f;
+        var a = new StairContinuation(new Vector2(0f, 8f), 0f, 45f, StairPieceKind.Landing);
+        var b = new StairContinuation(new Vector2(0f, 14f), 180f, 46.5f, StairPieceKind.Landing);
+        StairPlan first = TopAt(a.Edge, a.Heading, a.Height, true, kit, Ground);
+        StairPlan second = TopAt(b.Edge, b.Heading, b.Height, true, kit, Ground);
+        int before = second.Pieces.Count;
+        TopJoin laid = Meet(second, a, b, Ground, kit);
+        Assert.True(laid.Laid, laid.Why);
+        Assert.InRange(laid.Highest, 0f, StairKit.WalkwayCap);
+        Assert.True(laid.Sunk);
+        var run = second.Pieces.Skip(before).ToList();
+        StairPiece sunk = Assert.Single(run, p => p.Sunk);
+        // Sunk into the lower top's floor, on its row: the run's floors a rise over it at 45.5, half a rise under the higher.
+        Assert.Equal(7f, sunk.Position.z, 3);
+        Assert.All(run.Where(p => p.Kind == StairPieceKind.Landing), p => Assert.Equal(45.5f, p.Position.y + kit.FloorTop, 3));
+        Vector2 Row(StairContinuation top) => top.Edge - StairLayout.Forward(top.Heading) * (StairLayout.PieceRun / 2f);
+        var faults = WalkFaults(first.Pieces.Concat(second.Pieces).ToList(), run, kit, Row(b), Row(a), b.Height, StairLayout.StepUp);
+        Assert.True(faults.Count == 0, string.Join("\n", faults.Take(10)));
+    }
+
     /// <summary>What a clip never joins: tops four rises apart, and two tops side by side climbing the same way (a join would
     /// double back alongside both). Nor a clip that would leave a step over 0.2 m where no stair can be sunk under it (laid
     /// until 6 Nov with that step): a top stair 0.4 or 0.6 under the run's floor (a stair laid over it would cover its treads),
     /// and a top floor 0.4 under it but half a metre aside (the sunk stair is aimed at the 2 m row, not a road's width), and
-    /// tops 1.4 apart half a metre aside. Two top floors a rise and a half apart in line: laid until 6 Nov from the lower
-    /// one's floor, clipped half a rise over it; now the clip on from the lower top to the higher one's edge, a stair sunk
-    /// into that floor, ties the one from the lower's own edge (the same length) and is kept, and its floors stand 6 m over
-    /// this world's ground, over the walkway cap (raised: the tie, or the other way when the kept one is refused).</summary>
+    /// tops 1.4 apart half a metre aside.</summary>
     [Theory]
     [InlineData(0f, 10f, 180f, 4f, true, true)]
     [InlineData(3f, 0f, 0f, 0f, true, true)]
@@ -546,7 +575,6 @@ public sealed class FlatRunJoinTests
     [InlineData(0f, 4f, 180f, 0.6f, false, false)]
     [InlineData(0.5f, 4f, 180f, -0.4f, false, true)]
     [InlineData(0.5f, 6f, 180f, -1.4f, true, true)]
-    [InlineData(0f, 6f, 180f, 1.5f, true, true)]
     public void TopsAClipCannotJoinAreRefused(float aside, float gap, float heading, float rise, bool firstFloor, bool secondFloor)
     {
         StairKit kit = StairKit.BlackMarble;

@@ -34,6 +34,48 @@ public sealed class GhostRepairLedger
 
     private readonly Dictionary<Vector2s, Entry> m_zones = new();
 
+    /// <summary>The server bake's ledger (ServerTerrainBake): one for the session's network.</summary>
+    internal static readonly GhostRepairLedger Bake = new();
+
+    /// <summary>What one look at a zone told the ledger (<see cref="Answer"/>), for the bake to say.</summary>
+    public enum Answered
+    {
+        /// <summary>Worth coming back to, or finished: nothing to say.</summary>
+        Kept,
+        /// <summary>Its last write failed: dropped, a real failure.</summary>
+        GaveUp,
+        /// <summary>Nothing here can finish it; it was being watched.</summary>
+        EndedWatched,
+        /// <summary>Nothing here can finish it; it was not being watched.</summary>
+        Ended,
+    }
+
+    /// <summary>
+    /// What became of one look at this zone (<paramref name="outcome"/>, ServerBakePlanner.ResolveRepair), in this ledger:
+    /// the one mapping the bake applies to every path out of its terrain pass (ServerTerrainBake.Resolve). Finished work is
+    /// forgotten, deadline included; a failed write spends an attempt and is retried <paramref name="retryDelay"/> later, or
+    /// given up at the last; a zone nothing here can finish is forgotten; one waiting on a prerequisite is looked at again
+    /// <paramref name="retryDelay"/> later, spending nothing.
+    /// </summary>
+    public Answered Answer(Vector2s zone, ServerBakePlanner.RepairOutcome outcome, float now, float retryDelay)
+    {
+        switch (outcome)
+        {
+            case ServerBakePlanner.RepairOutcome.Resolved:
+                Succeeded(zone);
+                return Answered.Kept;
+            case ServerBakePlanner.RepairOutcome.FailedWrite:
+                return FailedWrite(zone, now, retryDelay) ? Answered.GaveUp : Answered.Kept;
+            case ServerBakePlanner.RepairOutcome.Terminal:
+                bool watched = Holds(zone);
+                Terminal(zone);
+                return watched ? Answered.EndedWatched : Answered.Ended;
+            default:
+                Defer(zone, now, retryDelay);
+                return Answered.Kept;
+        }
+    }
+
     /// <summary>
     /// Zones whose terrain has spent its attempts, kept apart from the entries
     /// so that deferring a zone for other work cannot revive terrain's budget.
@@ -103,6 +145,7 @@ public sealed class GhostRepairLedger
         entry.DueAt = now + delay;
         m_zones[zone] = entry;
     }
+
 
     /// <summary>A new network: everything is owed afresh, given-up marks included.</summary>
     public void Clear()

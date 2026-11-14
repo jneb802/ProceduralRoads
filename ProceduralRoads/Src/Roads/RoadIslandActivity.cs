@@ -23,25 +23,21 @@ public sealed class RoadIslandProgress
     public int ActiveSearches { get; }
     /// <summary>Seconds since this island was claimed (not since the stage began).</summary>
     public double IslandSeconds { get; }
-    /// <summary>Seconds since the island began connecting its places (pricing excluded); the time-left estimate's base.</summary>
-    public double SettlingSeconds { get; }
-    /// <summary>Settled places the network did not reach: no road was built to them.</summary>
+    /// <summary>Settled locations the network did not reach: no road was built to them.</summary>
     public int Unreached { get; }
     public int Bridges { get; }
     public int Staircases { get; }
-    /// <summary>Prefab name of the place being connected, and its distance from the road it starts from; null before the first.</summary>
+    /// <summary>Prefab name of the location being connected, and its distance from the road it starts from; null before the first.</summary>
     public string? Destination { get; }
     public double DestinationMetres { get; }
     internal RoadIslandProgress(int slot, int island, long assignment, bool active, string stage,
         int processed, int destinations, int reached, double metres, int pricesCompleted, int pricesTotal,
         long searchSteps, int activeSearches, double seconds,
-        int unreached = 0, int bridges = 0, int staircases = 0, string? destination = null, double destinationMetres = 0,
-        double settlingSeconds = 0)
+        int unreached = 0, int bridges = 0, int staircases = 0, string? destination = null, double destinationMetres = 0)
     { Slot=slot; Island=island; Assignment=assignment; Active=active; Stage=stage; Processed=processed;
       Destinations=destinations; Reached=reached; Kilometres=metres/1000; PricesCompleted=pricesCompleted;
       PricesTotal=pricesTotal; SearchSteps=searchSteps; ActiveSearches=activeSearches; IslandSeconds=seconds;
-      Unreached=unreached; Bridges=bridges; Staircases=staircases; Destination=destination; DestinationMetres=destinationMetres;
-      SettlingSeconds=settlingSeconds; }
+      Unreached=unreached; Bridges=bridges; Staircases=staircases; Destination=destination; DestinationMetres=destinationMetres; }
 }
 
 /// <summary>Fixed storage belonging to one generation. No event queue or per-node synchronization.</summary>
@@ -55,22 +51,21 @@ internal sealed class RoadIslandActivity
         private long nextReachSample;
         internal Token(RoadIslandActivity owner, int slot, int island, long epoch)
         { this.owner=owner; Slot=slot; Island=island; Epoch=epoch; }
-        /// <summary>The place being connected belongs to the connecting stage only; any other stage forgets it.</summary>
+        /// <summary>The location being connected belongs to the connecting stage only; any other stage forgets it.</summary>
         internal void Stage(string stage) => owner.Update(this, s => { s.Stage=stage; if (stage!="Connecting") s.Destination=null; });
         internal void Pricing(int total) => owner.Update(this, s => { s.Stage="Pricing"; s.Destination=null; s.PricesTotal=total; s.PricesCompleted=0; });
         internal void Priced() => owner.Update(this, s => s.PricesCompleted++);
-        /// <summary>A place is done: built to, joined, or given up on. <paramref name="served"/> is false when the network does not reach it.</summary>
+        /// <summary>A location is done: built to, joined, or given up on. <paramref name="served"/> is false when the network does not reach it.</summary>
         internal void Settled(int index, bool served = true) => owner.Update(this, s =>
         {
             if (index<0 || index>=s.Settled.Length || s.Settled[index]) return;
             s.Settled[index]=true;
             if (!served) s.Unreached++;
         });
-        /// <summary>The place the serial planner is connecting now, and how far it is from the road it starts from.</summary>
+        /// <summary>The location the serial planner is connecting now, and how far it is from the road it starts from.</summary>
         internal void Connecting(string name, float metres) => owner.Update(this, s =>
         {
             s.Destination=name; s.DestinationMetres=metres;
-            if (s.Working==0) s.Working=Stopwatch.GetTimestamp();
         });
         // Called only by this island's serial planner, outside the snapshot lock.
         internal bool ReachSampleDue()
@@ -81,12 +76,14 @@ internal sealed class RoadIslandActivity
             return true;
         }
         internal void Reached(int count) => owner.Update(this, s => s.Reached=count);
-        /// <summary>A measurement of which places the network serves now, by index. Reached counts them all;
-        /// unreached counts the settled ones it does not serve, so a place a later road passes leaves "unreached".</summary>
+        /// <summary>A measurement of which locations the network serves now, by index. Only the island's chosen locations
+        /// (the slots <see cref="RoadIslandActivity.Claim"/> made) are counted, so reached never exceeds the total shown: replacement
+        /// destinations, appended after them, are not in the panel's totals. Reached counts the chosen ones served; unreached the
+        /// settled ones it does not serve, so a location a later road passes leaves "unreached".</summary>
         internal void Measured(bool[] served) => owner.Update(this, s =>
         {
             int reached=0, unreached=0;
-            for (int i=0;i<served.Length;i++)
+            for (int i=0;i<served.Length && i<s.Settled.Length;i++)
             {
                 if (served[i]) reached++;
                 else if (i<s.Settled.Length && s.Settled[i]) unreached++;
@@ -106,7 +103,7 @@ internal sealed class RoadIslandActivity
         internal bool Active;
         internal bool[] Settled=Array.Empty<bool>();
         internal string Stage="Waiting";
-        internal long Claimed, Ended, Working, SearchSteps;
+        internal long Claimed, Ended, SearchSteps;
         internal double Metres, DestinationMetres;
         internal string? Destination;
     }
@@ -131,14 +128,16 @@ internal sealed class RoadIslandActivity
     }
     private void Update(Token token, Action<Slot> update)
     { lock(gate) { var s=slots[token.Slot]; if(!closed && s.Active && s.Epoch==token.Epoch && s.Island==token.Island) update(s); } }
+    /// <summary>A search's counters, without the gate: every search worker of an island (its pricing workers too) adds to its
+    /// slot, and under the gate they queued on each other and on the snapshot every 256 steps. A slot the token no longer
+    /// holds (claimed again, released, closed) is left alone, as under the gate; a count that races a release lands on a
+    /// slot no snapshot reads as active.</summary>
     private void Search(Token token,int steps,int activeDelta)
     {
-        lock(gate)
-        {
-            var s=slots[token.Slot];
-            if(!closed && s.Active && s.Epoch==token.Epoch && s.Island==token.Island)
-            { s.SearchSteps+=steps; s.ActiveSearches+=activeDelta; }
-        }
+        var s=System.Threading.Volatile.Read(ref slots[token.Slot]);
+        if(System.Threading.Volatile.Read(ref closed) || !s.Active || s.Epoch!=token.Epoch || s.Island!=token.Island) return;
+        if(steps!=0) System.Threading.Interlocked.Add(ref s.SearchSteps,steps);
+        if(activeDelta!=0) System.Threading.Interlocked.Add(ref s.ActiveSearches,activeDelta);
     }
     private void Release(Token token)
     { Update(token,s=> { s.Stage="Finished"; s.Ended=Stopwatch.GetTimestamp(); s.Active=false; }); }
@@ -152,10 +151,9 @@ internal sealed class RoadIslandActivity
             {
                 var s=slots[i]; int processed=0; foreach(bool done in s.Settled) if(done) processed++;
                 result[i]=new RoadIslandProgress(i,s.Island,s.Epoch,s.Active,s.Stage,processed,s.Settled.Length,s.Reached,
-                    s.Metres,s.PricesCompleted,s.PricesTotal,s.SearchSteps,s.ActiveSearches,
+                    s.Metres,s.PricesCompleted,s.PricesTotal,System.Threading.Interlocked.Read(ref s.SearchSteps),System.Threading.Volatile.Read(ref s.ActiveSearches),
                     s.Claimed==0?0:((s.Ended!=0?s.Ended:Stopwatch.GetTimestamp())-s.Claimed)/(double)Stopwatch.Frequency,
-                    s.Unreached,s.Bridges,s.Staircases,s.Destination,s.DestinationMetres,
-                    s.Working==0?0:((s.Ended!=0?s.Ended:Stopwatch.GetTimestamp())-s.Working)/(double)Stopwatch.Frequency);
+                    s.Unreached,s.Bridges,s.Staircases,s.Destination,s.DestinationMetres);
             }
             return Array.AsReadOnly(result);
         }

@@ -28,6 +28,7 @@ public sealed class DvergrViaductReloadTests : IDisposable
         RoadNetworkGenerator.Reset();
         RoadNetworkPersistence.Reset();
         RoadSpatialGrid.Clear();
+        PlacedLocations.Reset();
         _scope.Dispose();
     }
 
@@ -47,6 +48,13 @@ public sealed class DvergrViaductReloadTests : IDisposable
             });
         _scope.WithZdos().WithNetwork(server: true);
         RoadNetworkGenerator.Reset();
+        // A Mistlands destination is placed before its roads (PlacedLocations.PlacesFirst), here as the load would have placed it
+        // (it levels nothing): one not placed would be given no road.
+        PlacedLocations.Reset();
+        PlacedLocations.Remember(new PlacedLocationRecord
+        {
+            Prefab = "Eikthyrnir", Centre = new Vector2(100f, 0f), Root = world.GetHeight(100f, 0f), X0 = 40, Z0 = -60, W = 121, H = 121,
+        });
         bool viaducts = RoadPathfinder.ConfiguredViaducts;
         RoadPathfinder.ConfiguredViaducts = true;
         try
@@ -95,7 +103,8 @@ public sealed class DvergrViaductReloadTests : IDisposable
     [InlineData(2)]
     [InlineData(3)]
     [InlineData(4)]
-    [InlineData(6)]
+    [InlineData(5)]
+    [InlineData(7)]
     public void ACrossingsRecordOfAnotherVersionIsRefused(int version)
     {
         var c = RoadCrossing.Between(new Vector2(-24f, 0f), new Vector2(24f, 0f), 30f, new Vector2(0f, 0f), 0f, CrossingKind.Bridge);

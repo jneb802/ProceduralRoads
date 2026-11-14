@@ -55,12 +55,11 @@ public sealed class RoadStatisticsTests : IDisposable
         Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.addition==1);
         Assert.Equal(saved,Bytes());
     }
-    [Theory]
-    [InlineData(1)] [InlineData(2)] [InlineData(3)]
-    public void LegacyNonemptyLoadReplacesPriorLengthWithUnknownAndAppendPreservesUnknown(int format)
+    [Fact]
+    public void LegacyNonemptyLoadReplacesPriorLengthWithUnknownAndAppendPreservesUnknown()
     {
         Commit(); Assert.True(RoadSpatialGrid.Statistics.LengthKnown);
-        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Legacy(format)));
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Released()));
         AssertStatistics(1,null); Assert.True(float.IsNaN(RoadSpatialGrid.TotalRoadLength));
         Assert.Equal("unknown (legacy save)",RoadSpatialGrid.Statistics.LengthText());
         var before=Bytes(); Assert.Equal(4,BitConverter.ToInt32(before,0));
@@ -70,11 +69,10 @@ public sealed class RoadStatisticsTests : IDisposable
         before=Bytes(); RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(before));
         Assert.Null(RoadSpatialGrid.CommittedPathLengthMeters); Assert.Equal(before,Bytes());
     }
-    [Theory]
-    [InlineData(1)] [InlineData(2)] [InlineData(3)]
-    public void EmptyLegacyAndNewNetworksHaveKnownZeroLength(int format)
+    [Fact]
+    public void EmptyLegacyAndNewNetworksHaveKnownZeroLength()
     {
-        AssertStatistics(0,0); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Legacy(format,true)));
+        AssertStatistics(0,0); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Released(true)));
         AssertStatistics(0,0); var saved=Bytes(); RoadSpatialGrid.Clear();
         Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved)); AssertStatistics(0,0);
     }
@@ -178,7 +176,7 @@ public sealed class RoadStatisticsTests : IDisposable
         try
         {
             if(append) Assert.Throws<InvalidOperationException>(()=>RoadSpatialGrid.CommitAppend(new[]{Plan()},version));
-            else Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Legacy(2)));
+            else Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Released()));
             Assert.Equal(before,Bytes()); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion);
             Assert.Equal(0,RoadSpatialGrid.AppendCount);
         }
@@ -193,26 +191,25 @@ public sealed class RoadStatisticsTests : IDisposable
     [InlineData("NaN height")] [InlineData("infinite x")] [InlineData("width 0")] [InlineData("negative width")]
     public void LegacyV1WithOneBadPointLoadsTheRest(string defect)
     {
-        static void Point(BinaryWriter w,float x,float z,float width,float h,int version)
-        { w.Write(x); w.Write(z); w.Write(width); w.Write(h); if(version>=2) w.Write(false); }
-        byte[] Blob(int version)
+        byte[] Blob(bool released)
         {
             using var stream=new MemoryStream(); using var w=new BinaryWriter(stream);
-            w.Write(version); w.Write(2);
+            Header(w,released); w.Write(2);
             w.Write(0); w.Write(0); w.Write(2);
-            Point(w,1,2,4,40,version);
-            Point(w,defect=="infinite x"?float.PositiveInfinity:3,4,defect=="width 0"?0:defect=="negative width"?-2:4,defect=="NaN height"?float.NaN:40,version);
+            Point(w,1,2,4,40,released);
+            Point(w,defect=="infinite x"?float.PositiveInfinity:3,4,defect=="width 0"?0:defect=="negative width"?-2:4,defect=="NaN height"?float.NaN:40,released);
             w.Write(5); w.Write(5); w.Write(1);
-            Point(w,330,330,4,41,version);
+            Point(w,330,330,4,41,released);
+            Tail(w,released);
             return stream.ToArray();
         }
-        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(1)));
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(true)));
         Assert.Equal(2,RoadSpatialGrid.StoredPointRecords);
         Assert.Equal(2,RoadSpatialGrid.GridCellsWithRoads);
         Assert.All(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>Assert.True(ManualRoadDraft.IsFinite(p.h) && ManualRoadDraft.IsFinite(p.p.x) && p.w>0));
         Assert.NotEqual(0,RoadSpatialGrid.RoadNetworkVersion);
         RoadSpatialGrid.Clear();
-        Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(2)),"this build's own formats are refused whole");
+        Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(false)),"this build's own format is refused whole");
     }
     /// <summary>
     /// A released build (format 1) read a cell listed twice as one cell, so its blob loads here with both lists. In this
@@ -221,64 +218,96 @@ public sealed class RoadStatisticsTests : IDisposable
     [Fact]
     public void ARepeatedCellLoadsInAReleasedBlobAndIsRefusedInOurOwn()
     {
-        byte[] Blob(int version)
+        byte[] Blob(bool released)
         {
             using var stream=new MemoryStream(); using var w=new BinaryWriter(stream);
-            w.Write(version); w.Write(2);
+            Header(w,released); w.Write(2);
             for(int i=0;i<2;i++)
             {
                 w.Write(0); w.Write(0); w.Write(1);
-                w.Write(1f+i); w.Write(2f); w.Write(4f); w.Write(40f);
-                if(version>=2) w.Write(false);
+                Point(w,1f+i,2f,4f,40f,released);
             }
+            Tail(w,released);
             return stream.ToArray();
         }
-        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(1)));
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(true)));
         Assert.Equal(2,RoadSpatialGrid.StoredPointRecords);
         Assert.Equal(1,RoadSpatialGrid.GridCellsWithRoads);
         RoadSpatialGrid.Clear();
-        Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(2)));
+        Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(Blob(false)));
+        Assert.Contains("appears twice",RoadSpatialGrid.LastReadRefusal);
     }
     /// <summary>
-    /// The point flags (cut-only, into-site, unpainted) travel as geometry encodings 4, 5 and 6 inside the v4 envelope, so one
-    /// format number means one thing. Every encoding round-trips byte for byte with its flags; an encoding or envelope
-    /// this build does not know is refused (and the world then takes the unreadable path: nothing generated over it).
+    /// Every network, whatever it holds (road only, appended, cut, unpainted, a mound, into a location), is written in the one
+    /// current format (4, encoding 8) and round-trips byte for byte with its flags and its identity. Any other format or encoding
+    /// in the same place is refused (and the world then takes the unreadable path: nothing generated over it).
     /// </summary>
     [Fact]
-    public void EveryEncodingRoundTrips()
+    public void EveryNetworkWritesTheOneCurrentFormat()
     {
-        int Encoding(byte[] b)=>BitConverter.ToInt32(b,4);
-        void RoundTrip(int encoding,Func<RoadSpatialGrid.RoadPoint,bool>? flag=null)
+        void RoundTrip(Func<RoadSpatialGrid.RoadPoint,bool>? flag=null)
         {
             byte[] saved=Bytes(); int version=RoadSpatialGrid.RoadNetworkVersion;
-            Assert.Equal(4,BitConverter.ToInt32(saved,0)); Assert.Equal(encoding,Encoding(saved));
-            RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved));
+            Assert.Equal(RoadSpatialGrid.SavedFormat,BitConverter.ToInt32(saved,0)); Assert.Equal(RoadSpatialGrid.SavedEncoding,BitConverter.ToInt32(saved,4));
+            RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(saved),RoadSpatialGrid.LastReadRefusal);
             Assert.Equal(saved,Bytes()); Assert.Equal(version,RoadSpatialGrid.RoadNetworkVersion);
             if(flag!=null) Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>flag(p));
-            byte[] unknown=(byte[])saved.Clone(); Array.Copy(BitConverter.GetBytes(7),0,unknown,4,4);
-            Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(unknown),"encoding 7");
-            byte[] envelope=(byte[])saved.Clone(); Array.Copy(BitConverter.GetBytes(5),0,envelope,0,4);
-            Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(envelope),"envelope 5");
+            foreach(int other in new[]{2,3,4,5,6,7,9})
+            {
+                byte[] unknown=(byte[])saved.Clone(); Array.Copy(BitConverter.GetBytes(other),0,unknown,4,4);
+                Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(unknown),$"encoding {other}");
+                Assert.Contains($"format 4, encoding {other}: a format this build does not know",RoadSpatialGrid.LastReadRefusal);
+            }
+            foreach(int other in new[]{2,3,5})
+            {
+                byte[] unknown=(byte[])saved.Clone(); Array.Copy(BitConverter.GetBytes(other),0,unknown,0,4);
+                Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(unknown),$"format {other}");
+            }
             Assert.Equal(saved,Bytes());
         }
         Commit(); RoadSpatialGrid.FinalizeRoadNetwork();
-        RoundTrip(2);
+        RoundTrip(p=>!p.paintOnly&&!p.cutOnly&&!p.intoLocation&&!p.unpainted&&p.addition==0);
         RoadSpatialGrid.CommitAppend(new[]{Plan()},RoadSpatialGrid.RoadNetworkVersion);
-        RoundTrip(3,p=>p.addition>0);
+        RoundTrip(p=>p.addition>0);
         RoadSpatialGrid.CommitAppendCuts(new[]{new Vector3(32,39,1)},2f,RoadSpatialGrid.RoadNetworkVersion);
-        RoundTrip(4,p=>p.cutOnly);
-        RoadSpatialGrid.CommitAppend(new[]{Plan()},RoadSpatialGrid.RoadNetworkVersion,intoSite:true);
-        RoundTrip(5,p=>p.intoSite);
+        RoundTrip(p=>p.cutOnly);
         var under=Plan(); under.Unpainted=new List<bool>{false,true};
         RoadSpatialGrid.CommitAppend(new[]{under},RoadSpatialGrid.RoadNetworkVersion);
-        RoundTrip(6,p=>p.unpainted&&p.IsRoad);
+        RoundTrip(p=>p.unpainted&&p.IsRoad);
+        RoadSpatialGrid.CommitAppend(new[]{new StructureGround.Mound(new List<Vector2>{new(40,4)},41f).Plan()},RoadSpatialGrid.RoadNetworkVersion);
+        RoundTrip(p=>p.mound&&!p.IsRoad&&!p.unpainted);
+        RoadSpatialGrid.CommitAppend(new[]{Plan()},RoadSpatialGrid.RoadNetworkVersion,intoLocation:true);
+        RoundTrip(p=>p.intoLocation);
         Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.cutOnly);
-        Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.intoSite);
+        Assert.Contains(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.intoLocation);
     }
     /// <summary>
-    /// A generated network with a staircase's cuts and nothing appended: encoding 4 with an empty append block, the
-    /// shape of every network generated with a staircase. The reader demanded at least one append under any encoding
-    /// from 3 up, so this build refused its own saves.
+    /// The road-point formats only development builds wrote (bare 2 and 3; format 4 with encodings 2, 3, 4, 6 and 7), each
+    /// as those builds laid it out, are refused as unreadable with the reason; the released format 1 reads.
+    /// </summary>
+    [Theory]
+    [InlineData(2,0)] [InlineData(3,0)] [InlineData(4,2)] [InlineData(4,3)] [InlineData(4,4)] [InlineData(4,6)] [InlineData(4,7)]
+    public void ADevelopmentRoadFormatIsRefused(int format,int encoding)
+    {
+        int layout=format==4 ? encoding : format;
+        using var stream=new MemoryStream(); using var w=new BinaryWriter(stream);
+        w.Write(format); if(format==4) w.Write(encoding);
+        w.Write(1); w.Write(0); w.Write(0); w.Write(1);
+        w.Write(1f); w.Write(2f); w.Write(4f); w.Write(40f);
+        w.Write(false);
+        if(layout>=4) w.Write(false);
+        if(layout>=6) { w.Write(false); w.Write(false); }
+        if(layout>=3) w.Write(1);
+        if(layout>=3) { w.Write(1); w.Write(77); }
+        if(format==4) { w.Write((byte)0); w.Write(0f); }
+        Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(stream.ToArray()));
+        Assert.Equal(FormattableString.Invariant($"format {format}, encoding {(format==4?encoding:format)}: a format this build does not know (it reads the released format 1, and format 4 with encoding 8)"),RoadSpatialGrid.LastReadRefusal);
+        Assert.False(RoadSpatialGrid.IsInitialized);
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(Released()));
+    }
+    /// <summary>
+    /// A generated network with a staircase's cuts and nothing appended: an empty append block, the shape of every network
+    /// generated with a staircase (a reader once demanded at least one append, and so refused its own saves).
     /// </summary>
     [Fact]
     public void ANetworkWithStaircaseCutsAndNoAppendsRoundTrips()
@@ -287,7 +316,7 @@ public sealed class RoadStatisticsTests : IDisposable
         RoadSpatialGrid.CommitCuts(new[]{new Vector3(32,39,1)},2f);
         RoadSpatialGrid.FinalizeRoadNetwork();
         byte[] saved=Bytes(); int version=RoadSpatialGrid.RoadNetworkVersion;
-        Assert.Equal(4,BitConverter.ToInt32(saved,0)); Assert.Equal(4,BitConverter.ToInt32(saved,4));
+        Assert.Equal(4,BitConverter.ToInt32(saved,0)); Assert.Equal(8,BitConverter.ToInt32(saved,4));
         Assert.DoesNotContain(RoadSpatialGrid.SnapshotAllRoadPoints(),p=>p.addition>0);
         Assert.Equal(0,BitConverter.ToInt32(saved,saved.Length-9));   // the append block's count, before the length record
         RoadSpatialGrid.Clear();
@@ -298,17 +327,30 @@ public sealed class RoadStatisticsTests : IDisposable
         // Cut short, the refusal says where the read stopped.
         byte[] cut=saved.Take(saved.Length-3).ToArray();
         Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(cut));
-        Assert.StartsWith("envelope 4, encoding 4: EndOfStreamException at byte ",RoadSpatialGrid.LastReadRefusal);
+        Assert.StartsWith("format 4, encoding 8: EndOfStreamException at byte ",RoadSpatialGrid.LastReadRefusal);
         Assert.Contains($" of {cut.Length}:",RoadSpatialGrid.LastReadRefusal);
         Assert.DoesNotContain("at byte 0 ",RoadSpatialGrid.LastReadRefusal);
     }
-    internal static byte[] Legacy(int version,bool empty=false)
+    /// <summary>A network as a released build (format 1) wrote it: one cell, one point.</summary>
+    internal static byte[] Released(bool empty=false)
     {
         using var stream=new MemoryStream(); using var writer=new BinaryWriter(stream);
-        writer.Write(version); Geometry(writer,version,empty);
+        Header(writer,true); Geometry(writer,true,empty);
         return stream.ToArray();
     }
-    private static void Geometry(BinaryWriter writer,int version,bool empty=false,bool duplicate=false,bool badAddition=false,bool duplicateParents=false)
+    /// <summary>A record's leading numbers: the released format 1, or this build's format 4 with encoding 8.</summary>
+    private static void Header(BinaryWriter w,bool released)
+    { w.Write(released?1:RoadSpatialGrid.SavedFormat); if(!released) w.Write(RoadSpatialGrid.SavedEncoding); }
+    /// <summary>A plain road point: the released layout, or this build's (every flag false, no addition).</summary>
+    private static void Point(BinaryWriter w,float x,float z,float width,float h,bool released)
+    {
+        w.Write(x); w.Write(z); w.Write(width); w.Write(h);
+        if(!released) { w.Write(false); w.Write(false); w.Write(false); w.Write(false); w.Write(false); w.Write(0); }
+    }
+    /// <summary>What follows the cells in this build's format: an empty append block and an unknown length.</summary>
+    private static void Tail(BinaryWriter w,bool released)
+    { if(!released) { w.Write(0); w.Write((byte)0); w.Write(0f); } }
+    private static void Geometry(BinaryWriter writer,bool released,bool empty=false,bool duplicate=false,bool badAddition=false,bool duplicateParents=false)
     {
         writer.Write(empty?0:duplicate?2:1);
         if(!empty)
@@ -316,17 +358,15 @@ public sealed class RoadStatisticsTests : IDisposable
             {
                 writer.Write(0); writer.Write(0); writer.Write(1);
                 writer.Write(1f); writer.Write(2f); writer.Write(4f); writer.Write(40f);
-                if(version>=2) writer.Write(true);
-                if(version>=3) writer.Write(badAddition?2:1);
+                if(!released) { writer.Write(true); writer.Write(false); writer.Write(false); writer.Write(false); writer.Write(false); writer.Write(badAddition?2:1); }
             }
-        if(version>=3) { writer.Write(duplicateParents?2:1); writer.Write(77); if(duplicateParents) writer.Write(77); }
+        if(!released) { writer.Write(duplicateParents?2:1); writer.Write(77); if(duplicateParents) writer.Write(77); }
     }
     private static byte[] Envelope(int defect)
     {
         using var stream=new MemoryStream(); using var writer=new BinaryWriter(stream);
-        int encoding=defect==11 || defect==12 ? 3 : 2;
-        writer.Write(4); writer.Write(defect==0?1:encoding);
-        Geometry(writer,encoding,empty:defect==10,duplicate:defect==7,badAddition:defect==11,duplicateParents:defect==12);
+        writer.Write(RoadSpatialGrid.SavedFormat); writer.Write(defect==0?1:RoadSpatialGrid.SavedEncoding);
+        Geometry(writer,false,empty:defect==10,duplicate:defect==7,badAddition:defect==11,duplicateParents:defect==12);
         writer.Write((byte)(defect==1?2:defect==2 || defect==9?0:1));
         writer.Write(defect==2?5f:defect==3?-1f:defect==4?float.NaN:defect==5?float.PositiveInfinity:defect==9?BitConverter.ToSingle(new byte[]{0,0,0,128},0):5f);
         if(defect==8) writer.Write((byte)0);

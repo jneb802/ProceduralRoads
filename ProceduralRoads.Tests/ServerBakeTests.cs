@@ -115,30 +115,39 @@ public class ServerBakeTests
     }
 
     /// <summary>
-    /// A zone explored before the network keeps its trees, bushes and rocks: the vegetation pass owes it nothing, cleared
-    /// or not. A zone generated with the network, and not yet cleared for it, is still owed its clearing.
+    /// A zone the network protects (explored before it, in the modes that protect explored land) keeps everything: the
+    /// vegetation pass owes it nothing, a stump or log across an old road in it too. A zone generated with the network,
+    /// and not yet cleared for it, is still owed its clearing.
     /// </summary>
     [Fact]
-    public void VegetationInACutoffZoneIsKept()
+    public void EverythingInAProtectedZoneIsKept()
     {
-        Assert.False(ServerBakePlanner.VegetationOwed(generated: true, cleared: false, generatedBeforeNetwork: true));
-        Assert.True(ServerBakePlanner.VegetationOwed(generated: true, cleared: false, generatedBeforeNetwork: false));
-        Assert.False(ServerBakePlanner.VegetationOwed(generated: true, cleared: true, generatedBeforeNetwork: false));
-        Assert.False(ServerBakePlanner.VegetationOwed(generated: false, cleared: false, generatedBeforeNetwork: false));
+        Assert.False(ServerBakePlanner.VegetationOwed(generated: true, cleared: false, excluded: true));
+        Assert.True(ServerBakePlanner.VegetationOwed(generated: true, cleared: false, excluded: false));
+        Assert.False(ServerBakePlanner.VegetationOwed(generated: true, cleared: true, excluded: false));
+        Assert.False(ServerBakePlanner.VegetationOwed(generated: false, cleared: false, excluded: false));
     }
 
-    /// <summary>
-    /// A zone explored before the network keeps its trees, bushes and rocks, but not what lies across the road: a stump or a
-    /// fallen log is still judged there (VegetationClearing.Decide), once per zone and network, however the zone was reached.
-    /// </summary>
+    /// <summary>The bake's assessment of a zone's clearing, which its pass acts on and road_bake reports: stopped, protected,
+    /// not generated, completed, owed and waiting for players are distinct answers; a zone that owes nothing asks neither
+    /// for its work nor for players, and a player near a zone with nothing in reach does not hold it.</summary>
     [Fact]
-    public void LyingVegetationInACutoffZoneIsStillOwedItsJudgement()
+    public void TheClearingAssessmentTellsProtectedCompletedOwedWaitingAndStoppedApart()
     {
-        Assert.True(ServerBakePlanner.LyingOwed(generated: true, generatedBeforeNetwork: true, done: false));
-        Assert.False(ServerBakePlanner.LyingOwed(generated: true, generatedBeforeNetwork: true, done: true));
-        // A zone generated with the network is owed its whole pass (VegetationOwed), not this one; an ungenerated one nothing.
-        Assert.False(ServerBakePlanner.LyingOwed(generated: true, generatedBeforeNetwork: false, done: false));
-        Assert.False(ServerBakePlanner.LyingOwed(generated: false, generatedBeforeNetwork: true, done: false));
+        int asked = 0;
+        bool Ask(bool answer) { asked++; return answer; }
+        ServerBakePlanner.Clearing Assess(bool stopped = false, bool generated = true, bool cleared = false, bool excluded = false,
+            bool work = true, bool near = false) =>
+            ServerBakePlanner.AssessClearing(stopped, generated, cleared, excluded, () => Ask(work), () => Ask(near));
+        Assert.Equal(ServerBakePlanner.Clearing.Stopped, Assess(stopped: true));
+        Assert.Equal(ServerBakePlanner.Clearing.Protected, Assess(excluded: true));
+        Assert.Equal(ServerBakePlanner.Clearing.Protected, Assess(excluded: true, generated: false));
+        Assert.Equal(ServerBakePlanner.Clearing.NotGenerated, Assess(generated: false));
+        Assert.Equal(ServerBakePlanner.Clearing.Completed, Assess(cleared: true, near: true));
+        Assert.Equal(0, asked);
+        Assert.Equal(ServerBakePlanner.Clearing.Owed, Assess());
+        Assert.Equal(ServerBakePlanner.Clearing.WaitingForPlayer, Assess(near: true));
+        Assert.Equal(ServerBakePlanner.Clearing.Owed, Assess(work: false, near: true));
     }
 
     /// <summary>The stump and the log found on a paved road in an already generated zone, and one clear of it.</summary>
@@ -201,18 +210,78 @@ public class ServerBakeTests
             Crypt(p => Vector3.Distance(p, new Vector3(logAt.x, 72.328f, logAt.y)) < 0.1f)));
     }
 
+    /// <summary>A Black Forest road by a ruin, 4 m wide: the points the offline network lays there, moved 1.6 m east and 2.5 m
+    /// north to where the game's network runs (through a player standing on it at (3453.3, -4895.5)).</summary>
+    private static readonly List<VegetationClearing.RoadCentre> RuinRoad = new[]
+    {
+        (3442.51f, -4887.45f), (3443.34f, -4887.92f), (3444.15f, -4888.41f), (3444.94f, -4888.94f), (3445.70f, -4889.51f),
+        (3446.44f, -4890.11f), (3447.15f, -4890.73f), (3447.84f, -4891.39f), (3448.49f, -4892.08f), (3449.12f, -4892.80f),
+        (3449.71f, -4893.54f), (3450.27f, -4894.30f), (3450.80f, -4895.09f), (3451.19f, -4895.71f), (3451.58f, -4896.32f),
+        (3451.98f, -4896.94f), (3452.53f, -4897.71f), (3453.15f, -4898.43f), (3453.85f, -4899.07f), (3454.61f, -4899.64f),
+        (3455.42f, -4900.13f), (3456.29f, -4900.53f), (3457.18f, -4900.84f), (3458.11f, -4901.05f), (3458.72f, -4901.30f),
+        (3459.34f, -4901.55f),
+    }.Select(p => new VegetationClearing.RoadCentre(new Vector2(p.Item1, p.Item2), 2f, 47.43f)).ToList();
+
     /// <summary>
-    /// The same vegetation the game grew by a place's road, judged by generation (RoadClearAreaManager.OnRoad, the candidate
-    /// PlaceVegetation draws) and by the bake (VegetationClearing.Decide, the saved object in a zone generated before its
-    /// roads), with the clear areas each builds for the zone (the place's own first, then the roads'), the same road points
-    /// and the same spot: a stump and a fallen log on the road (live numbers by a crypt's door), a bush on the road, a swamp
-    /// tree whose trunk reaches it, a boulder the rock clearing takes there, a rock it leaves, and a bush, a tree and a log
-    /// inside the place's footprint but off the road. Once by a crypt, which clears no area, once by a place that does.
-    /// The verdicts are the same (removed, turned to the same yaw, or left). Off the road nothing is cleared by the bake;
-    /// generation keeps the place's own clear area empty only by the game's own test, as without the mod.
+    /// Seen in game: a fallen fir lying over most of a road, saved at (3454.030, 47.675, -4892.286) with rotation
+    /// (-10.0, 66.0, 15.7), in a zone generated with the road. The game lays every fallen log and stump on the ground's tilt
+    /// (its entries' m_chanceToUseGroundTilt is 1), which turns its length a quarter turn from the yaw it drew: it drew 336
+    /// and lies at 66. Generation judged it at 336, lying along the road beside it, and left it; the zone was recorded
+    /// cleared, so the bake, which reads it at 66 across the road, never saw it. Generation now judges the heading it will
+    /// lie at, so it gives the bake's verdict, and the yaw it hands back lays it where the bake would turn it.
     /// </summary>
     [Fact]
-    public void TheBakeJudgesVegetationByAPlacesRoadAsGenerationDoes()
+    public void GenerationJudgesALogLaidOnTheGroundsTiltAtTheHeadingItWillLieAt()
+    {
+        System.Func<Vector3, Heightmap.Biome> forest = _ => Heightmap.Biome.BlackForest;
+        const string name = "FirTree_oldLog";
+        int log = name.GetStableHashCode();
+        var at = new Vector2(3454.030f, -4892.286f);
+        var laid = new VegetationClearing.Lean(350f, 15.7f, 47.675f);
+        var none = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>());
+        var nobody = new List<VegetationClearing.Footprint>();
+        const float drawn = 336f, lies = 66f;
+        Assert.Equal(lies, (drawn + RoadClearAreaManager.GroundTiltTurn) % 360f, 3);
+
+        // The bake reads it as it lies, across the road.
+        VegetationClearing.Lying baked = VegetationClearing.Decide(log, at, false, new HashSet<int> { log }, none, nobody, nobody,
+            RuinRoad, 1f, forest, lies, out float bakeTurned, laid);
+        Assert.NotEqual(VegetationClearing.Lying.Clear, baked);
+
+        // Generation, handed the yaw PlaceVegetation drew, judges it at the same heading and gives the same verdict.
+        float yaw = drawn;
+        bool notPlaced = RoadClearAreaManager.OnRoad(none, RuinRoad, new Vector3(at.x, laid.Origin, at.y), name, 1f, forest, ref yaw,
+            new VegetationClearing.Lean(0f, 0f, laid.Origin), groundTilt: true);
+        Assert.Equal(baked == VegetationClearing.Lying.Remove, notPlaced);
+        if (!notPlaced)
+        {
+            float liesAt = (yaw + RoadClearAreaManager.GroundTiltTurn) % 360f;
+            Assert.Equal(bakeTurned, liesAt, 3);
+            Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(log, at, false, new HashSet<int> { log }, none, nobody,
+                nobody, RuinRoad, 1f, forest, liesAt, out _, laid));
+        }
+
+        // Its drawn yaw read as its heading, as before: along the road, left where the game lays it across.
+        float asDrawn = drawn;
+        Assert.False(RoadClearAreaManager.OnRoad(none, RuinRoad, new Vector3(at.x, laid.Origin, at.y), name, 1f, forest, ref asDrawn,
+            new VegetationClearing.Lean(0f, 0f, laid.Origin)));
+        Assert.Equal(drawn, asDrawn);
+    }
+
+    /// <summary>
+    /// The same vegetation the game grew by a location's road, judged by generation (RoadClearAreaManager.OnRoad, the candidate
+    /// PlaceVegetation draws) and by the bake (VegetationClearing.Decide, the saved object in a zone generated before its
+    /// roads), with the clear areas each builds for the zone (the location's own first, then the roads'), the same road points
+    /// and the same spot: a stump and a fallen log on the road (live numbers by a crypt's door), a bush on the road, a swamp
+    /// tree whose trunk reaches it, a boulder the rock clearing takes there, a rock it leaves, and a bush, a tree and a log
+    /// inside the location's footprint but off the road. Once by a crypt, which clears no area, once by a location that does.
+    /// A stump or fallen log is drawn a quarter turn from where it lies, as the game lays it on the ground's tilt: generation
+    /// is handed the drawn yaw, the bake the saved one. The verdicts are the same (removed, turned to lie at the same heading,
+    /// or left). Off the road nothing is cleared by the bake;
+    /// generation keeps the location's own clear area empty only by the game's own test, as without the mod.
+    /// </summary>
+    [Fact]
+    public void TheBakeJudgesVegetationByALocationsRoadAsGenerationDoes()
     {
         const Heightmap.Biome swamp = Heightmap.Biome.Swamp;
         System.Func<Vector3, Heightmap.Biome> biomeAt = _ => swamp;
@@ -236,8 +305,8 @@ public class ServerBakeTests
         Assert.False(RoadRockPolicy.ClearingTakes("rock_mistlands1", swamp));
         var vegetation = new HashSet<int>(entries.Select(e => e.prefab.GetStableHashCode()));
         var nobody = new List<VegetationClearing.Footprint>();
-        // The place's parts are known, and none of these is one.
-        var place = new List<VegetationClearing.Footprint> { new(centre, radius, _ => false) };
+        // The location's parts are known, and none of these is one.
+        var location = new List<VegetationClearing.Footprint> { new(centre, radius, _ => false) };
         foreach (bool clearsArea in new[] { false, true })
         {
             // As ZoneSystem.PlaceLocations adds it, then the roads' as RoadClearAreaManager builds them.
@@ -253,12 +322,17 @@ public class ServerBakeTests
             }
             foreach (var (prefab, at, yaw, laid, onRoad) in entries)
             {
-                string where = $"{prefab} at ({at.x}, {at.y}), place clears its area {clearsArea}";
+                string where = $"{prefab} at ({at.x}, {at.y}), location clears its area {clearsArea}";
                 Assert.True((at - centre).magnitude < radius, where);
-                float generated = yaw;
+                // The game lays a fallen log or stump on the ground's tilt, a quarter turn from the yaw it drew: generation is
+                // handed the drawn yaw, the bake reads the saved one it lies at.
+                bool groundTilt = VegetationClearing.IsLying(prefab.GetStableHashCode());
+                float drawn = groundTilt ? (yaw - RoadClearAreaManager.GroundTiltTurn + 360f) % 360f : yaw;
+                float generated = drawn;
                 bool notPlaced = RoadClearAreaManager.OnRoad(Areas(), CryptRoad, new Vector3(at.x, laid.Origin, at.y), prefab, 1f, biomeAt,
-                    ref generated, laid);
-                VegetationClearing.Lying baked = VegetationClearing.Decide(prefab.GetStableHashCode(), at, false, vegetation, Areas(), place,
+                    ref generated, laid, groundTilt: groundTilt);
+                float liesAt = groundTilt ? generated + RoadClearAreaManager.GroundTiltTurn : generated;
+                VegetationClearing.Lying baked = VegetationClearing.Decide(prefab.GetStableHashCode(), at, false, vegetation, Areas(), location,
                     nobody, CryptRoad, 1f, biomeAt, yaw, out float turned, laid);
                 // The road's verdict, by the one rule both ask.
                 VegetationClearing.Lying road = VegetationClearing.Judge(prefab.GetStableHashCode(), new Vector3(at.x, laid.Origin, at.y), 1f,
@@ -267,18 +341,18 @@ public class ServerBakeTests
                 Assert.Equal(judged, turned, 3);
                 if (!onRoad)
                 {
-                    // Off the road the bake clears nothing, by a crypt or by a place that clears its area.
+                    // Off the road the bake clears nothing, by a crypt or by a location that clears its area.
                     Assert.True(baked == VegetationClearing.Lying.Clear, where);
-                    // Generation places it by a crypt; by a place that clears its area the game's own test keeps it out.
+                    // Generation places it by a crypt; by a location that clears its area the game's own test keeps it out.
                     Assert.True(notPlaced == clearsArea, where);
-                    Assert.True(clearsArea || generated == yaw, where);
+                    Assert.True(clearsArea || generated == drawn, where);
                     continue;
                 }
-                // On the road generation leaves out what the bake removes, and turns what it turns; inside a place's own clear
+                // On the road generation leaves out what the bake removes, and turns what it turns; inside a location's own clear
                 // area the game keeps everything out besides (a rock the rock clearing takes there is left to it by the bake).
                 bool gameKeepsOut = clearsArea && VegetationClearing.InGameArea(Areas(), at);
                 Assert.True(notPlaced == (gameKeepsOut || baked == VegetationClearing.Lying.Remove), $"{where}: generation {notPlaced}, bake {baked}");
-                if (!notPlaced) Assert.True(Mathf.Abs(generated - turned) < 0.001f, $"{where}: generation yaw {generated}, bake {turned}");
+                if (!notPlaced) Assert.True(Mathf.Abs(((liesAt - turned) % 360f + 540f) % 360f - 180f) < 0.001f, $"{where}: generation lies at {liesAt}, bake {turned}");
             }
         }
         // What each is, by the road (by the crypt): the stump, the log, the bush on the road, the tree reaching it and the rock
@@ -294,7 +368,7 @@ public class ServerBakeTests
             new ZoneSystem.ClearArea(new Vector3(point.Centre.x, 0f, point.Centre.y), 2f * point.HalfWidth * RoadConstants.VegetationClearMultiplier))));
         for (int i = 0; i < entries.Length; i++)
             Assert.True(expected[i] == VegetationClearing.Decide(entries[i].prefab.GetStableHashCode(), entries[i].at, false, vegetation, crypt,
-                place, nobody, CryptRoad, 1f, biomeAt, entries[i].yaw, out _, entries[i].laid), $"{entries[i].prefab} at {entries[i].at}");
+                location, nobody, CryptRoad, 1f, biomeAt, entries[i].yaw, out _, entries[i].laid), $"{entries[i].prefab} at {entries[i].at}");
     }
 
     [Theory]
@@ -443,28 +517,13 @@ public class ServerBakeTests
     private const float Delay = 10f;
 
     /// <summary>
-    /// One look at a zone, mapped exactly as ServerTerrainBake.Resolve maps it:
-    /// the real ResolveRepair, the real scheduler. Returns whether it is worth
-    /// coming back.
+    /// One look at a zone, through the mapping ServerTerrainBake.Resolve calls
+    /// (GhostRepairLedger.Answer over the real ResolveRepair). Returns whether it
+    /// is worth coming back.
     /// </summary>
     private static bool Apply(GhostRepairLedger ledger, Vector2s zone, ServerBakePlanner.Action action,
-        ServerBakePlanner.WriteReport report, float now)
-    {
-        switch (ServerBakePlanner.ResolveRepair(action, report))
-        {
-            case ServerBakePlanner.RepairOutcome.Resolved:
-                ledger.Succeeded(zone);
-                return true;
-            case ServerBakePlanner.RepairOutcome.FailedWrite:
-                return !ledger.FailedWrite(zone, now, Delay);
-            case ServerBakePlanner.RepairOutcome.Terminal:
-                ledger.Terminal(zone);
-                return false;
-            default:
-                ledger.Defer(zone, now, Delay);
-                return true;
-        }
-    }
+        ServerBakePlanner.WriteReport report, float now) =>
+        ledger.Answer(zone, ServerBakePlanner.ResolveRepair(action, report), now, Delay) == GhostRepairLedger.Answered.Kept;
 
     [Fact]
     public void AZoneWhoseGhostWriteFailedIsWrittenFromTheQueueInstead()
@@ -786,6 +845,28 @@ public class ServerBakeTests
     private static ServerBakePlanner.RepairOutcome Outcome(ServerBakePlanner.Action action,
         ServerBakePlanner.WriteReport report = ServerBakePlanner.WriteReport.NotAttempted) =>
         ServerBakePlanner.ResolveRepair(action, report);
+
+    /// <summary>A write that failed (the game would not save) spends the zone's budget and is given up at the last.</summary>
+    [Fact]
+    public void AWriteThatFailedSpendsTheBudgetAndIsGivenUp()
+    {
+        var ledger = new GhostRepairLedger();
+        float now = 0f;
+        // A write that failed (the game would not save) spends the budget, as before.
+        ServerBakePlanner.WriteReport failed = ServerBakePlanner.ReportOf(false, RoadTerrainModifier.WriteOutcome.SaveRefused);
+        Assert.Equal(ServerBakePlanner.WriteReport.Failed, failed);
+        Assert.Equal(ServerBakePlanner.WriteReport.Failed, ServerBakePlanner.ReportOf(false, RoadTerrainModifier.WriteOutcome.None));
+        var broken = new Vector2s(4, -2);
+        ledger.Record(broken);
+        bool kept = true;
+        for (int i = 0; i < GhostRepairLedger.MaxFailedWrites; i++, now += Delay)
+        {
+            Assert.Contains(broken, ledger.TakeReady(_ => true, now));
+            kept = Apply(ledger, broken, ServerBakePlanner.Action.WriteSavedCompiler, failed, now);
+        }
+        Assert.False(kept);
+        Assert.True(ledger.HasGivenUp(broken));
+    }
 
     [Fact]
     public void WaitingForAPrerequisiteCostsTheZoneNothing()

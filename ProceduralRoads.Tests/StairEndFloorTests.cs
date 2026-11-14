@@ -21,6 +21,7 @@ public class StairEndFloorTests : IDisposable
 
     public void Dispose()
     {
+        RoadLocationProtection.Reset();
         RoadNetworkGenerator.Reset();
         _scope.Dispose();
     }
@@ -37,11 +38,11 @@ public class StairEndFloorTests : IDisposable
     /// <summary>The road staircase's ends carried over on <paramref name="ground"/>, the world's ground too (the road's
     /// pieces are planned on it), with the river weight <paramref name="river"/> and the next stretch <paramref name="next"/>.</summary>
     private StairPlan Carry(StairPlan plan, List<Vector2> path, int start, int to, bool foot, bool top, Func<float, float, float> ground,
-        Func<float, float, float>? river = null, (int from, int to)? next = null)
+        Func<float, float, float>? river = null, (int from, int to)? next = null, RoadLocationProtection.Targets locations = default)
     {
         var world = new World { Height = ground, River = river ?? ((x, z) => 0f) };
         _scope.WithWorld(world);
-        return RoadStairRuns.CarryRoadOntoStairs(plan, path, start, to, foot, top, new List<RoadStairSpan>(), new List<RoadCrossing>(), next, world, ground);
+        return RoadStairRuns.CarryRoadOntoStairs(plan, path, start, to, foot, top, new List<RoadStairSpan>(), new List<RoadCrossing>(), next, world, ground, locations);
     }
 
     /// <summary>Runs <paramref name="body"/> with the mod's earthwork cap (the suite runs on plain roads, with none).</summary>
@@ -139,14 +140,14 @@ public class StairEndFloorTests : IDisposable
     {
         // The floors laid out over a gully at the end of a spine 8 m under them, the ground 7 m either side of the spine 6 m
         // lower still: the road carried on to the first stair would stand on a ridge (RoadRidges, as the road builder reads it).
-        // Generation searches a road round one (RoadNetworkGenerator.SearchedRound); this road, tried once, is refused for it.
+        // The one list refuses a road along one (RoadNetworkGenerator.AlongARidge), this road as every road.
         var (plan, path) = Straight();
         StairPlan kept = plan;
         WithTheCap(() => kept = Carry(plan, path, 3, 5, foot: true, top: false,
             StraightGround((x, z) => z > -40f ? (Mathf.Abs(x) < 3f ? 32f : 26f) : null)));
         Assert.Same(plan, kept);
         Assert.Equal(0, kept.FootFloorsTrimmed);
-        Assert.Contains("foot: a ridge", RoadStairRuns.EndFloorsKept.Keys);
+        Assert.Contains("foot: " + RoadNetworkGenerator.RidgeRoadRefusal, RoadStairRuns.EndFloorsKept.Keys);
     }
 
     [Fact]
@@ -200,15 +201,18 @@ public class StairEndFloorTests : IDisposable
     }
 
     /// <summary>The short road is judged by generation's own refusals (RoadNetworkGenerator.BuiltRoadRefusal), so where no
-    /// earthwork cap is set it is judged by none, as generation judges every road then: the floors over the same 9 m are
-    /// carried over.</summary>
+    /// earthwork cap is set it is judged by none of the cap's, as generation judges every road then; but a ridge is judged
+    /// with or without a cap (RoadNetworkGenerator.AlongARidge): carried on 9 m over ground under it on both sides it would
+    /// stand on one, and the floors are kept.</summary>
     [Fact]
-    public void WithNoEarthworkCapTheShortRoadIsJudgedByNoneAsAnyRoad()
+    public void WithNoEarthworkCapTheShortRoadIsStillJudgedForItsRidge()
     {
         Assert.Equal(0f, RoadNetworkGenerator.EarthworkCap);
         var (plan, path) = Straight();
         StairPlan carried = Carry(plan, path, 3, 5, foot: true, top: false, StraightGround((x, z) => z > -40f ? 31f : null));
-        Assert.Equal(2, carried.FootFloorsTrimmed);
+        Assert.Same(plan, carried);
+        Assert.Equal(0, carried.FootFloorsTrimmed);
+        Assert.Contains("foot: " + RoadNetworkGenerator.RidgeRoadRefusal, RoadStairRuns.EndFloorsKept.Keys);
     }
 
     /// <summary>Water is read as the search read the road (RoadStairRuns.CarryWater: RoadWater.Walked on the world's height
@@ -459,6 +463,40 @@ public class StairEndFloorTests : IDisposable
         Assert.Empty(RoadStairRuns.EndFloorsKept);
     }
 
+    /// <summary>
+    /// A top whose road runs on to the location the road goes to, its end a trimmed arrival in that location's clearance, is carried
+    /// with that location as its target (decision 6d: locations carried by identity), as the road's own last piece is planned into
+    /// it: LayOnce hands the road's targets on (RoadStairRuns.Lay, CarryRoadOntoStairs, RoadOnto). Planned with none, the
+    /// carry's road was refused by the location's clearance and the top kept its floors. Another location's footprint there keeps
+    /// its clearance: a road whose target is elsewhere is refused there as before.
+    /// </summary>
+    [Fact]
+    public void ATopRunningOnIntoItsRoadsOwnLocationIsCarriedWithThatLocationAsItsTarget()
+    {
+        var (plan, whole) = Straight();
+        // The road ends 2.5 m past the top's floors, a trimmed arrival half way into the location's clearance.
+        List<Vector2> path = whole.Take(7).ToList();
+        const float radius = 10f;
+        var location = new Vector2(0f, path[path.Count - 1].y + radius + RoadLocationProtection.Clearance(RoadNetworkGenerator.RoadWidth) / 2f);
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(location, radius) });
+        // No target: the carry's road is in a location's footprint, refused; the top stays as laid.
+        StairPlan untargeted = plan.Copy();
+        Assert.Same(untargeted, Carry(untargeted, path, 3, 5, foot: false, top: true, StraightGround()));
+        Assert.Equal(0, RoadStairRuns.EndsCarried);
+        Assert.Single(RoadStairRuns.EndFloorsKept);
+        // Another location as its target: the footprint there is not its own, refused as before.
+        StairPlan elsewhere = plan.Copy();
+        Assert.Same(elsewhere, Carry(elsewhere, path, 3, 5, foot: false, top: true, StraightGround(),
+            locations: new RoadLocationProtection.Targets(null, new Vector2(0f, 400f))));
+        Assert.Equal(0, RoadStairRuns.EndsCarried);
+        // The location it goes to: carried, all but its landing row, as on open ground.
+        StairPlan carried = Carry(plan.Copy(), path, 3, 5, foot: false, top: true, StraightGround(), locations: new RoadLocationProtection.Targets(null, location));
+        Assert.True(carried.TopFloorsTrimmed == 2, string.Join("; ", RoadStairRuns.EndFloorsKept.Select(k => $"{k.Key} x{k.Value}")));
+        Assert.Equal(1, StairLayout.EndFloorRows(carried, top: true, RoadStairRuns.Width));
+        Assert.Equal(1, RoadStairRuns.EndsCarried);
+        Assert.Equal(3, RoadStairRuns.RoadOntoCalls);
+    }
+
     /// <summary>The top by the same rule: water where the carry's road would start again (a ring's radius past the floor
     /// next to the stair). It is not carried shorter: the top stays as laid, kept for that reason, its road asked once.</summary>
     [Fact]
@@ -549,7 +587,7 @@ public class StairEndFloorTests : IDisposable
 
     /// <summary>One world for every lay of a road, as a generation's: <see cref="Carry"/> makes a new one each call.</summary>
     private StairPlan CarryOn(World world, StairPlan plan, List<Vector2> path, bool foot, bool top) =>
-        RoadStairRuns.CarryRoadOntoStairs(plan, path, 3, 5, foot, top, new List<RoadStairSpan>(), new List<RoadCrossing>(), null, world, world.Height);
+        RoadStairRuns.CarryRoadOntoStairs(plan, path, 3, 5, foot, top, new List<RoadStairSpan>(), new List<RoadCrossing>(), null, world, world.Height, default);
 
     /// <summary>A staircase laid again (a road's retry or replan: a fresh copy of its layout) has each end's carry decided
     /// once a generation: the second lay asks RoadOnto's owners nothing and comes out the same, carried or kept, its tallies
@@ -620,6 +658,80 @@ public class StairEndFloorTests : IDisposable
         CarryOn(world, plan.Copy(), path, foot: false, top: true);
         Assert.Equal(calls + 1, RoadStairRuns.RoadOntoCalls);
         Assert.Equal(1, RoadStairRuns.CarriesReused);
+    }
+
+    /// <summary>The road being planned again as the last resort, or as a trial, plans the carry's road under other switches
+    /// (RoadSpatialGrid.PlanningState: the last resort's pitch), so its carry is decided afresh, not replayed from the first
+    /// plan; planned so again, it is replayed.</summary>
+    [Fact]
+    public void ASecondPlanAsTheLastResortOrATrialDecidesItsCarryAfresh()
+    {
+        var (plan, path) = Straight();
+        var world = new World { Height = StraightGround() };
+        _scope.WithWorld(world);
+        CarryOn(world, plan.Copy(), path, foot: false, top: true);
+        Assert.Equal(1, RoadStairRuns.RoadOntoCalls);
+
+        RoadPitches.AsLastResort("a test", () => CarryOn(world, plan.Copy(), path, foot: false, top: true));
+        Assert.Equal(2, RoadStairRuns.RoadOntoCalls);
+        Assert.Equal(0, RoadStairRuns.CarriesReused);
+        RoadGrade.Trial(() => CarryOn(world, plan.Copy(), path, foot: false, top: true));
+        Assert.Equal(3, RoadStairRuns.RoadOntoCalls);
+        Assert.Equal(0, RoadStairRuns.CarriesReused);
+
+        RoadPitches.AsLastResort("a test", () => CarryOn(world, plan.Copy(), path, foot: false, top: true));
+        RoadGrade.Trial(() => CarryOn(world, plan.Copy(), path, foot: false, top: true));
+        CarryOn(world, plan.Copy(), path, foot: false, top: true);
+        Assert.Equal(3, RoadStairRuns.RoadOntoCalls);
+        Assert.Equal(3, RoadStairRuns.CarriesReused);
+    }
+
+    /// <summary>The carry's road is a piece planned under what the road being planned holds on this thread (its held points,
+    /// its levelled ends: RoadSpatialGrid.PlanningState, as a remembered piece is keyed), so a carry asked with another held
+    /// point or levelled end is decided afresh, and asked again with the same ones is replayed.</summary>
+    [Fact]
+    public void AnotherHeldPointOrLevelledEndDecidesTheCarryAfresh()
+    {
+        var (plan, path) = Straight();
+        var world = new World { Height = StraightGround() };
+        _scope.WithWorld(world);
+        try
+        {
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            Assert.Equal(1, RoadStairRuns.RoadOntoCalls);
+
+            RoadSpatialGrid.HeldPoints = new List<Vector2> { new(0f, 40f) };
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            Assert.Equal(2, RoadStairRuns.RoadOntoCalls);
+            RoadSpatialGrid.HeldPoints = new List<Vector2> { new(0f, 41f) };
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            Assert.Equal(3, RoadStairRuns.RoadOntoCalls);
+            RoadSpatialGrid.HeldPoints = null;
+
+            RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (new Vector2(0f, 40f), 44f) };
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            Assert.Equal(4, RoadStairRuns.RoadOntoCalls);
+            RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (new Vector2(0f, 40f), 44.5f) };
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            Assert.Equal(5, RoadStairRuns.RoadOntoCalls);
+            Assert.Equal(0, RoadStairRuns.CarriesReused);
+
+            // The same held points and levelled ends again (new lists, the same values): replayed.
+            RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (new Vector2(0f, 40f), 44.5f) };
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            RoadSpatialGrid.LevelledEnds = null;
+            RoadSpatialGrid.HeldPoints = new List<Vector2> { new(0f, 40f) };
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            RoadSpatialGrid.HeldPoints = null;
+            CarryOn(world, plan.Copy(), path, foot: false, top: true);
+            Assert.Equal(5, RoadStairRuns.RoadOntoCalls);
+            Assert.Equal(3, RoadStairRuns.CarriesReused);
+        }
+        finally
+        {
+            RoadSpatialGrid.HeldPoints = null;
+            RoadSpatialGrid.LevelledEnds = null;
+        }
     }
 
     /// <summary>A carry decided on a worker (an island's) is never replayed for the main thread (a manual road's staircase) at

@@ -3,7 +3,7 @@ using Xunit;
 
 namespace ProceduralRoads.Tests;
 
-/// <summary>What this peer does by role: only a server (or the hosting player) holds a road network, and every place
+/// <summary>What this peer does by role: only a server (or the hosting player) holds a road network, and every location
 /// that asks reads RoadLifecycleManager.HoldsTheNetwork.</summary>
 public sealed class ServerRoleTests : System.IDisposable
 {

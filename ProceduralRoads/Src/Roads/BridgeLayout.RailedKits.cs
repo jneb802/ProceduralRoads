@@ -38,7 +38,8 @@ namespace ProceduralRoads;
 /// the columns either side, which always stand, when they are within <see cref="FreeSpanMaxWidth"/> of each other (what a
 /// wooden deck holds up unsupported); a longer run is left open, its rails stopping on newels as at a navigation gap.</para>
 /// <para><b>Nothing is buried</b>: a stringer, handrail or brace wholly under the ground is not laid (a stair's may meet a
-/// hillside), nor a railing post wholly under it, a column (a fallen one's stub too) ends at the first pole whose foot is
+/// hillside; by <see cref="BuriedPieces.Buried"/>, a sloped one's pitched collider too), nor a railing post wholly
+/// under it (<see cref="BuriedPieces.Buried"/>), a column (a fallen one's stub too) ends at the first pole whose foot is
 /// in the ground, and a stub's break under the ground leaves none: the ground
 /// as the road leaves it under an end (<see cref="RailedGround"/>). <b>A navigation gap</b> over a river
 /// is whole bays of the kit's own grid (<see cref="RailedNavigationBays"/>: 2 m for <see cref="Rail"/>, 4 m for
@@ -92,13 +93,17 @@ public static partial class BridgeLayout
     public const float RailHeight = 1f;
     /// <summary>How far a brace rises over its one bay.</summary>
     public const float BraceRise = 4f;
-    /// <summary>A <see cref="PostPrefab"/> pole's width (0.4 m square, measured in game with cli_piece_geometry): a column
-    /// at a navigation gap's edge reaches half of it into the opening.</summary>
-    public const float PoleWidth = 0.4f;
+    /// <summary>A <see cref="PostPrefab"/> pole's width along the deck, as measured (<see cref="BuriedPieces.DataOf"/>): a
+    /// column at a navigation gap's edge reaches half of it into the opening.</summary>
+    public static float PoleWidth => Measured(PostPrefab).Max.x - Measured(PostPrefab).Min.x;
 
-    /// <summary>Half a beam's depth about its snap line: a beam is wholly buried once the ground stands this far over it
-    /// along its whole length (an estimate of the vanilla beams' section, not measured).</summary>
-    public const float RailHalfDepth = 0.15f;
+    /// <summary>How far a <see cref="BeamPrefab"/> beam (a stringer, a handrail) reaches over its origin, as measured
+    /// (<see cref="BuriedPieces.DataOf"/>): its top over its snap line.</summary>
+    public static float BeamTop => Measured(BeamPrefab).Max.y;
+
+    /// <summary>A prefab's measured data (<see cref="BuriedPieces.DataOf"/>), which the kits' own pieces all have.</summary>
+    internal static BuriedPieces.Measured Measured(string prefab) =>
+        BuriedPieces.DataOf(prefab, out BuriedPieces.Measured data) ? data : throw new System.InvalidOperationException($"no measured data for {prefab}");
 
     /// <summary>The tallest column a railed kit stands (deck to the ground under it): the wood support ceiling
     /// (<see cref="RoadConstants.MaxBridgePierHeight"/>, measured in game), the deck carried on its column tops. A station
@@ -132,12 +137,11 @@ public static partial class BridgeLayout
         deckH - Mathf.Min(ground(station - side * DeckHalfWidth), ground(station + side * DeckHalfWidth));
 
     /// <summary>
-    /// The ground the railed and stone kits are laid on: the finished ground (<see cref="StructureGround.Of"/>, ends as
-    /// <see cref="StructureEnds.Of"/> gives them), so a bank column reaches the levelled road rather than stopping on the
-    /// bank the road cuts away, and a piece under a landing the road raises is left out as buried.
+    /// The ground the railed and stone kits are laid on: the finished ground (<see cref="StructureGround.At"/>), so a bank
+    /// column reaches the levelled road rather than stopping on the bank the road cuts away, and a piece under a landing the
+    /// road raises is left out as buried.
     /// </summary>
-    private static System.Func<Vector2, float> RailedGround(StructureEnds.End near, StructureEnds.End far, WorldGenerator world) =>
-        StructureGround.Of(world, near, far, DeckHalfWidth + SupportGraph.Reach);
+    private static System.Func<Vector2, float> RailedGround(WorldGenerator world) => StructureGround.At(world);
 
     /// <summary>The crossings a railed kit is laid on: a bridge, and a ford laid as a span (its footbridge, the same kit on
     /// a lower deck, <see cref="SpanDeckHeight"/>). A wading or raised ford is road.</summary>
@@ -147,9 +151,9 @@ public static partial class BridgeLayout
     public static float BayLength(RailedKit kit) => kit.ColumnEvery * DeckSpan;
 
     /// <summary>
-    /// The bays a railed kit leaves open over a river (<see cref="OpenBays"/>), in its own bays (<see cref="BayLength"/>)
+    /// The bays a railed kit leaves open over a ship's way (<see cref="OpenBays"/>), in its own bays (<see cref="BayLength"/>)
     /// from the near deck end: the first, how many, and whether their deck is open too (false: the ship passes under the
-    /// deck, and only the columns are left out). Null with no navigation gap: off a river, over a ford, under a free span.
+    /// deck, and only the columns are left out). Null with no navigation gap: over no water a ship sails (<see cref="NavigationChannel"/>), over a ford, under a free span.
     /// A column stands at both ends of the opening, half a pole (<see cref="PoleWidth"/>) reaching into it; the stringers
     /// end on it.
     /// </summary>
@@ -180,7 +184,7 @@ public static partial class BridgeLayout
     public static List<StructurePiece> SolveRailed(RoadCrossing crossing, WorldGenerator world, int worldSeed, RailedKit kit) =>
         SolveRailed(crossing, world, worldSeed, kit, ruin: true, openGap: true);
 
-    /// <summary>The kit whole (<see cref="StructureWear"/>: bridges not weathered): nothing missing, its gap over a river still
+    /// <summary>The kit whole (<see cref="StructureWear"/>: bridges not weathered): nothing missing, its gap over a ship's way still
     /// open for boats.</summary>
     internal static List<StructurePiece> SolveRailedWhole(RoadCrossing crossing, WorldGenerator world, int worldSeed, RailedKit kit) =>
         SolveRailed(crossing, world, worldSeed, kit, ruin: false, openGap: true);
@@ -205,8 +209,10 @@ public static partial class BridgeLayout
         (int first, int count, bool deck)? gap = RailedNavigationBays(crossing, world, kit);
         bool deckGap = gap is (_, _, true);
         var (nearEnd, farEnd) = StructureEnds.Of(crossing, world);
-        System.Func<Vector2, float> groundAt = RailedGround(nearEnd, farEnd, world);
+        System.Func<Vector2, float> groundAt = RailedGround(world);
         float Ground(Vector2 p) => groundAt(p);
+        // The same ground at its whole-metre vertices, the game's terrain mesh: what burial reads (BuriedPieces.Buried).
+        System.Func<int, int, float> vertex = (x, z) => groundAt(new Vector2(x, z));
 
         float[] alongs = StationsAlong(crossing.Width);
         int last = alongs.Length - 1;
@@ -318,15 +324,17 @@ public static partial class BridgeLayout
                 foreach (int s in new[] { Ruin.Left, Ruin.Right })
                 {
                     Vector2 off = side * (s * DeckHalfWidth);
-                    if (Buried(groundAt, footAt + off, deckH - BraceRise, headAt + off, deckH)) continue;
-                    if (ruin && !bankBay && r.Roll(bay + 1, s, RoleBraceLost) >= Survives(bay + 0.5f, profile.SupportShare)) continue;
                     Vector2 c = (footAt + headAt) * 0.5f + off;
+                    var at = new Vector3(c.x, deckH - BraceRise, c.y);
+                    float braceYaw = YawDegrees(up) - 90f;   // its local x from its foot to its head
+                    if (BuriedPieces.Buried(BracePrefab, at, braceYaw, vertex)) continue;
+                    if (ruin && !bankBay && r.Roll(bay + 1, s, RoleBraceLost) >= Survives(bay + 0.5f, profile.SupportShare)) continue;
                     pieces.Add(new StructurePiece
                     {
                         Kind = StructurePieceKind.Beam,
                         Prefab = BracePrefab,
-                        Position = new Vector3(c.x, deckH - BraceRise, c.y),
-                        YawDegrees = YawDegrees(up) - 90f,   // its local x from its foot to its head
+                        Position = at,
+                        YawDegrees = braceYaw,
                         HealthFraction = r.Health(bay + 1, s, RoleBraceHealth),
                     });
                     if (head >= 0 && head <= last) braced[head] = true;
@@ -384,7 +392,8 @@ public static partial class BridgeLayout
             {
                 int s = k == 0 ? Ruin.Left : Ruin.Right;
                 Vector2 off = side * (s * DeckHalfWidth);
-                if (Buried(groundAt, pos[j] + off, deckH + RailHeight, pos[j + 1] + off, deckH + RailHeight)) continue;
+                Vector2 at = (pos[j] + pos[j + 1]) * 0.5f + off;
+                if (BuriedPieces.Buried(BeamPrefab, new Vector3(at.x, deckH + RailHeight, at.y), along90, vertex)) continue;
                 if (ruin && !endBay && r.Roll(j, s, RoleRail) >= Survives(j + 0.5f, profile.CourseShare)) continue;
                 rail[j, k] = true;
                 post[j, k] = post[j + 1, k] = true;
@@ -444,8 +453,9 @@ public static partial class BridgeLayout
             {
                 int s = k == 0 ? Ruin.Left : Ruin.Right;
                 Vector2 off = side * (s * DeckHalfWidth);
-                if (!Buried(groundAt, pos[j] + off, deckH, pos[j + 1] + off, deckH))
-                    AddPiece(pieces, StructurePieceKind.Beam, BeamPrefab, c + off, deckH, along90, r.Health(j, s, Ruin.RoleBeamHealth));
+                Vector2 at = c + off;
+                if (!BuriedPieces.Buried(BeamPrefab, new Vector3(at.x, deckH, at.y), along90, vertex))
+                    AddPiece(pieces, StructurePieceKind.Beam, BeamPrefab, at, deckH, along90, r.Health(j, s, Ruin.RoleBeamHealth));
                 if (rail[j, k])
                     AddPiece(pieces, StructurePieceKind.Beam, BeamPrefab, c + off, deckH + RailHeight, along90, r.Health(j, s, RoleRailHealth));
             }
@@ -455,6 +465,8 @@ public static partial class BridgeLayout
         // none where the road meets the end level, the rails ending on the deck's end posts.
         EmitRailedEnd(pieces, groundAt, nearEnd, side, along90, r, 0);
         EmitRailedEnd(pieces, groundAt, farEnd, side, along90, r, last + 1);
+        // Its end stairs wholly in the ground left out where the bridge stands without them (the one owner), before it is ruined.
+        LeaveOutBuried(pieces, groundAt, crossing, world, p => p.Kind == StructurePieceKind.Stair);
         if (ruin) r.ApplyLocationDamage(pieces);   // vanilla's Location.m_applyRandomDamage, as every kit's ruin
         return pieces;
     }
@@ -474,6 +486,8 @@ public static partial class BridgeLayout
         float postYaw, Ruin r, int bayKey)
     {
         int steps = LayEndStairs(pieces, ground, end, side, r, bayKey, carry: false);
+        // The ground's mesh, which burial reads (BuriedPieces.Buried).
+        System.Func<int, int, float> vertex = (x, z) => ground(new Vector2(x, z));
         Vector2 anchor = end.Edge, inward = end.Up;
         float deckH = end.Height;
         float railYaw = YawDegrees(inward) - 90f;   // its local x from its low snap (outward) to its high one
@@ -487,26 +501,29 @@ public static partial class BridgeLayout
             foreach (int lane in new[] { Ruin.Left, Ruin.Right })
             {
                 Vector2 p = c + side * (lane * LaneOffset);
-                carried |= foot > ground(p) + StairFootTolerance;
+                float g = ground(p);
+                carried |= SupportGraph.Against(g, g, foot, foot) == SupportGraph.Terrain.Over;
             }
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
             {
                 Vector2 off = side * (s * DeckHalfWidth);
-                Vector2 low = c - inward * StairHalfRun + off, high = c + inward * StairHalfRun + off;
+                Vector2 low = c - inward * StairHalfRun + off;
                 if (carried)
                     EmitColumn(pieces, low, ground(low), foot, postYaw,
                         r.Health(bayKey, s, Ruin.RolePostHealth, k + 1), toFoot: true);
                 for (int tier = 0; tier < 2; tier++)
                 {
                     float y = foot + tier * RailHeight;
-                    if (Buried(ground, low, y, high, y + StairLayout.PieceRise)) continue;
+                    Vector2 at = c + off;
+                    if (BuriedPieces.Buried(StairRailPrefab, new Vector3(at.x, y, at.y), railYaw, vertex)) continue;
                     // Its origin over the middle of the step, at its low snap's height.
-                    AddPiece(pieces, StructurePieceKind.Beam, StairRailPrefab, c + off, y, railYaw,
+                    AddPiece(pieces, StructurePieceKind.Beam, StairRailPrefab, at, y, railYaw,
                         r.Health(bayKey, s, tier == 0 ? Ruin.RoleBeamHealth : RoleRailHealth, k + 1));
                 }
             }
         }
-        // The deck's railing post stands at the top joint; one at each joint below it, the newel at the foot.
+        // The deck's railing post stands at the top joint; one at each joint below it, the newel at the foot; none wholly in
+        // the ground (BuriedPieces.Buried, on the ground's mesh).
         for (int k = 1; k <= steps; k++)
         {
             Vector2 at = StructureEnds.StepJoint(anchor, inward, k);
@@ -515,27 +532,11 @@ public static partial class BridgeLayout
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
             {
                 Vector2 p = at + side * (s * DeckHalfWidth);
-                if (ground(p) >= bottom + RailHeight + SupportGraph.Reach) continue;
+                if (BuriedPieces.Buried(RailPostPrefab, new Vector3(p.x, bottom + RailHeight * 0.5f, p.y), postYaw, vertex)) continue;
                 AddPiece(pieces, StructurePieceKind.Post, RailPostPrefab, p, bottom + RailHeight * 0.5f, postYaw,
                     newel ? r.Health(bayKey, s, RoleRailHealth, 0) : r.Health(bayKey, s, RoleRailPost, k));
             }
         }
-    }
-
-    /// <summary>Whether a beam from <paramref name="a"/> at <paramref name="ha"/> to <paramref name="b"/> at
-    /// <paramref name="hb"/> lies wholly in the ground: the ground over its top (<see cref="RailHalfDepth"/> over its
-    /// snap line) at both ends and every half metre between, on <paramref name="ground"/>.</summary>
-    private static bool Buried(System.Func<Vector2, float> ground, Vector2 a, float ha, Vector2 b, float hb)
-    {
-        int n = Mathf.Max(1, Mathf.CeilToInt(Vector2.Distance(a, b) / 0.5f));
-        for (int k = 0; k <= n; k++)
-        {
-            float t = k / (float)n;
-            Vector2 p = Vector2.Lerp(a, b, t);
-            if (ground(p) < Mathf.Lerp(ha, hb, t) + RailHalfDepth)
-                return false;
-        }
-        return true;
     }
 
     private static void AddPiece(List<StructurePiece> pieces, StructurePieceKind kind, string prefab, Vector2 at, float height, float yaw, float health) =>

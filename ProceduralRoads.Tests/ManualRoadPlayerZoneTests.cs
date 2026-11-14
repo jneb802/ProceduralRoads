@@ -24,7 +24,7 @@ public sealed class ManualRoadPlayerZoneTests : IDisposable
     /// <summary>x 32 to 96, z -32 to 32: right across the line from (-16, 0) to (176, 0). A player's workbench stands in it.</summary>
     private static readonly Vector2s Base = new(1, 0);
 
-    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope().WithNetwork(server: true);
 
     public ManualRoadPlayerZoneTests()
     {
@@ -32,13 +32,13 @@ public sealed class ManualRoadPlayerZoneTests : IDisposable
         _scope.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
         RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
-        RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         // A network far away (along z = -400), generated on this world.
         RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(-40f, -400f), new(40f, -400f) }, 4f, WorldGenerator.instance!);
         RoadSpatialGrid.FinalizeRoadNetwork();
         RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
         NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
         ZDO bench = ZDOMan.instance!.CreateNewZDO(ZoneSystem.GetZonePos(Base) + new Vector3(10f, 0f, 2f), "piece_workbench".GetStableHashCode());
         bench.Set(ZDOVars.s_creator, 1234L);
     }
@@ -67,6 +67,60 @@ public sealed class ManualRoadPlayerZoneTests : IDisposable
         Assert.Empty(plan.PlayerZones);
         Assert.True(ManualRoads.ConfirmPlayerZones("host", "path", plan, DateTime.UtcNow), "nothing to confirm");
         Assert.False(NetworkCutoff.AvoidsAny, "the avoidance outlived the planning");
+    }
+
+    /// <summary>
+    /// A road past a protected zone keeps its whole footprint out of it, not only its centreline, generated or manual alike:
+    /// the terrain writer gathers none of its points for that zone (RoadSpatialGrid.GetRoadPointsInZone, the writer's own
+    /// reach). The same zone and the same ends, 8 m beside its border (z = 40): for the manual road a zone players changed
+    /// (the workbench), for the generated one a zone explored before the network (NetworkCutoff.Excludes). Before, the
+    /// manual road kept the writer's reach and the generated one only its centreline: its levelling reached 12 m, into it.
+    /// </summary>
+    [Fact]
+    public void AGeneratedRoadAndAManualRoadKeepTheirWholeFootprintOutOfAProtectedZoneAlike()
+    {
+        var from = new Vector2(-16f, 40f);
+        var to = new Vector2(176f, 40f);
+        ManualRoads.Commit(ManualRoads.Prepare(new[] { from, to }, false, new[] { Island() }));
+        Assert.True(RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(1, 1)).Count > 0, "the manual road was not laid past the zone");
+        Assert.True(RoadSpatialGrid.GetRoadPointsInZone(Base).Count == 0, "manual: the writer gathers road points for the protected zone");
+
+        RoadSpatialGrid.Clear();
+        NetworkCutoff.SnapshotWorld(new[] { Base });
+        NetworkCutoff.BeginNewNetwork();
+        typeof(RoadNetworkGenerator).GetField("m_pathfinder", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .SetValue(null, new RoadPathfinder(WorldGenerator.instance!));
+        try { Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(from.x, 0f, from.y), 0f, new Vector3(to.x, 0f, to.y), 0f, 4f, "past")); }
+        finally
+        {
+            typeof(RoadNetworkGenerator).GetField("m_pathfinder", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.SetValue(null, null);
+            NetworkCutoff.UseNewNetwork();
+        }
+        Assert.True(RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(1, 1)).Count > 0, "the generated road was not laid past the zone");
+        Assert.True(RoadSpatialGrid.GetRoadPointsInZone(Base).Count == 0, "generated: the writer gathers road points for the protected zone");
+    }
+
+    /// <summary>
+    /// road_connect to a network that runs 12 m from a zone players changed (the workbench's, east of x = 32): the search keeps
+    /// its own road the levelling's reach from that zone, and the end it carries onto the network's centreline reaches into
+    /// it, so every road planned writes into it (the one list's last check, RoadNetworkGenerator.RoadRefusal) and none is
+    /// built. The operator is told which zone and how to build into it (a mark in it, or force), as a marked road is.
+    /// Before, the refusal said only that it would write into a zone the network leaves as it is.
+    /// </summary>
+    [Fact]
+    public void ARoadConnectRefusedForAZonePlayersChangedNamesTheZoneAndForce()
+    {
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(20f, -30f), new(20f, 30f) }, 4f, WorldGenerator.instance!);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        var from = new Vector2(-40f, 0f);
+        var refused = Assert.Throws<InvalidOperationException>(() => ManualRoads.Prepare(new[] { from }, true, new[] { Island() }));
+        Assert.True(refused.Message.StartsWith("no road could be planned from -40, 0 to the network", StringComparison.Ordinal), refused.Message);
+        // The marked road's words, as before the one list of refusals (decision 6a) took the check over.
+        Assert.True(refused.Message.EndsWith(" The road would reach zone(s) players changed (buildings or terrain edits): (1, 0). " +
+            "Mark a point in a zone to build into it, or add force. Nothing added.", StringComparison.Ordinal), refused.Message);
+        // Forced, it is built through the zone.
+        Assert.Contains(Base, ManualRoads.Prepare(new[] { from }, true, new[] { Island() }, force: true).PlayerZones);
     }
 
     [Fact]
@@ -113,7 +167,7 @@ public sealed class ManualRoadPlayerZoneTests : IDisposable
         ZDOMan.instance.CreateNewZDO(ZoneSystem.GetZonePos(networkZone), compiler);
         NetworkCutoff.Forget();
         NetworkCutoff.SnapshotWorld(new[] { dugExplored });
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
 
         HashSet<Vector2s> changed = PlayerChanges.Zones(null, NetworkCutoff.Excludes);
         Assert.Contains(dugExplored, changed);

@@ -38,14 +38,14 @@ public static class RoadEndReport
         {
             // Approaches can finish outside the footprint plus road width,
             // smoothing clearance and the local arrival band (up to 22 m).
-            var near = RoadSpatialGrid.GetRoadPointsNearPosition(loc.position, RoadSiteProtection.RadiusAt(new Vector2(loc.position.x, loc.position.z), loc.radius) + SearchMargin);
+            var near = RoadSpatialGrid.GetRoadPointsNearPosition(loc.position, RoadLocationProtection.RadiusAt(new Vector2(loc.position.x, loc.position.z), loc.radius) + SearchMargin);
             if (near.Count == 0)
                 continue;
 
             Vector2 centre = new Vector2(loc.position.x, loc.position.z);
             RoadSpatialGrid.RoadPoint best = near[0];
             float bestDistance = float.MaxValue;
-            near.RemoveAll(rp => rp.cutOnly);
+            near.RemoveAll(rp => !rp.Walked);
             if (near.Count == 0)
                 continue;
             foreach (var rp in near)

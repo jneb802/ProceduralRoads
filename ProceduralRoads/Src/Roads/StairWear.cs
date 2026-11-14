@@ -32,11 +32,11 @@ public static class StairWear
     /// <summary>A roll in [0, 1) for a piece, keyed by where it stands and what it decides.</summary>
     private static float Roll(uint seed, StructurePiece p, uint role) => Roll(seed, p.Position, role);
 
-    /// <summary>A roll in [0, 1) for a place on a staircase, keyed by where it is and what it decides: the same on every
+    /// <summary>A roll in [0, 1) for a location on a staircase, keyed by where it is and what it decides: the same on every
     /// build, whether the staircase is weathered or not.</summary>
     internal static float Roll(Vector3 at, uint role) => Roll(0x5EEDu, at, role);
 
-    /// <summary>The one roll: <paramref name="seed"/>, the place to the centimetre, and the role.</summary>
+    /// <summary>The one roll: <paramref name="seed"/>, the location to the centimetre, and the role.</summary>
     private static float Roll(uint seed, Vector3 at, uint role)
     {
         uint h = Mix(Mix(Mix(Mix(seed, Key(at.x)), Key(at.y)), Key(at.z)), role);

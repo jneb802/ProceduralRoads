@@ -308,9 +308,9 @@ public class StairSupportTests
     [Fact]
     public void AWallIsLeftOutWhereTheFinishedGroundUnderItIsNotKnown()
     {
-        // The finished ground is not known at the terrain's vertices along z 3 (inside a place's footprint whose levelling
+        // The finished ground is not known at the terrain's vertices along z 3 (inside a location's footprint whose levelling
         // is not known, as RoadTerrainModifier.FinishedGround answers there), so under z 2..4: those metres are left
-        // unwalled, not walled 8 m down through whatever the place leaves; the rest walled as ever.
+        // unwalled, not walled 8 m down through whatever the location leaves; the rest walled as ever.
         Func<float, float, float> ground = (x, z) => x < -1.2f ? 50f : 0.3f;
         List<StructurePiece> laid = StairSupport.Lay(Stone, FourStairs(), ground, (x, z) => z == 3 ? float.NaN : ground(x, z));
         for (int cell = 0; cell < 8; cell++)
@@ -343,6 +343,25 @@ public class StairSupportTests
             Assert.True(bottom <= 1.3f - StairSupport.Bury + 1e-3f, $"cell {cell} ends at {bottom}, the finished ground at 1.3");
             Assert.True(bottom + 1f > 1.3f, $"cell {cell} has a course wholly under the ground");
         }
+    }
+
+    /// <summary>
+    /// The style a piece is held by is chosen on the ground its layout was searched on (the cliff 0.9 m off its edge: an
+    /// arch), but what is laid reaches the finished ground: a road's cut takes the cliff 2 m back, and the arch is carried
+    /// out on a corbel course to it, both halves, where on the planning ground it stopped with its tall end over the cut.
+    /// </summary>
+    [Fact]
+    public void AnArchIsCarriedOutToTheFinishedGroundPastARoadsCut()
+    {
+        Func<float, float, float> natural = Cliff(-0.9f), finished = Cliff(-2.9f);
+        var stair = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = Stone.Stair, Position = new Vector3(0f, 30f, 1f), YawDegrees = 180f };
+        Assert.Equal(1, StairSupport.Choose(Stone, StairSupport.WalkOf(stair, Stone)!.Value, natural).Courses);
+        List<StructurePiece> laid = Stone.Dress(new StairRun { Pieces = { stair } }, natural, (x, z) => finished(x, z), false);
+        var arches = laid.Where(p => p.Prefab == "stone_arch").ToList();
+        Assert.Equal(4, arches.Count);
+        Assert.Equal(2, arches.Count(p => Mathf.Abs(p.Position.y - 27.5f) < 1e-3f));
+        foreach (ViaductSupport.Held h in StairSupport.Holding(laid, (x, z) => finished(x, z)))
+            if (h.Piece.Kind == StructurePieceKind.StairSupport) Assert.True(h.Support >= h.Min, $"{h.Piece.Prefab} at {h.Piece.Position} falls");
     }
 
     private static bool Covers(StructurePiece p, float z)
@@ -396,8 +415,7 @@ public class StairSupportTests
     [Fact]
     public void OnARealFaceEveryPieceNotOnTheGroundIsHeldAndNoSupportIsWhollyBuried()
     {
-        Func<float, float, float> ground = StairLayoutTests.FixtureGround("mountain-face-2m.txt");
-        StairPlan plan = StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), ground);
+        var (plan, ground) = StairLayoutTests.Face.Value;
         Assert.True(plan.Reached, plan.Reason);
         StairRun run = StairRun.FromPlan(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), 2f, plan, Stone);
         List<StructurePiece> dressed = Stone.Dress(run, ground, (x, z) => ground(x, z));
@@ -1021,7 +1039,7 @@ public class BlackMarbleCornerTests
         var corners = laid.Where(p => p.Prefab == "blackmarble_outcorner").OrderByDescending(p => p.Position.y).ToList();
         Assert.Equal(8, corners.Count);
         AssertEachOutcornerStandsFlushUnderTheBlockAbove(laid, 1);
-        List<ViaductSupport.Held> alone = StairSupport.Holding(corners.Prepend(walking[1]).ToList(), ground, (x, z) => ground(x, z));
+        List<ViaductSupport.Held> alone = StairSupport.Holding(corners.Prepend(walking[1]).ToList(), (x, z) => ground(x, z));
         float[] support = corners.Select(c => alone.Single(h => h.Piece == c).Support).ToArray();
         Assert.Equal(new[] { false, false, false, false, false, false, true, true },
             support.Select(s => s >= SupportGraph.Marble.Max - 0.01f).ToArray());
@@ -1029,7 +1047,7 @@ public class BlackMarbleCornerTests
             Assert.True(h.Share >= DvergrViaduct.HoldMargin, $"{h.Piece.Prefab} at {h.Piece.Position}: support {h.Support:F1} under the margin");
         // Six hung courses keep 1500 x 0.68^6 at the top.
         Assert.InRange(support[0], 145f, 155f);
-        foreach (ViaductSupport.Held h in StairSupport.Holding(walking.Concat(laid).ToList(), ground, (x, z) => ground(x, z)))
+        foreach (ViaductSupport.Held h in StairSupport.Holding(walking.Concat(laid).ToList(), (x, z) => ground(x, z)))
             Assert.True(h.Share >= DvergrViaduct.HoldMargin, $"{h.Piece.Prefab} at {h.Piece.Position}: support {h.Support:F1} under the margin");
 
         Func<float, float, float> deeper = (x, z) => x < -7.5f ? 100f : -50f - x;
@@ -1214,10 +1232,12 @@ public class StairWearTests
 {
     private static List<StructurePiece> Dressed(bool weathered)
     {
-        StairPlan plan = StairLayout.LayFlight(new Vector2(0f, 0f), 10f, new[] { 0f, 0f, 0f, 0f, 22.5f, 22.5f, 22.5f, 22.5f, 22.5f, 22.5f },
-            StairKit.Stone, (x, z) => 0f);
+        // On a slope a metre under the flight as it climbs, so its kit holds every piece up (StairKit.Dress).
+        Func<float, float, float> slope = (x, z) => 0.5f * z - 1f;
+        StairPlan plan = StairLayout.LayFlight(new Vector2(0f, 0f), 0f, new[] { 0f, 0f, 0f, 0f, 22.5f, 22.5f, 22.5f, 22.5f, 22.5f, 22.5f },
+            StairKit.Stone, slope);
         StairRun run = StairRun.FromPlan(new Vector2(0f, 0f), new Vector2(plan.End.x, plan.End.z), 2f, plan, StairKit.Stone);
-        return StairKit.Stone.Dress(run, (x, z) => 0f, (x, z) => 0f, weathered);
+        return StairKit.Stone.Dress(run, slope, (x, z) => slope(x, z), weathered);
     }
 
     [Fact]
@@ -1312,6 +1332,32 @@ public class StairRailingTests
         Assert.DoesNotContain(rails, p => p.Prefab == StairRailing.LevelRailPrefab);
         // Every stair railed both sides, down to the road and up to the landing: a handrail and a lower rail each.
         Assert.Equal(16, rails.Count(p => p.Prefab == BridgeLayout.StairRailPrefab));
+    }
+
+    /// <summary>
+    /// A railing post is left out as standing wholly in the staircase's supports only where its measured box (wood_pole's,
+    /// BuriedPieces.DataOf: 0.4 m square) is, corner by corner: a wall course whose face runs 0.15 m inside a post's middle
+    /// leaves half of it clear, and the post is laid. On the parent a copy of its size (0.2 m square) put its corners inside
+    /// the course and left it out.
+    /// </summary>
+    [Fact]
+    public void APostHalfInAWallIsLaid()
+    {
+        StairPlan plan = StairLayout.LayFlight(new Vector2(0f, 0f), 10f, Enumerable.Repeat(0f, 6).ToList(), StairKit.Stone, (x, z) => -50f);
+        var run = StairRun.FromPlan(new Vector2(0f, 0f), new Vector2(plan.End.x, plan.End.z), 2f, plan, StairKit.Stone);
+        List<StructurePiece> open = StairRailing.Lay(StairKit.Stone, run.Pieces, run.Ends, (x, z) => -50f);
+        StructurePiece post = open.Where(p => p.Prefab == BridgeLayout.RailPostPrefab).OrderBy(p => p.Position.y).ElementAt(4);
+        Assert.Equal(0f, post.YawDegrees, 3);
+        float bottom = post.Position.y - BridgeLayout.RailHeight * 0.5f;
+        // A 2 x 1 x 2 course over the post's whole height, its face 0.15 m inside the post's middle along x.
+        var course = new StructurePiece { Kind = StructurePieceKind.StairSupport, Prefab = "stone_floor_2x2",
+            Position = new Vector3(post.Position.x + 1f - 0.15f, bottom + 0.5f, post.Position.z) };
+        List<StructurePiece> walled = StairRailing.Lay(StairKit.Stone, run.Pieces, run.Ends, (x, z) => -50f, new[] { course });
+        Assert.Contains(walled, p => p.Prefab == BridgeLayout.RailPostPrefab && Vector3.Distance(p.Position, post.Position) < 0.01f);
+        // Wholly inside it (its face 0.25 m past the post's middle): left out.
+        course.Position = new Vector3(post.Position.x + 1f - 0.25f, bottom + 0.5f, post.Position.z);
+        List<StructurePiece> inside = StairRailing.Lay(StairKit.Stone, run.Pieces, run.Ends, (x, z) => -50f, new[] { course });
+        Assert.DoesNotContain(inside, p => p.Prefab == BridgeLayout.RailPostPrefab && Vector3.Distance(p.Position, post.Position) < 0.01f);
     }
 
     [Fact]
@@ -1436,7 +1482,7 @@ public class StairRailingTests
         var road = new StairRun { From = new Vector2(-5392f, 5352f), To = new Vector2(-5380.9f, 5364.4f), Width = 2f, Kit = StairKit.BlackMarble };
         road.Pieces.Add(Step(-5382.020f, 62.596f, 5360.114f, 202.5f, "blackmarble_stair"));
         road.Pieces.Add(Walked(StructurePieceKind.StairFloor, "blackmarble_floor", -5381.254f, 63.096f, 5361.962f, 22.5f));
-        var cave = new StairRun { From = new Vector2(5056.35f, -5918.65f), To = new Vector2(5047.49f, -5893.35f), Width = 2f, KeepsSiteRocks = true };
+        var cave = new StairRun { From = new Vector2(5056.35f, -5918.65f), To = new Vector2(5047.49f, -5893.35f), Width = 2f, KeepsLocationRocks = true };
         cave.Pieces.Add(Step(5042.954f, 253.759f, -5890.229f, 270f));
         cave.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_2x1", 5044.454f, 254.259f, -5890.229f, 270f));
         cave.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_1x1", 5044.661f, 254.259f, -5889.815f, 315f));
@@ -1474,11 +1520,16 @@ public class StairRailingTests
     }
 
     /// <summary>The railing <paramref name="kit"/> lays over <paramref name="run"/>, on finished ground
-    /// <paramref name="ground"/> (far below by default).</summary>
-    private static List<StructurePiece> Railing(StairRun run, StairKit? kit = null, Func<int, int, float>? ground = null)
+    /// <paramref name="ground"/> (far below by default), round the supports it lays (StairKit.Dress's railing, read whether
+    /// or not the support rule would let the kit build the staircase: these layouts are the railing's, hung in the air).</summary>
+    internal static List<StructurePiece> Railing(StairRun run, StairKit? kit = null, Func<int, int, float>? ground = null,
+        IReadOnlyList<StructurePiece>? beside = null, Func<float, float, float>? natural = null)
     {
         Func<int, int, float> finished = ground ?? ((x, z) => -50f);
-        return (kit ?? StairKit.Stone).Dress(run, (x, z) => finished(Mathf.FloorToInt(x), Mathf.FloorToInt(z)), finished, false)
+        StairKit k = kit ?? StairKit.Stone;
+        List<StructurePiece> walking = run.Pieces.FindAll(p => p.Kind != StructurePieceKind.StairSupport);
+        List<StructurePiece> supports = StairSupport.Lay(k, walking, natural ?? ((x, z) => finished(Mathf.FloorToInt(x), Mathf.FloorToInt(z))), finished);
+        return StairRailing.Lay(k, walking, run.Ends, finished, supports, beside)
             .Where(p => p.Kind is StructurePieceKind.Beam or StructurePieceKind.Post).ToList();
     }
 
@@ -1505,7 +1556,7 @@ public class StairRailingTests
             string[] f = line.Split(',');
             switch (f[0])
             {
-                case "run": run.From = new Vector2(F(f[1]), F(f[2])); run.To = new Vector2(F(f[3]), F(f[4])); run.Width = F(f[5]); run.KeepsSiteRocks = f[6] == "True"; break;
+                case "run": run.From = new Vector2(F(f[1]), F(f[2])); run.To = new Vector2(F(f[3]), F(f[4])); run.Width = F(f[5]); run.KeepsLocationRocks = f[6] == "True"; break;
                 case "meets": run.FromMeet = new Vector2(F(f[1]), F(f[2])); run.ToMeet = new Vector2(F(f[3]), F(f[4])); break;
                 case "piece": run.Pieces.Add(Walked((StructurePieceKind)Enum.Parse(typeof(StructurePieceKind), f[1]), f[2], F(f[3]), F(f[4]), F(f[5]), F(f[6]))); break;
                 case "ground": vertices[((int)F(f[1]), (int)F(f[2]))] = F(f[3]); break;
@@ -1556,7 +1607,7 @@ public class StairRailingTests
         // top 2 x 2 floor. The bank rises beside the stairs' north-east side under the lip, the ground falls away on the other.
         // The top stair stood open on its bank side, the flight's rail stopping a stair short of the top floor: "the railing on
         // the stairs near the top could use 1 more leg ... it isn't level, we have a 2x2 block landing at the end".
-        var run = new StairRun { From = new Vector2(-799.1f, 7489.1f), To = new Vector2(-781.6f, 7486.0f), Width = 2f, KeepsSiteRocks = true };
+        var run = new StairRun { From = new Vector2(-799.1f, 7489.1f), To = new Vector2(-781.6f, 7486.0f), Width = 2f, KeepsLocationRocks = true };
         run.Pieces.Add(Step(-785.8725f, 162.769f, 7489.0675f, 315f));
         run.Pieces.Add(Step(-784.4575f, 163.769f, 7487.6525f, 315f));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_2x1", -783.3975f, 164.269f, 7486.5925f, 315f));
@@ -1653,20 +1704,20 @@ public class StairRailingTests
     [Theory]
     [InlineData(0f)]
     [InlineData(3f)]
-    public void AStaircaseEndingOnAPlacesLandingIsRailedButOnTheSideFacingThePlace(float pastTheEdge)
+    public void AStaircaseEndingOnALocationsLandingIsRailedButOnTheSideFacingTheLocation(float pastTheEdge)
     {
         // The top of the tower 2 approach: the last stair heading east, a 2x1 and a 1x1 in the turn's wedge, and the top floor
-        // turned 45 degrees toward the place, its far edge's middle at -1923.403,6715.182 (the place's ground there, or on past
+        // turned 45 degrees toward the location, its far edge's middle at -1923.403,6715.182 (the location's ground there, or on past
         // the landing's lip).
-        Vector2 toPlace = StairLayout.Forward(45f);
-        Vector2 meet = new Vector2(-1923.403f, 6715.182f) + toPlace * pastTheEdge;
-        var run = new StairRun { From = new Vector2(-1934f, 6713f), To = meet, Width = 2f, KeepsSiteRocks = true };
+        Vector2 toLocation = StairLayout.Forward(45f);
+        Vector2 meet = new Vector2(-1923.403f, 6715.182f) + toLocation * pastTheEdge;
+        var run = new StairRun { From = new Vector2(-1934f, 6713f), To = meet, Width = 2f, KeepsLocationRocks = true };
         run.Pieces.AddRange(Flight(-1928.524f, 274.813f, 6713.475f, 270f, 2));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_2x1", -1925.024f, 276.313f, 6713.475f, 270f));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_1x1", -1924.817f, 276.313f, 6713.061f, 225f));
         run.Pieces.Add(Walked(StructurePieceKind.StairFloor, "stone_floor_2x2", -1924.110f, 276.313f, 6714.475f, 45f));
         List<StructurePiece> rails = Railing(run, ground: LandingAhead(run.Pieces[run.Pieces.Count - 1]));
-        // Its two sides railed at both heights, posts at its far corners; its far edge, the way onto the place, open.
+        // Its two sides railed at both heights, posts at its far corners; its far edge, the way onto the location, open.
         foreach (float y in new[] { 276.813f, 277.813f })
         {
             AssertHas(rails, StairRailing.LevelRailPrefab, -1924.817f, y, 6715.182f, 135f, 180f);
@@ -1676,13 +1727,13 @@ public class StairRailingTests
         AssertHas(rails, BridgeLayout.RailPostPrefab, -1922.696f, 277.313f, 6714.475f, 45f, 90f);
         Assert.DoesNotContain(rails, p => p.Prefab is StairRailing.LevelRailPrefab or StairRailing.ShortRailPrefab
             && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), new Vector2(-1923.403f, 6715.182f)) < 0.6f);
-        // Nothing across the way from the last stair onto the floor and on to the place.
+        // Nothing across the way from the last stair onto the floor and on to the location.
         Vector2 floor = new(-1924.110f, 6714.475f);
         foreach (StructurePiece rail in rails.Where(p => p.Prefab is StairRailing.LevelRailPrefab or StairRailing.ShortRailPrefab))
         {
             Vector2 c = new(rail.Position.x, rail.Position.z), d = StairLayout.Right(rail.YawDegrees) * (rail.Prefab == StairRailing.ShortRailPrefab ? 0.5f : 1f);
             Assert.False(Crosses(new Vector2(-1926.524f, 6713.475f), floor, c - d, c + d), $"rail at {rail.Position} crosses the way onto the floor");
-            Assert.False(Crosses(floor, meet + toPlace, c - d, c + d), $"rail at {rail.Position} crosses the way onto the place");
+            Assert.False(Crosses(floor, meet + toLocation, c - d, c + d), $"rail at {rail.Position} crosses the way onto the location");
         }
     }
 
@@ -1697,9 +1748,9 @@ public class StairRailingTests
         return null;
     }
 
-    /// <summary>The ground of a place's landing level with the top of <paramref name="floor"/> (a tenth under it) on from its
+    /// <summary>The ground of a location's landing level with the top of <paramref name="floor"/> (a tenth under it) on from its
     /// far edge, out to 2.45 m round a point 1.5 m past it, the vertices a step off it all that edge's samples read; far below
-    /// elsewhere. A place's end floor is open where the landing stands at walking height past it, as a road's (StairRailing's
+    /// elsewhere. A location's end floor is open where the landing stands at walking height past it, as a road's (StairRailing's
     /// Ways.Road); over a drop it is railed.</summary>
     private static Func<int, int, float> LandingAhead(StructurePiece floor, StairKit? kit = null)
     {
@@ -1716,7 +1767,7 @@ public class StairRailingTests
         // -1916.81,6724.33), recorded to the last stair's top (-1930.73,6719.25), the top floor laid on past it turned 45
         // degrees; railed on three sides, across the way off it onto the landing too (a railing across the stairs, not
         // just on the side, which should never happen). The pieces as laid (ids 58508..58512).
-        var run = new StairRun { From = new Vector2(-1926.95f, 6699.84f), To = new Vector2(-1930.73f, 6719.25f), Width = 2f, KeepsSiteRocks = true };
+        var run = new StairRun { From = new Vector2(-1926.95f, 6699.84f), To = new Vector2(-1930.73f, 6719.25f), Width = 2f, KeepsLocationRocks = true };
         run.Pieces.AddRange(Flight(-1932.441f, 273.845f, 6714.124f, 180f, 2));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_2x1", -1932.441f, 275.345f, 6717.624f, 180f));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_1x1", -1932.855f, 275.345f, 6717.831f, 225f));
@@ -1738,13 +1789,13 @@ public class StairRailingTests
     }
 
     /// <summary>The same top floor, its end recorded back on the last stair (so the floor is the walk's end, StairRailing's
-    /// WalkOut, not the end's), where the finished ground past it is not known (NaN: a place placed after the staircase, a
-    /// run with no expected place): the way off it is left open, as at a road's end (StairRailing's TakenOver, one rule), and
+    /// WalkOut, not the end's), where the finished ground past it is not known (NaN: a location placed after the staircase, a
+    /// run with no expected location): the way off it is left open, as at a road's end (StairRailing's TakenOver, one rule), and
     /// its sides railed.</summary>
     [Fact]
     public void AnApproachsTopFloorIsOpenWhereTheWalkLeavesItOntoGroundNotKnown()
     {
-        var run = new StairRun { From = new Vector2(-1926.95f, 6699.84f), To = new Vector2(-1932.441f, 6716.124f), Width = 2f, KeepsSiteRocks = true };
+        var run = new StairRun { From = new Vector2(-1926.95f, 6699.84f), To = new Vector2(-1932.441f, 6716.124f), Width = 2f, KeepsLocationRocks = true };
         run.Pieces.AddRange(Flight(-1932.441f, 273.845f, 6714.124f, 180f, 2));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_2x1", -1932.441f, 275.345f, 6717.624f, 180f));
         run.Pieces.Add(Walked(StructurePieceKind.StairFiller, "stone_wall_1x1", -1932.855f, 275.345f, 6717.831f, 225f));
@@ -1792,8 +1843,7 @@ public class StairRailingTests
         }
         finally { StairStructures.Reset(); }
         Assert.Contains(beside, p => Vector3.Distance(p.Position, new Vector3(-6922.840f, 56.547f, -3653.000f)) < 0.01f);
-        List<StructurePiece> rails = StairKit.BlackMarble.Dress(six, (x, z) => ground(Mathf.FloorToInt(x), Mathf.FloorToInt(z)), ground, false, beside: beside)
-            .Where(p => p.Kind is StructurePieceKind.Beam or StructurePieceKind.Post).ToList();
+        List<StructurePiece> rails = Railing(six, StairKit.BlackMarble, ground, beside);
         // Both sides railed at both heights: the downhill side as in game, the uphill side too.
         foreach (float y in new[] { 57.547f, 58.547f })
         {
@@ -1898,29 +1948,29 @@ public class StairRailingTests
     }
 
     /// <summary>The landing's layout as its search laid it (its foot first), on <paramref name="ground"/>, then finished at the
-    /// place (StairLayout.AddPlaceFloor, as an approach's foot on a place's landing is): the floor laid out, if any.</summary>
+    /// location (StairLayout.AddLocationFloor, as an approach's foot on a location's landing is): the floor laid out, if any.</summary>
     private static (StairPlan plan, Vector2? meet) LandingPlan(Func<int, int, float> ground)
     {
         var plan = new StairPlan { Kit = StairKit.Stone.Name, Reached = true, Reversed = true, StartsOnFloor = true };
         foreach (var (kind, prefab, at, yaw) in LandingPieces())
             plan.Pieces.Add(new StairPiece { Kind = kind, Prefab = prefab, Position = at, YawDegrees = yaw });
-        Vector2? meet = StairLayout.AddPlaceFloor(plan, (x, z) => BuriedPieces.MeshHeight(x, z, ground), LandingEnd, Tower, _ => true);
-        plan.PlaceMeet = meet;
+        Vector2? meet = StairLayout.AddLocationFloor(plan, (x, z) => BuriedPieces.MeshHeight(x, z, ground), LandingEnd, Tower, _ => true);
+        plan.LocationMeet = meet;
         return (plan, meet);
     }
 
-    /// <summary>The staircase run the layout's plan makes at a place (RoadNetworkGenerator.JoinNetwork): its end at the place
-    /// met where the place's ground meets a floor laid out onto it.</summary>
+    /// <summary>The staircase run the layout's plan makes at a location (RoadNetworkGenerator.JoinNetwork): its end at the location
+    /// met where the location's ground meets a floor laid out onto it.</summary>
     private static StairRun LandingRun(StairPlan plan)
     {
         StairRun run = StairRun.FromPlan(new Vector2(-1869.46f, 6734.31f), LandingEnd, 2f, plan, StairKit.Stone);
-        run.KeepsSiteRocks = true;
-        run.ToMeet = plan.PlaceMeet;
+        run.KeepsLocationRocks = true;
+        run.ToMeet = plan.LocationMeet;
         return run;
     }
 
     [Fact]
-    public void APlacesLandingIsOpenOnTheSideFacingThePlaceAndJoinedToItsGroundThere()
+    public void ALocationsLandingIsOpenOnTheSideFacingTheLocationAndJoinedToItsGroundThere()
     {
         Func<int, int, float> ground = LandingGround();
         var (plan, meet) = LandingPlan(ground);
@@ -1934,7 +1984,7 @@ public class StairRailingTests
         Assert.Single(laid, p => p.Kind == StructurePieceKind.StairFloor && At(p, -1905.230f, 276.457f, 6717.842f));
         Assert.NotNull(meet);
         // The rails across that side gone (in game at -1904.307,6717.459, 276.957 and 277.957). The bank side, railed by hand
-        // in game (its handrail at -1903.000,277.957,6718.000), is open now: the landing's floor at a place's end is railed
+        // in game (its handrail at -1903.000,277.957,6718.000), is open now: the landing's floor at a location's end is railed
         // as a road's end floor, only over a drop (StairRailing.LedgeDrop), and the bank stands level with it.
         AssertHasNone(rails, -1904.307f, 276.957f, 6717.459f);
         AssertHasNone(rails, -1904.307f, 277.957f, 6717.459f);
@@ -1958,7 +2008,7 @@ public class StairRailingTests
     }
 
     [Fact]
-    public void AFloorLaidOutOntoAPlacesGroundIsTheLayoutsOwnEndFloor()
+    public void AFloorLaidOutOntoALocationsGroundIsTheLayoutsOwnEndFloor()
     {
         // The floor laid out onto the tower's ground is the layout's: in its pieces first in the walk (the top's last row
         // stays last), with a clearance over it as any floor has, a landing more, and its kit holds it up as any end floor.
@@ -1986,7 +2036,7 @@ public class StairRailingTests
     }
 
     [Fact]
-    public void APlacesLandingOverADeeperDipGetsNoFloorAndIsRailedAsBefore()
+    public void ALocationsLandingOverADeeperDipGetsNoFloorAndIsRailedAsBefore()
     {
         // The same landing with the tower's side of it a metre and a half lower, the dip and the level ground past it both
         // more than a floor's band (StairLayout.TopFloorBand) under the floor: no floor lands level there, so none is laid,
@@ -2022,7 +2072,7 @@ public class StairRailingTests
     }
 
     [Fact]
-    public void APlacesLandingWhoseSideFacingThePlaceAbutsARiseIsOpenThereAndStraightOn()
+    public void ALocationsLandingWhoseSideFacingTheLocationAbutsARiseIsOpenThereAndStraightOn()
     {
         // The landing on level ground but for a rise 0.8 m over its floor on from its side facing the tower (a mound or a
         // cave's mouth). No floor is laid there (the step off it is no drop). Railed as a road's end floor, only over a drop
@@ -2040,10 +2090,10 @@ public class StairRailingTests
     }
 
     [Fact]
-    public void APlacesLandingOnLevelGroundIsOpenIntoThePlaceAndStraightOn()
+    public void ALocationsLandingOnLevelGroundIsOpenIntoTheLocationAndStraightOn()
     {
         // The landing on level ground all round: open on its side facing the tower, straight on off the walk across the end
-        // recorded (the bank side), and on its other side too (railed before): a place's end floor is railed as a road's,
+        // recorded (the bank side), and on its other side too (railed before): a location's end floor is railed as a road's,
         // only over a drop (StairRailing.LedgeDrop). A floor off its side facing the tower lands (the end rule's 2x2 at the
         // lower landing, StairEnds.Lands), flush with the tower's ground.
         Func<int, int, float> ground = GroundRisingTowardTheTower(0f);
@@ -2083,8 +2133,7 @@ public class StairRailingTests
         }
         finally { StairStructures.Reset(); }
         Func<int, int, float> ground = (x, z) => 35f;
-        List<StructurePiece> rails = StairKit.BlackMarble.Dress(up, (x, z) => 35f, ground, false, beside: beside)
-            .Where(p => p.Kind is StructurePieceKind.Beam or StructurePieceKind.Post).ToList();
+        List<StructurePiece> rails = Railing(up, StairKit.BlackMarble, ground, beside);
         foreach (float y in new[] { 62.528f, 63.528f })
         {
             AssertHas(rails, StairRailing.LevelRailPrefab, 5784.935f, y, 5636.396f, 202.5f, 180f);
@@ -2284,13 +2333,15 @@ public class StairRailingTests
         List<StructurePiece> rails = Railing(run, StairKit.BlackMarble, (x, z) => z <= -6613 ? 92.6f : x <= 1809 ? 89.8f : east);
         foreach (float y in new[] { 92.687f, 93.687f })
         {
-            // West, as in game: the second to sixth floors' edges.
+            // West, as in game: the second to sixth floors' edges; the third's and fourth's, on the inside of the jog back
+            // between them, each railed to where it meets the other's edge.
             AssertHas(rails, StairRailing.LevelRailPrefab, 1807.276f, y, -6611.580f, 112.5f, 180f);
-            AssertHas(rails, StairRailing.LevelRailPrefab, 1808.042f, y, -6609.732f, 112.5f, 180f);
-            foreach (float z in new[] { -6608.574f, -6606.574f, -6604.574f })
+            AssertHas(rails, StairRailing.LevelRailPrefab, 1807.966f, y, -6609.917f, 112.5f, 180f);
+            foreach (float z in new[] { -6608.376f, -6606.574f, -6604.574f })
                 AssertHas(rails, StairRailing.LevelRailPrefab, 1808.272f, y, z, 90f, 180f);
-            // East, the side that stood bare: the same five, however level the ground beside them.
-            AssertHas(rails, StairRailing.LevelRailPrefab, 1809.124f, y, -6612.346f, 112.5f, 180f);
+            // East, the side that stood bare: the same five, however level the ground beside them; the second's, on the
+            // inside of its jog off the first, from where it meets the first's edge.
+            AssertHas(rails, StairRailing.LevelRailPrefab, 1809.200f, y, -6612.161f, 112.5f, 180f);
             AssertHas(rails, StairRailing.LevelRailPrefab, 1809.890f, y, -6610.498f, 112.5f, 180f);
             foreach (float z in new[] { -6608.574f, -6606.574f, -6604.574f })
                 AssertHas(rails, StairRailing.LevelRailPrefab, 1810.272f, y, z, 90f, 180f);
@@ -2325,10 +2376,11 @@ public class StairRailingTests
         });
         foreach (float y in new[] { 107.687f, 108.687f })
         {
-            // The three floors on past the one the road meets: railed on both sides, over the drop and beside the level ground.
+            // The three floors on past the one the road meets: railed on both sides, over the drop and beside the level ground;
+            // on the inside of the jog between the last stair's floor and the next, each to where it meets the other's edge.
             AssertHas(rails, StairRailing.LevelRailPrefab, 1778.555f, y, -6555.115f, 45f, 180f);
-            AssertHas(rails, StairRailing.LevelRailPrefab, 1779.969f, y, -6556.529f, 45f, 180f);
-            AssertHas(rails, StairRailing.LevelRailPrefab, 1780.952f, y, -6557.185f, 22.5f, 180f);
+            AssertHas(rails, StairRailing.LevelRailPrefab, 1779.829f, y, -6556.389f, 45f, 180f);
+            AssertHas(rails, StairRailing.LevelRailPrefab, 1781.135f, y, -6557.261f, 22.5f, 180f);
             AssertHas(rails, StairRailing.LevelRailPrefab, 1777.141f, y, -6556.529f, 45f, 180f);
             AssertHas(rails, StairRailing.LevelRailPrefab, 1778.555f, y, -6557.943f, 45f, 180f);
             AssertHas(rails, StairRailing.LevelRailPrefab, 1780.186f, y, -6559.033f, 22.5f, 180f);
@@ -2341,7 +2393,7 @@ public class StairRailingTests
 
     /// <summary>
     /// The one rule at a staircase's two ends: no rail ever crosses the walk where it leaves the staircase, at its foot onto
-    /// the road and at its top onto a place's landing, whichever way its top is turned and wherever its end was recorded
+    /// the road and at its top onto a location's landing, whichever way its top is turned and wherever its end was recorded
     /// (the top floor's near edge, where a finished top leaves it, or its far edge); the top floor railed on its two sides.
     /// </summary>
     [Theory]
@@ -2369,8 +2421,8 @@ public class StairRailingTests
         StructurePiece top = run.Pieces.Last(p => p.Kind == StructurePieceKind.StairFloor);
         StairSupport.Walk floor = StairSupport.WalkOf(top, StairKit.Stone)!.Value;
         run.To = floor.At(recordedAtFarEdge ? floor.Depth : 0f, 0f);
-        run.KeepsSiteRocks = true;
-        // The place's landing level with the top floor past it, as an approach's top meets it.
+        run.KeepsLocationRocks = true;
+        // The location's landing level with the top floor past it, as an approach's top meets it.
         List<StructurePiece> rails = Railing(run, ground: LandingAhead(top));
         StairSupport.Walk first = StairSupport.WalkOf(run.Pieces.First(p => p.Kind == StructurePieceKind.StairStep), StairKit.Stone)!.Value;
         // At the foot: from the road onto the first stair.
@@ -2533,8 +2585,10 @@ public class StairRailingTests
         // handrail (ids 103200, 103205) ...
         AssertHas(rails, StairRailing.ShortRailPrefab, -1858.543f, 261.664f, 6889.883f, 315f, 180f);
         AssertHas(rails, StairRailing.ShortRailPrefab, -1858.543f, 262.664f, 6889.883f, 315f, 180f);
-        // ... ending in the upper leg's wall, where no post stands wholly in it; the run back's post is the corner's.
-        Assert.DoesNotContain(rails, r => r.Prefab == BridgeLayout.RailPostPrefab
+        // ... ending in the upper leg's wall. The post at its end stands mostly in the wall, but its measured box (0.4 m
+        // square, turned with the rail, BuriedPieces.DataOf) reaches 0.16 m out of the wall's face, so it is not wholly in a
+        // support and stands (laid by hand without it; on the parent a copied 0.2 m square post, unturned, was wholly in it).
+        Assert.Contains(rails, r => r.Prefab == BridgeLayout.RailPostPrefab
             && Vector2.Distance(new Vector2(r.Position.x, r.Position.z), new Vector2(-1858.897f, 6889.530f)) < 0.1f);
         // The inner corner keeps its one post, shared by the two flights.
         AssertHas(rails, BridgeLayout.RailPostPrefab, -1859.604f, 262.164f, 6891.651f, 270f, 90f);

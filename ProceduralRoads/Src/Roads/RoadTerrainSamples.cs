@@ -9,9 +9,9 @@ namespace ProceduralRoads;
 ///
 /// Only facts that cannot change within a generation belong here: the world
 /// generator's, and the ground as it will be (<see cref="Ground"/>), which
-/// differs from the natural ground only inside the footprints of the places
+/// differs from the natural ground only inside the footprints of the locations
 /// placed before their roads, made ready before the islands are generated
-/// (<see cref="PlacedSites.Prepare"/>).
+/// (<see cref="PlacedLocations.Prepare"/>).
 /// Road sharing, crossing decisions and configurable move costs do NOT: they
 /// change as roads are committed, and a memo that outlives a search must not
 /// hold anything that can go out of date within one.
@@ -91,6 +91,23 @@ internal sealed class RoadTerrainSamples
         return ref sample;
     }
 
+    /// <summary>Whether the pathfinder's squeeze of a cell (RoadPathfinder.SqueezedCell: the locations and the ground beside it,
+    /// neither of which changes in a generation) is held here, and what it was (<paramref name="squeezed"/>). The pathfinder
+    /// keeps every cell's in its own dictionary as well, which answers when this memo has let the cell go.</summary>
+    public bool KnowsSqueeze(Vector2i position, out bool squeezed)
+    {
+        ref Sample sample = ref samples[unchecked((position.x * 73856093) ^ (position.y * 83492791)) & (Capacity - 1)];
+        squeezed = (sample.Flags & 64) != 0;
+        return sample.Position == position && (sample.Flags & 32) != 0;
+    }
+
+    /// <summary>Holds a cell's squeeze (<see cref="KnowsSqueeze"/>).</summary>
+    public void NoteSqueeze(Vector2i position, bool squeezed)
+    {
+        ref Sample sample = ref At(position);
+        sample.Flags |= (byte)(squeezed ? 32 | 64 : 32);
+    }
+
     /// <summary>The natural ground the search prices its grades on: the terrain the game renders
     /// (<see cref="BiomeBlendedHeight"/>), not WorldGenerator.GetHeight, whose point biome reads a cliff wherever it changes
     /// inside a zone whose heightmap corners are two biomes.</summary>
@@ -114,6 +131,16 @@ internal sealed class RoadTerrainSamples
         else Hits++;
         return sample.Height;
     }
+    /// <summary>The natural ground at a point that is not a cell centre (<see cref="BiomeBlendedHeight"/>, not held): its
+    /// heightmap corners' biomes read through this memo's <see cref="corners"/>, the same heights to the bit.</summary>
+    public float NaturalAt(Vector2 point)
+    {
+        TerrainCalls++;
+        long began = Now;
+        float height = BiomeBlendedHeight.GetBlendedHeight(point.x, point.y, world, corners);
+        TerrainTicks += Now - began;
+        return height;
+    }
     public float River(Vector2i position)
     {
         ref Sample sample = ref At(position);
@@ -135,7 +162,7 @@ internal sealed class RoadTerrainSamples
         return sample.River;
     }
     /// <summary>The ground a water test judges at <paramref name="position"/> (<see cref="RoadWater.Ground(Vector2, float)"/>): the
-    /// ground as it will be (in a place's footprint the ground it levels), else the natural ground the search prices its grades
+    /// ground as it will be (in a location's footprint the ground it levels), else the natural ground the search prices its grades
     /// on (<see cref="Height"/>, read once for both).</summary>
     public float Ground(Vector2i position)
     {
@@ -164,7 +191,7 @@ internal sealed class RoadTerrainSamples
                 TerrainCalls++;
                 var p = RoadPathfinder.CellCentre(position);
                 long began = Now;
-                sample.Biome = world.GetBiome(p.x, p.y);
+                sample.Biome = RoadBiome.At(world, p);
                 TerrainTicks += Now - began;
                 SharedTerrain.PutBiome(world, position, sample.Biome);
             }
@@ -396,6 +423,8 @@ internal static class SharedTerrain
         int tx = FloorDiv(cell.x, TileCells);
         int tz = FloorDiv(cell.y, TileCells);
         index = (cell.y - tz * TileCells) * TileCells + (cell.x - tx * TileCells);
+        // Not kept where the generation keeps less (GenerationMemory.SharesTerrain): each pathfinder's own memo, then the world.
+        if (!GenerationMemory.SharesTerrain) return null;
         if (!ReferenceEquals(s_world, world))
         {
             lock (s_gate)
@@ -435,7 +464,7 @@ internal static class SharedTerrain
     }
     internal static void PutHeight(WorldGenerator world, Vector2i cell, float value)
     {
-        Tile tile = Find(world, cell, true, out int i)!;
+        if (Find(world, cell, true, out int i) is not Tile tile) return;
         System.Threading.Volatile.Write(ref tile.Height[i], value);
         Mark(tile, i, 1);
     }
@@ -448,7 +477,7 @@ internal static class SharedTerrain
     }
     internal static void PutRiver(WorldGenerator world, Vector2i cell, float value)
     {
-        Tile tile = Find(world, cell, true, out int i)!;
+        if (Find(world, cell, true, out int i) is not Tile tile) return;
         System.Threading.Volatile.Write(ref tile.River[i], value);
         Mark(tile, i, 2);
     }
@@ -461,7 +490,7 @@ internal static class SharedTerrain
     }
     internal static void PutBiome(WorldGenerator world, Vector2i cell, Heightmap.Biome value)
     {
-        Tile tile = Find(world, cell, true, out int i)!;
+        if (Find(world, cell, true, out int i) is not Tile tile) return;
         System.Threading.Volatile.Write(ref tile.Biome[i], (int)value);
         Mark(tile, i, 4);
     }
@@ -474,7 +503,7 @@ internal static class SharedTerrain
     }
     internal static void PutVariance(WorldGenerator world, Vector2i cell, float value)
     {
-        Tile tile = Find(world, cell, true, out int i)!;
+        if (Find(world, cell, true, out int i) is not Tile tile) return;
         System.Threading.Volatile.Write(ref tile.Variance[i], value);
         Mark(tile, i, 8);
     }

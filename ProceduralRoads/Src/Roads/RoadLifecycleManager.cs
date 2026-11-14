@@ -37,13 +37,14 @@ public static partial class RoadLifecycleManager
         ChoicePending = false;
         m_includedNote = null;
         RoadNetworkGenerator.Reset();
-        // This world's placed places and the map icons they hide: another world's are not its. Kept through
-        // a regeneration: the places stay placed, and nothing places them again to hide them.
-        PlacedSites.Reset();
-        HiddenSiteIcons.Reset();
+        // This world's placed locations and the map icons they hide: another world's are not its. Kept through
+        // a regeneration: the locations stay placed, and nothing places them again to hide them.
+        PlacedLocations.Reset();
+        HiddenLocationIcons.Reset();
         NetworkCutoff.Forget(zoneSystem);
         RoadClearAreaManager.ClearCache();
         RoadTerrainModifier.ResetForWorld();
+        RoadNetworkSync.Reset();
 
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Road data cleared on world unload");
     }
@@ -93,6 +94,17 @@ public static partial class RoadLifecycleManager
     /// decision, the spawn fallback, road_generate and road_regen_island.</summary>
     internal static bool HoldsTheNetwork => ZNet.instance != null && ZNet.instance.IsServer();
 
+    /// <summary>Whether this peer has a road network to read: the server's own (generated, loaded or added to), or on a modded
+    /// client the one the server sent it (RoadNetworkSync). The one check every read of the network asks (the console's
+    /// readers, its diagnostics, the load decision); never false on a peer whose road queries answer.</summary>
+    internal static bool HasNetwork => RoadNetworkGenerator.RoadsAvailable;
+
+    /// <summary>Whether this peer writes the road network into the world now: only the peer that holds it
+    /// (<see cref="HoldsTheNetwork"/>), with its network available (no generation's workers own the world). The one check every
+    /// write path asks: zone spawn, vegetation placing, terrain compilers, the terrain sweep, the rock pass, the server bake and
+    /// the saves. A client holding a received network reads it and writes nothing.</summary>
+    internal static bool WritesTheNetwork => HoldsTheNetwork && RoadNetworkGenerator.RoadsAvailable;
+
     /// <summary>
     /// Load the saved network, or build one, once, when both halves are ready:
     /// the locations in place (IsLocationsReady: told by the event, or the game
@@ -104,7 +116,7 @@ public static partial class RoadLifecycleManager
     {
         // World load can announce readiness before ZoneSystem.Start. Initialize first, then replay both readiness facts.
         if (!ReferenceEquals(m_subscribedZone, ZoneSystem.instance)) return;
-        if (RoadNetworkGenerator.RoadsAvailable || IsGenerating || ChoicePending)
+        if (HasNetwork || IsGenerating || ChoicePending)
             return;
         if (!HoldsTheNetwork)
             return;
@@ -129,6 +141,7 @@ public static partial class RoadLifecycleManager
         {
             RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug("Loaded roads from global persistence");
+            RoadNetworkSync.Publish();
             return;
         }
 
@@ -207,30 +220,57 @@ public static partial class RoadLifecycleManager
                 return;
             case ExistingWorldFirstLoad.Decision.IncludeExplored:
                 // Before anything is written: the game's own backup of the world as it is on disk.
-                string? backup = ExistingWorldFirstLoad.Backup?.Invoke();
-                if (backup == null)
+                if (!IncludeExploredLand(null, saveFirst: false, out string? backup, out int kept))
                 {
                     const string refused = "The world could not be backed up, so roads are built only in land explored from now on.";
                     log.LogError($"Existing world: {refused}");
                     ExistingWorldFirstLoad.Tell?.Invoke(refused);
                     break;
                 }
-                HashSet<Vector2s> keep = ExistingWorldFirstLoad.PlayerMarkedZones(NetworkCutoff.ExploredAtLoad);
-                NetworkCutoff.IncludeExplored(keep);
-                m_includedNote = ExistingWorldFirstLoad.KeptNote(keep.Count);
+                m_includedNote = ExistingWorldFirstLoad.KeptNote(kept);
                 log.LogInfo($"Existing world: roads are built through the explored land ({NetworkCutoff.ExploredAtLoadCount} zone(s)), " +
-                            $"round the {keep.Count} with player buildings or terrain edits; backup {backup}");
+                            $"round the {kept} with player buildings or terrain edits; backup {backup}");
                 break;
             case ExistingWorldFirstLoad.Decision.NewZonesOnly:
                 log.LogInfo($"Existing world: roads are built only in land explored from now on; the {NetworkCutoff.ExploredAtLoadCount} explored zone(s) stay as they are.");
                 break;
         }
-        // BeginInitialGeneration builds the network over many frames, its places placed first (it honours the
+        // BeginInitialGeneration builds the network over many frames, its locations placed first (it honours the
         // PROCEDURALROADS_GENERATE_ROADS_ON_LOAD switch, and Tick applies road terrain to the zones spawned before the
         // network existed): behind the loading screen, or with the player already in the world (the spawn fallback)
         // under the same panel, the world held still as road_generate holds it. Placing waits for frames, so no
         // generation in the game is synchronous.
         BeginInitialGeneration();
+    }
+
+    /// <summary>
+    /// The next network is built through the explored land (ExistingWorldRoads.IncludeExplored), for the first load's
+    /// answer and for road_generate and road_regen_island alike: the world backed up first (saved first when
+    /// <paramref name="saveFirst"/>: a command's world has a session since its last save), then the explored zones players
+    /// built in or dug kept (ExistingWorldFirstLoad.PlayerMarkedZones; <paramref name="kept"/> counts them), and for one
+    /// <paramref name="island"/> every explored zone off it too, which the command builds nothing in
+    /// (NetworkCutoff.IncludeExplored). With nothing explored there is nothing to back up or keep. False when the world
+    /// could not be saved or backed up: then nothing is changed.
+    /// </summary>
+    internal static bool IncludeExploredLand(Island? island, bool saveFirst, out string? backup, out int kept)
+    {
+        backup = null;
+        kept = 0;
+        HashSet<Vector2s> explored = NetworkCutoff.Explored;
+        if (explored.Count == 0) { NetworkCutoff.IncludeExplored(null); return true; }
+        if (saveFirst && ExistingWorldFirstLoad.SaveNow?.Invoke() != true) return false;
+        backup = ExistingWorldFirstLoad.Backup?.Invoke();
+        if (backup == null) return false;
+        HashSet<Vector2s> keep = ExistingWorldFirstLoad.PlayerMarkedZones(explored);
+        kept = keep.Count;
+        if (island != null)
+        {
+            HashSet<Vector2s> on = island.Zones();
+            foreach (Vector2s zone in explored)
+                if (!on.Contains(zone)) keep.Add(zone);
+        }
+        NetworkCutoff.IncludeExplored(keep);
+        return true;
     }
 
     /// <summary>Once a network over the explored land is built: tell the players which zones it went round.</summary>
@@ -247,7 +287,7 @@ public static partial class RoadLifecycleManager
     /// </summary>
     public static void OnPlayerSpawn(Vector3 spawnPoint)
     {
-        if (RoadNetworkGenerator.RoadsAvailable || IsGenerating)
+        if (HasNetwork || IsGenerating)
             return;
 
         // A last resort for a host whose world load did not go through ZNet.ServerLoadWorld.
@@ -261,7 +301,8 @@ public static partial class RoadLifecycleManager
     /// </summary>
     public static void OnPrepareSave()
     {
-        if (IsGenerating) return;
+        // A client never saves a network: one it received is the server's.
+        if (IsGenerating || !HoldsTheNetwork) return;
         if (RoadNetworkGenerator.NetworkDirty)
         {
             RoadNetworkGenerator.SaveGlobalRoadData();

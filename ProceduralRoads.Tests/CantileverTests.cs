@@ -28,7 +28,7 @@ public class CantileverTests
 
     /// <summary>
     /// A planar face of 6:1 across z (the reference face is about 6:1), rising along x at a flight's
-    /// 1:2 so a flight along it keeps its place on the face, and a shelf at its top (x past 20)
+    /// 1:2 so a flight along it keeps its location on the face, and a shelf at its top (x past 20)
     /// for the staircase to finish on. Without cantilevers every piece stood on a column down the
     /// face (up to 12 m of pillars); held out, no column hangs into the drop.
     /// </summary>
@@ -92,9 +92,7 @@ public class CantileverTests
             Assert.NotNull(meadows.FindPath(new Vector2(-80f, 0f), new Vector2(100f, 0f)));
             Assert.Contains(meadows.LastStairSteps, s =>
                 Mathf.Abs(stone.GetHeight(s.to.x, s.to.y) - stone.GetHeight(s.from.x, s.from.y)) / Vector2.Distance(s.from, s.to) > RoadPathfinder.StairMaxGrade);
-            // An older save's wood staircase stood on columns: no step over 1:1 is offered for its kit.
-            Assert.True(RoadPathfinder.StairStepTooSteep(1.8f, StairKit.Wood));
-            Assert.False(RoadPathfinder.StairStepTooSteep(1.8f, StairKit.Stone));
+            Assert.False(RoadPathfinder.StairStepTooSteep(1.8f));
         }
         finally
         {
@@ -685,7 +683,7 @@ public class CantileverTests
         Assert.Equal(1, plan.FootLowered);
         Assert.Equal(1.3f, foot!.Value.y, 2);
         Assert.Equal(-2f, foot.Value.z, 2);
-        // The sunk step went; one stair down took its place, uncovered: the same number of stair pieces, one more walked.
+        // The sunk step went; one stair down took its location, uncovered: the same number of stair pieces, one more walked.
         Assert.Equal(stairs, plan.Pieces.Count(p => p.Kind == StairPieceKind.Stair));
         Assert.Contains(plan.Pieces, p => p.Kind == StairPieceKind.Stair && Math.Abs(p.Position.y - 1.3f) < 0.01f && Math.Abs(p.Position.z + 1f) < 0.01f);
         // First in the lists, in walking order from the foot, as the sunk step was: the first walked piece is the new foot's
@@ -703,15 +701,16 @@ public class CantileverTests
         Assert.Equal(low!.Value.y, walked[0], 2);
         Assert.Equal(low.Value.y + StairLayout.PieceRise, walked[1], 2);
     }
-    /// <summary>A foot lowers to the nearest whole stair, as a foot carried to a crossing's end does (StairLayout.FootToRoad): over
-    /// its road by less than half a rise it stays (the road's landing is filled up to it), and from half a rise up one stair
-    /// drops. The mound's foot stands 2.3 m up, the plain road 5 m back climbing at the cap.</summary>
+    /// <summary>A foot over its road's ground lowers until it reaches it, rounded up where nothing raises its road (StairLayout.StairsDownTo: "a stair a
+    /// bit sunk is fine"): more than a step over, a stair drops, and stairs on until it is within a step or under. The mound's
+    /// foot stands 2.3 m up, the plain road 5 m back climbing at the cap. Rounded to the nearest whole stair, a foot 1.3 m over
+    /// took one stair and was left 0.3 m over its road, and one 0.3 m over took none.</summary>
     [Theory]
-    [InlineData(0.40f, 0)]   // over 0.3: stays
+    [InlineData(0.40f, 1)]   // over 0.3: one stair, more than a step
     [InlineData(0.35f, 1)]   // over 0.55: one stair
-    [InlineData(0.20f, 1)]   // over 1.3: one stair, not two
+    [InlineData(0.20f, 2)]   // over 1.3: two, the second a bit sunk (to the nearest, one left it 0.3 m over)
     [InlineData(0.10f, 2)]   // over 1.8: two
-    public void AFootLowersToTheNearestWholeStair(float cap, int stairs)
+    public void AFootLowersUntilItReachesTheGround(float cap, int stairs)
     {
         StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 20f), Mound, arriving: 0f, sunkFoot: true);
         Assert.True(plan.Reached, plan.Reason);

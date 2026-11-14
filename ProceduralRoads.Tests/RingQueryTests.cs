@@ -72,7 +72,13 @@ public class RingQueryTests : System.IDisposable
 
             var road = Best(p => p.IsRoad);
             Assert.Equal(road.HasValue, RoadSpatialGrid.TryGetRoadHeightWithin(at, reach, out float height, out _, out float width));
-            if (road.HasValue) { Assert.Equal(road.Value.h, height); Assert.Equal(road.Value.w, width); }
+            if (road.HasValue)
+            {
+                // Its surface as the one reader fits it over a scan of every point (RoadSpatialGrid.SurfaceReader): the cells
+                // round the nearest point see every point that reaches it.
+                Assert.True(new RoadSpatialGrid.SurfaceReader().ResetOver(all).Read(at, reach, out float scanned, out _, out _));
+                Assert.Equal(scanned, height); Assert.Equal(road.Value.w, width);
+            }
 
             var grade = Best(p => p.IsRoad && Mathf.Abs(p.h - ground) <= 3f);
             Assert.Equal(grade.HasValue, RoadSpatialGrid.TryGetRoadAtGradeWithin(at, reach, ground, 3f, out Vector2 junction));

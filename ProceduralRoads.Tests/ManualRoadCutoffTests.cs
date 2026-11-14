@@ -25,7 +25,7 @@ public sealed class ManualRoadCutoffTests : IDisposable
     /// <summary>Explored too, far from any road.</summary>
     private static readonly Vector2s FarAway = new(6, 6);
 
-    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope().WithNetwork(server: true);
 
     public ManualRoadCutoffTests()
     {
@@ -33,7 +33,7 @@ public sealed class ManualRoadCutoffTests : IDisposable
         _scope.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
         RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
-        RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
     }
 
     public void Dispose()
@@ -58,7 +58,7 @@ public sealed class ManualRoadCutoffTests : IDisposable
         ZoneSystem.instance!.m_generatedZones.Add(Explored);
         ZoneSystem.instance.m_generatedZones.Add(FarAway);
         NetworkCutoff.SnapshotWorld(new[] { Explored, FarAway });
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
     }
 
     [Fact]

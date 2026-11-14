@@ -61,7 +61,7 @@ public sealed class StructureRollTests : IDisposable
     public StructureRollTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
-        RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadNetworkGenerator.MarkLocationsReady(); RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
         for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
@@ -92,7 +92,7 @@ public sealed class StructureRollTests : IDisposable
             if (ZNetScene.instance!.GetPrefab(piece.Prefab) == null) ZNetScene.instance.AddPrefab(piece.Prefab);
         NetworkCutoff.Forget();
         NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
         foreach (Vector2s zone in zones) StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full);
         var spawned = ZDOMan.instance!.Zdos.Where(z => z.GetInt(StructurePlans.MarkerHash) == 1).ToList();
         foreach (StructurePiece p in planned)

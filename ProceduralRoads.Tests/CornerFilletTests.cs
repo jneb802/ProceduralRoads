@@ -99,7 +99,7 @@ public class CornerFilletTests
         Assert.True(SharpestVertex(shaped!) <= 15f, $"sharpest {SharpestVertex(shaped!):F1} deg");
         // The hook is gone: the road turns from north to east-north-east once, never out west.
         foreach (Vector2 q in shaped!) Assert.True(q.x > -0.5f, $"point {q} still runs out on the hook");
-        // Its new legs, and the arc, are checked for water and sites.
+        // Its new legs, and the arc, are checked for water and locations.
         Assert.Contains(true, RoadSwitchbacks.LastCurve!);
     }
 

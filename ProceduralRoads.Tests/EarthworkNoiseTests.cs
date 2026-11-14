@@ -65,16 +65,16 @@ public class EarthworkNoiseTests
             float x = i * 3.71f - 7000f, z = i * -1.93f + 1200f;
             float p = RoadEarthworkNoise.Perlin01(x * 0.1f, z * 0.1f);
             Assert.InRange(p, 0f, 1f);
-            float d = RoadEarthworkNoise.Detail(x, z, false);
+            float d = RoadEarthworkNoise.Detail(x, z, RoadRules.Global);
             lo = Mathf.Min(lo, d); hi = Mathf.Max(hi, d);
             // One vertex (1 m) apart never differs by more than the fine octave
             // can make it: no spikes on the grid.
-            jump = Mathf.Max(jump, Mathf.Abs(d - RoadEarthworkNoise.Detail(x + 1f, z, false)));
+            jump = Mathf.Max(jump, Mathf.Abs(d - RoadEarthworkNoise.Detail(x + 1f, z, RoadRules.Global)));
         }
         Assert.True(hi - lo <= 2.6f + 1e-3f, $"range {hi - lo:F2}");
         Assert.True(hi - lo > 1f, $"range {hi - lo:F2}: too flat to be vanilla's detail");
         Assert.True(jump < 1.0f, $"1 m jump {jump:F2}");
-        Assert.True(RoadEarthworkNoise.Detail(5f, 5f, true) != RoadEarthworkNoise.Detail(5f, 5f, false));
+        Assert.True(RoadEarthworkNoise.Detail(5f, 5f, RoadRules.Mistlands) != RoadEarthworkNoise.Detail(5f, 5f, RoadRules.Global));
     }
 
     [Fact]
@@ -90,9 +90,9 @@ public class EarthworkNoiseTests
         Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 6f, (x, z) => 10f));
         Assert.Equal(0f, RoadEarthworkNoise.FillExtra(new Vector2(0, 0), 10.8f, (x, z) => 10f));
         Assert.True(RoadTerrainModifier.GatherRadius(4f) >= RoadTerrainModifier.MaxInfluenceRadius(4f) + RoadEarthworkNoise.FillSpreadMax - 1e-4f);
-        // With neither the spread nor the noise the gather pads by the influence radius alone.
+        // With no spread the gather uses the fit reach, including its rounding allowance.
         RoadEarthworkNoise.FillSpread = 0f; RoadEarthworkNoise.Amplitude = 0f;
-        Assert.Equal(RoadTerrainModifier.MaxInfluenceRadius(4f), RoadTerrainModifier.GatherRadius(4f));
+        Assert.Equal(RoadTerrainModifier.FitReach(4f), RoadTerrainModifier.GatherRadius(4f));
     }
 
     [Fact]

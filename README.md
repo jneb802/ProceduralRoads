@@ -4,7 +4,7 @@ A Valheim mod that generates procedural roads connecting locations across your w
 
 ## Features
 
-- Connects a seeded mix of dungeons, settlements, ruins, bosses and quest sites across selected islands
+- Connects a seeded mix of dungeons, settlements, ruins, bosses and quest locations across selected islands
 - Terrain-aware routing that holds a maximum grade and protects the terrain of locations
 - River fords and ruined wooden and stone bridges; Dvergr viaducts and bridges in the Mistlands
 - Staircases where the ground is too steep for a road
@@ -41,14 +41,15 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | RoadWidth | 4 | Road width in meters (2-10) |
 | IslandRoadPercentage | 33 | Percentage of islands selected for roads (0 disables generation) |
 | MaxLocationsPerIsland | 48 | Destinations selected per island (2-128) |
+| ReplaceUnreachableLocations | true | Not every location can be reached by road (water, cliffs, protected zones). On, a chosen location no road reaches is replaced by another on its island, so islands keep their density and stay better connected; on our test worlds a quarter to a third more locations got a road, for about 15-30% longer generation (up to about twice as long on the busiest island). Off, each island keeps its first picks |
 | PathfindingMaxIterations | 30000 | Search budget per road; higher finds more roads, slower |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
 | ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
 | ExistingWorldFirstLoadRoads | Ask | First load of a world explored before it had roads: Ask, IncludeExplored, NewZonesOnly or Skip |
-| AttemptRoadsToHildirQuestSites | false | Roads to Hildir's cave, crypt and tower |
+| AttemptRoadsToHildirQuestLocations | false | Roads to Hildir's cave, crypt and tower |
 | Weathered (section Structures) | Bridges, Stairs | Structures laid as an old ruin a player can repair (some pieces missing, every piece worn); one not listed is laid whole and at full health |
 
-Settings apply when a network is generated, not to a saved one, except Weathered: it is read when a structure's first zone is built, so it applies to the structures of a saved network not built yet. Not every selected destination gets a road: some cannot be reached within the grade and site rules.
+Settings apply when a network is generated, not to a saved one, except Weathered: it is read when a structure's first zone is built, so it applies to the structures of a saved network not built yet. Not every selected destination gets a road: some cannot be reached within the grade and location rules.
 
 ### Custom Locations via Config
 
@@ -66,8 +67,8 @@ Host or admin only:
 |---------|-------------|
 | `road_progress` | Generation phase and island count |
 | `road_connect`, `road_path`, `road_mark` | Add your own roads, round zones players changed unless asked; see [manual roads](docs/manual-roads.md) |
-| `road_generate [force]` | Regenerate the whole network (back up first). Over a generated network it first says what it would replace; run it again within 2 minutes, or add `force` |
-| `road_regen_island [x z] [force]` | Clear all roads and regenerate only the island you are on (back up first). Asks first like `road_generate`; the repeat may be anywhere on the same island |
+| `road_generate [NewZonesOnly\|IncludeExplored\|Skip] [force]` | Regenerate the whole network; it can take many minutes. Over a network it replaces, the land explored so far is treated as you choose: `NewZonesOnly` (the default over a network) builds only in land explored from now on, the old roads there staying as they are; `IncludeExplored` (the default on a world with no network) saves and backs up the world, then builds through the explored land too, round your buildings and terrain edits, and the old roads it does not follow stay as levelled, painted ground (the backup is the undo); `Skip` runs nothing. Over a generated network it first lists these and what it would replace; run it again within 2 minutes, or add `force` |
+| `road_regen_island [x z] [NewZonesOnly\|IncludeExplored\|Skip] [force]` | Clear all roads and regenerate only the island you are on, with the same choices as `road_generate`; land off the island is left as it is. Asks first like `road_generate`; the repeat may be anywhere on the same island |
 
 ## API for Mod Authors
 

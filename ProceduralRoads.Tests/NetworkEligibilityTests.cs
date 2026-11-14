@@ -43,7 +43,7 @@ public class NetworkEligibilityTests
     }
 
     [Fact]
-    public void ExcludedBiomeFiltersApiAndRequiredSitesBeforeSelection()
+    public void ExcludedBiomeFiltersApiAndRequiredLocationsBeforeSelection()
     {
         using var scope = new ValheimWorldScope();
         using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.NetworkOptions);
@@ -57,9 +57,9 @@ public class NetworkEligibilityTests
             RoadNetworkGenerator.RegisterLocation("MWL_Test");
             var island = new Island { Min=new Vector2(-10,-10), Max=new Vector2(10,10),
                 CellSize=128, Cells=new() { new Vector2Int(0,0) } };
-            var places = new List<(string,Vector3,float)> {
+            var locations = new List<(string,Vector3,float)> {
                 ("ApiAshFixture",Vector3.zero,1), ("MWL_Test",Vector3.zero,1), ("GoblinKing",Vector3.zero,1) };
-            int Found() => places.Count(p => (bool)Call("IsIslandDestination", island, p, world, RoadNetworkGenerator.NetworkOptions));
+            int Found() => locations.Count(p => (bool)Call("IsIslandDestination", island, p, world, RoadNetworkGenerator.NetworkOptions));
             Assert.Equal(0, Found());
             RoadNetworkGenerator.NetworkOptions.ExcludedBiomes = 0;
             Assert.Equal(3, Found());

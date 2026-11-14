@@ -33,7 +33,7 @@ public class FlatRunTests : IDisposable
     private static StairPlan Plan(Vector2 a, Vector2 b, Func<float, float, float> ground, List<Vector2>? corridor)
     {
         MethodInfo plan = typeof(RoadStairRuns).GetMethod("Plan", BindingFlags.NonPublic | BindingFlags.Static)!;
-        object?[] given = { a, b, StairKit.Stone, ground, null, null, corridor };
+        object?[] given = { a, b, StairKit.Stone, RoadStairRuns.LayoutGround.Own(ground), null, null, corridor };
         var args = new object?[plan.GetParameters().Length];
         for (int i = 0; i < args.Length; i++) args[i] = i < given.Length ? given[i] : Type.Missing;
         return (StairPlan)plan.Invoke(null, args)!;

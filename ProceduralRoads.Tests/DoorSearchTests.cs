@@ -5,7 +5,7 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// The search to a place's doors (RoadPathfinder.FindPathBetween): several starts and ends, each priced, and the road found
+/// The search to a location's doors (RoadPathfinder.FindPathBetween): several starts and ends, each priced, and the road found
 /// ends at the cheapest end with its price counted, not the nearest.
 /// </summary>
 public class DoorSearchTests

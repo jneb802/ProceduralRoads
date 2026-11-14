@@ -17,28 +17,28 @@ public class PreparationBoundaryTests : System.IDisposable
         // A lookup refused while sealed marks this thread's road (PreparationMissedHere, thread-static); the next test
         // run on this thread would plan as a road preparation missed (HumpRoadTests refused its hump so).
         LocationLevelling.PreparationMissedHere = false;
-        RoadSiteProtection.Source = null;
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Source = null;
+        RoadLocationProtection.Reset();
     }
 
-    private static IEnumerable<RoadSiteProtection.Footprint> OneSite() =>
-        new[] { new RoadSiteProtection.Footprint(new Vector2(0f, 0f), 32f) };
+    private static IEnumerable<RoadLocationProtection.Footprint> OneLocation() =>
+        new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 32f) };
 
     [Fact]
     public void PrimingBeforeTheBoundaryBuildsTheIndex()
     {
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         int built = 0;
-        RoadSiteProtection.Source = () => { built++; return OneSite(); };
+        RoadLocationProtection.Source = () => { built++; return OneLocation(); };
 
-        RoadSiteProtection.Prime();
+        RoadLocationProtection.Prime();
         LocationLevelling.Seal();
 
         Assert.Equal(1, built);
-        // The site it was primed with is protected, and asking does not
+        // The location it was primed with is protected, and asking does not
         // rebuild anything.
-        Assert.True(RoadSiteProtection.Contains(new Vector2(0f, 0f)));
+        Assert.True(RoadLocationProtection.Contains(new Vector2(0f, 0f)));
         Assert.Equal(1, built);
         Assert.Equal(0, LocationLevelling.MissesAfterSealing);
     }
@@ -50,16 +50,16 @@ public class PreparationBoundaryTests : System.IDisposable
         // there are no footprints. Treating that as a missed lookup wrote one
         // error per ask -- 21,531 of them in a single suite run.
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        RoadSiteProtection.Source = null;
+        RoadLocationProtection.Reset();
+        RoadLocationProtection.Source = null;
         LocationLevelling.Seal();
 
         for (int i = 0; i < 100; i++)
-            Assert.False(RoadSiteProtection.Contains(new Vector2(i, 0f)),
+            Assert.False(RoadLocationProtection.Contains(new Vector2(i, 0f)),
                 "no source at all means no footprints, and must not refuse every route");
 
         Assert.Equal(0, LocationLevelling.MissesAfterSealing);
-        Assert.False(RoadSiteProtection.InstalledButUnprepared);
+        Assert.False(RoadLocationProtection.InstalledButUnprepared);
     }
 
     [Fact]
@@ -69,20 +69,20 @@ public class PreparationBoundaryTests : System.IDisposable
         // lookup, opposite answers -- because one is a world without
         // footprints and the other is a world whose footprints were lost.
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        RoadSiteProtection.Source = null;
+        RoadLocationProtection.Reset();
+        RoadLocationProtection.Source = null;
         LocationLevelling.Seal();
-        Assert.False(RoadSiteProtection.InstalledButUnprepared);
-        Assert.False(RoadSiteProtection.Contains(new Vector2(0f, 0f)));
+        Assert.False(RoadLocationProtection.InstalledButUnprepared);
+        Assert.False(RoadLocationProtection.Contains(new Vector2(0f, 0f)));
         Assert.False(LocationLevelling.PreparationMissedHere);
 
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        RoadSiteProtection.Source = OneSite;
+        RoadLocationProtection.Reset();
+        RoadLocationProtection.Source = OneLocation;
         LocationLevelling.Seal();
-        Assert.True(RoadSiteProtection.InstalledButUnprepared);
+        Assert.True(RoadLocationProtection.InstalledButUnprepared);
         LocationLevelling.BeginRoad();
-        Assert.True(RoadSiteProtection.Contains(new Vector2(0f, 0f)));
+        Assert.True(RoadLocationProtection.Contains(new Vector2(0f, 0f)));
         // And the road being built knows, so it can be refused rather than
         // built through something it could not see.
         Assert.True(LocationLevelling.PreparationMissedHere);
@@ -92,15 +92,15 @@ public class PreparationBoundaryTests : System.IDisposable
     public void APreparedIndexIsNotTreatedAsUnprepared()
     {
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        RoadSiteProtection.Source = OneSite;
-        RoadSiteProtection.Prime();
+        RoadLocationProtection.Reset();
+        RoadLocationProtection.Source = OneLocation;
+        RoadLocationProtection.Prime();
         LocationLevelling.Seal();
         LocationLevelling.BeginRoad();
 
-        Assert.False(RoadSiteProtection.InstalledButUnprepared);
-        Assert.True(RoadSiteProtection.Contains(new Vector2(0f, 0f)), "the primed footprint is not protected");
-        Assert.False(RoadSiteProtection.Contains(new Vector2(4000f, 0f)), "ground far from any site reads as blocked");
+        Assert.False(RoadLocationProtection.InstalledButUnprepared);
+        Assert.True(RoadLocationProtection.Contains(new Vector2(0f, 0f)), "the primed footprint is not protected");
+        Assert.False(RoadLocationProtection.Contains(new Vector2(4000f, 0f)), "ground far from any location reads as blocked");
         Assert.False(LocationLevelling.PreparationMissedHere);
         Assert.Equal(0, LocationLevelling.MissesAfterSealing);
     }
@@ -109,11 +109,11 @@ public class PreparationBoundaryTests : System.IDisposable
     public void AMissingSubjectIsNamedOnceHoweverOftenItIsAskedFor()
     {
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        RoadSiteProtection.Source = OneSite;
+        RoadLocationProtection.Reset();
+        RoadLocationProtection.Source = OneLocation;
         LocationLevelling.Seal();
 
-        for (int i = 0; i < 100; i++) RoadSiteProtection.Contains(new Vector2(i, 0f));
+        for (int i = 0; i < 100; i++) RoadLocationProtection.Contains(new Vector2(i, 0f));
 
         // Every ask is counted -- that is the scale of the gap -- but the
         // subject is named once.
@@ -127,12 +127,12 @@ public class PreparationBoundaryTests : System.IDisposable
         // boundary this silently invoked the source on whichever worker asked
         // first and filled a shared dictionary from it.
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         int built = 0;
-        RoadSiteProtection.Source = () => { built++; return OneSite(); };
+        RoadLocationProtection.Source = () => { built++; return OneLocation(); };
 
         LocationLevelling.Seal();
-        bool blocks = RoadSiteProtection.Contains(new Vector2(0f, 0f));
+        bool blocks = RoadLocationProtection.Contains(new Vector2(0f, 0f));
 
         Assert.Equal(0, built);
         // Footprints exist and cannot be consulted, so everything is treated
@@ -147,37 +147,37 @@ public class PreparationBoundaryTests : System.IDisposable
     public void TheIndexCannotBeClearedWhileWorkersAreReadingIt()
     {
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        RoadSiteProtection.Source = OneSite;
-        RoadSiteProtection.Prime();
+        RoadLocationProtection.Reset();
+        RoadLocationProtection.Source = OneLocation;
+        RoadLocationProtection.Prime();
         LocationLevelling.Seal();
 
         // The source is taken away first, so a rebuild is impossible: the only
         // way the footprint can still be there afterwards is that the clear
         // was refused. Without this the test passed either way, because a
         // cleared index simply rebuilt itself from the source on the next ask.
-        RoadSiteProtection.Source = null;
-        RoadSiteProtection.Reset();   // refused
+        RoadLocationProtection.Source = null;
+        RoadLocationProtection.Reset();   // refused
 
-        Assert.True(RoadSiteProtection.Contains(new Vector2(0f, 0f)),
+        Assert.True(RoadLocationProtection.Contains(new Vector2(0f, 0f)),
             "the index was cleared while it was sealed, which is what island workers read");
 
         // And once the workers are done, it clears as usual.
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
-        Assert.False(RoadSiteProtection.Contains(new Vector2(0f, 0f)));
+        RoadLocationProtection.Reset();
+        Assert.False(RoadLocationProtection.Contains(new Vector2(0f, 0f)));
     }
 
     [Fact]
     public void SealingZeroesTheCountSoOneGenerationDoesNotInheritAnother()
     {
         LocationLevelling.Unseal();
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         // A source that was never primed: the gap. No source at all is an
         // ordinary state and is deliberately not reported.
-        RoadSiteProtection.Source = OneSite;
+        RoadLocationProtection.Source = OneLocation;
         LocationLevelling.Seal();
-        RoadSiteProtection.Contains(new Vector2(0f, 0f));
+        RoadLocationProtection.Contains(new Vector2(0f, 0f));
         Assert.True(LocationLevelling.MissesAfterSealing > 0);
 
         LocationLevelling.Unseal();

@@ -77,11 +77,18 @@ public static class DvergrWoodBridge
     public const float StringerDrop = 0.5f;
     /// <summary>Plank to plank along the deck.</summary>
     public const float PlankPitch = 1f;
-    /// <summary>The beam's length (along its local x), width and depth.</summary>
-    public const float BeamLength = 6f, BeamWidth = 0.8f, BeamDepth = 0.8f;
+    /// <summary>The beam's length (along its local x), width (its local z) and depth, as measured
+    /// (<see cref="BuriedPieces.DataOf"/>).</summary>
+    public static float BeamLength => BridgeLayout.Measured(Plank).Max.x - BridgeLayout.Measured(Plank).Min.x;
+    /// <inheritdoc cref="BeamLength"/>
+    public static float BeamWidth => BridgeLayout.Measured(Plank).Max.z - BridgeLayout.Measured(Plank).Min.z;
+    /// <inheritdoc cref="BeamLength"/>
+    public static float BeamDepth => BridgeLayout.Measured(Plank).Max.y - BridgeLayout.Measured(Plank).Min.y;
     /// <summary>One pile's length and its square side. Its collar and LOD children's RandomSpawn runs only while a
     /// location spawns, so a pole spawned on its own shows both.</summary>
-    public const float PileLength = 4f, PileWidth = 0.8f;
+    public static float PileLength => BridgeLayout.Measured(Pile).Max.y - BridgeLayout.Measured(Pile).Min.y;
+    /// <inheritdoc cref="PileLength"/>
+    public static float PileWidth => BridgeLayout.Measured(Pile).Max.x - BridgeLayout.Measured(Pile).Min.x;
     /// <summary>How far a pile's top stands over the walking surface (the pier stands its top piles 2.6 m over the
     /// planks' top; this is an open choice).</summary>
     public const float PileAboveDeck = 0.75f;
@@ -93,10 +100,10 @@ public static class DvergrWoodBridge
     /// <summary>A mist light's origin over the top of the pile it stands on, as on the pier: its box sits 0.15 m into the
     /// pile's top.</summary>
     public const float LightOverPile = 0.5f;
-    /// <summary>A mist light's box top over its origin.</summary>
-    public const float LightBoxTop = 0.09f;
+    /// <summary>A mist light's box top over its origin, as measured (<see cref="BuriedPieces.DataOf"/>).</summary>
+    public static float LightBoxTop => BridgeLayout.Measured(Light).Max.y;
     /// <summary>The kit's highest point over the walking surface: a mist light's box on a pile's top.</summary>
-    public const float TopOverDeck = PileAboveDeck + LightOverPile + LightBoxTop;
+    public static float TopOverDeck => PileAboveDeck + LightOverPile + LightBoxTop;
     /// <summary>The share of Dvergr wood bridges that have mist lights at all (only some do, as in the harbour).</summary>
     public const float LitBridgeChance = 1f / 3f;
     /// <summary>On a bridge that has them, the chance each top pile carries one (the pier's demisters' RandomSpawn); one
@@ -129,7 +136,7 @@ public static class DvergrWoodBridge
     }
 
     /// <summary>The deck from the planks' top (the walking surface) to the stringers' bottom.</summary>
-    public const float DeckDepth = BeamDepth + StringerDrop;
+    public static float DeckDepth => BeamDepth + StringerDrop;
 
     /// <summary>
     /// The bays left open over a river: the first, how many, and whether their deck is open too (<paramref name="deck"/>
@@ -171,7 +178,7 @@ public static class DvergrWoodBridge
     public static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
         Solve(crossing, world, worldSeed, ruin: true, openGap: true);
 
-    /// <summary>The bridge whole (<see cref="StructureWear"/>: bridges not weathered): nothing missing, its gap over a river
+    /// <summary>The bridge whole (<see cref="StructureWear"/>: bridges not weathered): nothing missing, its gap over a ship's way
     /// still open for boats.</summary>
     internal static List<StructurePiece> SolveWhole(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
         Solve(crossing, world, worldSeed, ruin: false, openGap: true);
@@ -197,7 +204,7 @@ public static class DvergrWoodBridge
         BridgeLayout.RuinProfile profile = Profile;
         // The finished ground (StructureGround): the piles stand on it, and the end stairs' columns are carried down to it.
         var (nearEnd, farEnd) = StructureEnds.Of(crossing, world);
-        System.Func<Vector2, float> groundAt = StructureGround.Of(world, nearEnd, farEnd, BeamLength * 0.5f + SupportGraph.Reach);
+        System.Func<Vector2, float> groundAt = StructureGround.At(world);
 
         float[] bents = BentAlongs(length);
         int n = bents.Length;
@@ -308,6 +315,8 @@ public static class DvergrWoodBridge
         BridgeLayout.LayEndStairs(pieces, groundAt, farEnd, side, r, BridgeLayout.Bays(crossing.Width) + 1, StairPrefab, Pile, PileLength);
 
         EmitLights(pieces, r, tops, yaw);
+        // Its end stairs wholly in the ground left out where the bridge stands without them (the one owner), before it is ruined.
+        BridgeLayout.LeaveOutBuried(pieces, groundAt, crossing, world, p => p.Kind == StructurePieceKind.Stair);
 
         // Every piece worn as the vanilla harbour's (Location.m_applyRandomDamage), in the one ruin owner.
         if (ruin) r.ApplyLocationDamage(pieces);

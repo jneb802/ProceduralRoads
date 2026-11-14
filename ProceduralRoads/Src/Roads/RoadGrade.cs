@@ -6,7 +6,7 @@ namespace ProceduralRoads;
 /// <summary>
 /// How steeply a road is allowed to climb, as rise over run.
 ///
-/// Two places enforce it. The pathfinder refuses a step whose ground is
+/// Two locations enforce it. The pathfinder refuses a step whose ground is
 /// steeper than the cap, so the search has to traverse or fail instead of
 /// paying a large but finite price for the direct climb. This class enforces
 /// the other half: the height profile that is actually stored. Smoothing and
@@ -26,7 +26,7 @@ public static class RoadGrade
 {
     /// <summary>
     /// The cap in force, <see cref="RoadConstants.DefaultMaxRoadGrade"/>;
-    /// settable for tests (0 for no cap). One value, read by both
+    /// settable for tests (a positive cap: there is no uncapped mode). One value, read by both
     /// halves: the pathfinder takes it as its default and the spatial grid
     /// holds the stored profile to it. They were briefly two - the grid read
     /// the pathfinder's copy - which is a coupling with nothing to say for
@@ -35,7 +35,7 @@ public static class RoadGrade
     /// </summary>
     public static float Configured = RoadConstants.DefaultMaxRoadGrade;
 
-    /// <summary>The cap as a divisor: never under 0.01, so a test with no cap (0) does not divide by zero.</summary>
+    /// <summary>The cap as a divisor: never under 0.01, so a cap at or near 0 does not divide by zero.</summary>
     public static float Floored => Mathf.Max(Configured, 0.01f);
 
     /// <summary>The metres of road that ease a rise of <paramref name="rise"/> at the grade cap.</summary>
@@ -53,8 +53,13 @@ public static class RoadGrade
 
     private static readonly object m_steepestGate = new object();
 
-    /// <summary>Trial plans on this thread (a site approach's or entry's candidates) are not recorded: only roads count.</summary>
+    /// <summary>Trial plans on this thread (a location approach's or entry's candidates) are not recorded: only roads count.</summary>
     [System.ThreadStatic] private static int t_trial;
+    /// <summary>Whether a trial is planned on this thread (<see cref="Trial{T}"/>).</summary>
+    internal static bool InTrial => t_trial > 0;
+    /// <summary>The steepest recorded on this thread (<see cref="RecordSteepest"/>), read round a remembered piece
+    /// (RoadSpatialGrid's) to record it again as it is answered.</summary>
+    [System.ThreadStatic] internal static float RecordedSteepest;
 
     /// <summary>Plan a trial: nothing it plans is recorded as the steepest, on this thread only (other islands go on recording).</summary>
     public static T Trial<T>(System.Func<T> plan)
@@ -70,16 +75,13 @@ public static class RoadGrade
     public static void RecordSteepest(float grade)
     {
         if (t_trial > 0) return;
+        if (grade > RecordedSteepest) RecordedSteepest = grade;
         lock (m_steepestGate)
             if (grade > SteepestPlanned) SteepestPlanned = grade;
     }
 
     /// <summary>A cap at or below zero is no cap at all.</summary>
     public static bool Capped(float maxGrade) => maxGrade > 0f;
-
-    /// <summary>The cap in force, or <paramref name="uncapped"/> where there is none (a test with the cap at 0). The one place a
-    /// caller that needs a number without a cap picks it; at the default settings every caller reads <see cref="Configured"/>.</summary>
-    public static float CapOr(float uncapped) => Capped(Configured) ? Configured : uncapped;
 
     /// <summary>
     /// The steepest step in a profile, as rise over run. Steps shorter than a
@@ -101,7 +103,7 @@ public static class RoadGrade
 
     /// <summary>The grade edge <paramref name="i"/> (from point i-1 to i) may climb: its own limit in
     /// <paramref name="edgeGrades"/> (a pitch, a rest, a turn landing) under <paramref name="maxGrade"/>, their
-    /// steepest (<see cref="RoadPitches.LimitCap"/>); <paramref name="maxGrade"/> without them. The one reading of
+    /// never past <paramref name="maxGrade"/>; <paramref name="maxGrade"/> without them. The one reading of
     /// per-edge limits, for the limiter and for a road eased to the roads it meets (RoadSpatialGrid.HoldToNetwork).</summary>
     public static float EdgeLimit(IReadOnlyList<float>? edgeGrades, int i, float maxGrade) =>
         edgeGrades != null && i < edgeGrades.Count ? Mathf.Min(maxGrade, Mathf.Max(0f, edgeGrades[i])) : maxGrade;

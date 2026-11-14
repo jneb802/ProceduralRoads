@@ -12,11 +12,11 @@ namespace ProceduralRoads;
 /// by ten Random.insideUnitCircle ground samples (GetTerrainDelta). Positions and the generator's terrain are the same on
 /// every run of a seed; these draws are not, so a landing, and the roads to it, moved between runs. With the switch on,
 /// the zone's placing draws from <see cref="Seed"/> (the slope's samples) and a randomly turned location takes
-/// <see cref="Step"/>; the game's location seed, handed to SpawnLocation right after, is untouched. Places placed before
-/// their roads (SitesFirstLoad) are placed by the same game method, so they agree; what is read back from a placing
+/// <see cref="Step"/>; the game's location seed, handed to SpawnLocation right after, is untouched. Locations placed before
+/// their roads (LocationsFirstLoad) are placed by the same game method, so they agree; what is read back from a placing
 /// (its LocationProxy's rotation) follows.
 ///
-/// The one owner of the fixed turn: offline tools may ask <see cref="Degrees"/> for a randomly turned place's turn.
+/// The one owner of the fixed turn: offline tools may ask <see cref="Degrees"/> for a randomly turned location's turn.
 /// </summary>
 public static class FixedLocationYaw
 {

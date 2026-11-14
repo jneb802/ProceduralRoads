@@ -18,16 +18,17 @@ public sealed class GeneratedSpawnRecoveryTests : IDisposable
     private readonly ValheimWorldScope _world = new ValheimWorldScope()
         .WithWorld(new BridgeTests.WideRiverWorld()).WithZdos().WithZoneSystem().WithScene().AsServer();
     private static readonly Vector2s Zone = new(0, 0);
-    private const string Prefab = "wood_stair";
+    private const string Prefab = BridgeLayout.StoneStairPrefab;
 
     public GeneratedSpawnRecoveryTests()
     {
         RoadNetworkGenerator.Reset();
         NetworkCutoff.Forget();
         NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-        NetworkCutoff.UseNewNetwork();
-        var run = new StairRun { From = new Vector2(0, 0), To = new Vector2(2, 0), Width = 4f };
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
+        var run = new StairRun { From = new Vector2(0, 0), To = new Vector2(2, 0), Width = 4f, Kit = StairKit.Stone };
         run.Pieces.Add(new StructurePiece { Prefab = Prefab, Kind = StructurePieceKind.StairStep, Position = new Vector3(0, 40, 0) });
+        Assert.NotNull(BuiltStairs.Keep(run, StairKit.Stone, run.Pieces, world: null));
         StairStructures.Add(run);
     }
 
@@ -84,7 +85,7 @@ public sealed class GeneratedSpawnRecoveryTests : IDisposable
     {
         ZNetScene.instance!.AddPrefab(Prefab);
         if (client) ZNet.instance!.Server = false;
-        else { NetworkCutoff.SnapshotWorld(new[] { Zone }); NetworkCutoff.UseNewNetwork(); }
+        else { NetworkCutoff.SnapshotWorld(new[] { Zone }); NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork(); }
 
         Assert.Equal(0, StructurePlacement.SpawnGhostInZone(Zone));
         Assert.Equal(0, StructurePlacement.OnZoneSpawned(Zone, ZoneSystem.SpawnMode.Full));
@@ -99,11 +100,11 @@ public sealed class GeneratedSpawnRecoveryTests : IDisposable
     {
         // The worn piece fails in a step of the mod's own after its object is out (ShowHealth): it stands, and is not
         // owed again with the rest of the plan.
-        // Wood, as the other staircase here: an older save's, laid as its layout is (StairKit.Dress), so its plan is these
-        // pieces alone, with no supports a stone kit would lay under them.
-        var run = new StairRun { From = new Vector2(8, 0), To = new Vector2(12, 0), Width = 4f, Kit = StairKit.Wood };
+        // Save these fixture pieces as built, so the retry exercises this plan without dressing extra supports.
+        var run = new StairRun { From = new Vector2(8, 0), To = new Vector2(12, 0), Width = 4f, Kit = StairKit.Stone };
         run.Pieces.Add(new StructurePiece { Prefab = "Breaking", Kind = StructurePieceKind.StairStep, Position = new Vector3(8, 40, 0), HealthFraction = 0.5f });
         run.Pieces.Add(new StructurePiece { Prefab = Prefab, Kind = StructurePieceKind.StairStep, Position = new Vector3(12, 40, 0) });
+        Assert.NotNull(BuiltStairs.Keep(run, StairKit.Stone, run.Pieces, world: null));
         StairStructures.Add(run);
         ZNetScene.instance!.AddPrefab(Prefab);
         ZNetScene.instance.AddPrefab("Breaking");
@@ -123,6 +124,45 @@ public sealed class GeneratedSpawnRecoveryTests : IDisposable
         Assert.Equal(3, Live().Count);
         Assert.Equal(0, Spawn(ghost));
         Assert.Equal(3, Live().Count);
+    }
+
+    /// <summary>
+    /// A generated zone whose own plan (the staircase here) is still owed, and an append's piece (another staircase's) queued
+    /// there: the append's piece goes out, and the zone's plan after it, each once. An append marks only its own work done: it
+    /// is not the zone's plan, so it neither records the zone built nor stands for its plan (StructurePlans.ZoneHasLivePieces
+    /// counts an append's pieces as the plan only when the plan is all of them). Whether the append's pieces go out from the
+    /// zone's spawn or first from the queue's own retry (StructurePlacement.ApplyPendingAppends). Before, the completed
+    /// append recorded the zone built and its own staircase was never laid.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnAppendInAZoneThatOwesItsPlanLeavesThePlanOwed(bool retriedFirst)
+    {
+        ZNetScene.instance!.AddPrefab(Prefab);
+        ZNetScene.instance.AddPrefab("Appended");
+        ZoneSystem.instance!.Generated.Add(Zone);
+        var run = new StairRun { From = new Vector2(8, 0), To = new Vector2(12, 0), Width = 4f, Kit = StairKit.Stone };
+        run.Pieces.Add(new StructurePiece { Prefab = "Appended", Kind = StructurePieceKind.StairStep, Position = new Vector3(12, 40, 0) });
+        Assert.NotNull(BuiltStairs.Keep(run, StairKit.Stone, run.Pieces, world: null));
+        StairStructures.Add(run);
+        List<StructurePiece> appended = StructurePlans.BuildablePlanFor(Zone)!.FindAll(p => p.Prefab == "Appended");
+        Assert.Single(appended);
+        StructureAppendQueue.Enqueue(StructureAppendQueue.Prepare(appended));
+        Assert.NotNull(StructureAppendQueue.ForZone(Zone));
+
+        if (retriedFirst)
+        {
+            StructurePlacement.ApplyPendingAppends();
+            Assert.Null(StructureAppendQueue.ForZone(Zone));
+            Assert.False(StructurePlans.IsSpawned(Zone), "the zone's own staircase is still owed");
+        }
+        Spawn(ghost: true);
+        Assert.True(StructurePlans.IsSpawned(Zone));
+        Assert.Single(Live(), z => z.GetPrefab() == Prefab.GetStableHashCode());
+        Assert.Single(Live(), z => z.GetPrefab() == "Appended".GetStableHashCode());
+        Assert.Equal(0, Spawn(ghost: true));
+        Assert.Equal(2, Live().Count);
     }
 
     /// <summary>Every live ZDO, marked as the mod's piece or not.</summary>

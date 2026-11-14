@@ -67,8 +67,12 @@ public class JunctionAtGradeTests : System.IDisposable
             Assert.Equal(44f, world.GetHeight(0f, 0f));
             Assert.Equal(40f, RoadSpatialGrid.JunctionGround(new Vector2(0f, 0f), world), 3);
             var finder = new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f };
-            finder.FindPathToNetwork(new Vector2(0f, 0f), RoadPathfinder.CellSize);
-            Assert.True(finder.AlreadyOnNetwork, "the road 6 m off is at grade with the ground the game renders here");
+            // Not served (the caller's test): the junction at the first cell is one the search finds, a road from the start to it.
+            var path = finder.FindPathToNetwork(new Vector2(0f, 0f), RoadPathfinder.CellSize, served: () => false);
+            Assert.False(finder.AlreadyOnNetwork);
+            Assert.NotNull(path);
+            Assert.True(path!.Count == 2 && Mathf.Abs(path[1].y - 6f) < 0.01f,
+                $"the road 6 m off is at grade with the ground the game renders here, a junction at the first cell: {string.Join(" ", path)}");
         }
         finally { RoadPathfinder.JunctionStep = step; }
     }
@@ -96,9 +100,9 @@ public class TrunkBranchTests : System.IDisposable
     }
 
     [Fact]
-    public void ARoadAlongsideTheOneServingItsPlaceBranchesOffItThere()
+    public void ARoadAlongsideTheOneServingItsLocationBranchesOffItThere()
     {
-        // The place's road runs east along z = 0; a second road leaves the same place 6 m beside it,
+        // The location's road runs east along z = 0; a second road leaves the same place 6 m beside it,
         // never touching it, for 60 m, then turns away north. It should share the first as a trunk
         // and set off from it where they part: its start moves onto the trunk at about x = 60.
         var trunk = new List<Vector2>();
@@ -112,7 +116,7 @@ public class TrunkBranchTests : System.IDisposable
         Assert.True(Mathf.Abs(kept[0].y) < 2.5f, $"starts at {kept[0]}, not on the trunk");
         Assert.InRange(kept[0].x, 40f, 64f);
         Assert.Equal(path[path.Count - 1], kept[kept.Count - 1]);
-        // A place no other road serves keeps its whole road.
+        // A location no other road serves keeps its whole road.
         Assert.Equal(path.Count, RoadNetworkGenerator.DropStubs(path, startReached: false, endReached: false)!.Count);
     }
 }

@@ -34,6 +34,7 @@ public class StairClearanceTests : IDisposable
         StairStructures.Reset();
         StructurePlans.Reset();
         RoadSpatialGrid.Clear();
+        RoadClearAreaManager.ClearCache();
     }
 
     public void Dispose()
@@ -41,6 +42,9 @@ public class StairClearanceTests : IDisposable
         StairStructures.Reset();
         StructurePlans.Reset();
         RoadSpatialGrid.Clear();
+        RoadClearAreaManager.ClearCache();
+        // The ground a settled staircase held goes with it.
+        StructureGround.Rebuild();
         _scope.Dispose();
     }
 
@@ -129,7 +133,7 @@ public class StairClearanceTests : IDisposable
         var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
         StairStructures.Add(run);
 
-        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _);
+        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, NoGround, out _);
         int rising = run.Clearances.Count(Rises);
         Assert.True(rising > 0);
         Assert.True(rising < run.Clearances.Count);
@@ -165,9 +169,9 @@ public class StairClearanceTests : IDisposable
         }
 
         // A road's clearance is a player's height over the road, its own roof too.
-        var point = new RoadSpatialGrid.RoadPoint(new Vector2(0f, -10f), RoadSpatialGrid.DefaultRoadWidth, Flat);
+        var point = new RoadSpatialGrid.RoadPoint(new Vector2(0f, -10f), RoadConstants.DefaultRoadWidth, Flat);
         RockClearance road = RockClearances.Road(point, Flat, new List<RoadSpatialGrid.RoadPoint> { point }, RoadRockPolicy.ClearanceHeight,
-            wholeOnly: false, keepsSiteRocks: false);
+            wholeOnly: false, keepsLocationRocks: false);
         Assert.Equal(RockClearances.Top(Flat), road.Top, 3);
         Assert.Equal(Flat + RoadRockPolicy.ClearanceLift + RoadRockPolicy.ClearanceHeight, road.Top, 3);
     }
@@ -247,7 +251,7 @@ public class StairClearanceTests : IDisposable
         Assert.True(plan.Reached, plan.Reason);
         var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
         StairStructures.Add(run);
-        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, generating: false, NoGround, out _, out _);
+        List<RockClearance> boxes = RockClearances.Near(new Vector3(0f, 0f, 20f), 40f, NoGround, out _);
 
         float rise = StairLayout.PieceRise / StairLayout.ClearanceStretches;
         float corridor = RockClearances.Corridor(RoadStairRuns.Width / 2f);
@@ -302,32 +306,26 @@ public class StairClearanceTests : IDisposable
     {
         Func<Vector3, Heightmap.Biome> meadows = _ => Heightmap.Biome.Meadows;
         var at = new Vector3(5f, 0f, 5f);
-        // The game's none, a road's far away, the staircase's over the point, then a bridge's far away.
+        // The game's none, a road's far away, then the staircase's over the point.
         var areas = new List<ZoneSystem.ClearArea>
         {
             new(new Vector3(100f, 0f, 100f), 2f),
             new(at, StairLayout.PieceRun * 0.75f),
-            new(new Vector3(-100f, 0f, -100f), 2f),
         };
         Assert.True(RoadRockPolicy.ClearingTakes("rock4_coast", Heightmap.Biome.Meadows));
         int rock = "rock4_coast".GetStableHashCode(), tree = "Beech1".GetStableHashCode();
-        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 2), at, rock, meadows));
-        // Vegetation stays out of it; a bridge's area keeps it out.
-        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 2), at, tree, meadows));
-        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1, 1), at, rock, meadows));
-        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), at, rock, meadows));
+        Assert.False(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), at, rock, meadows));
+        // Vegetation stays out of it.
+        Assert.True(VegetationClearing.InsideClearArea(new VegetationClearing.ZoneAreas(areas, 0, 1), at, tree, meadows));
 
         // The server's clearing of a zone generated before the staircase: the same.
         var vegetation = new HashSet<int> { rock, tree };
         var p = new Vector2(at.x, at.z);
-        // The staircase's area alone, as a staircase's (rock-leaving) or as a bridge's.
-        VegetationClearing.ZoneAreas Structure(bool stair) =>
-            new(new List<ZoneSystem.ClearArea> { new(at, StairLayout.PieceRun * 0.75f) }, 0, 0, stair ? 1 : 0);
-        bool Removed(int prefab, bool stair) => VegetationClearing.ShouldRemove(prefab, p, false, vegetation, Structure(stair),
+        var stair = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea> { new(at, StairLayout.PieceRun * 0.75f) }, 0, 0);
+        bool Removed(int prefab) => VegetationClearing.ShouldRemove(prefab, p, false, vegetation, stair,
             new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), biomeAt: meadows);
-        Assert.False(Removed(rock, stair: true));
-        Assert.True(Removed(tree, stair: true));
-        Assert.True(Removed(rock, stair: false));
+        Assert.False(Removed(rock));
+        Assert.True(Removed(tree));
     }
 
     // ---- The ground: a cut lowers it only down to just under a walk (StairStructures.CutFloor). ----
@@ -422,5 +420,127 @@ public class StairClearanceTests : IDisposable
                 Assert.True(g >= line - StairLayout.CutBelowSurface - 1e-3f, $"({x}, {z}): the ground {g:F2} is dug under the walk {line:F2}");
                 Assert.True(g <= line + StairLayout.CoverTolerance, $"({x}, {z}): the ground {g:F2} covers the walk {line:F2}");
             }
+    }
+
+    // ---- vegetation in a staircase's walk (its stored walking boxes, laid or buried) ----
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ARunThatLaysNothingClearsNeitherVegetationNorRock(bool withheld)
+    {
+        _scope.WithWorld(new FlightWorld()).WithZoneSystem();
+        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 40), Ground);
+        Assert.True(plan.Reached, plan.Reason);
+        var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
+        var dresser = StairStructures.Dresser;
+        try
+        {
+            // An empty dressing is the support refusal / unknown-ground response. A nonempty one can still be withheld.
+            StairStructures.Dresser = (r, _) => ReferenceEquals(r, run) && !withheld ? new List<StructurePiece>() : new(r.Pieces);
+            if (withheld)
+            {
+                NetworkCutoff.SnapshotWorld(new[] { ZoneSystem.GetZone(run.Pieces[0].Position) });
+                NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
+            }
+            StairStructures.Add(run);
+            // A different, built staircase in the same zone must not make the refused run clear its boxes.
+            OnePiece(new Vector2(20f, 0f), 0f, stair: false);
+            StairClearance box = run.Clearances[0];
+            Vector2s zone = ZoneSystem.GetZone(box.Centre);
+            Assert.DoesNotContain(StructurePlans.BuildablePlanFor(zone) ?? new(), p => p.Position.Equals(run.Pieces[0].Position));
+            Assert.Empty(StructurePlans.WalksNear(zone));
+            Assert.Empty(StructurePlans.ClearancesNear(box.Centre, 0f));
+            var at = new Vector2(box.Centre.x, box.Centre.z);
+            Assert.NotEqual(VegetationClearing.Lying.Remove,
+                Judged("Beech1", at, new VegetationClearing.Body(box.Centre.y, box.Centre.y + 10f)));
+        }
+        finally { StairStructures.Dresser = dresser; NetworkCutoff.Forget(); }
+    }
+
+    /// <summary>What generation (RoadClearAreaManager.OnRoad) and the server bake (VegetationClearing.Decide) make of one piece of
+    /// vegetation at <paramref name="at"/>, from the clear areas and road centres both build for the zone
+    /// (RoadClearAreaManager.AddRoadAreas, GetOrCreateRoadCentres): the same verdict, asserted, returned.</summary>
+    private static VegetationClearing.Lying Judged(string prefab, Vector2 at, VegetationClearing.Body? body, float yaw = 0f)
+    {
+        Vector2s zone = ZoneSystem.GetZone(new Vector3(at.x, 0f, at.y));
+        var areas = RoadClearAreaManager.AddRoadAreas(zone, new List<ZoneSystem.ClearArea>());
+        var road = RoadClearAreaManager.GetOrCreateRoadCentres(zone);
+        Func<Vector3, Heightmap.Biome> swamp = _ => Heightmap.Biome.Swamp;
+        float turned = yaw;
+        bool generation = RoadClearAreaManager.OnRoad(areas, road, new Vector3(at.x, 0f, at.y), prefab, 1f, swamp, ref turned, body: body);
+        int hash = prefab.GetStableHashCode();
+        VegetationClearing.Lying bake = VegetationClearing.Decide(hash, at, false, new HashSet<int> { hash }, areas,
+            new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), road, 1f, swamp, yaw, out _, body: body);
+        Assert.Equal(generation, bake == VegetationClearing.Lying.Remove);
+        return bake;
+    }
+
+    /// <summary>
+    /// A flight left out as buried in the ground over it (StairStructures.Settle, BuriedPieces.Drop) is still walked: its
+    /// stored walking boxes are its walk (StairStructures.AddWalksNear), read as road centres by the grown-tree and lying
+    /// rules (VegetationClearing.CentresOf) from its walking surface up to the headroom over it. A grown tree standing on its
+    /// walk and a fallen log lying across it are taken, by generation and the bake alike. Before, its pieces were its only
+    /// walk: buried, it had none, and both stayed on the way.
+    /// </summary>
+    [Fact]
+    public void ABuriedFlightsWalkClearsTheTreesAndLogsInItsWay()
+    {
+        _scope.WithWorld(new FlightWorld());
+        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 40), Ground);
+        Assert.True(plan.Reached, plan.Reason);
+        var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
+        // The finished ground a metre and a half over the slope: walked pieces wholly in it, left out.
+        Func<int, int, float> buried = (x, z) => Ground(x, z) + 1.5f;
+        int walked = run.Pieces.Count(p => p.Kind != StructurePieceKind.StairSupport);
+        StairStructures.Settle(run, buried);
+        List<StructurePiece> left = run.Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport).ToList();
+        Assert.True(left.Count < walked, "no walked piece left out as buried");
+        StairStructures.Add(run);
+
+        // A stretch of the walk with no walked piece left within its clear area's reach: its piece was left out.
+        StairClearance box = run.Clearances.First(b => left.All(p =>
+            Vector2.Distance(new Vector2(p.Position.x, p.Position.z), new Vector2(b.Centre.x, b.Centre.z)) > 2f * StairLayout.PieceRun));
+        var at = new Vector2(box.Centre.x, box.Centre.z);
+        Assert.NotEmpty(StructurePlans.BuildablePlanFor(ZoneSystem.GetZone(left[0].Position))!);
+        Assert.Contains(StructurePlans.ClearancesNear(box.Centre, 0f), c => c.Centre.Equals(box.Centre));
+        float ground = BuriedPieces.MeshHeight(at.x, at.y, buried);
+        Assert.True(ground > StairLayout.HighestWalk(box.Centre, box.Half, box.Surface), "the walk is under the ground");
+        // A tree rooted in the ground over the walk, reaching up through the walker's headroom.
+        Assert.Equal(VegetationClearing.Lying.Remove, Judged("Beech1", at, new VegetationClearing.Body(ground - 0.5f, ground + 10f)));
+        // A fallen fir lying across the flight (its length across the walk), its origin off it.
+        var side = at + StairLayout.Right(box.YawDegrees) * 2.5f;
+        Assert.NotEqual(VegetationClearing.Lying.Clear, Judged("FirTree_oldLog", side, null, box.YawDegrees + 90f));
+    }
+
+    /// <summary>
+    /// A laid flight's walk is read so too: a grown tree whose origin stands past the flight's clear-area square (a step's
+    /// 1.5 m each way round its middle, StairStructures.AddClearAreas) but whose trunk reaches over its walk is taken, as it is
+    /// beside a road. Before, a staircase's walk was its clear areas only, and the trunk stood on the treads.
+    /// </summary>
+    [Fact]
+    public void ATreeWhoseTrunkReachesALaidFlightsWalkIsTaken()
+    {
+        _scope.WithWorld(new FlightWorld());
+        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 40), Ground);
+        Assert.True(plan.Reached, plan.Reason);
+        var run = StairRun.FromPlan(new Vector2(0, 0), new Vector2(0, 40), RoadStairRuns.Width, plan);
+        StairStructures.Add(run);
+        VegetationClearing.IsGrownTree("Beech1", out float trunk);
+        bool any = false;
+        foreach (StructurePiece step in StairStructures.PiecesOf(run, WorldGenerator.instance!).Where(p => p.Kind == StructurePieceKind.StairStep))
+        {
+            var (back, heading, across, depth, height) = StairLayout.Footprint(StairRun.PieceOf(step));
+            Vector2 middle = back + StairLayout.Forward(heading) * (depth / 2f);
+            // Beside the step, the trunk's reach short of its edge: over the walk.
+            Vector2 at = middle + StairLayout.Right(heading) * (across / 2f + trunk - 0.1f);
+            Vector2s zone = ZoneSystem.GetZone(new Vector3(at.x, 0f, at.y));
+            var areas = RoadClearAreaManager.AddRoadAreas(zone, new List<ZoneSystem.ClearArea>());
+            if (VegetationClearing.InsideClearArea(areas, new Vector3(at.x, 0f, at.y), "Beech1".GetStableHashCode(), null)) continue;
+            any = true;
+            float g = Ground(at.x, at.y);
+            Assert.Equal(VegetationClearing.Lying.Remove, Judged("Beech1", at, new VegetationClearing.Body(g - 0.5f, g + 10f)));
+        }
+        Assert.True(any, "no step with its side past its clear area");
     }
 }

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEngine;
+using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
@@ -47,7 +48,7 @@ public class ViaductSupportTests
             var lo = new Vector3(c.x - hu, c.y - hy, c.z - hv);
             var hi = new Vector3(c.x + hu, c.y + hy, c.z + hv);
             if (r.Prefab == DvergrViaduct.StepPrefab) { lo.y = c.y; hi.y = c.y + 1f; }
-            return new SupportGraph.Piece(c, lo, hi, ViaductSupport.MaterialOf(r.Prefab)!.Value, r.Support >= SupportGraph.Marble.Max - 0.1f);
+            return new SupportGraph.Piece(c, lo, hi, (BuriedPieces.DataOf(r.Prefab, out BuriedPieces.Measured measured) ? measured.Material : null)!.Value, r.Support >= SupportGraph.Marble.Max - 0.1f);
         }).ToList());
 
     /// <summary>
@@ -96,5 +97,35 @@ public class ViaductSupportTests
         Assert.NotEmpty(span);
         Assert.True(span.Min(i => model[i]) < 1.2f * SupportGraph.Marble.Min);
         Assert.True(span.Min(i => rows[i].Support) < 1.2f * SupportGraph.Marble.Min);
+    }
+
+    /// <summary>
+    /// The same laid black marble pieces on the same ground, put to the support rule by the staircase's adapter
+    /// (StairSupport.Holding) and the viaduct's (ViaductSupport.Of), read the same: a black marble stair turned on a
+    /// grounded black marble floor, not grounded itself, held only by the floor. One conversion from the prefab's measured data
+    /// (BuriedPieces.DataOf): the stair's centre of mass half a metre over its foot (the viaduct took its origin), its
+    /// bounds as measured (x -1 .. 1.001) at its own turn (the viaduct took a box square to the deck).
+    /// </summary>
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(30f)]
+    [InlineData(117f)]
+    public void TheStaircaseAndTheViaductHoldTheSamePiecesAlike(float yaw)
+    {
+        DvergrViaductTests.MistRiver world = DvergrViaductTests.WideRiver();
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        RoadCrossing c = DvergrViaductTests.WideRiverCrossing();
+        float ground = world.Bank;
+        var pieces = new List<StructurePiece>
+        {
+            new() { Kind = StructurePieceKind.ViaductDeck, Prefab = "blackmarble_floor", Position = new Vector3(-100f, ground + 0.4f, 100f), YawDegrees = 90f },
+            new() { Kind = StructurePieceKind.Stair, Prefab = DvergrViaduct.StepPrefab, Position = new Vector3(-99.5f, ground + 1f, 100f), YawDegrees = yaw },
+        };
+        List<ViaductSupport.Held> stair = StairSupport.Holding(pieces, StructureGround.Vertices(world));
+        List<ViaductSupport.Held> viaduct = ViaductSupport.Of(c, world, pieces);
+        Assert.Equal(2, stair.Count);
+        Assert.Equal(SupportGraph.Marble.Max, stair[0].Support);
+        Assert.InRange(stair[1].Support, SupportGraph.Marble.Min, SupportGraph.Marble.Max - 1f);
+        Assert.Equal(stair.Select(h => (h.Piece, h.Support)), viaduct.Select(h => (h.Piece, h.Support)));
     }
 }

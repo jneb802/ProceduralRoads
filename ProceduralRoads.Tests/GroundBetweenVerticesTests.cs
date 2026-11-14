@@ -7,7 +7,7 @@ namespace ProceduralRoads.Tests;
 
 /// <summary>
 /// The ground between four heightmap vertices has one owner (<see cref="BuriedPieces.BetweenVertices"/>): the game's two
-/// triangles. The staircase planning lattice, the placed-site sampler and the kits' mesh height all read it, so at a
+/// triangles. The staircase planning lattice, the placed-location sampler and the kits' mesh height all read it, so at a
 /// saddle cell's centre each gives the mean of the two corners on the diagonal, not of all four.
 /// </summary>
 [Collection("StairLayout")]
@@ -47,9 +47,9 @@ public class GroundBetweenVerticesTests : IDisposable
     }
 
     [Fact]
-    public void ThePlacedSiteSamplerJoinsAnAlternatingCellOnTheDiagonal()
+    public void ThePlacedLocationSamplerJoinsAnAlternatingCellOnTheDiagonal()
     {
-        var ground = PlacedSiteGround.Sampler(new[] { 10f, 0f, 0f, 10f }, 0, 0, 2, 2);
+        var ground = PlacedLocationGround.Sampler(new[] { 10f, 0f, 0f, 10f }, 0, 0, 2, 2);
         Assert.Equal(0f, ground(0.5f, 0.5f), 4);
         Assert.Equal(0f, BuriedPieces.MeshHeight(0.5f, 0.5f, (i, k) => (i + k) % 2 == 0 ? 10f : 0f), 4);
     }

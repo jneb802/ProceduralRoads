@@ -10,9 +10,9 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// The paint stops at a bridge end's stairs' foot. Past it, under the stairs, the road is levelled (the stairs stand on
-/// level ground) but not painted (RoadSpatialGrid.RoadPoint.unpainted, StructureEnds.Unpainted). An end met level paints its
-/// road on under the deck's end, as any road.
+/// At a bridge end's stairs' foot, road points past it are levelled (the stairs stand on level ground) but do not paint
+/// (RoadSpatialGrid.RoadPoint.unpainted, StructureEnds.Unpainted). Paint from before the foot reaches only as far as its
+/// vertex or grass-cell profile read asks. An end met level paints its road on under the deck's end, as any road.
 /// </summary>
 public sealed class BridgeEndPaintTests : IDisposable
 {
@@ -91,7 +91,7 @@ public sealed class BridgeEndPaintTests : IDisposable
         var world = new BridgeTests.WideRiverWorld { EastRise = 1f };
         _scope.WithWorld(world);
         RoadCrossingDetector.SetFordStyleWeights(1f, 1f, 1f);
-        SetPathfinder(new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0f });
+        SetPathfinder(new RoadPathfinder(world) { Fords = true, Bridges = true });
         Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-200f, -40f), 0f, new Vector2(200f, 40f), 0f, 4f, "across the river"),
             RoadSpatialGrid.LastRefusal);
         RoadCrossing c = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.Kind == CrossingKind.Bridge);
@@ -129,11 +129,13 @@ public sealed class BridgeEndPaintTests : IDisposable
                 rp => rp.cutOnly && Mathf.Abs(rp.h - (end.Height - depth)) < 1e-3f);
             Assert.True(before > 0, $"{which} end: no road before the stairs' foot");
 
-            // The terrain writer on the zone of the foot: unpainted past the foot's paint blend, painted before it.
+            // The terrain writer on the zone of the foot: only painted road points contribute at either profile read.
             Vector2s zone = ZoneSystem.GetZone(new Vector3(end.Meet.x, 0f, end.Meet.y));
             Heightmap hm = _scope.RegisterHeightmap(zone, Width);
             TerrainComp tc = hm.m_terrainComp!;
             RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), hm, tc);
+            var paintingPoints = RoadSpatialGrid.GetRoadPointsInZone(zone)
+                .Where(p => !p.cutOnly && !p.unpainted && !p.mound).ToList();
             Vector3 origin = hm.transform.position;
             bool Cell(Vector2 at, out int index)
             {
@@ -146,7 +148,14 @@ public sealed class BridgeEndPaintTests : IDisposable
                 if (Cell(end.Meet + end.Up * along, out int i))
                 {
                     checkedPast++;
-                    Assert.False(tc.m_modifiedPaint[i], $"{which} end: painted {along:F1} m past the stairs' foot {end.Meet}");
+                    // Snap to the texel actually checked: toward -x/-z its grass-cell middle can still
+                    // meet the last painted point's fade. Beyond both reads it must stay unpainted.
+                    var vertex = new Vector2(origin.x + i % (Width + 1) - Width / 2,
+                        origin.z + i / (Width + 1) - Width / 2);
+                    bool asksForPaint = paintingPoints.Any(p => Mathf.Max(
+                        RoadProfile.PaintStrength(Vector2.Distance(vertex, p.p), p.w),
+                        RoadProfile.PaintStrength(Vector2.Distance(vertex + new Vector2(0.5f, 0.5f), p.p), p.w)) > 0f);
+                    Assert.Equal(asksForPaint, tc.m_modifiedPaint[i]);
                     Assert.True(tc.m_modifiedHeight[i], $"{which} end: not levelled {along:F1} m past the stairs' foot {end.Meet}");
                 }
             Assert.True(checkedPast > 0, $"{which} end: no cell past the foot in zone {zone}");
@@ -194,7 +203,7 @@ public sealed class BridgeEndPaintTests : IDisposable
     /// A road arriving at a deck met level, its points in the order it was laid (towards the deck, every 0.5 m, as the
     /// paint pass meets them), run on under the deck's end at its height: the ground is painted (cleared of grass, paved
     /// over half) at the deck's edge and on under its end. Before, the road under the deck's end was unpainted and the
-    /// paint pass, which paints one point of every 1.5 m it reaches (RoadConstants.PaintDedupeInterval), left the edge
+    /// paint pass, which then painted one point of every 1.5 m it reached, left the edge
     /// painted only by a point up to 1.5 m before it: at one bridge the paint faded out 1-2 m short of the planks, grass
     /// over the road's end and up through the deck.
     /// </summary>

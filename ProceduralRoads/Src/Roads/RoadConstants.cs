@@ -25,7 +25,6 @@ public static class RoadConstants
     public const int PathfindingMaxIterations = 30000;
     public const float TerrainVarianceSampleRadius = 16f;
     public const int TerrainVarianceSampleCount = 8;
-    public const float MountainSlopeThreshold = 0.4f;
     public const float RiverImpassableThreshold = 0.5f;
     
     public const float DefaultBaseCost = 1f;
@@ -50,7 +49,7 @@ public static class RoadConstants
     // styles a site allows (DefaultFordStyleWeight each).
     // Banks, landings and a raised ford's surface stand BankClearance above
     // the shallow-water line. Swamp roads wade their shallows down to
-    // DeepWaterHeight at SwampShallowWaterPenalty per cell. A jump whose
+    // DeepWaterHeight at DefaultStandingWaterPenalty per cell. A jump whose
     // both ends already carry road is an existing crossing: it costs
     // SharedCrossingCostFraction of the crossing price, so a later road
     // detours to share it when the detour costs less than the saving and
@@ -61,15 +60,13 @@ public static class RoadConstants
     public const float RiverCrossingPenalty = 5000f;
     public const float FordWadeDepth = 0.8f;
     public const float FordWadeMaxDepth = 0.5f;
-    // In swamps a sailable stretch shorter than a boat is a pothole, not a
-    // fairway: a wading-depth swamp channel with no longer sailable stretch
-    // is still a ford.
-    public const float SwampFordMaxFairway = 8f;
     public const float MaxFordBankDelta = 4f;
     public const float BankDeltaPenalty = 1250f;
     public const float BankClearance = 0.75f;
     public const float DefaultFordStyleWeight = 1f;
-    public const float DefaultSwampShallowWaterPenalty = 500f;
+    /// <summary>What a cell of standing water costs the search: a swamp's waded shallows, a puddle, and a standing pool's wet
+    /// length per cell, in every biome.</summary>
+    public const float DefaultStandingWaterPenalty = 500f;
     public const float SharedCrossingCostFraction = 0.5f;
 
     // Bridges. A jump
@@ -87,8 +84,17 @@ public static class RoadConstants
     public const float MaxBridgeBankDelta = 2.5f;
     public const float DefaultBridgeCostFixed = 60000f;
     public const float DefaultBridgeCostPerMeter = 600f;
+    /// <summary>The share of its price (<see cref="DefaultBridgeCostFixed"/>, <see cref="DefaultBridgeCostPerMeter"/>) a
+    /// bridge of the longest span (<see cref="MaxBridgeSpan"/>) pays where its deck stands as tall as the stone kit stands
+    /// (BridgeLayout.StoneHeightReach 1), where a stone deck belongs (BridgeStructures.StoneBelongs). The price falls
+    /// geometrically to it with the deck's height, as a viaduct's falls with its piers' (DvergrViaduct.HeightFactor), and the
+    /// fall is weighted by the span from nothing at the longest ford (<see cref="MaxFordSpan"/>) to the whole at the longest
+    /// bridge (RoadPathfinder.BridgeHeightFactor): a short bridge may sit low, a long one is bought tall. 0.3: the maintainer's
+    /// choice (12 Nov 2026), milder than the viaduct's tenth at its price ceiling (DvergrViaduct.DefaultCeilingPriceShare), so
+    /// a tall crossing wins among a river's sites while few detours turn into new long bridges.</summary>
+    public const float DefaultBridgeHeightShare = 0.3f;
     /// <summary>Starting a staircase in the Mountains (other biomes multiply it,
-    /// RoadPathfinder.StairBiomeFactor): about a 1 km detour of easy road. Swept
+    /// RoadRules.StairPrice and its biome overrides): about a 1 km detour of easy road. Swept
     /// on RoadSeedA with stairs only where road cannot climb:
     /// 300/6 gave 457 staircases, 1000/10 371, 2000/10 243, 3000/20 183;
     /// 1000/10 was picked; fixed in code, no config.</summary>
@@ -124,16 +130,23 @@ public static class RoadConstants
     /// bought over a stepped one wherever there is a choice.</summary>
     public const float DefaultViaductEndStairCostPerMeter = 100f;
 
+    /// <summary>How far from a viaduct's ends the road's own steps are priced at <see cref="DefaultViaductApproachFactor"/>:
+    /// the last metres up to its near bank and the first from its far bank, along the search's own steps, so the search takes a
+    /// viaduct route more often (RoadPathfinder.ApproachAfterJump, ApproachToJump). A price only: every road is judged by the
+    /// same rules.</summary>
+    public const float DefaultViaductApproachReach = 50f;
+    /// <summary>What a step within <see cref="DefaultViaductApproachReach"/> of a viaduct's end costs, of its price.</summary>
+    public const float DefaultViaductApproachFactor = 0.5f;
+
     // A ford may also be SPANNED: a short low footbridge
     // with a step at each end, where the crossing is at least
     // FordSpanMinWidth wide; its deck stands FordSpanDeckClearance above
     // the water and FordSpanDeckRise above the higher bank. A swamp BRIDGE
-    // walks its banks outward over the wade shelf up to SwampBridgeDryReach
-    // to find ground above the waterline.
+    // walks its banks outward over the wade shelf up to its biome's
+    // RoadRules.ShelfReach to find ground above the waterline.
     public const float FordSpanMinWidth = 6f;
     public const float FordSpanDeckClearance = 1f;
     public const float FordSpanDeckRise = 1f;
-    public const float SwampBridgeDryReach = 120f;
 
     // High bridge: when the ground within HighBankReach of each bank along
     // the road stands at least HighBankRise above that bank, the deck
@@ -156,7 +169,7 @@ public static class RoadConstants
     // longer approach, a bridge that is still there next week.
     public static float MaxBridgePierHeight => BridgeSupport.MaxPierHeight();
 
-    // The steepest a road may climb, as rise over run, or 0 for no cap.
+    // The steepest a road may climb, as rise over run (RoadGrade.Configured).
     // Without a cap every steep step is a large but finite price and never a
     // refusal, so when a destination sits on a cliff the cheapest expensive
     // line is the direct climb: RoadPathfinder refuses a step over the cap,
@@ -201,10 +214,15 @@ public static class RoadConstants
     public const float HeightFitRidgeMetres = 0.02f;
     public const float HeightFitMaxGradient = 1.5f;
     
-    /// <summary>The radius of the land the world generates: where the island scan stops and a typed point is refused.</summary>
+    /// <summary>The radius of the world (the game's world size; past it to the game's edge is sea): where the island scan
+    /// stops, and the edge of <see cref="InWorld"/>.</summary>
     public const float WorldRadius = 10000f;
-    /// <summary>The edge of the game's world, past <see cref="WorldRadius"/>: how far out a saved crossing's point may lie.</summary>
-    public const float WorldEdge = 10500f;
+
+    /// <summary>Whether a point (x, z) is in the world: finite, and strictly inside <see cref="WorldRadius"/>. The one rule
+    /// for where anything may stand: a typed mark, every saved coordinate (road points, crossings, structures, pending
+    /// pieces, held ground) and every built structure, whole (<see cref="StructureSites.SpatialFault"/>). The one owner of
+    /// the world's edge (docs/OWNERS.md).</summary>
+    public static bool InWorld(Vector2 p) => ManualRoadDraft.IsFinite(p.x) && ManualRoadDraft.IsFinite(p.y) && p.sqrMagnitude < WorldRadius * WorldRadius;
 
     public const float SpatialGridSize = ZoneSize;
     public const float DefaultRoadWidth = 4f;
@@ -215,7 +233,6 @@ public static class RoadConstants
     public const float OverlapBlendRadiusMultiplier = 0.8f;
     
     public const float TerrainBlendMargin = 2.0f;
-    public const float PaintDedupeInterval = 1.5f;
     public const float MinHeightDeltaThreshold = 0.01f;
     public const float MinBlendForModification = 0.5f;
     

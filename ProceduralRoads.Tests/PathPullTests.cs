@@ -18,7 +18,7 @@ public class PathPullTests
     [Fact]
     public void AStaircaseOnFlatGroundBecomesAStraightLine()
     {
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         var pulled = RoadPathPull.Pull(Staircase(), 4, _ => 40f, Dry, 0.45f, maxPull: 256f);
         Assert.Equal(2, pulled.Count);
         Assert.Equal(new Vector2(0, 0), pulled[0]);
@@ -28,7 +28,7 @@ public class PathPullTests
     [Fact]
     public void AContouringZigzagIsKept()
     {
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         // Ground rises 0.3 per metre to the north. The zigzag climbs gently
         // east-west; the straight line between its ends climbs the fall line.
         var zig = new List<Vector2> { new(0, 0), new(40, 8), new(0, 16), new(40, 24), new(0, 32) };
@@ -39,7 +39,7 @@ public class PathPullTests
     [Fact]
     public void WaterStopsAStraightLine()
     {
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         // A pond on the straight diagonal, 5.7 m from every staircase waypoint.
         bool Pond(Vector2 p) => Vector2.Distance(p, new Vector2(12, 12)) < 3f;
         var pulled = RoadPathPull.Pull(Staircase(), 4, _ => 40f, Pond, 0.45f, maxPull: 256f);
@@ -50,7 +50,7 @@ public class PathPullTests
     [Fact]
     public void BothEndsAreHeld()
     {
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         var path = Staircase();
         var pulled = RoadPathPull.Pull(path, 4, p => 40f + 0.02f * p.x, Dry, 0.45f);
         Assert.Equal(path[0], pulled[0]);

@@ -94,7 +94,7 @@ public class BridgeDeckLineTests
         var world = RidgeBetweenBankAndWater(2.3f);
         using (new ValheimWorldScope().WithWorld(world))
         {
-            RoadSiteProtection.Set(System.Array.Empty<RoadSiteProtection.Footprint>());
+            RoadLocationProtection.Set(System.Array.Empty<RoadLocationProtection.Footprint>());
             var c = Assert.Single(RoadCrossingDetector.Detect(Jump(-12f, 104f), world, bridges: true, fords: false));
             Assert.NotNull(c.FromBank.x < c.ToBank.x ? c.FromLand : c.ToLand);
             Assert.True(RoadNetworkGenerator.MeetsTheRoad(c));

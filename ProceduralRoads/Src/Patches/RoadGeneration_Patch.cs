@@ -14,17 +14,13 @@ namespace ProceduralRoads;
 [HarmonyPatch]
 internal static class RoadGeneration_Patch
 {
-    /// <summary>What an operator is told as road_generate or road_regen_island starts.</summary>
-    internal const string HeldWhileBuilding =
-        "Places first, then the roads; this takes a few minutes (road_progress). The world holds still meanwhile: you stay where you stand.";
-
     /// <summary>Hands <see cref="WhyTheWorldCannotHold"/> to the generation's owner, which asks it as an operator's run starts
     /// and every frame it runs.</summary>
     internal static void Install() => RoadLifecycleManager.WorldCannotHold = WhyTheWorldCannotHold;
 
     /// <summary>
     /// Why an operator's generation cannot start, or go on, now, or null. While it runs the server makes no new land (its workers read
-    /// the world's places), so: no other player is connected (their new land would stay bare, and a vanilla client cannot be
+    /// the world's locations), so: no other player is connected (their new land would stay bare, and a vanilla client cannot be
     /// held), and the host stands on loaded ground: not on a ship (it sails on into unmade water) and not in a teleport (it
     /// lands in unmade land), and not riding (a mount walks on as it was told).
     /// </summary>

@@ -28,7 +28,7 @@ public static class RoadNetworkSelection
     /// <summary>Destinations an island earns: eight, plus four for every two
     /// square kilometres, capped by MaxLocationsPerIsland. One formula and one
     /// cap - the density multiplier this replaced was a third knob that could
-    /// only be set to a value the other two already expressed. The one owner of which places get a road and which connect (docs/OWNERS.md).</summary>
+    /// only be set to a value the other two already expressed. The one owner of automatic destinations (docs/OWNERS.md).</summary>
     public static int Quota(float area, int cap)
     {
         double requested = (2 + Math.Floor(Math.Max(0, area) / 2000000d)) * 4;
@@ -45,14 +45,43 @@ public static class RoadNetworkSelection
         var selected = ordered.Where(c => required(c.name)).ToList();
         var optional = ordered.Where(c => !required(c.name)).ToList();
         int room = Math.Max(0, quota - selected.Count);
-        if (room >= optional.Count) { selected.AddRange(optional); return selected; }
-        if (room == 0) return selected;
+        Spread(selected, optional, room, area, priority, seed, options);
+        return selected;
+    }
+
+    /// <summary>
+    /// Replacements for destinations that ended unreached, by the same rule as <see cref="Destinations"/>: up to
+    /// <paramref name="count"/> more of <paramref name="candidates"/>, spread over the same sub-areas (the ones with the fewest
+    /// of <paramref name="kept"/>, the destinations still standing, first) and drawn within each the same way. A candidate
+    /// <paramref name="excluded"/> (already chosen or tried) is never drawn. Returns only the new ones.
+    /// </summary>
+    public static List<(string name, Vector3 position, float radius)> Replacements(
+        List<(string name, Vector3 position, float radius)> candidates, IReadOnlyList<(string name, Vector3 position, float radius)> kept,
+        Func<(string name, Vector3 position, float radius), bool> excluded, int count, float area,
+        Func<string, int> priority, int seed, RoadNetworkOptions options)
+    {
+        var selected = new List<(string name, Vector3 position, float radius)>(kept);
+        if (count <= 0) return new List<(string name, Vector3 position, float radius)>();
+        var optional = candidates.Where(c => !excluded(c)).OrderBy(c => c.position.x).ThenBy(c => c.position.z)
+            .ThenBy(c => c.name, StringComparer.Ordinal).ToList();
+        Spread(selected, optional, count, area, priority, seed, options);
+        return selected.GetRange(kept.Count, selected.Count - kept.Count);
+    }
+
+    /// <summary>Adds up to <paramref name="room"/> of <paramref name="optional"/> to <paramref name="selected"/>: spread over an
+    /// island's sub-areas, those with the fewest already selected first, and drawn within each (<see cref="Draw"/>).</summary>
+    private static void Spread(List<(string name, Vector3 position, float radius)> selected,
+        List<(string name, Vector3 position, float radius)> optional, int room, float area,
+        Func<string, int> priority, int seed, RoadNetworkOptions options)
+    {
+        if (room >= optional.Count) { selected.AddRange(optional); return; }
+        if (room == 0) return;
 
         float side = area > 0 ? Mathf.Sqrt(area / TargetSubAreas) : 0;
         if (side <= 0)
         {
             selected.AddRange(Draw(optional, room, priority, seed, options));
-            return selected;
+            return;
         }
         (int, int) Cell(Vector3 p) => (Mathf.FloorToInt(p.x / side), Mathf.FloorToInt(p.z / side));
         var buckets = optional.GroupBy(c => Cell(c.position)).ToDictionary(g => g.Key, g => g.ToList());
@@ -86,7 +115,6 @@ public static class RoadNetworkSelection
         }
         for (int i = 0; i < keys.Count; i++)
             selected.AddRange(Draw(buckets[keys[i]], grants[i], priority, seed, options));
-        return selected;
     }
 
     private static double SquaredDistance((int, int) a, (int, int) b)
@@ -126,7 +154,7 @@ public static class RoadNetworkSelection
         {
             uint hash = 2166136261u;
             foreach (char c in name) hash = (hash ^ c) * 16777619u;
-            // By the zone the place stands in (a location is placed well inside its zone, one to a zone),
+            // By the zone the location stands in (a location is placed well inside its zone, one to a zone),
             // not its rounded metre: a position read back at 0.1 m (a dump of the world) rounds differently from
             // the game's float, and drew other destinations than the game's on the same world.
             hash = (hash ^ (uint)RoadConstants.ZoneIndex(position.x)) * 16777619u;

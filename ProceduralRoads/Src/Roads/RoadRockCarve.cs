@@ -22,9 +22,11 @@ namespace ProceduralRoads;
 /// (sharing a corner with it: <see cref="RoadRockPolicy.TouchingFragments"/>)
 /// is removed with the road's, quietly (<see cref="RoadRockPolicy.CutOff"/>).
 /// </summary>
-public static class RoadRockCarve
+public static partial class RoadRockCarve
 {
-    public enum Outcome { Carved, Removed, Untouched, NotCarvable }
+    /// <summary>What a carve did. <see cref="Refused"/>: this peer may not change the rock (another owns it): never a reason
+    /// to remove it whole, unlike <see cref="NotCarvable"/> (a rock with no chunks to carve).</summary>
+    public enum Outcome { Carved, Removed, Untouched, NotCarvable, Refused }
 
     /// <summary>How far past a rock's footprint a road or structure can touch it (<see cref="RoadRockPolicy.CarveReach"/>). The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
     internal static float WidestRoadHalfWidth => RoadRockPolicy.CarveReach;
@@ -104,13 +106,13 @@ public static class RoadRockCarve
         if (rock.m_nview == null || !rock.m_nview.IsValid() || !rock.m_nview.IsOwner())
         {
             if (original != null) UndoSwap(rock.gameObject, original, result);
-            result.note = "not owner"; return result;
+            result.outcome = Outcome.Refused; result.note = "not owner"; return result;
         }
 
         rock.LoadHealth();
         var areas = rock.m_hitAreas;
         result.chunks = areas.Count;
-        var near = RoadClearances(rock);
+        var near = RoadClearances(rock, new GroundReader());
         var take = ChooseChunks(rock, near);
         var removed = new List<int>();
         float size = 0f;
@@ -276,12 +278,16 @@ public static class RoadRockCarve
     }
 
     /// <summary>
-    /// The ground under a carve's chunks (<see cref="RoadRockPolicy.FragmentGround"/>): the loaded terrain in a zone whose
-    /// terrain is ready, elsewhere the finished ground (<see cref="StructureGround.At"/>), made only when a column needs it.
-    /// One per carve: each zone is asked once.
+    /// The ground a rock is judged on, its clearance boxes' (RockClearances.Near, the probe's and the carve's) and its
+    /// fragments' alike (<see cref="RoadRockPolicy.FragmentGround"/>): the loaded terrain in a zone whose terrain is ready,
+    /// elsewhere the finished ground (<see cref="StructureGround.At"/>), made only when a column needs it; none where neither
+    /// is known. One per pass or carve: each zone is asked once.
     /// </summary>
-    private sealed class GroundReader
+    internal sealed class GroundReader
     {
+        /// <summary><see cref="At(float, float, out float)"/> as the clearances read it (RockClearances.GroundAt).</summary>
+        public bool At(Vector3 at, out float ground) => At(at.x, at.z, out ground);
+
         private readonly Dictionary<Vector2s, bool> m_ready = new Dictionary<Vector2s, bool>();
         private System.Func<Vector2, float>? m_finished;
 
@@ -306,7 +312,7 @@ public static class RoadRockCarve
             Vector3 centre = ZoneSystem.GetZonePos(zone);
             foreach (var map in Heightmap.GetAllHeightmaps())
                 if (map != null && !map.IsDistantLod && map.IsPointInside(centre))
-                    return RoadRockClearing.TerrainWritten(map, centre, zone, orRoadless: true);
+                    return RoadRockClearing.TerrainWritten(map, centre);
             return false;
         }
     }
@@ -325,11 +331,31 @@ public static class RoadRockCarve
     /// by): the rock's horizontal half-diagonal plus the widest road's half-width round its live chunks. The FRACTURED
     /// rock's reach, not the one the intact rock touched: the fractured mesh is not the same shape, and the automatic pass
     /// only looks 46 m round a zone's centre (measured: 4 of 24 carved rocks still clipped the road at points outside both).</summary>
-    private static List<RockClearance> RoadClearances(MineRock5 rock)
+    private static List<RockClearance> RoadClearances(MineRock5 rock, GroundReader ground)
     {
         if (RockBounds(rock) is not Bounds bounds) return new List<RockClearance>();
         float reach = new Vector2(bounds.extents.x, bounds.extents.z).magnitude + WidestRoadHalfWidth;
-        return RockClearances.Near(bounds.center, reach, GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out _, out _);
+        return RockClearances.Near(bounds.center, reach, ground.At, out _);
+    }
+
+    /// <summary>
+    /// How big the rock still standing is, for the carve-or-whole rule (<see cref="RoadRockPolicy.CarveRemovesWhole"/>):
+    /// the diagonal of the bounds round all of it, not its largest piece. A fractured rock is its live chunks
+    /// (<see cref="RockBounds"/>), so a remainder spread wide after a carve is not small because each chunk is; an intact
+    /// rock is its enabled colliders. 0 when nothing of it is left.
+    /// </summary>
+    public static float SurvivingSize(GameObject root)
+    {
+        var rock = root.GetComponent<MineRock5>();
+        Bounds? bounds = rock != null ? RockBounds(rock) : null;
+        if (rock == null)
+            foreach (var part in root.GetComponentsInChildren<Collider>())
+                if (part.enabled)
+                {
+                    if (bounds == null) bounds = part.bounds;
+                    else { var b = bounds.Value; b.Encapsulate(part.bounds); bounds = b; }
+                }
+        return bounds is Bounds all ? all.size.magnitude : 0f;
     }
 
     /// <summary>The bounds of a rock's live chunks, or null when none are left.</summary>
@@ -343,18 +369,6 @@ public static class RoadRockCarve
                 else { var b = bounds.Value; b.Encapsulate(area.m_collider.bounds); bounds = b; }
             }
         return bounds;
-    }
-
-    /// <summary>The prefab an object was made from, read from its ZDO when it
-    /// has one: MineRock5.Awake renames a fractured rock's GameObject.</summary>
-    public static string PrefabName(GameObject root, ZNetView? view)
-    {
-        if (view != null && view.IsValid() && ZNetScene.instance != null)
-        {
-            var prefab = ZNetScene.instance.GetPrefab(view.GetZDO().GetPrefab());
-            if (prefab != null) return prefab.name;
-        }
-        return Utils.GetPrefabName(root);
     }
 
     private static Dictionary<string, List<string>>? s_fracturedFrom;

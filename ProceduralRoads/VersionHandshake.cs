@@ -47,8 +47,11 @@ namespace ProceduralRoads
             return true;
         }
 
-        private static void Postfix(ZNet __instance)
+        private static void Postfix(ZRpc rpc, ZNet __instance)
         {
+            // A validated peer whose PeerInfo the game took (it has its id and is routed to): sent the network, once.
+            if (__instance.IsServer() && RpcHandlers.ValidatedPeers.Contains(rpc) && __instance.GetPeer(rpc) is { } joined && joined.IsReady())
+                RoadNetworkSync.Publish();
             ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(),
                 $"{ProceduralRoadsPlugin.ModName}RequestAdminSync",
                 new ZPackage());
@@ -79,6 +82,7 @@ namespace ProceduralRoads
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
                 $"Peer ({peer.m_rpc.m_socket.GetHostName()}) disconnected, removing from validated list");
             _ = RpcHandlers.ValidatedPeers.Remove(peer.m_rpc);
+            RoadNetworkSync.PeerLeft(peer.m_uid);
             _ = RpcHandlers.OtherVersionPeers.Remove(peer.m_rpc);
         }
     }

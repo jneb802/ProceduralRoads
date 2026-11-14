@@ -117,7 +117,7 @@ public static class TerrainFingerprint
     }
 
     /// <summary>A float's bits, the same on every runtime (no unsafe, no GetHashCode).</summary>
-    private static int Bits(float value) => BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
+    internal static int Bits(float value) => BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
 
     private static void Mix(ref uint hash, int value)
     {

@@ -20,13 +20,13 @@ public sealed class DvergrViaductRoadTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
-    /// <summary>One way up: flat at 40 west of x = 0, 40 + 15 east of x = 12.5, a face of 1.2 between.</summary>
+    /// <summary>One way up: flat at 40 west of x = 0, 40 + 19.2 east of x = 16 (its rim on a search cell line), a face of 1.2 between.</summary>
     private sealed class MistScarp : WorldGenerator
     {
         public override float GetHeight(float wx, float wy)
         {
             if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
-            return 40f + Mathf.Clamp(wx * 1.2f, 0f, 15f);
+            return 40f + Mathf.Clamp(wx * 1.2f, 0f, 19.2f);
         }
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mistlands;
         public override int GetSeed() => 76;
@@ -53,7 +53,7 @@ public sealed class DvergrViaductRoadTests : IDisposable
         new(world) { Stairs = true, Viaducts = viaducts, TerrainVarianceThreshold = 1000f, Meander = 0f };
 
     /// <summary>Over the ceiling the road goes down (on stairs, or road where it can) to where a viaduct's piers fit, and
-    /// crosses there: the rim-level viaduct is never bought.</summary>
+    /// crosses there: the rim-level viaduct is never bought. A pier the ceiling still leaves over it fits on its mound.</summary>
     [Fact]
     public void OverTheCeilingTheRoadGoesDownToAViaductWhosePiersFit()
     {
@@ -67,7 +67,9 @@ public sealed class DvergrViaductRoadTests : IDisposable
         {
             RoadCrossing? lower = DvergrViaduct.ValleyCrossing(from, to, deep, out string refused);
             Assert.True(lower != null, refused);
-            Assert.True(DvergrViaduct.TallestPier(lower!, deep) <= DvergrViaduct.PierCeiling);
+            // Its piers fit: under the ceiling, or a pier over it on its mound (DvergrViaduct.Mounds), as the support line reads it.
+            Assert.True(DvergrViaduct.TallestPier(lower!, deep) <= DvergrViaduct.PierCeiling || DvergrViaduct.Mounds(lower!, deep).Count > 0,
+                $"piers of {DvergrViaduct.TallestPier(lower!, deep):F1} m over the ceiling with no mound");
             Assert.True(DvergrViaduct.DeckHeight(lower!, deep) < deep.Top - 2f, "the deck is below the rim");
         }
     }
@@ -210,7 +212,7 @@ public sealed class DvergrViaductRoadTests : IDisposable
                     if (ZNetScene.instance!.GetPrefab(p.Prefab) == null) ZNetScene.instance.AddPrefab(p.Prefab);
             Vector2s kept = zones[0], other = zones[1];
             NetworkCutoff.SnapshotWorld(new[] { kept });
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             Assert.Equal(0, StructurePlacement.OnZoneSpawned(kept, ZoneSystem.SpawnMode.Full));
             Assert.Equal(0, StructurePlacement.SpawnGhostInZone(kept));
             Assert.False(StructurePlans.IsSpawned(kept));

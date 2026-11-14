@@ -9,7 +9,7 @@ using Valheim.Testing.Doubles;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// A place that levels ground off its centre is placed before its roads (PlacedSites.NeedsPlacing), so a staircase onto it is
+/// A location that levels ground off its centre is placed before its roads (PlacedLocations.NeedsPlacing), so a staircase onto it is
 /// laid on the ground the game leaves: the Mountain tower (StoneTowerRuins05, the saved Tower fixture), whose
 /// flat round its centre and four corner levellings raise its landing out to about 15 m.
 /// </summary>
@@ -29,7 +29,7 @@ public class TowerPlacedFirstTests : IDisposable
         public TowerWorld(CapturedLandingFile f) { _f = f; }
         public override float GetHeight(float wx, float wy)
         {
-            PlacedSiteRecord r = _f.Record;
+            PlacedLocationRecord r = _f.Record;
             return _f.Natural(Mathf.Clamp(wx, r.X0, r.X0 + r.W - 1.001f), Mathf.Clamp(wy, r.Z0, r.Z0 + r.H - 1.001f));
         }
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
@@ -43,66 +43,66 @@ public class TowerPlacedFirstTests : IDisposable
         _world = new TowerWorld(_tower);
         _scope.WithWorld(_world);
         RoadNetworkGenerator.Reset();
-        PlacedSites.Reset();
-        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(_tower.Record.Centre, 30f) });
+        PlacedLocations.Reset();
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(_tower.Record.Centre, 30f) });
     }
 
     public void Dispose()
     {
         SetPathfinder(null);
-        PlacedSites.Reset();
-        RoadSiteProtection.Reset();
+        PlacedLocations.Reset();
+        RoadLocationProtection.Reset();
         RoadNetworkGenerator.Reset();
         _scope.Dispose();
     }
 
-    /// <summary>The one rule: a place the game turns as it places it, that levels or smooths anywhere off its centre and has a
+    /// <summary>The one rule: a location the game turns as it places it, that levels or smooths anywhere off its centre and has a
     /// flat to come onto, is placed first where the network comes close to it (turned to face downhill, the Mistlands, a boss's
-    /// entrance), and every place in the Mountains. The tower's flat is round its centre: placed first by its corners.</summary>
+    /// entrance), and every location in the Mountains. The tower's flat is round its centre: placed first by its corners.</summary>
     [Fact]
-    public void APlaceThatLevelsOffItsCentreIsPlacedBeforeItsRoadsWhereTheNetworkComesClose()
+    public void ALocationThatLevelsOffItsCentreIsPlacedBeforeItsRoadsWhereTheNetworkComesClose()
     {
         IReadOnlyList<LevelOp> tower = _tower.Record.Ops;
         Assert.True(RoadStairRuns.FlatOf(tower)!.Value.Concentric);
-        Assert.True(PlacedSites.NeedsPlacing("StoneTowerRuins05", true, true, Heightmap.Biome.Mountain, tower));
-        Assert.True(PlacedSites.NeedsPlacing("StoneTowerRuins05", false, true, Heightmap.Biome.Mountain, tower));
-        Assert.True(PlacedSites.NeedsPlacing("StoneTowerRuins05", false, true, Heightmap.Biome.Mistlands, tower));
-        Assert.True(PlacedSites.NeedsPlacing("StoneTowerRuins05", true, false, Heightmap.Biome.BlackForest, tower));
-        Assert.True(PlacedSites.NeedsPlacing("Mistlands_DvergrBossEntrance1", false, true, Heightmap.Biome.Meadows, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("StoneTowerRuins05", true, true, Heightmap.Biome.Mountain, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("StoneTowerRuins05", false, true, Heightmap.Biome.Mountain, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("StoneTowerRuins05", false, true, Heightmap.Biome.Mistlands, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("StoneTowerRuins05", true, false, Heightmap.Biome.BlackForest, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("Mistlands_DvergrBossEntrance1", false, true, Heightmap.Biome.Meadows, tower));
         // Turned at random elsewhere: the outskirts end (a ruin; a crypt has a door, placed first for it).
-        Assert.False(PlacedSites.NeedsPlacing("StoneTowerRuins05", false, true, Heightmap.Biome.BlackForest, tower));
-        Assert.True(PlacedSites.NeedsPlacing("Crypt3", false, true, Heightmap.Biome.BlackForest, tower));
+        Assert.False(PlacedLocations.NeedsPlacing("StoneTowerRuins05", false, true, Heightmap.Biome.BlackForest, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("Crypt3", false, true, Heightmap.Biome.BlackForest, tower));
         // Not turned: its ground is known before it is placed (outside the Mountains).
-        Assert.False(PlacedSites.NeedsPlacing("StoneTowerRuins05", false, false, Heightmap.Biome.Mistlands, tower));
+        Assert.False(PlacedLocations.NeedsPlacing("StoneTowerRuins05", false, false, Heightmap.Biome.Mistlands, tower));
         // Everything round its centre: the same whichever way it is turned (outside the Mountains).
         var round = new[] { new LevelOp(0f, 0f, 0f, 8f, false, 15f, 3f), new LevelOp(0.2f, -0.3f, 0f, 0f, false, 20f, 3f) };
-        Assert.False(PlacedSites.NeedsPlacing("MountainWell1", true, true, Heightmap.Biome.Mistlands, round));
+        Assert.False(PlacedLocations.NeedsPlacing("MountainWell1", true, true, Heightmap.Biome.Mistlands, round));
         // No flat: nothing to carry its road onto (outside the Mountains).
         var smoothing = new[] { new LevelOp(6f, 0f, 0f, 0f, false, 9f, 3f) };
-        Assert.False(PlacedSites.NeedsPlacing("StoneHenge1", true, true, Heightmap.Biome.Mistlands, smoothing));
+        Assert.False(PlacedLocations.NeedsPlacing("StoneHenge1", true, true, Heightmap.Biome.Mistlands, smoothing));
         // In the Mountains every one is placed first: too varied to guess.
-        Assert.True(PlacedSites.NeedsPlacing("StoneTowerRuins05", false, false, Heightmap.Biome.Mountain, tower));
-        Assert.True(PlacedSites.NeedsPlacing("MountainWell1", true, true, Heightmap.Biome.Mountain, round));
-        Assert.True(PlacedSites.NeedsPlacing("StoneHenge1", true, true, Heightmap.Biome.Mountain, smoothing));
+        Assert.True(PlacedLocations.NeedsPlacing("StoneTowerRuins05", false, false, Heightmap.Biome.Mountain, tower));
+        Assert.True(PlacedLocations.NeedsPlacing("MountainWell1", true, true, Heightmap.Biome.Mountain, round));
+        Assert.True(PlacedLocations.NeedsPlacing("StoneHenge1", true, true, Heightmap.Biome.Mountain, smoothing));
         // A frost cave, as before.
         var cave = new[] { new LevelOp(-0.06f, -4.75f, -4.09f, 4f, false, 7f, 3f) };
-        Assert.True(PlacedSites.NeedsPlacing("MountainCave02", true, false, Heightmap.Biome.Mountain, cave));
+        Assert.True(PlacedLocations.NeedsPlacing("MountainCave02", true, false, Heightmap.Biome.Mountain, cave));
     }
 
     /// <summary>The tower's end, not placed first (not placed before its roads): the staircase onto the flat round its centre is no
     /// longer laid over the ground predicted from that flat alone, which buried its top in the landing its corners raise
-    /// as a raised landing had; none is laid, and the tower gets no road (PlacedSites.NotPlaced). Placed first, the ground the
+    /// as a raised landing had; none is laid, and the tower gets no road (PlacedLocations.NotPlaced). Placed first, the ground the
     /// staircases read is the ground the game leaves there, and the staircase onto its landing, laid on it, buries nothing in
     /// it: from the captured road's end, every staircase crosses the road there, so it is laid from where the road is cut back
     /// for it.</summary>
     [Fact]
     public void TheTowersStaircaseIsLaidOnTheGroundItsCornersRaiseNotUnderIt()
     {
-        PlacedSiteRecord r = _tower.Record;
-        SiteApproachRequest q = _tower.Request;
+        PlacedLocationRecord r = _tower.Record;
+        LocationApproachRequest q = _tower.Request;
         float Real(Vector2 p) => _tower.Ground(p.x, p.y);
         // Walked surfaces, edges included (StairLayout.Cover, the reading the approach's search and refusal make), over the
-        // ground the place raised, deeper under it than an approach may be; but the last piece, a stair whose foot meets the
+        // ground the location raised, deeper under it than an approach may be; but the last piece, a stair whose foot meets the
         // ledge it climbs onto. Read on the real ground, not the ground the layout was given.
         string Buried(StairPlan plan)
         {
@@ -116,15 +116,15 @@ public class TowerPlacedFirstTests : IDisposable
         }
 
         RoadStairRuns.ResetCache();
-        RoadStairSpan? centred = RoadStairRuns.LaySiteApproach(q.RoadEnd, q.RoadHeight, q.Arriving, r.Centre, r.Root, r.Ops, true,
+        RoadStairSpan? centred = RoadStairRuns.LayLocationApproach(q.RoadEnd, q.RoadHeight, q.Arriving, r.Centre, r.Root, r.Ops, true,
             q.RoadTail, q.RoadTail.Count - 1, new List<RoadStairSpan>(), _world, out string why);
         if (centred != null) Assert.True(Buried(centred.Plan) == "", "laid on its centred levelling alone: " + Buried(centred.Plan));
         Assert.Null(centred);
         Assert.Equal(RoadStairRuns.LevelsOffItsCentre, why);
 
-        PlacedSites.Remember(r);
-        PlacedSites.Prepare((x, z) => _world.GetHeight(x, z));
-        Assert.True(PlacedSites.TryGetReady(r.Centre, out PlacedSite site));
+        PlacedLocations.Remember(r);
+        PlacedLocations.Prepare((x, z) => _world.GetHeight(x, z));
+        Assert.True(PlacedLocations.TryGetReady(r.Centre, out PlacedLocation placedLocation));
         // Across its landing and the corners round it, the stair ground is the game's.
         for (float d = 6f; d <= 16f; d += 2f)
             for (float a = 0f; a < 360f; a += 45f)
@@ -133,9 +133,9 @@ public class TowerPlacedFirstTests : IDisposable
                 Assert.True(Mathf.Abs(RoadStairRuns.GroundAt(p.x, p.y, _world) - Real(p)) <= 0.1f,
                     FormattableString.Invariant($"at ({p.x:F1},{p.y:F1}): {RoadStairRuns.GroundAt(p.x, p.y, _world):F2} against {Real(p):F2}"));
             }
-        RoadStairSpan? Lay(SiteApproachRequest from, out string refused) => RoadStairRuns.PlanPlacedSiteApproach(from, r.Yaw, r.Ops,
-            (x, z) => RoadStairRuns.GroundAt(x, z, _world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed, out refused, r.RockRadius,
-            _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: site.Shape);
+        RoadStairSpan? Lay(LocationApproachRequest from, out string refused) => RoadStairRuns.PlanPlacedLocationApproach(from, r.Yaw, r.Ops,
+            RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed, out refused, r.RockRadius,
+            RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
         RoadStairSpan? span = Lay(q, out why);
         // Every staircase from the captured road's end crosses the road there (RoadEndRing): laid from where
         // the road is cut back for it, the first cut back along its last stretch (RoadNetworkGenerator.EntryCutBacks).
@@ -159,7 +159,7 @@ public class TowerPlacedFirstTests : IDisposable
     internal static string RailAcrossTheWalk(RoadStairSpan span, Func<Vector2, float> ground)
     {
         var run = StairRun.FromPlan(span.FromPoint, span.ToPoint, RoadStairRuns.Width, span.Plan, span.Kit);
-        run.KeepsSiteRocks = true;
+        run.KeepsLocationRocks = true;
         List<StructurePiece> pieces = span.Kit.Dress(run, (x, z) => ground(new Vector2(x, z)), (x, z) => ground(new Vector2(x, z)), false);
         var rails = pieces.Where(p => p.Prefab is StairRailing.LevelRailPrefab or StairRailing.ShortRailPrefab).ToList();
         var walks = pieces.Where(p => p.Kind is StructurePieceKind.StairStep or StructurePieceKind.StairFloor)
@@ -202,14 +202,14 @@ public class TowerPlacedFirstTests : IDisposable
     [InlineData(-4778f, 1730f, 295f, 1)]
     public void AStaircaseLeavingItsRoadsEndTurnedStartsBesideItOnTheSideItTurnsTo(float x, float z, float arriving, int side)
     {
-        PlacedSiteRecord r = _tower.Record;
-        PlacedSites.Remember(r);
-        PlacedSites.Prepare((a, b) => _world.GetHeight(a, b));
-        Assert.True(PlacedSites.TryGetReady(r.Centre, out PlacedSite site));
+        PlacedLocationRecord r = _tower.Record;
+        PlacedLocations.Remember(r);
+        PlacedLocations.Prepare((a, b) => _world.GetHeight(a, b));
+        Assert.True(PlacedLocations.TryGetReady(r.Centre, out PlacedLocation placedLocation));
         float Ground(float a, float b) => RoadStairRuns.GroundAt(a, b, _world);
         Vector2 end = default;
         List<Vector2> tail = new();
-        SiteApproachRequest q = new();
+        LocationApproachRequest q = new();
         RoadStairSpan? span = null;
         string why = "";
         // From the road's end, else, where nothing from there both keeps out of the tower's ground (StairLayout.Cover, a
@@ -225,8 +225,8 @@ public class TowerPlacedFirstTests : IDisposable
             tail = Enumerable.Range(0, 6).Select(k => at - StairLayout.Forward(arriving) * (8f * (5 - k))).ToList();
             q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
                 TotalExpansions = _tower.Request.TotalExpansions, Stall = _tower.Request.Stall, Leg = _tower.Request.Leg, RoadTail = tail };
-            span = RoadStairRuns.PlanPlacedSiteApproach(q, r.Yaw, r.Ops, Ground, (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
-                out string refused, r.RockRadius, _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: site.Shape);
+            span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
+                out string refused, r.RockRadius, RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
             why += (back > 0f ? FormattableString.Invariant($"; {back:F0} m back: ") : "") + refused;
             if (span != null) break;
         }
@@ -310,17 +310,17 @@ public class TowerPlacedFirstTests : IDisposable
     [InlineData(180f)]
     public void NoStaircaseIsLaidAcrossItsRoadsEndWhereNoneFitsBesideIt(float arriving)
     {
-        PlacedSiteRecord r = _tower.Record;
-        PlacedSites.Remember(r);
-        PlacedSites.Prepare((a, b) => _world.GetHeight(a, b));
-        Assert.True(PlacedSites.TryGetReady(r.Centre, out PlacedSite site));
+        PlacedLocationRecord r = _tower.Record;
+        PlacedLocations.Remember(r);
+        PlacedLocations.Prepare((a, b) => _world.GetHeight(a, b));
+        Assert.True(PlacedLocations.TryGetReady(r.Centre, out PlacedLocation placedLocation));
         float Ground(float a, float b) => RoadStairRuns.GroundAt(a, b, _world);
         var end = new Vector2(-4791f, 1751f);
         var tail = Enumerable.Range(0, 6).Select(k => end - StairLayout.Forward(arriving) * (8f * (5 - k))).ToList();
-        SiteApproachRequest q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
+        LocationApproachRequest q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
             TotalExpansions = _tower.Request.TotalExpansions, Stall = _tower.Request.Stall, Leg = _tower.Request.Leg, RoadTail = tail };
-        RoadStairSpan? span = RoadStairRuns.PlanPlacedSiteApproach(q, r.Yaw, r.Ops, Ground, (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
-            out string why, r.RockRadius, _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: site.Shape);
+        RoadStairSpan? span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
+            out string why, r.RockRadius, RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
         if (span == null) return;
         Assert.True(AcrossItsRoad(span.Plan, end, arriving, q.RoadHeight) == "", AcrossItsRoad(span.Plan, end, arriving, q.RoadHeight));
         Assert.False(RoadStairRuns.OverRoad(span.Plan, tail, tail.Count - 1, tail.Count - 1, Ground), "on its road");
@@ -329,12 +329,12 @@ public class TowerPlacedFirstTests : IDisposable
     /// <summary>
     /// In game, StoneTowerRuins05 at -1917,6724: the road came in above the tower and its staircase
     /// came down to the landing (very neat), but its last flight ran along the tower's wall and ended into it; it would be better
-    /// if it turned towards the place vs into the wall, and so for a staircase climbing to it. On the saved tower's own ground
+    /// if it turned towards the location vs into the wall, and so for a staircase climbing to it. On the saved tower's own ground
     /// (turned 180 degrees from that one, the road's end behind it as there): road ends above it to the north west, 26 m out at
     /// 315 and 337.5 degrees (about -4819.5,1745.3 and -4811.1,1751.0, 9 and 3 m over its landing), whose staircases come down
     /// round its side, and one below it, 34 m out at 45 degrees (-4777.1,1751.0), whose staircase climbs round its north side.
-    /// The flight that arrives at the landing faces into the place: its last stair, walked onto the landing, heads within 90
-    /// degrees of the tower's centre as seen from it (anywhere from a tangent to the place's radius up to
+    /// The flight that arrives at the landing faces into the location: its last stair, walked onto the landing, heads within 90
+    /// degrees of the tower's centre as seen from it (anywhere from a tangent to the location's radius up to
     /// straight in, never away; 45 before, StairLayout.ArrivalSteps), give or take its standing a metre or two off where it was
     /// aimed: not away from the tower. Laid as PlanEntry lays it: from the road's end, else from where the road is cut back for
     /// it (RoadNetworkGenerator.EntryCutBacks). From the end below, 34 m out at 45 degrees, nothing meets the raised landing's
@@ -351,14 +351,14 @@ public class TowerPlacedFirstTests : IDisposable
     [InlineData(315f, 26f, Skip = "Waits on a decision on a road's end on a summit: from this end, 9 m over the landing on a knoll that falls away on every side, no staircase from the landing arrives on the end's ring (RoadEndRing), facing in or not, nor with the ring's tolerance doubled; with no ring one faces in, 36 degrees off. Cut back, the road runs down this test's straight-in road, steeper than a road is planned, and none is laid from there either.")]
     [InlineData(337.5f, 26f)]
     [InlineData(45f, 34f)]
-    public void TheFlightArrivingAtTheLandingFacesIntoThePlace(float bearing, float distance)
+    public void TheFlightArrivingAtTheLandingFacesIntoTheLocation(float bearing, float distance)
     {
-        PlacedSiteRecord r = _tower.Record;
-        PlacedSites.Remember(r);
-        PlacedSites.Prepare((a, b) => _world.GetHeight(a, b));
-        Assert.True(PlacedSites.TryGetReady(r.Centre, out PlacedSite site));
+        PlacedLocationRecord r = _tower.Record;
+        PlacedLocations.Remember(r);
+        PlacedLocations.Prepare((a, b) => _world.GetHeight(a, b));
+        Assert.True(PlacedLocations.TryGetReady(r.Centre, out PlacedLocation placedLocation));
         float Ground(float a, float b) => RoadStairRuns.GroundAt(a, b, _world);
-        // The road straight in toward the place, 40 m of it, cut back along itself as PlanEntry cuts it back.
+        // The road straight in toward the location, 40 m of it, cut back along itself as PlanEntry cuts it back.
         float arriving = StairLayout.Wrap(bearing + 180f);
         RoadStairSpan? span = null;
         string why = "";
@@ -366,21 +366,21 @@ public class TowerPlacedFirstTests : IDisposable
         {
             Vector2 end = r.Centre + StairLayout.Forward(bearing) * (distance + back);
             var tail = Enumerable.Range(0, 6).Select(k => end - StairLayout.Forward(arriving) * (8f * (5 - k))).ToList();
-            SiteApproachRequest q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
+            LocationApproachRequest q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
                 TotalExpansions = _tower.Request.TotalExpansions, Stall = _tower.Request.Stall, Leg = _tower.Request.Leg, RoadTail = tail };
-            span = RoadStairRuns.PlanPlacedSiteApproach(q, r.Yaw, r.Ops, Ground, (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
-                out string refused, r.RockRadius, _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: site.Shape);
+            span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
+                out string refused, r.RockRadius, RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
             why += (back > 0f ? FormattableString.Invariant($"; {back:F0} m back: ") : "") + refused;
             if (span != null) break;
         }
         Assert.True(span != null, why);
         StairPlan plan = span!.Plan;
         // Where the walk ends on the landing: the aim a staircase laid up from it set off from, else its top.
-        Vector2 place = plan.Reversed ? span.ToPoint : new Vector2(plan.End.x, plan.End.z);
-        var (walk, toward, at) = ArrivingStair(plan, place, r.Centre);
+        Vector2 location = plan.Reversed ? span.ToPoint : new Vector2(plan.End.x, plan.End.z);
+        var (walk, toward, at) = ArrivingStair(plan, location, r.Centre);
         float off = Mathf.Abs(StairLayout.Wrap(walk - toward + 180f) - 180f);
         Assert.True(off <= StairLayout.ArrivalSteps * StairLayout.HeadingStep + 5f, FormattableString.Invariant(
-            $"{(plan.Reversed ? "down" : "up")} to ({place.x:F1},{place.y:F1}): its last stair at ({at.x:F1},{at.y:F1}) walked heading {walk:F1}, the tower's centre at {toward:F1} from it, {off:F1} off"));
+            $"{(plan.Reversed ? "down" : "up")} to ({location.x:F1},{location.y:F1}): its last stair at ({at.x:F1},{at.y:F1}) walked heading {walk:F1}, the tower's centre at {toward:F1} from it, {off:F1} off"));
         float buried = RoadStairRuns.Cover(plan, Ground);
         Assert.True(buried <= StairCover.ApproachRefusal + 0.001f, FormattableString.Invariant($"a walked piece {buried:F2} m into the ground"));
         Assert.True(RailAcrossTheWalk(span, p => Ground(p.x, p.y)) == "", RailAcrossTheWalk(span, p => Ground(p.x, p.y)));
@@ -395,12 +395,12 @@ public class TowerPlacedFirstTests : IDisposable
     [Fact]
     public void ThePointsBesideAnAimLieOnTheLipNearestFirstAStepApart()
     {
-        PlacedSiteRecord r = _tower.Record;
-        PlacedSites.Remember(r);
-        PlacedSites.Prepare((a, b) => _world.GetHeight(a, b));
-        Assert.True(PlacedSites.TryGetReady(r.Centre, out PlacedSite site));
+        PlacedLocationRecord r = _tower.Record;
+        PlacedLocations.Remember(r);
+        PlacedLocations.Prepare((a, b) => _world.GetHeight(a, b));
+        Assert.True(PlacedLocations.TryGetReady(r.Centre, out PlacedLocation placedLocation));
         float Ground(float a, float b) => RoadStairRuns.GroundAt(a, b, _world);
-        var landing = site.Shape.ConnectedLanding(Ground, 1f);
+        var landing = placedLocation.Shape.ConnectedLanding(Ground, 1f);
         var aim = new Vector2(-4803f, 1743f);
         Assert.Contains(landing.Lip, l => l.at == aim);
         var beside = RoadStairRuns.BesideOnTheLip(landing, aim);
@@ -418,17 +418,17 @@ public class TowerPlacedFirstTests : IDisposable
         Assert.Contains(beside, b => b.at == new Vector2(-4803f, 1740f));
     }
 
-    /// <summary>The stair a walker steps onto a place's landing from at <paramref name="place"/> (sunk steps aside), the heading
+    /// <summary>The stair a walker steps onto a location's landing from at <paramref name="location"/> (sunk steps aside), the heading
     /// they walk it on and the bearing of <paramref name="centre"/> from it: of its two ends, they leave it by the one nearer the
     /// landing, up it or down it (a top finished with a step down is walked down).</summary>
-    internal static (float walk, float toward, Vector2 at) ArrivingStair(StairPlan plan, Vector2 place, Vector2 centre)
+    internal static (float walk, float toward, Vector2 at) ArrivingStair(StairPlan plan, Vector2 location, Vector2 centre)
     {
         StairPiece last = plan.Pieces.Skip(plan.SunkPieces).Where(p => p.Kind == StairPieceKind.Stair)
-            .OrderBy(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), place)).First();
+            .OrderBy(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), location)).First();
         Vector2 at = new Vector2(last.Position.x, last.Position.z);
         float climb = StairLayout.Wrap(last.YawDegrees + 180f);
         Vector2 high = at + StairLayout.Forward(climb), low = at - StairLayout.Forward(climb);
-        float walk = Vector2.Distance(high, place) <= Vector2.Distance(low, place) ? climb : StairLayout.Wrap(climb + 180f);
+        float walk = Vector2.Distance(high, location) <= Vector2.Distance(low, location) ? climb : StairLayout.Wrap(climb + 180f);
         return (walk, StairLayout.Bearing(at, centre), at);
     }
 
@@ -440,19 +440,19 @@ public class TowerPlacedFirstTests : IDisposable
     /// the stairs can find a proper way to reach it). A road 48 m straight in to the tower's end at -4791,1751, heading 200 or
     /// 180 (as captured), on its ground, carried on onto the landing through the one owner (PlanEntry): no staircase from its
     /// end fits beside it, and none is laid across it: one that does not cross it, else the road cut back along its last
-    /// stretch (or started lower) and the staircase laid from there, or the place gets none. Whatever is laid crosses no road.
+    /// stretch (or started lower) and the staircase laid from there, or the location gets none. Whatever is laid crosses no road.
     /// </summary>
     [Theory]
     [InlineData(200f)]
     [InlineData(180f)]
     public void TheRoadIsCutBackForAStaircaseThatWouldCrossItsEnd(float arriving)
     {
-        PlacedSiteRecord r = _tower.Record;
+        PlacedLocationRecord r = _tower.Record;
         RoadSpatialGrid.Clear();
         StairStructures.Reset();
-        PlacedSites.Remember(r);
-        PlacedSites.Prepare((a, b) => _world.GetHeight(a, b));
-        Assert.True(PlacedSites.TryGetReady(r.Centre, out PlacedSite site));
+        PlacedLocations.Remember(r);
+        PlacedLocations.Prepare((a, b) => _world.GetHeight(a, b));
+        Assert.True(PlacedLocations.TryGetReady(r.Centre, out PlacedLocation placedLocation));
         float Ground(float a, float b) => RoadStairRuns.GroundAt(a, b, _world);
         SetPathfinder(new RoadPathfinder(_world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f });
         var end = new Vector2(-4791f, 1751f);
@@ -464,7 +464,7 @@ public class TowerPlacedFirstTests : IDisposable
         var piece = new RoadSpatialGrid.PlannedPath(points, points.ConvertAll(q => Ground(q.x, q.y)), points.ConvertAll(_ => default(RoadPointDebugInfo)),
             RoadNetworkGenerator.RoadWidth, 48f, true);
         var plans = new List<RoadSpatialGrid.PlannedPath> { piece };
-        bool entered = RoadNetworkGenerator.PlanEntry(site, false, path, plans, new List<RoadStairSpan>(), new List<RoadCrossing>(), 4f,
+        bool entered = RoadNetworkGenerator.PlanEntry(placedLocation, false, path, plans, new List<RoadStairSpan>(), new List<RoadCrossing>(), 4f,
             out RoadSpatialGrid.PlannedPath? road, out RoadStairSpan? span, out string why);
         if (!entered) { Assert.Contains(RoadStairRuns.AcrossItsRoad, why); return; }
         if (span == null) return;

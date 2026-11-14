@@ -72,6 +72,76 @@ public static class ExistingWorldFirstLoad
         _ => Decision.NewZonesOnly,
     };
 
+    /// <summary>
+    /// The answer road_generate and road_regen_island take when none is typed: over a road network (one in memory, or a
+    /// saved one this build could not read), new land only; on a world with none, the first load's own
+    /// (<see cref="Recommended"/>). An operator writes explored land under an existing network only by naming
+    /// IncludeExplored.
+    /// </summary>
+    public static ExistingWorldRoads CommandDefault(bool overNetwork) => overNetwork ? ExistingWorldRoads.NewZonesOnly : Recommended;
+
+    /// <summary>An answer's heading: the loading screen's button, and the line road_generate lists it on.</summary>
+    public static string Label(ExistingWorldRoads answer) => answer switch
+    {
+        ExistingWorldRoads.IncludeExplored => "Build roads through explored land too",
+        ExistingWorldRoads.NewZonesOnly => "Build roads in new land only",
+        _ => "Skip road building",
+    };
+
+    /// <summary>What an answer does, as the loading screen explains it under its button.</summary>
+    public static string Detail(ExistingWorldRoads answer) => answer switch
+    {
+        ExistingWorldRoads.IncludeExplored =>
+            "Roads are built everywhere except the zones with your buildings or terrain edits, which they go round. " +
+            "The world is backed up first. Use road_connect afterwards to join your builds to the network.",
+        ExistingWorldRoads.NewZonesOnly =>
+            "Roads are built, but only in land explored from now on. Everything explored so far stays as it is.",
+        _ => "No road network. The world stays exactly as it is. You can still build one later with road_generate.",
+    };
+
+    /// <summary>What an answer adds when it replaces a road network: what becomes of the old roads in explored land.</summary>
+    public static string OverNetworkNote(ExistingWorldRoads answer) => answer switch
+    {
+        ExistingWorldRoads.IncludeExplored =>
+            "The old network's ground in explored land cannot be undone: where the new roads do not run, the old roads stay " +
+            "as levelled, painted ground. The backup is the undo.",
+        ExistingWorldRoads.NewZonesOnly => "The old roads there stay as they are, but are no longer part of the network.",
+        _ => "Nothing is run, and the roads stay as they are.",
+    };
+
+    /// <summary>The words road_generate and road_regen_island take after their own (the point, for road_regen_island).</summary>
+    public const string CommandWords = "[NewZonesOnly|IncludeExplored|Skip] [force]";
+
+    /// <summary>
+    /// Reads a command's words (after its name): force last (ManualRoads.EndsInForce), then one answer word
+    /// (<see cref="ExistingWorldRoads"/> by name, any case; not Ask), the words before them returned in
+    /// <paramref name="rest"/>. Null when they are read, else why not. The one reading of the answer a command is given.
+    /// </summary>
+    public static string? ReadCommand(IReadOnlyList<string> words, out ExistingWorldRoads? answer, out bool force, out List<string> rest)
+    {
+        rest = new List<string>(words);
+        answer = null;
+        force = ManualRoads.EndsInForce(rest);
+        if (force) rest.RemoveAt(rest.Count - 1);
+        if (rest.Count > 0 && !float.TryParse(rest[rest.Count - 1], System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out _))
+        {
+            string word = rest[rest.Count - 1];
+            // By name only: Enum.TryParse would also read numbers and lists ("Skip,NewZonesOnly").
+            string? name = Array.Find(Enum.GetNames(typeof(ExistingWorldRoads)), n => string.Equals(n, word, StringComparison.OrdinalIgnoreCase));
+            if (name == null || name == nameof(ExistingWorldRoads.Ask)) return $"unknown word '{word}'";
+            answer = (ExistingWorldRoads)Enum.Parse(typeof(ExistingWorldRoads), name);
+            rest.RemoveAt(rest.Count - 1);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Saves the world now, the game's own save, and waits for it (the plugin sets it): before a command's backup, so the
+    /// backup is the world as it stands, the network it replaces in it. False when the game did not save it.
+    /// </summary>
+    public static Func<bool>? SaveNow;
+
     /// <summary>What players are told about the zones an IncludeExplored network left as they are.</summary>
     public static string KeptNote(int kept) =>
         kept == 0
@@ -104,10 +174,10 @@ public static class ExistingWorldFirstLoad
         catch (Exception) { return false; }
     }
 
-    /// <summary>The explored zones players built in or dug (<see cref="PlayerChanges.Zones"/>): before any network every
-    /// terrain compiler is a player's.</summary>
+    /// <summary>The explored zones players built in or dug (<see cref="PlayerChanges.Zones"/>, a terrain compiler counted as
+    /// <see cref="PlayerChanges.CompilerIsPlayers"/> says).</summary>
     public static HashSet<Vector2s> PlayerMarkedZones(IReadOnlyCollection<Vector2s> explored) =>
-        explored.Count == 0 ? new HashSet<Vector2s>() : PlayerChanges.Zones(explored, _ => true);
+        explored.Count == 0 ? new HashSet<Vector2s>() : PlayerChanges.Zones(explored, PlayerChanges.CompilerIsPlayers);
 }
 
 /// <summary>
@@ -119,6 +189,13 @@ public static class ExistingWorldFirstLoad
 /// </summary>
 public static class PlayerChanges
 {
+
+    /// <summary>
+    /// Whether a terrain compiler in this zone can only be a player's: with no road network in memory, everywhere; with
+    /// one, in the zones it leaves as they are (NetworkCutoff.Excludes). Where the network writes, the compiler is its own.
+    /// The one rule for manual roads and for the explored land a new network goes round.
+    /// </summary>
+    public static bool CompilerIsPlayers(Vector2s zone) => !RoadNetworkGenerator.NetworkInMemory || NetworkCutoff.Excludes(zone);
 
     /// <summary>Whether a player made this object: vanilla stamps what a player builds with its creator.</summary>
     public static bool IsPlayers(ZDO zdo) => zdo.GetLong(ZDOVars.s_creator, 0L) != 0L;

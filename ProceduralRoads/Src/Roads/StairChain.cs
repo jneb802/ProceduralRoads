@@ -110,7 +110,7 @@ public static class StairChain
     /// <summary>How far apart two yaws are, 0 to 180 degrees.</summary>
     public static float YawApart(float a, float b) => Mathf.Abs(StairLayout.Wrap(a - b + 180f) - 180f);
 
-    /// <summary>One line per chain that doubled back alongside itself (<see cref="BackTracks"/>), once per place and outcome:
+    /// <summary>One line per chain that doubled back alongside itself (<see cref="BackTracks"/>), once per location and outcome:
     /// a crest or a pit, and whether it was joined where its flights pass, laid as one staircase, or refused.</summary>
     public static void LogBackTrack(Vector2 at, StairKit kit, bool pit, string outcome)
     {
@@ -134,8 +134,8 @@ public static class StairChain
     }
 
     /// <summary>One line per walkway a chain lays across a valley, or that the cap refused: where, the kit, how high
-    /// over the ground it stands at most, how long it is. Once per place and outcome, not on every retry of the road (a
-    /// place's road is laid again and again); none for a walkway with no floors.</summary>
+    /// over the ground it stands at most, how long it is. Once per location and outcome, not on every retry of the road (a
+    /// location's road is laid again and again); none for a walkway with no floors.</summary>
     public static void LogWalkway(Vector2 at, StairKit kit, float most, float length, bool laid)
     {
         if (!RoadNetworkGenerator.RoadsLog || (laid && length < StairLayout.PieceRun - 0.01f) || !FirstAt("walkway", at, laid)) return;
@@ -143,7 +143,7 @@ public static class StairChain
             $"[STAIRS] walkway at ({at.x:F1}, {at.y:F1}) {kit.Name}: {(laid ? "laid" : "refused")}, {most:F2} m over the ground at most (cap {StairKit.WalkwayCap:F0}), {length:F1} m long"));
     }
 
-    /// <summary>One line per top-to-top join (StairLayout.JoinTops) at <paramref name="at"/>, once per place and outcome:
+    /// <summary>One line per top-to-top join (StairLayout.JoinTops) at <paramref name="at"/>, once per location and outcome:
     /// laid (on a stair sunk into the top floor under it, where a clip is) or refused and why, how far it carries floors, and
     /// how high over the ground they stand at most.</summary>
     public static void LogTopJoin(Vector2 at, StairKit kit, TopJoin join)
@@ -157,10 +157,10 @@ public static class StairChain
     private const float LogCell = 4f;
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string, int, int, bool), byte> s_logged = new();
 
-    /// <summary>Whether this is the first line of its kind and outcome logged at this place this generation.</summary>
+    /// <summary>Whether this is the first line of its kind and outcome logged at this location this generation.</summary>
     private static bool FirstAt(string what, Vector2 at, bool laid) =>
         s_logged.TryAdd((what, Mathf.RoundToInt(at.x / LogCell), Mathf.RoundToInt(at.y / LogCell), laid), 0);
 
-    /// <summary>A new generation: every place may log again.</summary>
+    /// <summary>A new generation: every location may log again.</summary>
     public static void ResetLog() => s_logged.Clear();
 }

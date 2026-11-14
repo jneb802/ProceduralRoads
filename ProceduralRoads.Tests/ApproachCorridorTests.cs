@@ -9,7 +9,7 @@ using Valheim.Testing.Doubles;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// A place has one way in up a face (PlaceWaysIn, the one owner of the ways into a place). Read from a generated
+/// A location has one way in up a face (LocationWaysIn, the one owner of the ways into a location). Read from a generated
 /// MountainCave02 whose landing stands at about 143.5 near 5706,3585: the first road's approach climbs from its foot at
 /// 5724.2,3596.1 (130.9) west up the slope; the second road's way in came up the same face beside it three ways: a staircase
 /// 6.5 to 16 m off, a road onto the landing 8 to 14 m off once that was refused, and a staircase 11 to 19 m off once refused
@@ -24,7 +24,7 @@ public class ApproachCorridorTests : IDisposable
     public ApproachCorridorTests()
     {
         StairStructures.Reset();
-        PlaceWaysIn.Reset();
+        LocationWaysIn.Reset();
         RoadNetworkGenerator.RoadSnap = (float)PlainRoads.ModDefaults["road snap"];
         RoadNetworkGenerator.CorridorSnap = (float)PlainRoads.ModDefaults["corridor snap"];
     }
@@ -32,15 +32,15 @@ public class ApproachCorridorTests : IDisposable
     public void Dispose()
     {
         StairStructures.Reset();
-        PlaceWaysIn.Reset();
+        LocationWaysIn.Reset();
         _corridor.Dispose();
         _scope.Dispose();
     }
 
     private const bool S = true, F = false;
 
-    /// <summary>The place the ways come into (its centre behind the landing); an approach carries it as its place
-    /// (StairRun.ExpectedPlace, RoadStairRuns.PlaceOf).</summary>
+    /// <summary>The location the ways come into (its centre behind the landing); an approach carries it as its location
+    /// (StairRun.ExpectedLocation, RoadStairRuns.LocationOf).</summary>
     private static readonly Vector2 Cave = new(5698f, 3586f);
     private static readonly Vector2 Foot = new(5724.19f, 3596.05f);
 
@@ -167,8 +167,8 @@ public class ApproachCorridorTests : IDisposable
         var (_, fx, _, fz, _) = pieces[0];
         var (_, tx, _, tz, _) = pieces[pieces.Count - 1];
         var run = StairRun.FromPlan(new Vector2(fx, fz), new Vector2(tx, tz), RoadStairRuns.Width, Plan(pieces), StairKit.Stone);
-        run.KeepsSiteRocks = true;
-        run.ExpectedPlace = (Cave, 143f);
+        run.KeepsLocationRocks = true;
+        run.ExpectedLocation = (Cave, 143f);
         StairStructures.Add(run);
         return run;
     }
@@ -178,8 +178,8 @@ public class ApproachCorridorTests : IDisposable
     {
         StairPlan plan = Plan(First.Append((F, 5703.66f, 143.42f, 3590.50f, 247.5f)));
         var run = StairRun.FromPlan(Foot, new Vector2(5703.66f, 3590.50f), RoadStairRuns.Width, plan, StairKit.Stone);
-        run.KeepsSiteRocks = approach;
-        if (approach) run.ExpectedPlace = (Cave, 143f);
+        run.KeepsLocationRocks = approach;
+        if (approach) run.ExpectedLocation = (Cave, 143f);
         StairStructures.Add(run);
         return run;
     }
@@ -214,8 +214,8 @@ public class ApproachCorridorTests : IDisposable
     public void ARoadUpTheSameFaceJoinsTheApproachAtItsFoot()
     {
         StairRun first = LayFirst();
-        var way = PlaceWaysIn.Of(ItsRoad.Select(p => new Vector2(p.x, p.z)).ToList(), ItsRoad.Select(p => p.h).ToList(), Cave);
-        Assert.Same(first, PlaceWaysIn.Joining(Cave, way, out Vector2 joinAt)?.Approach);
+        var way = LocationWaysIn.Of(ItsRoad.Select(p => new Vector2(p.x, p.z)).ToList(), ItsRoad.Select(p => p.h).ToList(), Cave);
+        Assert.Same(first, LocationWaysIn.Joining(Cave, way, out Vector2 joinAt)?.Approach);
         Assert.True(Vector2.Distance(joinAt, Foot) < 0.01f, $"joined at {joinAt}");
     }
 
@@ -233,10 +233,10 @@ public class ApproachCorridorTests : IDisposable
         Assert.False(RoadStairRuns.DuplicatesAWayIn(Plan(other), Cave));
         var road = Turned(comingDown ? ItsRoad.Select(p => (S, p.x, p.h, p.z, 0f)).ToArray() is var r ? ComingDown(r) : r
             : ItsRoad.Select(p => (S, p.x, p.h, p.z, 0f)).ToArray(), turn);
-        Assert.Null(PlaceWaysIn.Joining(Cave, PlaceWaysIn.Of(road.Select(p => new Vector2(p.x, p.z)).ToList(), road.Select(p => p.y).ToList(), Cave), out _));
+        Assert.Null(LocationWaysIn.Joining(Cave, LocationWaysIn.Of(road.Select(p => new Vector2(p.x, p.z)).ToList(), road.Select(p => p.y).ToList(), Cave), out _));
     }
 
-    /// <summary>A road's own staircase is no way into a place; and the rule is off with the corridor snap.</summary>
+    /// <summary>A road's own staircase is no way into a location; and the rule is off with the corridor snap.</summary>
     [Fact]
     public void NotBesideARoadsOwnStaircaseNorWithTheCorridorSnapOff()
     {
@@ -268,8 +268,8 @@ public class ApproachCorridorTests : IDisposable
         LayApproach(Retried);
         float axis = 3581.62f - 1.25f;
         var mirrored = Retried.Select(p => (p.stair, p.x, p.y, 2f * axis - p.z, 180f - p.yaw)).ToArray();
-        var first = PlaceWaysIn.Of(Plan(Retried), Cave)!;
-        var second = PlaceWaysIn.Of(Plan(mirrored), Cave)!;
+        var first = LocationWaysIn.Of(Plan(Retried), Cave)!;
+        var second = LocationWaysIn.Of(Plan(mirrored), Cave)!;
         float apart = (float)(Math.Acos(Vector2.Dot((first.Inner - first.Outer).normalized, (second.Inner - second.Outer).normalized)) * 180.0 / Math.PI);
         Assert.True(apart > 2f * RoadNetworkGenerator.CorridorAngle, $"their lines foot to top {apart:F0} degrees apart");
         Assert.True(Vector2.Dot((first.Line[1] - first.Line[0]).normalized, (second.Line[1] - second.Line[0]).normalized) < 0f,
@@ -277,21 +277,21 @@ public class ApproachCorridorTests : IDisposable
         Assert.True(RoadStairRuns.DuplicatesAWayIn(Plan(mirrored), Cave));
     }
 
-    /// <summary>The whole-network invariant (PlaceWaysIn.Twins, beside the staircase-end audit): the twin as built is named
-    /// with its place and both staircases' ends; either alone, or the first with one up another face, is none.</summary>
+    /// <summary>The whole-network invariant (LocationWaysIn.Twins, beside the staircase-end audit): the twin as built is named
+    /// with its location and both staircases' ends; either alone, or the first with one up another face, is none.</summary>
     [Fact]
     public void TheTwinAsBuiltIsTheNetworksOneTwin()
     {
         LayApproach(Retried);
-        Assert.Empty(PlaceWaysIn.Twins());
+        Assert.Empty(LocationWaysIn.Twins());
         LayApproach(Turned(SecondFurther, 135f));
-        Assert.Empty(PlaceWaysIn.Twins());
+        Assert.Empty(LocationWaysIn.Twins());
         LayApproach(Second);
-        var twins = PlaceWaysIn.Twins();
+        var twins = LocationWaysIn.Twins();
         var twin = Assert.Single(twins);
         Assert.Contains("(5725.1, 3596.3) -> (5707.5, 3581.6)", twin.line);
         Assert.Contains("(5738.1, 3584.0) -> (5709.8, 3579.1)", twin.line);
-        Assert.True(Vector2.Distance(twin.place, RoadStairRuns.IntoThePlace(Cave)) < 0.01f, twin.line);
+        Assert.True(Vector2.Distance(twin.location, RoadStairRuns.IntoTheLocation(Cave)) < 0.01f, twin.line);
     }
 
     /// <summary>The invariant is the rule's own test, read whether or not the rule ran (the corridor snap off).</summary>
@@ -302,26 +302,26 @@ public class ApproachCorridorTests : IDisposable
         LayApproach(Retried);
         LayApproach(Second);
         Assert.False(RoadStairRuns.DuplicatesAWayIn(Plan(Second), Cave));
-        Assert.Single(PlaceWaysIn.Twins());
+        Assert.Single(LocationWaysIn.Twins());
     }
 
-    /// <summary>A road arriving as road is a way in too (PlaceWaysIn.Record): a second road up the same face beside it, 8 m
+    /// <summary>A road arriving as road is a way in too (LocationWaysIn.Record): a second road up the same face beside it, 8 m
     /// off at its heights, joins it where its arrival passes nearest; one in from the other side does not.</summary>
     [Fact]
     public void ASecondRoadUpTheSameFaceJoinsTheFirstRoad()
     {
         var points = ItsRoad.Select(p => new Vector2(p.x, p.z)).ToList();
         var heights = ItsRoad.Select(p => p.h).ToList();
-        PlaceWaysIn.Record(Cave, PlaceWaysIn.Of(points, heights, Cave)!);
-        var beside = PlaceWaysIn.Of(points.ConvertAll(p => p + new Vector2(0f, -8f)), heights, Cave);
-        Assert.NotNull(PlaceWaysIn.Joining(Cave, beside, out Vector2 joinAt));
+        LocationWaysIn.Record(Cave, LocationWaysIn.Of(points, heights, Cave)!);
+        var beside = LocationWaysIn.Of(points.ConvertAll(p => p + new Vector2(0f, -8f)), heights, Cave);
+        Assert.NotNull(LocationWaysIn.Joining(Cave, beside, out Vector2 joinAt));
         Assert.Contains(points, p => Vector2.Distance(p, joinAt) < 0.01f);
         var farSide = Turned(ItsRoad.Select(p => (S, p.x, p.h, p.z, 0f)), 180f);
-        Assert.Null(PlaceWaysIn.Joining(Cave, PlaceWaysIn.Of(farSide.Select(p => new Vector2(p.x, p.z)).ToList(), farSide.Select(p => p.y).ToList(), Cave), out _));
+        Assert.Null(LocationWaysIn.Joining(Cave, LocationWaysIn.Of(farSide.Select(p => new Vector2(p.x, p.z)).ToList(), farSide.Select(p => p.y).ToList(), Cave), out _));
     }
 
     /// <summary>A straight way into the Cave heading <paramref name="degrees"/> (from east), 16 m long, climbing (1) or coming down (-1) 3 m.</summary>
-    private static PlaceWaysIn.Way Straight(float degrees, int rise)
+    private static LocationWaysIn.Way Straight(float degrees, int rise)
     {
         var dir = new Vector2(Mathf.Cos(degrees * Mathf.PI / 180f), Mathf.Sin(degrees * Mathf.PI / 180f));
         var points = new List<Vector2>();
@@ -331,18 +331,18 @@ public class ApproachCorridorTests : IDisposable
             points.Add(Cave - dir * (16f - 2f * k));
             heights.Add(rise > 0 ? 130f + 0.375f * k : 133f - 0.375f * k);
         }
-        return PlaceWaysIn.Of(points, heights, Cave)!;
+        return LocationWaysIn.Of(points, heights, Cave)!;
     }
 
-    /// <summary>The same-side angle is the places' own (<see cref="PlaceWaysIn.SameSideAngle"/>, the project owner's, 5 Nov), not the road
+    /// <summary>The same-side angle is the locations' own (<see cref="LocationWaysIn.SameSideAngle"/>, the project owner's, 5 Nov), not the road
     /// corridor's: two ways climbing the same way 60 degrees apart are one way in; at the angle or more, two.</summary>
     [Fact]
     public void TwoWaysClimbingTheSameWaySixtyDegreesApartAreOneWayIn()
     {
-        Assert.True(PlaceWaysIn.SameSideAngle > RoadNetworkGenerator.CorridorAngle);
-        Assert.True(PlaceWaysIn.SameWay(Straight(0f, 1), Straight(60f, 1)));
-        Assert.True(PlaceWaysIn.SameWay(Straight(0f, -1), Straight(60f, -1)));
-        Assert.True(PlaceWaysIn.SameWay(Straight(0f, 1), Straight(PlaceWaysIn.SameSideAngle - 1f, 1)));
+        Assert.True(LocationWaysIn.SameSideAngle > RoadNetworkGenerator.CorridorAngle);
+        Assert.True(LocationWaysIn.SameWay(Straight(0f, 1), Straight(60f, 1)));
+        Assert.True(LocationWaysIn.SameWay(Straight(0f, -1), Straight(60f, -1)));
+        Assert.True(LocationWaysIn.SameWay(Straight(0f, 1), Straight(LocationWaysIn.SameSideAngle - 1f, 1)));
     }
 
     [Theory]
@@ -351,8 +351,8 @@ public class ApproachCorridorTests : IDisposable
     [InlineData(45f)]
     public void TwoWaysClimbingTheSameWayAtTheSameSideAngleOrMoreApartAreTwo(float more)
     {
-        Assert.False(PlaceWaysIn.SameWay(Straight(0f, 1), Straight(PlaceWaysIn.SameSideAngle + more, 1)));
-        Assert.False(PlaceWaysIn.SameWay(Straight(0f, -1), Straight(-(PlaceWaysIn.SameSideAngle + more), -1)));
+        Assert.False(LocationWaysIn.SameWay(Straight(0f, 1), Straight(LocationWaysIn.SameSideAngle + more, 1)));
+        Assert.False(LocationWaysIn.SameWay(Straight(0f, -1), Straight(-(LocationWaysIn.SameSideAngle + more), -1)));
     }
 
     /// <summary>One close staircase going up and one going down are two ways in, however close.</summary>
@@ -362,12 +362,12 @@ public class ApproachCorridorTests : IDisposable
     [InlineData(60f)]
     public void AWayUpAndAWayDownBesideEachOtherAreBothKept(float apart)
     {
-        Assert.False(PlaceWaysIn.SameWay(Straight(0f, 1), Straight(apart, -1)));
-        Assert.False(PlaceWaysIn.SameWay(Straight(apart, -1), Straight(0f, 1)));
+        Assert.False(LocationWaysIn.SameWay(Straight(0f, 1), Straight(apart, -1)));
+        Assert.False(LocationWaysIn.SameWay(Straight(apart, -1), Straight(0f, 1)));
     }
 
-    /// <summary>A turning approach whose top lands farther from the place's centre than its foot: east 20 m along the place's
-    /// row, then north, climbing a metre a stair. Its place end is its own (<see cref="StairRun.To"/>, the plan's end), never the
+    /// <summary>A turning approach whose top lands farther from the location's centre than its foot: east 20 m along the location's
+    /// row, then north, climbing a metre a stair. Its location end is its own (<see cref="StairRun.To"/>, the plan's end), never the
     /// end nearer the centre, so it reads as climbing (Rise +1), as a staircase and as a plan; coming down it reads -1.</summary>
     private static (bool stair, float x, float y, float z, float yaw)[] TurningAway(bool up)
     {
@@ -382,17 +382,17 @@ public class ApproachCorridorTests : IDisposable
     }
 
     [Fact]
-    public void ATurningApproachWhoseTopIsFartherFromThePlaceThanItsFootStillClimbs()
+    public void ATurningApproachWhoseTopIsFartherFromTheLocationThanItsFootStillClimbs()
     {
         var up = TurningAway(true);
         var top = new Vector2(up[up.Length - 1].x, up[up.Length - 1].z);
         Assert.True(Vector2.Distance(top, Cave) > Vector2.Distance(new Vector2(up[0].x, up[0].z), Cave), "its top is farther from the centre than its foot");
         var run = StairRun.FromPlan(new Vector2(up[0].x, up[0].z), top, RoadStairRuns.Width, Plan(up), StairKit.Stone);
-        run.KeepsSiteRocks = true;
-        run.ExpectedPlace = (Cave, 143f);
-        Assert.Equal(1, PlaceWaysIn.Of(run, Cave)!.Rise);
-        Assert.Equal(1, PlaceWaysIn.Of(Plan(up), Cave)!.Rise);
-        Assert.Equal(-1, PlaceWaysIn.Of(Plan(TurningAway(false)), Cave)!.Rise);
+        run.KeepsLocationRocks = true;
+        run.ExpectedLocation = (Cave, 143f);
+        Assert.Equal(1, LocationWaysIn.Of(run, Cave)!.Rise);
+        Assert.Equal(1, LocationWaysIn.Of(Plan(up), Cave)!.Rise);
+        Assert.Equal(-1, LocationWaysIn.Of(Plan(TurningAway(false)), Cave)!.Rise);
     }
 
     /// <summary>An up staircase and a down staircase side by side (the same lines, 2 m apart) are both kept.</summary>
@@ -402,10 +402,10 @@ public class ApproachCorridorTests : IDisposable
         var up = TurningAway(true);
         var down = TurningAway(false).Select(p => (p.stair, p.x, p.y, p.z + 2f, p.yaw)).ToArray();
         LayApproach(up);
-        Assert.True(PlaceWaysIn.There(Cave).Count == 1);
+        Assert.True(LocationWaysIn.There(Cave).Count == 1);
         Assert.False(RoadStairRuns.DuplicatesAWayIn(Plan(down), Cave));
         LayApproach(down);
-        Assert.Empty(PlaceWaysIn.Twins());
-        Assert.Equal(2, PlaceWaysIn.There(Cave).Count);
+        Assert.Empty(LocationWaysIn.Twins());
+        Assert.Equal(2, LocationWaysIn.There(Cave).Count);
     }
 }

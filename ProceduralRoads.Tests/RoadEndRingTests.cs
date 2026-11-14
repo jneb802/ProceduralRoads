@@ -182,23 +182,44 @@ public class RoadEndRingTests
         Assert.False(ring.Intrudes(plan, out string piece), piece);
     }
 
-    /// <summary>A flight going down from a road's end (an approach to a place below): its top arrives on the ring, its exit
-    /// edge on the circle, and nothing of it stands inside the ring or the lane.</summary>
+    /// <summary>A flight going down from a road's end (an approach to a location below): its top arrives on the ring, its exit
+    /// edge on the circle, and nothing of it stands inside the ring or the lane. The road arrives heading north at 12 m; the
+    /// ground falls away north of a floor's length past the ring at a flight's grade.</summary>
+    private static float Down(float x, float z) => 12f - 0.5f * Mathf.Max(0f, z - 3.5f);
+
+    private static StairPlan DownFrom(float footZ, RoadEndRing ring) =>
+        StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, footZ), Down, topLandings: 1, sunkFoot: true, ring: ring);
+
     [Fact]
     public void AFlightDescendingFromARoadsEndArrivesOnItsRing()
     {
-        // The road arrives heading north at 12 m; the ground falls away north of a floor's length past the ring at a flight's grade.
-        static float Down(float x, float z) => 12f - 0.5f * Mathf.Max(0f, z - 3.5f);
         var ring = new RoadEndRing(new Vector2(0f, 0f), 0f, 12f);
-        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 24f), Down, topLandings: 1, sunkFoot: true, ring: ring);
+        // From a foot whose straight flight's top floor ends on the circle (23.5 m out: whole pieces back to 1.5 m).
+        StairPlan plan = DownFrom(23.5f, ring);
         Assert.True(plan.Reached, plan.Reason);
         Assert.True(plan.Reversed);
         var exit = new Vector2(plan.End.x, plan.End.z);
-        Assert.True(Mathf.Abs(exit.magnitude - ring.Radius) <= RoadEndRing.Delta + 0.01f, $"top's exit at {exit}");
+        Assert.True(ring.Allows(exit, StairLayout.Wrap(plan.EndHeading + 180f), StairLayout.PieceRun), $"top's exit at {exit} on {plan.EndHeading}");
         Assert.Null(plan.RingStart);
         Assert.False(ring.Intrudes(plan, out string piece), piece);
         // Straight on: it goes down the way the road arrives.
         Assert.True(Mathf.Abs(RoadEndRing.Turn(StairLayout.Wrap(plan.EndHeading + 180f), 0f)) <= 22.51f, $"goes down on {plan.EndHeading + 180f}");
+    }
+
+    /// <summary>Changed (decision 6j, its precise fallback): an arrival on the ring is the start's own target
+    /// (RoadEndRing.Allows), not a band round the circle. From a foot 24 m out the straight flight's top floor ends half a
+    /// metre past the circle, which the band took (its exit 2 m from the road's end); now the top arrives only where a start
+    /// would set off, on the circle, or the flight is not laid.</summary>
+    [Fact]
+    public void AnArrivalOffTheCircleIsNotTakenWhereAStartWouldNotBe()
+    {
+        var ring = new RoadEndRing(new Vector2(0f, 0f), 0f, 12f);
+        StairPlan plan = DownFrom(24f, ring);
+        var exit = new Vector2(plan.End.x, plan.End.z);
+        Assert.True(!plan.Reached || ring.Allows(exit, StairLayout.Wrap(plan.EndHeading + 180f), StairLayout.PieceRun),
+            $"arrived {exit.magnitude:F2} m from the road's end (the circle {ring.Radius:F2}) on {plan.EndHeading}");
+        // The start's own test, at the exit the band took: refused there.
+        Assert.False(ring.Allows(new Vector2(0f, 2f), 0f, StairLayout.PieceRun));
     }
 
     /// <summary>Where nothing fits from a road's end (every start hemmed in), none is laid there; from a ring further back

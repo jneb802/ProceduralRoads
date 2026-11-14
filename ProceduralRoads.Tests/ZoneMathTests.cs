@@ -133,7 +133,9 @@ public class NamedDefaultsTests
 
 public class ModelledHeightRecordedTests
 {
-    /// <summary>Recorded before ModelledHeight read the writer's own delta: a hash of every height's bits.</summary>
+    /// <summary>Recorded before ModelledHeight read the writer's own delta: a hash of every height's bits. Recorded again when
+    /// the fit past a road's end took the road's own last stretch (RoadTerrainModifier.FitHeightAtVertex): the vertices with
+    /// every reaching point on one side of them changed, no other.</summary>
     [Fact]
     public void ModelledHeightIsBitForBitAsRecorded()
     {
@@ -158,7 +160,7 @@ public class ModelledHeightRecordedTests
                 hash = (hash ^ (uint)System.BitConverter.ToInt32(System.BitConverter.GetBytes(RoadTerrainModifier.ModelledHeight(points, vertex, ground, fill)), 0)) * 16777619u;
             }
         }
-        Assert.Equal(4142811402u, hash);
+        Assert.Equal(2890224176u, hash);
     }
 }
 
@@ -184,6 +186,8 @@ public class EaseLengthTests
     [InlineData(3.1f, 0.123f, 25.203f)]
     public void TheEaseIsTheRiseOverTheGradeFlooredAtOneHundredth(float rise, float grade, float ease)
     {
+        // The zero row is the floor of RoadGrade.Floored's divisor, the one zero cap the suite sets: only EaseLength is
+        // called under it, and the configured cap is put back at once (no road is planned with it).
         using var keep = StaticOverride.Keep(() => RoadGrade.Configured);
         RoadGrade.Configured = grade;
         Assert.Equal(ease, RoadGrade.EaseLength(rise), 3);

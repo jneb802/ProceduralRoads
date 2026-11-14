@@ -32,12 +32,12 @@ public class RegenerateAfterLoadTests : System.IDisposable
         typeof(RoadNetworkGenerator).GetField(name, BindingFlags.NonPublic | BindingFlags.Static)!
             .SetValue(null, value);
 
-    /// <summary>Places the generator can actually build a network between, so
+    /// <summary>Locations the generator can actually build a network between, so
     /// that a regeneration really regenerates. Without them the test would
     /// pass on a run that did nothing.</summary>
-    private static void GiveTheWorldSomePlaces(ZoneSystem zones)
+    private static void GiveTheWorldSomeLocations(ZoneSystem zones)
     {
-        (string name, float x, float z)[] places =
+        (string name, float x, float z)[] locations =
         {
             ("StartTemple", 0f, 0f),
             ("Eikthyrnir", -220f, -120f),
@@ -45,14 +45,14 @@ public class RegenerateAfterLoadTests : System.IDisposable
             ("Crypt4", -120f, 240f),
             ("SunkenCrypt4", 180f, -260f),
         };
-        foreach ((string name, float x, float z) place in places)
+        foreach ((string name, float x, float z) location in locations)
         {
             TestLocations.Add(zones, new ZoneSystem.LocationInstance
             {
-                m_position = new Vector3(place.x, 0f, place.z),
+                m_position = new Vector3(location.x, 0f, location.z),
                 m_location = new ZoneSystem.ZoneLocation
                 {
-                    m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(place.name),
+                    m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(location.name),
                     m_exteriorRadius = 16f,
                 },
             });
@@ -65,7 +65,7 @@ public class RegenerateAfterLoadTests : System.IDisposable
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
         _world.WithWorld(world).WithZdos().WithZoneSystem().WithNetwork(server: true);
         RoadNetworkGenerator.Reset();
-        GiveTheWorldSomePlaces(ZoneSystem.instance!);
+        GiveTheWorldSomeLocations(ZoneSystem.instance!);
         return world;
     }
 

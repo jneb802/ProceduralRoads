@@ -23,7 +23,7 @@ public static class RoadEndpoint
             }
         }
         // Keep the original destination when no nearby ground exists. A failed
-        // search must remain visible, not become a road to some unrelated place.
+        // search must remain visible, not become a road to some unrelated location.
         return center;
     }
 

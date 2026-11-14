@@ -56,6 +56,41 @@ public class RoadMeetingTests : IDisposable
         Assert.True(tee, "the road ending on the trunk was refused");
     }
 
+    [Fact]
+    public void ACarriedEdgeAsksTheSameMeetingOwnerAsAnOrdinaryRoad()
+    {
+        RoadNetworkGenerator.Reset();
+        var world = new FlatWorld();
+        _scope.WithWorld(world);
+        SetPathfinder(new RoadPathfinder(world));
+        RoadSpatialGrid.PlannedPath Line(Vector2 from, Vector2 to)
+        {
+            var points = new List<Vector2>();
+            var heights = new List<float>();
+            var debug = new List<RoadPointDebugInfo>();
+            int length = Mathf.CeilToInt(Vector2.Distance(from, to));
+            for (int i = 0; i <= length; i++)
+            {
+                points.Add(Vector2.Lerp(from, to, i / (float)length));
+                heights.Add(40f); debug.Add(default);
+            }
+            return new RoadSpatialGrid.PlannedPath(points, heights, debug, 4f, length, false);
+        }
+        RoadSpatialGrid.Commit(Line(new Vector2(-30f, 0f), new Vector2(30f, 0f)));
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        var approach = Line(new Vector2(0f, -24f), new Vector2(0f, -8f));
+        var edge = Line(new Vector2(0f, -8f), new Vector2(0f, 24f));
+        var ordinary = new RoadNetworkGenerator.PlannedRoad { Plans = new() { approach, edge } };
+        var carried = new RoadNetworkGenerator.PlannedRoad { Plans = new() { approach }, Carried = new() { edge } };
+        var expected = RoadNetworkGenerator.RoadRefusal(ordinary, out _);
+        Assert.NotNull(expected);
+        Assert.Equal("crosses another road", expected!.Reason);
+        var actual = RoadNetworkGenerator.RoadRefusal(carried, out _);
+        Assert.NotNull(actual);
+        Assert.Equal(expected.Reason, actual!.Reason);
+        Assert.Equal(expected.At, actual.At);
+    }
+
     /// <summary>A road at 40 m, the trunk's height, from z = -60 to 60, its x given by <paramref name="x"/>.</summary>
     private static RoadSpatialGrid.PlannedPath Road(Func<float, float> x)
     {
@@ -139,7 +174,11 @@ public class RoadMeetingTests : IDisposable
     /// <summary>A strip of level ground at 40 m between the sea north of z = 11 and south of z = -40.</summary>
     private sealed class Strip : WorldGenerator
     {
-        public override float GetHeight(float wx, float wy) => Mathf.Abs(wx) > 200f || wy > 11f || wy < -40f ? 0f : 40f;
+        /// <summary>Where the sea begins to the south.</summary>
+        public float South = -40f;
+        /// <summary>The ground from z = 3 to the sea in the north: a bank over the strip where it is higher.</summary>
+        public float NorthBank = 40f;
+        public override float GetHeight(float wx, float wy) => Mathf.Abs(wx) > 200f || wy > 11f || wy < South ? 0f : wy >= 3f ? NorthBank : 40f;
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
         public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
         public override int GetSeed() => 77;
@@ -147,8 +186,8 @@ public class RoadMeetingTests : IDisposable
 
     /// <summary>An earthwork re-route is taken only where the network takes it: one that crosses another road is not,
     /// and the first plan stands. Here the road's straight line passes
-    /// 7 m from a short road on a 3.5 m fill and is held up to it (a stretch held over 3 m off its profile, which is
-    /// re-routed but never refused); the only way round, south, crosses a road that runs from just south of the line to
+    /// 7 m from a short road on a bank 4 m over the strip and is held up to it (a stretch held over 3 m off its profile, which is
+    /// re-routed but never refused; against the bank it is a shelf, not a ridge); the only way round, south, crosses a road that runs from just south of the line to
     /// the sea. Taken, the re-route was refused for the crossing and the road with it.</summary>
     [Fact]
     public void AnEarthworkReRouteThatCrossesAnotherRoadIsNotTaken()
@@ -159,7 +198,7 @@ public class RoadMeetingTests : IDisposable
             bool Build()
             {
                 RoadNetworkGenerator.Reset();
-                var world = new Strip();
+                var world = new Strip { NorthBank = 44f };
                 _scope.WithWorld(world);
                 SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f, Fords = false, Bridges = false });
                 RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
@@ -182,16 +221,16 @@ public class RoadMeetingTests : IDisposable
         finally { RoadNetworkGenerator.EarthworkCap = cap; }
     }
 
-    /// <summary>The planner's join and its search ask one owner whether a place is already served, the same as the count
-    /// of places reached: a place 19 m from a trunk on a 1 m fill is reached (it is within the place's reach and within a
+    /// <summary>The planner's join and its search ask one owner whether a location is already served, the same as the count
+    /// of locations reached: a location 19 m from a trunk on a 1 m fill is reached (it is within the location's reach and within a
     /// step of its level, RoadNetworkGenerator.ReachRise), and the
     /// planner leaves it, where it used to search for a junction at grade from it again (none along the fill) and come
     /// back with no join, or build a connector beside the trunk. A boss's entrance is not served by a road passing it.</summary>
     [Fact]
-    public void APlaceTheNetworkServesIsServedForThePlannerAsForTheCount()
+    public void ALocationTheNetworkServesIsServedForThePlannerAsForTheCount()
     {
         RoadNetworkGenerator.Reset();
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         var world = new FlatWorld();
         _scope.WithWorld(world);
         var finder = new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f };
@@ -208,7 +247,7 @@ public class RoadMeetingTests : IDisposable
             var hints = new List<Vector2>(points);
 
             Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-            Assert.True(RoadNetworkGenerator.JoinPlace(finder, world, hints, new RoadConnectionPlanner.Place("Cave", Vector3.zero, 10f)));
+            Assert.True(RoadNetworkGenerator.JoinLocation(finder, world, hints, new RoadConnectionPlanner.Location("Cave", Vector3.zero, 10f)));
             Assert.Equal(laid, RoadSpatialGrid.TotalRoadLength);
             Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f, "SomeBossEntrance"));
         }
@@ -217,7 +256,9 @@ public class RoadMeetingTests : IDisposable
 
     /// <summary>An earthwork re-route passed over for crossing another road prices that crossing up for the next attempt,
     /// which goes round it: here past the end of the short road to the south. Without it the next attempt searched the same
-    /// way, was passed over again, and the road kept its first plan, held 3.5 m up to the road on a fill beside it.</summary>
+    /// way, was passed over again, and the road kept its first plan, held 3.5 m up to the road on a fill beside it. The sea
+    /// lies 40 m beyond that road's end: 20 m beyond, the way round ran along the shore with its edge over the sea, past the
+    /// earthwork cap across its width.</summary>
     [Fact]
     public void AnEarthworkReRoutePassedOverForACrossingGoesRoundItNextTime()
     {
@@ -225,7 +266,7 @@ public class RoadMeetingTests : IDisposable
         try
         {
             RoadNetworkGenerator.Reset();
-            var world = new Strip();
+            var world = new Strip { South = -60f };
             _scope.WithWorld(world);
             SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f, Fords = false, Bridges = false });
             RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
@@ -237,7 +278,7 @@ public class RoadMeetingTests : IDisposable
                 return new RoadSpatialGrid.PlannedPath(points, points.Select(_ => h).ToList(), points.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, n, false);
             }
             RoadSpatialGrid.Commit(Laid(-4f, 7f, 4f, 7f, 43.5f));
-            // A short road south of the line, ending 20 m short of the sea.
+            // A short road south of the line, ending 40 m short of the sea.
             RoadSpatialGrid.Commit(Laid(-6f, -8f, -6f, -20f, 40f));
             RoadSpatialGrid.FinalizeRoadNetwork();
 
@@ -248,7 +289,7 @@ public class RoadMeetingTests : IDisposable
         finally { RoadNetworkGenerator.EarthworkCap = cap; }
     }
 
-    /// <summary>A staircase onto a placed place's landing meets the network along its walk: one point a row, at the row's
+    /// <summary>A staircase onto a placed location's landing meets the network along its walk: one point a row, at the row's
     /// middle and walking surface. Taken piece by piece, two pieces a row side by side read as a zig-zag across the width
     /// and as a longer road, and a short pass beside another road could count as a braid.</summary>
     [Fact]
@@ -273,10 +314,10 @@ public class RoadMeetingTests : IDisposable
         }
     }
 
-    /// <summary>A place's join tries the next junction away from one whose road is refused: here the cheapest junction,
+    /// <summary>A location's join tries the next junction away from one whose road is refused: here the cheapest junction,
     /// straight north on the trunk, can be reached only across a short road on a 5 m fill (not a junction: off grade),
     /// and that road is refused for crossing it; a junction further east along the trunk is reached clear of it. The join
-    /// took its first junction only, and the place was left cut off (offline: the components the join-arrival rule added).</summary>
+    /// took its first junction only, and the location was left cut off (offline: the components the join-arrival rule added).</summary>
     [Fact]
     public void AJoinTriesTheNextJunctionWhereTheRoadToTheFirstIsRefused()
     {
@@ -288,7 +329,7 @@ public class RoadMeetingTests : IDisposable
             bool Join(int tries)
             {
                 RoadNetworkGenerator.Reset();
-                RoadSiteProtection.Reset();
+                RoadLocationProtection.Reset();
                 var world = new FlatWorld();
                 _scope.WithWorld(world);
                 var finder = new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f };
@@ -305,7 +346,7 @@ public class RoadMeetingTests : IDisposable
                 RoadSpatialGrid.Commit(trunk);
                 RoadSpatialGrid.Commit(Laid(-6f, -20f, 6f, -20f, 45f));
                 RoadSpatialGrid.FinalizeRoadNetwork();
-                return RoadNetworkGenerator.JoinPlace(finder, world, new List<Vector2>(trunk.Points), new RoadConnectionPlanner.Place("Cave", new Vector3(0f, 0f, -40f), 5f));
+                return RoadNetworkGenerator.JoinLocation(finder, world, new List<Vector2>(trunk.Points), new RoadConnectionPlanner.Location("Cave", new Vector3(0f, 0f, -40f), 5f));
             }
             Assert.False(Join(0), "the road to the first junction was built");
             Assert.True(Join(2), "refused: " + RoadSpatialGrid.LastRefusal);

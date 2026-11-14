@@ -43,11 +43,6 @@ internal static class RoadEarthworkNoise
     internal static float FlatGround = 0.15f;
     internal static bool Enabled => Amplitude > 0f;
 
-    /// <summary>The most the noise and fill spread can add to a side slope's
-    /// reach, for padding the zone gather.</summary>
-    internal static float MaxExtraReach =>
-        (Enabled ? RoadConstants.TerrainBlendMargin * WidthVariation : 0f) + (FillSpread > 0f ? FillSpreadMax : 0f);
-
     /// <summary>How much wider or narrower the side slope is at this road point.</summary>
     internal static float MarginFactor(Vector2 roadPoint) =>
         Enabled ? 1f + WidthVariation * (2f * Perlin01((roadPoint.x + 1013f) / 32f, (roadPoint.y - 2027f) / 32f) - 1f) : 1f;
@@ -71,8 +66,9 @@ internal static class RoadEarthworkNoise
     /// <summary>The fine octave's frequency, per metre (vanilla's 0.4: a 2.5 m wave).</summary>
     internal const float FineFrequency = 0.4f;
 
-    /// <summary>Vanilla's fine terrain detail at a point, in metres about zero.</summary>
-    internal static float Detail(float x, float z, bool mistlands) => Detail(x, z, mistlands, float.PositiveInfinity);
+    /// <summary>Vanilla's fine terrain detail at a point, in metres about zero, as <paramref name="biome"/> carries it
+    /// (RoadRules.FaceDetailCoarse, RoadRules.FaceDetailFine).</summary>
+    internal static float Detail(float x, float z, RoadRules.Rules biome) => Detail(x, z, biome, float.PositiveInfinity);
 
     /// <summary>
     /// The detail as a face <paramref name="faceWidth"/> metres wide carries it: each octave scaled by the face's width
@@ -81,9 +77,9 @@ internal static class RoadEarthworkNoise
     /// Mistlands wave on a 2 m face stood as a wall. Scaled, each octave's wave is squeezed onto the face no more than the
     /// face is narrower than it, so the long wave that made the wall is mostly gone and the short one nearly whole.
     /// </summary>
-    internal static float Detail(float x, float z, bool mistlands, float faceWidth)
+    internal static float Detail(float x, float z, RoadRules.Rules biome, float faceWidth)
     {
-        float coarse = mistlands ? 6f : 2f, fine = mistlands ? 2f : 0.6f;
+        float coarse = biome.FaceDetailCoarse, fine = biome.FaceDetailFine;
         coarse *= OnFace(faceWidth, CoarseFrequency);
         fine *= OnFace(faceWidth, FineFrequency);
         return coarse * (Perlin01(x * CoarseFrequency, z * CoarseFrequency) - 0.5f)
@@ -103,10 +99,10 @@ internal static class RoadEarthworkNoise
     {
         if (!Enabled || blend <= 0f || blend >= 1f) return 0f;
         var wg = WorldGenerator.instance;
-        bool mist = wg != null && wg.GetBiome(vertex.x, vertex.y) == Heightmap.Biome.Mistlands;
+        RoadRules.Rules here = wg != null ? RoadRules.For(RoadBiome.At(wg, vertex)) : RoadRules.Global;
         float shape = 4f * blend * (1f - blend);
         float scale = Mathf.Min(1f, Mathf.Abs(earthwork) / 2f);
-        return Amplitude * Detail(vertex.x, vertex.y, mist, faceWidth) * shape * scale;
+        return Amplitude * Detail(vertex.x, vertex.y, here, faceWidth) * shape * scale;
     }
 
     // Ken Perlin's improved noise in 2D, mapped to [0, 1] like Unity's

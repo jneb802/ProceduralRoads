@@ -11,7 +11,7 @@ public class SwitchbackTests
     private static List<Vector2> WideU()=>new(){new(0,0),new(40,0),new(40,20),new(0,20)};
     [Fact] public void BroadUTurnHasSpaceAndGentleLanding()
     {
-        RoadSpatialGrid.Clear();RoadSiteProtection.Reset();using var cap=GradeCap.At(0.35f);
+        RoadSpatialGrid.Clear();RoadLocationProtection.Reset();using var cap=GradeCap.At(0.35f);
         var path=WideU();
         Assert.True(RoadSwitchbacks.Shape(path,4,out var rounded,out var landing));
         Assert.NotNull(rounded);Assert.NotNull(landing);
@@ -27,7 +27,7 @@ public class SwitchbackTests
     }
     [Fact] public void BroadTurnRemainsGentleAfterTheTerrainHeightFit()
     {
-        RoadSpatialGrid.Clear();RoadSiteProtection.Reset();
+        RoadSpatialGrid.Clear();RoadLocationProtection.Reset();
         using var cap=GradeCap.At(0.35f);
         var world=new Slope();var plan=RoadSpatialGrid.PlanRoadPath(WideU(),4,world)!;
         Assert.NotNull(plan);
@@ -68,7 +68,7 @@ public class SwitchbackTests
     }
     [Fact] public void PinchedUIsRefusedInsteadOfBlendingItsLegs()
     {
-        RoadSpatialGrid.Clear();RoadSiteProtection.Reset();
+        RoadSpatialGrid.Clear();RoadLocationProtection.Reset();
         var path=new List<Vector2>{new(0,0),new(40,0),new(40,8),new(0,8)};
         Assert.False(RoadSwitchbacks.Shape(path,4,out _,out _));
         Assert.Null(RoadSpatialGrid.PlanRoadPath(path,4,new Slope()));
@@ -108,11 +108,11 @@ public class SwitchbackTests
         Assert.False(RoadSwitchbacks.Separated(points,new(){60,65,67,69},4));
         Assert.True(RoadSwitchbacks.Separated(points,new(){60,60,60,60},4));
     }
-    [Fact] public void RoundingMustNotCutThroughAProtectedSite()
+    [Fact] public void RoundingMustNotCutThroughAProtectedLocation()
     {
         RoadSpatialGrid.Clear();
-        RoadSiteProtection.Set(new[]{new RoadSiteProtection.Footprint(new(38,2),2)});
+        RoadLocationProtection.Set(new[]{new RoadLocationProtection.Footprint(new(38,2),2)});
         try { Assert.Null(RoadSpatialGrid.PlanRoadPath(WideU(),4,new Slope())); }
-        finally {RoadSiteProtection.Reset();}
+        finally {RoadLocationProtection.Reset();}
     }
 }

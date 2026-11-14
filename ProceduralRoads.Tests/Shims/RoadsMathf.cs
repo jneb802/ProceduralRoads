@@ -1,5 +1,5 @@
 // Roads' part of the Mathf double (Valheim.Testing.Doubles): the angle conversions the staircase and
-// placed-site code use, as Unity defines them.
+// placed-location code use, as Unity defines them.
 namespace UnityEngine;
 
 public partial struct Mathf

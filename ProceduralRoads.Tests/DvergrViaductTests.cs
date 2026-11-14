@@ -263,9 +263,12 @@ public sealed class DvergrViaductTests : IDisposable
         RoadCrossing c = DvergrViaduct.ValleyCrossing(new Vector2(-24f, 0f), new Vector2(24f, 0f), world, out string why)!;
         Assert.True(c != null, why);
         Assert.False(DvergrViaduct.HasNavigationBay(c!, world));
-        // The deck's modules, floors and course: the floors that would lie wholly in the bank are left out, the course
-        // over them is flush with the bank.
-        var deck = DvergrViaduct.SolveComplete(c!, world, 1).Where(p => p.Kind == StructurePieceKind.ViaductDeck).Select(p => Mathf.Round(Along(c!, p) * 2f) / 2f).OrderBy(a => a).Distinct().ToList();
+        // The deck's modules, floors and course, laid or left out as wholly in the finished ground (BuriedPieces.Buried: the
+        // bank at or over its top, the course flush with a bank at the deck's height too, the rest standing without them).
+        List<StructurePiece> laid = DvergrViaduct.Solve(c!, world, 1, false, out DvergrViaduct.HoldReport report);
+        Func<Vector2, float> finished = StructureGround.At(world);
+        Assert.All(report.Buried, p => Assert.True(BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (x, z) => finished(new Vector2(x, z))), $"{p.Prefab} at {p.Position}"));
+        var deck = laid.Concat(report.Buried).Where(p => p.Kind == StructurePieceKind.ViaductDeck).Select(p => Mathf.Round(Along(c!, p) * 2f) / 2f).OrderBy(a => a).Distinct().ToList();
         for (int i = 1; i < deck.Count; i++) Assert.Equal(DvergrViaduct.Module, deck[i] - deck[i - 1], 3);
         // Bank to bank: the remainder past the outer piers goes onto the banks.
         Assert.True(deck.First() - 1f <= 0f && deck.Last() + 1f >= c!.Width, $"deck {deck.First() - 1f}..{deck.Last() + 1f} of {c.Width}");
@@ -590,8 +593,8 @@ public sealed class DvergrViaductTests : IDisposable
     }
 
     /// <summary>Bays flex where 16 m ones do not carry the deck (the other bays may flex a little), the widest that does (fewer piers do): 18 m piers stand 16 m apart, 22 m
-    /// piers 12 m (two corbel bands tip to tip, never closer), those between no closer the taller they are, and 23 m piers
-    /// are over the ceiling.</summary>
+    /// piers 12 m (two corbel bands tip to tip, never closer), those between no closer the taller they are, and 28 m piers
+    /// are over the ceiling by more than a mound under them makes up (RoadRules.ViaductMostMound).</summary>
     [Fact]
     public void TallPiersStandCloser()
     {
@@ -611,7 +614,7 @@ public sealed class DvergrViaductTests : IDisposable
             Assert.True(bay <= last + 1e-3f, $"{depth} m: {bay} m bays, wider than {last} m");
             last = bay;
         }
-        var deep = new MistValley { Top = 80f, Depth = 23f, FloorHalf = 36f, Face = 2f };
+        var deep = new MistValley { Top = 80f, Depth = DvergrViaduct.PierCeiling + RoadRules.ViaductMostMound + 0.5f, FloorHalf = 36f, Face = 2f };
         _scope.WithWorld(deep);
         Assert.Null(DvergrViaduct.ValleyCrossing(new Vector2(-48f, 0f), new Vector2(48f, 0f), deep, out string over));
         Assert.Contains("ceiling", over);

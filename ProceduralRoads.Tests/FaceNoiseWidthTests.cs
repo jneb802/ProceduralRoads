@@ -98,8 +98,8 @@ public class FaceNoiseWidthTests
             {
                 steepOn = Mathf.Max(steepOn, Mathf.Abs(on[Index(x, z)] - on[Index(x, z + 1)]));
                 steepOff = Mathf.Max(steepOff, Mathf.Abs(off[Index(x, z)] - off[Index(x, z + 1)]));
-                scaled = Mathf.Max(scaled, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, true, face)));
-                full = Mathf.Max(full, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, true)));
+                scaled = Mathf.Max(scaled, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, RoadRules.Mistlands, face)));
+                full = Mathf.Max(full, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, RoadRules.Mistlands)));
             }
         }
         _output.WriteLine($"steepest face step: noise {steepOn:F3} m, plain {steepOff:F3} m; most detail on the face {scaled:F3} m (full {full:F3} m)");
@@ -143,7 +143,7 @@ public class FaceNoiseWidthTests
         float margin = RoadConstants.TerrainBlendMargin * RoadEarthworkNoise.MarginFactor(new Vector2(8872f, -86.24347f));
         float blend = RoadProfile.LevelBlend(3.0f, 4f, margin);
         float earthwork = 36.07f - 34.3f;
-        float full = RoadEarthworkNoise.Detail(vertex.x, vertex.y, true) * 4f * blend * (1f - blend) * Mathf.Min(1f, earthwork / 2f);
+        float full = RoadEarthworkNoise.Detail(vertex.x, vertex.y, RoadRules.Mistlands) * 4f * blend * (1f - blend) * Mathf.Min(1f, earthwork / 2f);
         float bump = RoadEarthworkNoise.FaceBump(vertex, blend, earthwork, RoadProfile.FaceWidth(4f, margin));
         _output.WriteLine($"blend {blend:F3}, face {RoadProfile.FaceWidth(4f, margin):F2} m: full-detail bump {full:F3} m, scaled {bump:F3} m");
         Assert.InRange(full, -1.35f, -1.15f);
@@ -172,7 +172,7 @@ public class FaceNoiseWidthTests
         float margin = RoadConstants.TerrainBlendMargin * RoadEarthworkNoise.MarginFactor(new Vector2(-2496f, 6846f));
         float blend = RoadProfile.LevelBlend(1f, RoadEndRing.PadPointWidth, margin);
         float before = Mathf.Lerp(natural, road, blend)
-            + RoadEarthworkNoise.Detail(vertex.x, vertex.y, true) * 4f * blend * (1f - blend) * Mathf.Min(1f, (road - natural) / 2f);
+            + RoadEarthworkNoise.Detail(vertex.x, vertex.y, RoadRules.Mistlands) * 4f * blend * (1f - blend) * Mathf.Min(1f, (road - natural) / 2f);
         _output.WriteLine($"pad face at (-2496, 6845): {h:F2} (before {before:F2}), road {road:F2}, natural {natural:F2}");
         Assert.True(before > road + 0.3f, $"before {before:F2}: the bump is not reproduced");
         Assert.InRange(h, natural, road + 1e-3f);

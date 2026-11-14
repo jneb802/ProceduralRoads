@@ -31,7 +31,11 @@ public class WalkOwnerTests
         // ---- Not a walk between two heights ----
         new("Roads/RockClearances.cs", "highest + StairLayout.StepUp", "the rock layer over the treads a lump on them is in, not a walk"),
         new("Roads/RoadStairRuns.cs", "CrestStubJoinReach, StairLayout.StepUp, clip", "two staircases' tops joined top to top (no road): JoinTops' height tolerance, a whole number of rises apart within it (two calls)"),
-        new("Roads/StairEnds.cs", "d <= StairLayout.StepUp && d >= -over", "the end reader's step-off band, one-sided: a step under the edge, up to a rise over a low edge (StepsOff)"),
+        new("Roads/RoadStairRuns.PlacedLocations.cs", "ground - surface <= StairLayout.StepUp", "a walking surface up to a step under the ground, one-sided: the step up onto it (SurfaceUnderGroundAllowed: a raised landing's walk, an onward floor's corners)"),
+        new("Roads/StairEnds.cs", "EdgeIn(a, b, StairLayout.StepUp)", "the one floor-lands rule's band over the walk: a step, the band's under side Walkable's (EdgeLands)"),
+        new("Roads/StairEnds.cs", "Exit(d, StairLayout.StepUp, joined", "a floor's exit by the same band: a step over the walk (Exit)"),
+        new("Roads/StairEnds.cs", "StepsOff(back, o, hs[1], length, StairLayout.StepUp", "a floor's edge read by the end reader in the same band: a step over the walk"),
+        new("Roads/StairEnds.cs", "Mathf.Abs(d - StairLayout.StepUp), Mathf.Abs(d + over)", "the distance to the step-off band, for the corner furthest from it (StepsOff's line)"),
         new("Roads/StairEnds.cs", "Mathf.Abs(off + StairLayout.StepUp), Mathf.Abs(off - over)", "the distance to the same band, for the nearest miss"),
         new("Roads/StairEnds.cs", "StairLayout.PieceRise : StairLayout.StepUp", "the band's other side: a rise at a stair's low edge, else a step"),
         new("Roads/StairEnds.cs", "seq[0].Walk(seq[0].Depth) > g + StairLayout.StepUp", "a foot's stairs sunk in the ground: their high edge no more than a step over it, one-sided"),

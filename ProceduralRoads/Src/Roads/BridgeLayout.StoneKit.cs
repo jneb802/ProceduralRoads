@@ -15,10 +15,10 @@ namespace ProceduralRoads;
 /// bays, each bay a pier bay, half an arch, or the open middle of a 6 m opening (<see cref="StoneBays"/>):</para>
 /// <list type="bullet">
 /// <item><b>deck</b>: two lanes of <see cref="StoneFloorPrefab"/> (2 x 1 x 2 m, origin at its centre) across
-/// +-<see cref="LaneOffset"/>, their top the walking surface, a metre off the bays: centred on the joints between bays, so
-/// each floor rests half on each of the two bays under it (half on each arch's crown over the middle of an opening, half on
-/// a crown and half open over a 6 m one's), and at each end of the deck a 1 m strip of <see cref="StonePierBlock"/>s laid
-/// across it on the end pier, a block a lane;</item>
+/// +-<see cref="LaneOffset"/>, their top the walking surface, a floor a lane on each bay, as the hand build laid them: on a
+/// pier's top course, on an arch bay's arches, over a 6 m opening's open bay on the two crowns either side. A deck is whole
+/// bays, so it is whole floors from end to end and never needs a part floor (a <see cref="StonePierBlock"/> laid
+/// flat);</item>
 /// <item><b>piers</b>: in a pier bay, courses of four <see cref="StonePierBlock"/> blocks (2 x 1 x 1 m) filling the bay's
 /// 2 x 4 m under the deck, the top course level with the arches, stacked down to the ground; bonded, the two blocks laid
 /// across the deck on one side and the two laid along it on the other, the sides swapping every course;</item>
@@ -28,7 +28,7 @@ namespace ProceduralRoads;
 /// <item><b>railing</b>: centred on each deck edge (across +-<see cref="DeckHalfWidth"/>, half over the deck), a course
 /// level with the deck of the bay's own piece (an arch over an arch bay, a block over a pier bay, none over an open bay,
 /// where nothing would carry it), and a top course of blocks over it, a metre higher, its joints on the bays' middles, over
-/// an open bay resting half on each arch's crown as the floors do;</item>
+/// an open bay resting half on each arch's crown;</item>
 /// <item><b>ends</b>: the stairs as the road meets the end (<see cref="LayEndStairs"/>), two abreast in
 /// <see cref="StoneStairPrefab"/>, each step on a footing of <see cref="StonePillarPrefab"/>s (2 along by 4 across, their
 /// tops at the step's foot) stacked down to the ground, and beside each step on each side a railing block from its foot to
@@ -37,22 +37,22 @@ namespace ProceduralRoads;
 /// <item><b>over a river</b>: whole openings and the piers between them left open over the ship's way
 /// (<see cref="StoneNavigationBays"/>) but for the half arch springing from each pier either side, so the opening reads
 /// as a span left open between two arch springings: each half arch's four arches under the deck, the deck over it ending
-/// on a strip on its crown, the railing's lower course over it to the crown, its top course a metre short of it, as at a
+/// with its floors at its crown, the railing's lower course over it to the crown, its top course a metre short of it, as at a
 /// deck end without stairs.</item>
 /// </list>
 /// <para><b>Nothing is buried</b>: a piece wholly under the ground as the road leaves it (<see cref="RailedGround"/>) is
 /// not laid (<see cref="BuriedPieces.Buried"/>), and a pier or a footing ends at the first course or pillar whose foot is in
 /// the ground. <b>The ruin</b> is every kit's (<see cref="BridgeRuin"/>, keyed by what it decides), more missing
 /// toward mid-span: floors at its deck share, the railing's two courses at its course share, the arches under the deck at
-/// its support share, now and then a joint open from side to side (both floors and the top course over them) at its hole
-/// share, never two within three joints and never two joints running open, so every gap is 2 m, which a player jumps;
+/// its support share, now and then a bay open from side to side (both its floors) at its hole share, never two within
+/// three bays and never two bays running open, so every gap is 2 m, which a player jumps;
 /// every piece is worn as a vanilla location's (<see cref="Ruin.ApplyLocationDamage"/>). The floors and railing over the
-/// bank bays, the end strips, the steps, their footing and the railing beside them always stand, and so do the piers: a
+/// bank bays, the floors over a half arch the deck ends on, the steps, their footing and the railing beside them always stand, and so do the piers: a
 /// pier is courses bonded down to the ground, which no ruin of the deck brings down, as vanilla's masonry piers stand. Every piece
 /// left is on a neighbour's snap points: a railing piece with no neighbour left in its course has one put back, as a top block
 /// with nothing under it has the edge piece under it (and one beside it), so the railing is lost at its course share; a floor with no neighbour
 /// has the other lane's floor put back. A floor resting on no pier, no arch and not between two floors has an arch under it
-/// put back. The complete plan (<see cref="SolveStoneComplete"/>) is
+/// put back (over an open bay, one on each side of it with neither a crown nor a floor). The complete plan (<see cref="SolveStoneComplete"/>) is
 /// what a player can repair it to.</para>
 /// </summary>
 public static partial class BridgeLayout
@@ -88,9 +88,6 @@ public static partial class BridgeLayout
     /// <summary>The stone kit's ruin rolls, apart from every other kit's (<see cref="Ruin"/>).</summary>
     internal const int RoleStoneArch = 29, RoleStoneHole = 30, RoleStoneFloorBack = 31;
 
-    /// <summary>The deck's floors are laid this far along from the bays: centred on the joints between them.</summary>
-    public const float StoneFloorOffset = 1f;
-
     /// <summary>What a 2 m bay of the stone kit's deck stands on.</summary>
     public enum StoneBay
     {
@@ -100,16 +97,15 @@ public static partial class BridgeLayout
         ArchNear,
         /// <summary>The far half of an opening: an arch whose tall end stands on the pier toward the far end.</summary>
         ArchFar,
-        /// <summary>The middle of a 6 m opening, between the two arches' crowns: nothing under the deck, the floors either side
-        /// resting half on a crown.</summary>
+        /// <summary>The middle of a 6 m opening, between the two arches' crowns: nothing under the deck, its floors
+        /// resting on the two crowns either side.</summary>
         Open,
     }
 
     /// <summary>
     /// The stone kit's bays over a deck of <paramref name="bays"/> 2 m bays, near end first, symmetrical about the middle:
     /// a pier bay at each end and one between openings, each opening 4 m (two arches meeting at their crowns) or 6 m (the
-    /// two arches 2 m apart, an open bay between them, the floors offset onto their crowns,
-    /// <see cref="StoneFloorOffset"/>), so a deck is made up in 2 m steps. The 6 m openings are the ones nearest the middle,
+    /// two arches 2 m apart, an open bay between them, its floors on their crowns), so a deck is made up in 2 m steps. The 6 m openings are the ones nearest the middle,
     /// a mirrored pair at a time (or the middle one alone). Where no such layout is symmetrical the piers are widened, as few
     /// bays as can be: each end's pier by one, or the middle pier (between an even number of openings) by one. Of the layouts
     /// with the fewest widened bays, the most openings, then the fewest 6 m ones. Null where none can be laid (2, 4 and
@@ -158,7 +154,7 @@ public static partial class BridgeLayout
     public const float StoneDeckDepth = StoneFloorDepth + 1f;
 
     /// <summary>The ship's way under a stone deck: <see cref="NavigationChannel"/> for its deck (<see cref="WoodDeckHeight"/>,
-    /// <see cref="StoneDeckDepth"/>). Null off a river.</summary>
+    /// <see cref="StoneDeckDepth"/>). Null over no water a ship sails.</summary>
     public static ShipWay? StoneShipWay(RoadCrossing crossing, WorldGenerator world)
     {
         if (crossing == null || world == null || crossing.Kind != CrossingKind.Bridge) return null;
@@ -242,7 +238,7 @@ public static partial class BridgeLayout
     /// and railing over them, its walking surface <paramref name="deck"/> over the water: at each of the ship's height bands
     /// that meets the structure, the band's width and <see cref="Ships.PassingMargin"/> and <see cref="FairwayClearance"/>
     /// each side lie between what reaches furthest into the opening at those heights. That is the half arch under the deck
-    /// (<see cref="StoneArchReach"/>, its origin 1.5 m under the walking surface), the floors, strips and the railing's lower
+    /// (<see cref="StoneArchReach"/>, its origin 1.5 m under the walking surface), the floors and the railing's lower
     /// course over it (2 m, to its crown, from the deck's underside to its surface) and the railing's top course (a metre,
     /// from the surface a metre up). The piers reach no further than their faces.
     /// </summary>
@@ -273,28 +269,121 @@ public static partial class BridgeLayout
     }
 
     /// <summary>
+    /// The tallest a stone deck's walking surface stands over the lowest ground under one of its piers: the floor's metre
+    /// (<see cref="StoneFloorDepth"/>) over <see cref="BridgeSupport.StoneMaxPierCourses"/> courses of a metre
+    /// (<see cref="StonePierBlock"/>), the last one's foot sunk <see cref="StairSupport.Bury"/>, as a pier's courses are
+    /// counted (StoneFrame.Courses) and a mound raises the ground to (<see cref="StoneMounds"/>). Derived from the kit's support
+    /// estimate, not a number of its own: 9.75 m with nine courses.
+    /// </summary>
+    public static float StoneTallestPier => StoneFloorDepth + BridgeSupport.StoneMaxPierCourses() - StairSupport.Bury;
+
+    /// <summary>
+    /// How far a bridge's deck stands toward the tallest the stone kit stands over its bed, from 0 to 1: 0 for a deck at the
+    /// water line (<see cref="MinDeck"/>, the lowest any deck stands), 1 for one <see cref="StoneTallestPier"/> over the bed
+    /// (<see cref="RoadCrossing.RiverbedHeight"/>) and for every deck taller than that: past the kit's limit a deck stands no
+    /// nearer it. The deck is the one every kit's is laid at (<see cref="WoodDeckHeight"/>). 0 where even a deck at the water
+    /// line stands past the limit over the bed (no height to gain within it), and for anything but a bridge.
+    /// The search's height price reads it (RoadPathfinder.BridgeHeightFactor), on the crossing the detector makes of the jump.
+    /// </summary>
+    public static float StoneHeightReach(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (crossing == null || world == null || crossing.Kind != CrossingKind.Bridge) return 0f;
+        float low = MinDeck(crossing.WaterLevel), top = crossing.RiverbedHeight + StoneTallestPier;
+        if (top <= low) return 0f;
+        return Mathf.Clamp01((WoodDeckHeight(crossing, world) - low) / (top - low));
+    }
+
+    /// <summary>
     /// Whether the stone kit can be laid over a crossing, as the network saved it: a bridge or a ford's span
     /// (<see cref="Railed"/>) whose deck takes the kit's bays (<see cref="StoneBays"/>), over a river with whole openings
     /// left open over the ship's way (<see cref="StoneNavigationBays"/>), every pier that stands within
     /// <see cref="BridgeSupport.StoneMaxPierCourses"/> and every stair footing within
     /// <see cref="BridgeSupport.StoneMaxFootingPillars"/>. Where it does not, another kit is chosen
-    /// (<see cref="BridgeStructures.KitFor"/>).
+    /// (<see cref="BridgeStructures.KitFor"/>), as where the support rule breaks a piece of the bridge it admits
+    /// (<see cref="BridgeStructures.CheckSupport"/>). An estimate (<see cref="StoneFitMargin"/>).
     /// </summary>
-    public static bool StoneFits(RoadCrossing crossing, WorldGenerator world)
+    public static bool StoneFits(RoadCrossing crossing, WorldGenerator world) => StoneFitMargin(crossing, world) is int margin && margin >= 0;
+
+    /// <summary>
+    /// The stone kit's cheap support estimate over a crossing (<see cref="StoneFits"/>'s), as a margin: the fewest courses or
+    /// pillars to spare under <see cref="BridgeSupport.StoneMaxPierCourses"/> and <see cref="BridgeSupport.StoneMaxFootingPillars"/>
+    /// of any pier that stands and any stair footing (negative past them; the estimate refuses the kit); null where the deck
+    /// does not take the kit's bays or openings at all. An estimate, derived from the column arithmetic, not the support rule's
+    /// reading of the bridge (<see cref="BridgeStructures.CheckSupport"/>).
+    /// </summary>
+    internal static int? StoneFitMargin(RoadCrossing crossing, WorldGenerator world)
     {
-        if (!Railed(crossing) || world == null || crossing.Width < DeckSpan) return false;
+        if (!Railed(crossing) || world == null || crossing.Width < DeckSpan) return null;
         int bays = Bays(crossing.Width);
-        if (StoneBays(bays) is not StoneBay[] layout) return false;
-        if (!StoneNavigationBays(crossing, world, layout, out int open, out int opened)) return false;
+        if (StoneBays(bays) is not StoneBay[] layout) return null;
+        if (!StoneNavigationBays(crossing, world, layout, out int open, out int opened)) return null;
         var f = new StoneFrame(crossing, world);
+        int margin = int.MaxValue;
         for (int j = 0; j < bays; j++)
-            if (layout[j] == StoneBay.Pier && (j < open || j >= open + opened) && f.PierCourses(j) > BridgeSupport.StoneMaxPierCourses())
-                return false;
+            if (layout[j] == StoneBay.Pier && (j < open || j >= open + opened))
+                margin = Mathf.Min(margin, BridgeSupport.StoneMaxPierCourses() - f.PierCourses(j));
         foreach (StructureEnds.End end in new[] { f.Near, f.Far })
             for (int k = 0; k < end.Steps; k++)
                 foreach (Vector2 p in StoneFooting(end, f.Side, k))
-                    if (f.FootingPillars(p, StructureEnds.StepBase(end.Height, k)) > BridgeSupport.StoneMaxFootingPillars()) return false;
-        return true;
+                    margin = Mathf.Min(margin, BridgeSupport.StoneMaxFootingPillars() - f.FootingPillars(p, StructureEnds.StepBase(end.Height, k)));
+        return margin;
+    }
+
+    /// <summary>
+    /// The mounds that bring the stone kit within its limits over <paramref name="crossing"/> (<see cref="StoneFitMargin"/>'s
+    /// piers and stair footings), on the ground the kit reads (<see cref="RailedGround"/>): under each pier standing more
+    /// than <see cref="BridgeSupport.StoneMaxPierCourses"/> courses, its bay's ground raised to where that many reach it
+    /// (the lowest course's foot sunk <see cref="StairSupport.Bury"/>); under each footing of more than
+    /// <see cref="BridgeSupport.StoneMaxFootingPillars"/> pillars, its pillar's ground so; at the very points the kit reads
+    /// them (<see cref="StructureGround.Mound"/>). Null where the kit is not laid there, where a mound may not be made under
+    /// one (<see cref="StructureGround.MayRaise"/>), or where the terrain writer's reach round one
+    /// (RoadTerrainModifier.MaxInfluenceRadius) meets an opening left over a ship's way (<see cref="StoneNavigationBays"/>):
+    /// the opening is kept clear. Empty where none is past its limit. Whether the kit is then drawn is the kit's choice
+    /// (BridgeStructures.StoneMounds).
+    /// </summary>
+    internal static List<StructureGround.Mound>? StoneMounds(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (!Railed(crossing) || world == null || crossing.Width < DeckSpan) return null;
+        int bays = Bays(crossing.Width);
+        if (StoneBays(bays) is not StoneBay[] layout) return null;
+        if (!StoneNavigationBays(crossing, world, layout, out int open, out int opened)) return null;
+        var f = new StoneFrame(crossing, world);
+        var mounds = new List<StructureGround.Mound>();
+        float reach = RoadTerrainModifier.MaxInfluenceRadius(StructureGround.Mound.Width);
+        bool Clear(List<Vector2> points)
+        {
+            if (opened == 0) return true;
+            foreach (Vector2 p in points)
+            {
+                float along = crossing.Along(p);
+                if (along > open * DeckSpan - reach && along < (open + opened) * DeckSpan + reach) return false;
+            }
+            return true;
+        }
+        int courses = BridgeSupport.StoneMaxPierCourses(), pillars = BridgeSupport.StoneMaxFootingPillars();
+        float top = f.DeckH - StoneFloorDepth;
+        for (int j = 0; j < bays; j++)
+        {
+            if (layout[j] != StoneBay.Pier || (j >= open && j < open + opened) || f.PierCourses(j) <= courses) continue;
+            float low = f.PierLow(j), raised = top - courses + StairSupport.Bury;
+            var points = f.PierPoints(j);
+            if (!StructureGround.MayRaise(low, raised, BridgeStructures.Kit.Stone) || StoneFrame.Courses(top, raised) > courses || !Clear(points)) return null;
+            mounds.Add(new StructureGround.Mound(points, raised));
+        }
+        foreach (StructureEnds.End end in new[] { f.Near, f.Far })
+            for (int k = 0; k < end.Steps; k++)
+            {
+                float foot = StructureEnds.StepBase(end.Height, k);
+                foreach (Vector2 p in StoneFooting(end, f.Side, k))
+                {
+                    if (f.FootingPillars(p, foot) <= pillars) continue;
+                    float raised = foot - StonePillarHeight * pillars + StairSupport.Bury;
+                    var points = new List<Vector2> { p };
+                    if (!StructureGround.MayRaise(f.Ground(p), raised, BridgeStructures.Kit.Stone) || StoneFrame.Pillars(foot, raised) > pillars || !Clear(points)) return null;
+                    mounds.Add(new StructureGround.Mound(points, raised));
+                }
+            }
+        return mounds;
     }
 
     /// <summary>The stone bridge as it stands, ruined (the game's plan).</summary>
@@ -306,7 +395,16 @@ public static partial class BridgeLayout
     internal static List<StructurePiece> SolveStoneComplete(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
         SolveStone(crossing, world, worldSeed, ruin: false);
 
-    private static List<StructurePiece> SolveStone(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin)
+    /// <summary>
+    /// The stone bridge its cheap estimate refuses, laid as it would stand with no pier or footing stopped at the estimate's
+    /// limits (<see cref="BridgeSupport.StoneMaxPierCourses"/>, <see cref="BridgeSupport.StoneMaxFootingPillars"/>): the
+    /// candidate before its admission, for the support rule to read it in a test's replay of refused candidates (decision 6p's
+    /// calibration). Never built.
+    /// </summary>
+    internal static List<StructurePiece> SolveStoneCandidate(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin) =>
+        SolveStone(crossing, world, worldSeed, ruin, capped: false);
+
+    private static List<StructurePiece> SolveStone(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin, bool capped = true)
     {
         var pieces = new List<StructurePiece>();
         if (!Railed(crossing) || world == null || crossing.Width < DeckSpan) return pieces;
@@ -316,10 +414,9 @@ public static partial class BridgeLayout
         // The bays open over a river: the run StoneNavigationBays opens but its half arches either side, which stand with
         // the deck and railing over them.
         int open = gapCount > 0 ? gapFirst + StoneGapHalfArches : 0, opened = Mathf.Max(0, gapCount - 2 * StoneGapHalfArches);
-        // A bay open over a river, and a joint with no deck over it (strictly inside the opening).
+        // A bay open over a river.
         bool Opened(int j) => j >= open && j < open + opened;
-        bool NoDeck(int i) => opened > 0 && i > open && i < open + opened;
-        var f = new StoneFrame(crossing, world);
+        var f = new StoneFrame(crossing, world) { Capped = capped };
         Ruin r = new(worldSeed, crossing);
         float deckH = f.DeckH;
         float mid = bays * 0.5f;
@@ -332,39 +429,32 @@ public static partial class BridgeLayout
         // The pier bays, each with its top course laid or not (wholly buried).
         var pierTop = new bool[bays];
 
-        // The deck's floors on the joints between bays (lane 0 left, 1 right), and a 1 m strip where the deck ends, at each
-        // end on its pier and either side of a river's opening on the half arch's crown, centred this far along: lost toward
-        // mid-span, never a strip or a floor over a bank's bay.
-        var strip = new float?[bays + 1];
-        strip[0] = StoneFloorOffset * 0.5f;
-        strip[bays] = bays * DeckSpan - StoneFloorOffset * 0.5f;
-        if (opened > 0)
-        {
-            strip[open] = open * DeckSpan - StoneFloorOffset * 0.5f;
-            strip[open + opened] = (open + opened) * DeckSpan + StoneFloorOffset * 0.5f;
-        }
-        var floor = new bool[bays + 1, 2];
-        for (int i = 0; i <= bays; i++)
+        // The deck's floors, a whole floor on each bay (lane 0 left, 1 right), as the hand build laid them: on a pier bay on its
+        // top course, on an arch bay on its arches' flat tops, on a 6 m opening's open bay between the two crowns either side.
+        // A deck of whole bays takes whole floors, so the deck never needs a part floor. Lost toward mid-span, never over a
+        // bank's bay, nor over the half arch the deck ends on beside a river's opening.
+        bool Kept(int j) => j == 0 || j == bays - 1 || (opened > 0 && (j == open - 1 || j == open + opened));
+        var floor = new bool[bays, 2];
+        for (int j = 0; j < bays; j++)
             for (int l = 0; l < 2; l++)
-                floor[i, l] = !NoDeck(i) && (!ruin || strip[i] != null || i <= 1 || i >= bays - 1
-                    || r.Roll(i, l == 0 ? Ruin.Left : Ruin.Right, Ruin.RoleDeck) < Survives(i, shares.DeckShare));
-        // Now and then a joint open from side to side, both floors and the top course over them: never over a bank's bay,
-        // never two within three joints.
-        var hole = new bool[bays + 1];
+                floor[j, l] = !Opened(j) && (!ruin || Kept(j)
+                    || r.Roll(j, l == 0 ? Ruin.Left : Ruin.Right, Ruin.RoleDeck) < Survives(j + 0.5f, shares.DeckShare));
+        // Now and then a bay open from side to side, both its floors: never a kept one, never two within three bays.
+        var hole = new bool[bays];
         if (ruin)
-            for (int i = 2, last = -3; i <= bays - 2; i++)
-                if (i - last >= 3 && strip[i] == null && !NoDeck(i) && r.Roll(i, Ruin.Centre, RoleStoneHole) >= Survives(i, shares.HoleShare))
+            for (int j = 1, last = -3; j <= bays - 2; j++)
+                if (j - last >= 3 && !Kept(j) && !Opened(j) && r.Roll(j, Ruin.Centre, RoleStoneHole) >= Survives(j + 0.5f, shares.HoleShare))
                 {
-                    hole[i] = true;
-                    floor[i, 0] = floor[i, 1] = false;
-                    last = i;
+                    hole[j] = true;
+                    floor[j, 0] = floor[j, 1] = false;
+                    last = j;
                 }
-        // A way across a player jumps: never two joints running open from side to side; a floor is put back in the one that
-        // is not a hole.
-        for (int i = 2; i < bays; i++)
-            if (!NoDeck(i) && !NoDeck(i - 1) && !floor[i, 0] && !floor[i, 1] && !floor[i - 1, 0] && !floor[i - 1, 1])
+        // A way across a player jumps: never two bays running open from side to side; a floor is put back in the one that is
+        // not a hole.
+        for (int j = 1; j < bays; j++)
+            if (!Opened(j) && !Opened(j - 1) && !floor[j, 0] && !floor[j, 1] && !floor[j - 1, 0] && !floor[j - 1, 1])
             {
-                int b = hole[i] ? i - 1 : i;
+                int b = hole[j] ? j - 1 : j;
                 floor[b, r.Roll(b, Ruin.Centre, RoleStoneFloorBack) < 0.5f ? 0 : 1] = true;
             }
 
@@ -375,8 +465,9 @@ public static partial class BridgeLayout
             // Courses down to the ground, the top one level with the arches; bonded, the side whose two blocks lie across the
             // deck swapping every course. Never past the support limit: the kit fitted when it was chosen
             // (StoneFits), but ground lowered since (a road cut under a pier) leaves the courses past the
-            // limit, at the foot, out rather than the railing over the arches losing its support.
-            int courses = Mathf.Min(f.PierCourses(j), BridgeSupport.StoneMaxPierCourses());
+            // limit, at the foot, out rather than the railing over the arches losing its support; the bridge so laid is read by
+            // the support rule before it is (BridgeStructures.KitAmong: a saved kit solved again).
+            int courses = Mathf.Min(f.PierCourses(j), f.MostCourses);
             for (int c = 0; c < courses; c++)
             {
                 float y = underside - 0.5f - c;
@@ -389,14 +480,15 @@ public static partial class BridgeLayout
             }
         }
 
-        // Every floor left on a neighbour's snap points (its corners on the bays' middles): the other lane's floor at its
-        // joint, its lane's floors either side (or an end strip), or, in the left lane, the top course of a pier under it,
-        // whose blocks laid across the deck have corners there. A floor with none of them has the other lane's put back.
-        for (int i = 2; i <= bays - 2; i++)
+        // Every floor left on a neighbour's snap points (its corners on the bays' joints): the other lane's floor in its bay,
+        // its lane's floors either side, or the top course of the pier it lies on, whose blocks have corners at the bay's
+        // joints under both lanes. A floor with none of them has the other lane's put back; one on an arch bay is on its
+        // arches' snap points too, which the arches' rule below keeps.
+        for (int j = 1; j < bays - 1; j++)
             for (int l = 0; l < 2; l++)
             {
-                bool onPier = l == 0 && (pierTop[i - 1] || pierTop[i]);
-                if (strip[i] == null && floor[i, l] && !floor[i, 1 - l] && !floor[i - 1, l] && !floor[i + 1, l] && !onPier) floor[i, 1 - l] = true;
+                bool onPier = layout[j] == StoneBay.Pier && pierTop[j];
+                if (floor[j, l] && !floor[j, 1 - l] && !floor[j - 1, l] && !floor[j + 1, l] && !onPier) floor[j, 1 - l] = true;
             }
 
         // The arches under the deck: lost toward mid-span. Each stands on its pier by its tall end, so none is left loose;
@@ -407,22 +499,23 @@ public static partial class BridgeLayout
             if (layout[j] is StoneBay.ArchNear or StoneBay.ArchFar && !Opened(j))
                 for (int k = 0; k < 4; k++)
                     arch[j, k] = !ruin || r.Roll(j, k, RoleStoneArch) < Survives(j + 0.5f, shares.SupportShare);
-        // A strip on a half arch's crown over a river rests on one of the two arches of its lane under it: where the rolls
-        // took both, one is put back.
-        if (opened > 0)
-            foreach (var (joint, bay) in new[] { (open, open - 1), (open + opened, open + opened) })
-                for (int l = 0; l < 2; l++)
-                    if (floor[joint, l] && !arch[bay, 2 * l] && !arch[bay, 2 * l + 1])
-                        arch[bay, 2 * l + (r.Roll(joint, l, RoleStoneArch, 3) < 0.5f ? 0 : 1)] = true;
-        for (int i = 1; i < bays; i++)
+        // A floor on an arch bay resting on no arch of its lane and not between two floors of its lane has one of its arches
+        // put back; one on an open bay rests on the crowns either side, and a side with neither a crown nor a floor of its
+        // lane has one of that side's arches put back.
+        bool Under(int bay, int l) => arch[bay, 2 * l] || arch[bay, 2 * l + 1];
+        for (int j = 0; j < bays; j++)
             for (int l = 0; l < 2; l++)
             {
-                if (!floor[i, l] || strip[i] != null || layout[i - 1] == StoneBay.Pier || layout[i] == StoneBay.Pier) continue;
-                if (arch[i - 1, 2 * l] || arch[i - 1, 2 * l + 1] || arch[i, 2 * l] || arch[i, 2 * l + 1]) continue;
-                if (floor[i - 1, l] && floor[i + 1, l]) continue;
-                int bay = layout[i - 1] == StoneBay.Open ? i : layout[i] == StoneBay.Open ? i - 1
-                    : r.Roll(i, l, RoleStoneArch, 1) < 0.5f ? i - 1 : i;
-                arch[bay, 2 * l + (r.Roll(i, l, RoleStoneArch, 2) < 0.5f ? 0 : 1)] = true;
+                if (!floor[j, l] || layout[j] == StoneBay.Pier) continue;
+                if (layout[j] == StoneBay.Open)
+                {
+                    foreach (int side in new[] { j - 1, j + 1 })
+                        if (!floor[side, l] && !Under(side, l))
+                            arch[side, 2 * l + (r.Roll(j, l, RoleStoneArch, side < j ? 1 : 3) < 0.5f ? 0 : 1)] = true;
+                    continue;
+                }
+                if (Under(j, l) || (j > 0 && j < bays - 1 && floor[j - 1, l] && floor[j + 1, l])) continue;
+                arch[j, 2 * l + (r.Roll(j, l, RoleStoneArch, 2) < 0.5f ? 0 : 1)] = true;
             }
         for (int j = 0; j < bays; j++)
             for (int k = 0; k < 4; k++)
@@ -430,18 +523,14 @@ public static partial class BridgeLayout
                     f.Lay(pieces, StructurePieceKind.Beam, StoneArchPrefab, j * DeckSpan + DeckSpan * 0.5f, k - 1.5f, underside - 0.5f,
                         ArchYaw(layout[j]), r.Health(j, k, Ruin.RoleBeamHealth));
 
-        // The deck: the floors on the joints, the strips (a block laid across each lane) on the piers where the deck ends.
-        for (int i = 0; i <= bays; i++)
+        // The deck: a floor on each bay.
+        for (int j = 0; j < bays; j++)
             for (int l = 0; l < 2; l++)
             {
-                if (!floor[i, l]) continue;
+                if (!floor[j, l]) continue;
                 int lane = l == 0 ? Ruin.Left : Ruin.Right;
-                if (strip[i] is float at)
-                    f.Lay(pieces, StructurePieceKind.Deck, StonePierBlock, at, lane * LaneOffset, deckH - StoneFloorDepth * 0.5f, f.Heading,
-                        r.Health(i, lane, Ruin.RoleDeckHealth));
-                else
-                    f.Lay(pieces, StructurePieceKind.Deck, StoneFloorPrefab, i * DeckSpan, lane * LaneOffset, deckH - StoneFloorDepth * 0.5f,
-                        f.AlongYaw, r.Health(i, lane, Ruin.RoleDeckHealth));
+                f.Lay(pieces, StructurePieceKind.Deck, StoneFloorPrefab, j * DeckSpan + DeckSpan * 0.5f, lane * LaneOffset,
+                    deckH - StoneFloorDepth * 0.5f, f.AlongYaw, r.Health(j, lane, Ruin.RoleDeckHealth));
             }
 
         // Both ends as the road meets them: the stairs laid (LayEndStairs), each step on its footing, the railing stepping
@@ -460,7 +549,7 @@ public static partial class BridgeLayout
         bool CanEdge(int j) => j >= 0 && j < bays && layout[j] != StoneBay.Open && !Opened(j);
         bool Laid(int i) => (i > 0 || nearSteps > 0) && (i < bays || farSteps > 0) && (opened == 0 || i < open || i > open + opened);
         bool CanHold(int i) => (i == 0 && nearSteps > 0) || (i == bays && farSteps > 0) || CanEdge(i - 1) || CanEdge(i);
-        bool CanTop(int i) => i >= 0 && i <= bays && Laid(i) && !hole[i] && CanHold(i);
+        bool CanTop(int i) => i >= 0 && i <= bays && Laid(i) && CanHold(i);
         void Rail(float edgeRolled)
         {
             for (int k = 0; k < 2; k++)
@@ -470,7 +559,7 @@ public static partial class BridgeLayout
                     edge[j, k] = CanEdge(j)
                         && (!ruin || j == 0 || j == bays - 1 || r.Roll(j, s, RoleRail) < Survives(j + 0.5f, shares.CourseShare * edgeRolled));
                 for (int i = 0; i <= bays; i++)
-                    top[i, k] = Laid(i) && !hole[i]
+                    top[i, k] = Laid(i)
                         && (!ruin || i <= 1 || i >= bays - 1 || r.Roll(i, s, RoleRail, 1) < Survives(i, shares.CourseShare * RailTopRolled));
                 if (!ruin) continue;
                 int Pick(int low, int high, bool canLow, bool canHigh, int at, int extra) =>
@@ -547,6 +636,8 @@ public static partial class BridgeLayout
                     f.Lay(pieces, StructurePieceKind.Beam, StonePierBlock, i * DeckSpan, s * DeckHalfWidth, deckH + 0.5f, f.AlongYaw,
                         r.Health(i, s, RoleRailHealth, 1));
         }
+        // Its pieces wholly in the ground left out where the bridge stands without them (the one owner), before it is ruined.
+        LeaveOutBuried(pieces, f.Ground, crossing, world, p => f.Laid.Contains(p) || p.Kind == StructurePieceKind.Stair);
         if (ruin) r.ApplyLocationDamage(pieces);   // vanilla's Location.m_applyRandomDamage, as the viaduct's
         return pieces;
     }
@@ -567,7 +658,7 @@ public static partial class BridgeLayout
             foreach (Vector2 p in StoneFooting(end, f.Side, k))
             {
                 // Within the support limit, as a pier's courses: the pillars past it, at the foot, are left out.
-                int pillars = Mathf.Min(f.FootingPillars(p, foot), BridgeSupport.StoneMaxFootingPillars());
+                int pillars = Mathf.Min(f.FootingPillars(p, foot), f.MostPillars);
                 for (int m = 0; m < pillars; m++)
                     f.LayAt(pieces, StructurePieceKind.Post, StonePillarPrefab, p, foot - StonePillarHeight * (m + 0.5f), f.Heading,
                         r.Health(bayKey, n, Ruin.RolePostHealth, k * 16 + m));
@@ -604,6 +695,13 @@ public static partial class BridgeLayout
         private readonly System.Func<int, int, float> m_vertex;
         /// <summary>The ground the bridge is laid on (<see cref="RailedGround"/>).</summary>
         public System.Func<Vector2, float> Ground => m_ground;
+        /// <summary>Whether its piers and footings stop at the estimate's limits, as every built one does; a calibration
+        /// candidate's do not (<see cref="SolveStoneCandidate"/>).</summary>
+        public bool Capped = true;
+        /// <summary>The most courses a pier stands: <see cref="BridgeSupport.StoneMaxPierCourses"/> where <see cref="Capped"/>.</summary>
+        public int MostCourses => Capped ? BridgeSupport.StoneMaxPierCourses() : int.MaxValue;
+        /// <summary>The most pillars a footing stacks: <see cref="BridgeSupport.StoneMaxFootingPillars"/> where <see cref="Capped"/>.</summary>
+        public int MostPillars => Capped ? BridgeSupport.StoneMaxFootingPillars() : int.MaxValue;
 
         public StoneFrame(RoadCrossing crossing, WorldGenerator world)
         {
@@ -615,7 +713,7 @@ public static partial class BridgeLayout
             AlongYaw = Heading + 90f;
             DeckH = WoodDeckHeight(crossing, world);
             (Near, Far) = StructureEnds.Of(crossing, world);
-            System.Func<Vector2, float> ground = RailedGround(Near, Far, world);
+            System.Func<Vector2, float> ground = RailedGround(world);
             m_ground = ground;
             m_vertex = (i, k) => ground(new Vector2(i, k));
         }
@@ -624,23 +722,44 @@ public static partial class BridgeLayout
 
         /// <summary>The courses a pier bay stands: from the top one, level with the arches, down to the first whose foot is
         /// sunk <see cref="StairSupport.Bury"/> under the lowest ground under the bay's 2 x 4 m, as a staircase's wall is.</summary>
-        public int PierCourses(int bay)
+        public int PierCourses(int bay) => Courses(DeckH - StoneFloorDepth, PierLow(bay));
+
+        /// <summary>The courses from a pier's top one at <paramref name="top"/> down to the first whose foot is sunk
+        /// <see cref="StairSupport.Bury"/> under <paramref name="low"/> (<see cref="PierCourses"/>).</summary>
+        public static int Courses(float top, float low)
         {
-            float low = float.PositiveInfinity;
-            for (int a = 0; a <= 2; a++)
-                for (int s = -1; s <= 1; s++)
-                    low = Mathf.Min(low, m_ground(At(bay * DeckSpan + a, s * DeckHalfWidth)));
-            float top = DeckH - StoneFloorDepth;
             int courses = 1;
             while (top - courses > low - StairSupport.Bury && courses < 256) courses++;
             return courses;
         }
 
+        /// <summary>Where a pier bay's ground is read (<see cref="PierCourses"/>): its 2 x 4 m, every metre along and at its
+        /// middle and both edges across.</summary>
+        public List<Vector2> PierPoints(int bay)
+        {
+            var points = new List<Vector2>();
+            for (int a = 0; a <= 2; a++)
+                for (int s = -1; s <= 1; s++)
+                    points.Add(At(bay * DeckSpan + a, s * DeckHalfWidth));
+            return points;
+        }
+
+        /// <summary>The lowest ground under a pier bay (<see cref="PierPoints"/>).</summary>
+        public float PierLow(int bay)
+        {
+            float low = float.PositiveInfinity;
+            foreach (Vector2 p in PierPoints(bay)) low = Mathf.Min(low, m_ground(p));
+            return low;
+        }
+
         /// <summary>The pillars of a step's footing at <paramref name="p"/>: from the step's <paramref name="foot"/> down to
         /// the first whose foot is sunk <see cref="StairSupport.Bury"/> under the ground, as a staircase's wall is.</summary>
-        public int FootingPillars(Vector2 p, float foot)
+        public int FootingPillars(Vector2 p, float foot) => Pillars(foot, m_ground(p));
+
+        /// <summary>The pillars from a step's <paramref name="foot"/> down to the first whose foot is sunk
+        /// <see cref="StairSupport.Bury"/> under <paramref name="ground"/> (<see cref="FootingPillars"/>).</summary>
+        public static int Pillars(float foot, float ground)
         {
-            float ground = m_ground(p);
             int pillars = 1;
             while (foot - StonePillarHeight * pillars > ground - StairSupport.Bury && pillars < 256) pillars++;
             return pillars;
@@ -650,14 +769,20 @@ public static partial class BridgeLayout
         public bool Lay(List<StructurePiece> pieces, StructurePieceKind kind, string prefab, float along, float across, float y, float yaw, float health) =>
             LayAt(pieces, kind, prefab, At(along, across), y, yaw, health);
 
-        /// <summary>A piece at <paramref name="at"/>, unless it lies wholly under the ground (<see cref="BuriedPieces.Buried"/>);
-        /// whether it was laid.</summary>
+        /// <summary>The pieces laid in the frame (<see cref="LayAt"/>): those left out with the bridge's where wholly in the
+        /// ground (BridgeLayout.LeaveOutBuried).</summary>
+        public readonly HashSet<StructurePiece> Laid = new();
+
+        /// <summary>A piece at <paramref name="at"/>, laid; one wholly under the ground is left out with the bridge's where the
+        /// rest stands without it (BridgeLayout.LeaveOutBuried, BuriedPieces.Omit). Whether it stands out of the ground
+        /// (<see cref="BuriedPieces.Buried"/>), which the layout reads (a pier's top course).</summary>
         public bool LayAt(List<StructurePiece> pieces, StructurePieceKind kind, string prefab, Vector2 at, float y, float yaw, float health)
         {
             var position = new Vector3(at.x, y, at.y);
-            if (BuriedPieces.Buried(prefab, position, yaw, m_vertex)) return false;
-            pieces.Add(new StructurePiece { Kind = kind, Prefab = prefab, Position = position, YawDegrees = yaw, HealthFraction = health });
-            return true;
+            var piece = new StructurePiece { Kind = kind, Prefab = prefab, Position = position, YawDegrees = yaw, HealthFraction = health };
+            pieces.Add(piece);
+            Laid.Add(piece);
+            return !BuriedPieces.Buried(prefab, position, yaw, m_vertex);
         }
     }
 }

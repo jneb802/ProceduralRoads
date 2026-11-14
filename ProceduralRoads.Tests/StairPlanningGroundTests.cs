@@ -10,7 +10,7 @@ namespace ProceduralRoads.Tests;
 /// <summary>
 /// A staircase's kit chooses its supports on the ground its layout was laid out on (RoadStairRuns.PlanningGround, one
 /// owner), so the search and the first build choose the same: a road's staircase on the 1 m lattice, an approach on the
-/// ground its place is expected to leave.
+/// ground its location is expected to leave.
 /// </summary>
 public sealed class StairPlanningGroundTests : IDisposable
 {
@@ -41,14 +41,14 @@ public sealed class StairPlanningGroundTests : IDisposable
     public StairPlanningGroundTests()
     {
         RoadNetworkGenerator.Reset();
-        PlacedSites.Reset();
+        PlacedLocations.Reset();
     }
 
     public void Dispose()
     {
         LocationLevelling.Source = null;
-        PlacedSites.Reset();
-        RoadSiteProtection.Reset();
+        PlacedLocations.Reset();
+        RoadLocationProtection.Reset();
         RoadNetworkGenerator.Reset();
         _scope.Dispose();
     }
@@ -73,13 +73,13 @@ public sealed class StairPlanningGroundTests : IDisposable
     [Fact]
     public void TheLatticeIsTheGroundAtItsMetresJoinedAsTheGamesMeshJoinsThemAcrossTileEdges()
     {
-        // The lattice a staircase is laid out on reads each cell's four corners from the ground as places leave it and joins
+        // The lattice a staircase is laid out on reads each cell's four corners from the ground as locations leave it and joins
         // them as the game's mesh does, whichever tiles they fall in: in the middle of a tile, along its last row or column,
         // across its corner, and below zero.
         var world = new WavyWorld();
         _scope.WithWorld(world);
         RoadStairRuns.ForgetGround();
-        float Corner(int i, int k) => PlacedSites.GroundAt(i, k, world);
+        float Corner(int i, int k) => PlacedLocations.GroundAt(i, k, world);
         foreach (float x in new[] { 5.3f, 31.4f, 31.999f, 32f, 63.7f, -0.6f, -1f, -32.5f, -33.25f, 1000.75f })
             foreach (float z in new[] { 7.8f, 31.6f, -0.2f, -31.9f, -64.5f, 95.01f })
             {
@@ -107,99 +107,113 @@ public sealed class StairPlanningGroundTests : IDisposable
     }
 
     [Fact]
-    public void AnApproachIsHeldUpOnTheGroundItsPlaceIsExpectedToLeave()
+    public void AnApproachIsHeldUpOnTheGroundItsLocationIsExpectedToLeave()
     {
-        // A place at the origin, placed after its roads, levelling a flat 4 m over the level ground out to 10 m. An
+        // A location at the origin, placed after its roads, levelling a flat 4 m over the level ground out to 10 m. An
         // approach's top stair at x 7 stands on that flat (its underside on it), 4 m over the natural ground: chosen on
-        // the natural ground it was walled down through the fill; on the ground it was laid out on, it needs nothing.
+        // the natural ground it was walled down through the fill; on the ground it was laid out on, it needs nothing. (The
+        // finished ground here is the natural ground, the location not being one the writer knows: the kit, finding the stair
+        // falling as chosen, holds it again on that ground, StairKit.Dress.)
         var world = new LevelWorld();
         _scope.WithWorld(world);
         var centre = new Vector2(0f, 0f);
         IReadOnlyList<LevelOp> ops = new[] { new LevelOp(0f, 0f, 4f, 10f, false, 14f, 3f) };
         LocationLevelling.Source = c => Vector2.Distance(c, centre) < 0.01f ? ops : null;
         StairRun run = OneStair(7f, 24f);
-        run.KeepsSiteRocks = true;
+        run.KeepsLocationRocks = true;
         Assert.Contains(KitDressedOnNatural(run, world), p => p.Kind == StructurePieceKind.StairSupport);
-        run.ExpectedPlace = (centre, 20f);
-        Assert.DoesNotContain(StairStructures.Dresser(run, world), p => p.Kind == StructurePieceKind.StairSupport);
+        run.ExpectedLocation = (centre, 20f);
+        StairSupport.Walk w = StairSupport.WalkOf(run.Pieces[0], StairKit.Stone)!.Value;
+        Assert.Equal(StairSupport.Style.Ground, StairSupport.Choose(StairKit.Stone, w, RoadStairRuns.PlanningGround(run, world)).Style);
         Assert.Equal(24f, RoadStairRuns.PlanningGround(run, world)(7f, 1f), 3);
     }
 
     [Fact]
-    public void AWayOntoAPlacedPlacesLandingIsHeldUpOnTheGroundItWasLaidOutOnPastTheFootprint()
+    public void AWayOntoAPlacedLocationsLandingIsHeldUpOnTheGroundItWasLaidOutOnPastTheFootprint()
     {
-        // A place placed before its roads at (12, 0): its footprint 6 m round it, its grid out to x -10, its flat level with
+        // A location placed before its roads at (12, 0): its footprint 6 m round it, its grid out to x -10, its flat level with
         // the lattice. The stair of the road's staircase test stands between the footprint's edge and the grid's, as a way
         // onto the landing's flight up the slope just outside a Mountain tower's footprint does. It was searched on the
-        // place's own grid, the lattice's metres there (a wall, 3.5 m over it at its downhill edge), and dressed on the
+        // location's own grid, the lattice's metres there (a wall, 3.5 m over it at its downhill edge), and dressed on the
         // continuous ground past the footprint (5.5 m: an arch): what the search had priced, the kit did not lay.
         var world = new RidgedWorld();
         _scope.WithWorld(world);
         var centre = new Vector2(12f, 0f);
-        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(centre, 6f) });
-        PlacedSites.Remember(new PlacedSiteRecord
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, 6f) });
+        PlacedLocations.Remember(new PlacedLocationRecord
         {
             Prefab = "StoneTowerRuins05", Centre = centre, Root = 20f, Ops = new List<LevelOp> { new LevelOp(0f, 0f, 0f, 3f, false, 0f, 0f) },
             X0 = -10, Z0 = -10, W = 40, H = 21,
         });
-        PlacedSites.Prepare((x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world));
-        Assert.True(PlacedSites.TryGetReady(centre, out PlacedSite site));
+        PlacedLocations.Prepare((x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world));
+        Assert.True(PlacedLocations.TryGetReady(centre, out PlacedLocation location));
         StairRun run = OneStair(0.5f, 23.5f);
-        run.KeepsSiteRocks = true;
-        Assert.Null(PlacedSites.GroundAt(new Vector2(1.5f, 1f)));
+        run.KeepsLocationRocks = true;
+        Assert.Null(PlacedLocations.GroundAt(new Vector2(1.5f, 1f)));
 
         Func<float, float, float> planning = RoadStairRuns.PlanningGround(run, world);
         foreach (float x in new[] { 0.5f, 1f, 1.5f, 2f, 2.5f })
-            Assert.Equal(site.Ground(x, 1f), planning(x, 1f), 3);
+            Assert.Equal(location.Ground(x, 1f), planning(x, 1f), 3);
         StairSupport.Walk w = StairSupport.WalkOf(run.Pieces[0], StairKit.Stone)!.Value;
-        Assert.Equal(StairSupport.Style.Wall, StairSupport.Choose(StairKit.Stone, w, site.Ground).Style);
+        Assert.Equal(StairSupport.Style.Wall, StairSupport.Choose(StairKit.Stone, w, location.Ground).Style);
         List<StructurePiece> dressed = StairStructures.Dresser(run, world);
         Assert.DoesNotContain(dressed, p => p.Prefab == "stone_arch");
         Assert.Contains(dressed, p => p.Kind == StructurePieceKind.StairSupport && p.Prefab.StartsWith("stone_wall_"));
     }
 
     [Fact]
-    public void AnApproachIsWalledDownToTheGroundItsPlaceIsExpectedToLeaveInsideItsFootprint()
+    public void AnApproachOnALocationsGroundNotKnownIsNotLaidAndSaysSo()
     {
-        // A place at the origin, placed after its roads, cutting a flat 4 m into the level ground out to 10 m, its footprint
-        // 12 m round it. An approach's stair at x 7 stands 3 m over that cut: walled. The game's finished ground is unknown
-        // inside the footprint until the place spawns; the ground the place is expected to leave, which the approach was laid
-        // out on, is known, and its walls stand down to it. Unknown, the stair was left unwalled.
+        // A location at the origin, its ground not published, cutting a flat 4 m into the level ground out to 10 m, its footprint
+        // 12 m round it. An approach's stair at x 7 stands 3 m over that cut. The finished ground is not known inside the
+        // footprint: a bug under the preload-list rule. The staircase lays and saves nothing, said as an error, never laid on
+        // the ground the location was expected to leave in its stead; nothing waits for that ground.
         var world = new LevelWorld();
         _scope.WithWorld(world);
         var centre = new Vector2(0f, 0f);
         IReadOnlyList<LevelOp> ops = new[] { new LevelOp(0f, 0f, -4f, 10f, false, 14f, 3f) };
         LocationLevelling.Source = c => Vector2.Distance(c, centre) < 0.01f ? ops : null;
-        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(centre, 12f) });
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, 12f) });
         StairRun run = OneStair(7f, 19f);
-        run.KeepsSiteRocks = true;
-        run.ExpectedPlace = (centre, 20f);
-        Assert.True(float.IsNaN(StructureGround.Vertices(world)(7, 1)));
-        Assert.Equal(16f, RoadStairRuns.FinishedGround(run, world)(7, 1), 3);
-        List<StructurePiece> walls = StairStructures.Dresser(run, world).FindAll(p => p.Prefab.StartsWith("stone_wall_"));
-        Assert.NotEmpty(walls);
-        // Down into the cut, the lowest course sunk in it, none wholly under it.
-        Assert.InRange(walls.Min(p => p.Position.y), 15f, 16.5f);
-        // Outside the footprint, nothing changes: the finished ground as the network leaves it.
-        Assert.Equal(StructureGround.Vertices(world)(40, 1), RoadStairRuns.FinishedGround(run, world)(40, 1), 3);
+        run.KeepsLocationRocks = true;
+        run.ExpectedLocation = (centre, 20f);
+        StairStructures.Reset();
+        StairStructures.Add(run);
+        try
+        {
+            Assert.True(float.IsNaN(StructureGround.Vertices(world)(7, 1)));
+            var lines = new List<string>();
+            BepInEx.Logging.ManualLogSource.Captured = lines;
+            try { Assert.Empty(StairStructures.Build(run, world)); }
+            finally { BepInEx.Logging.ManualLogSource.Captured = null; }
+            Assert.Null(BuiltStairs.Of(run));
+            Assert.True(lines.Exists(l => l.Contains("[STAIRS] staircase") && l.Contains("not laid") && l.Contains("not known")), string.Join(" | ", lines));
+            // Its ends are not verified on ground not known, never read off the ground it was laid out on.
+            Assert.Contains(StairEnds.Read(run, StairEnds.GroundOf(run, world)), e => e.Verdict == StairEnds.Verdict.NotVerified && e.Why.Contains("not known"));
+
+        }
+        finally
+        {
+            StairStructures.Reset();
+        }
     }
 
     private static List<StructurePiece> KitDressedOnNatural(StairRun run, WorldGenerator world) =>
         StairKit.Stone.Dress(run, (x, z) => world.GetHeight(x, z), StructureGround.Vertices(world), false);
 
     [Fact]
-    public void AnApproachsPlaceIsSavedWithIt()
+    public void AnApproachsLocationIsSavedWithIt()
     {
         StairRun run = OneStair(7f, 26f);
-        run.KeepsSiteRocks = true;
-        run.ExpectedPlace = (new Vector2(3f, -4f), 21.5f);
+        run.KeepsLocationRocks = true;
+        run.ExpectedLocation = (new Vector2(3f, -4f), 21.5f);
         StairStructures.Reset();
         StairStructures.Add(run);
         StairRun read = StairStructures.Parse(StairStructures.Serialize()).Single();
-        Assert.Equal(run.ExpectedPlace, read.ExpectedPlace);
+        Assert.Equal(run.ExpectedLocation, read.ExpectedLocation);
         StairStructures.Reset();
         StairStructures.Add(OneStair(0f, 10f));
-        Assert.Null(StairStructures.Parse(StairStructures.Serialize()).Single().ExpectedPlace);
+        Assert.Null(StairStructures.Parse(StairStructures.Serialize()).Single().ExpectedLocation);
         StairStructures.Reset();
     }
 }

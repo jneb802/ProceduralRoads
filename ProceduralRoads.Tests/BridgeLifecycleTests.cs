@@ -21,7 +21,7 @@ public sealed class BridgeLifecycleTests : IDisposable
     public BridgeLifecycleTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
-        RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadNetworkGenerator.MarkLocationsReady(); RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
         for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
@@ -70,7 +70,7 @@ public sealed class BridgeLifecycleTests : IDisposable
         try
         {
             NetworkCutoff.SnapshotWorld(new[] { kept });
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             Drain(10 * zones.Count);
             Assert.Equal(0, StructurePlacement.OnZoneSpawned(kept, ZoneSystem.SpawnMode.Full));
             Assert.Equal(0, StructurePlacement.SpawnGhostInZone(kept));
@@ -94,7 +94,7 @@ public sealed class BridgeLifecycleTests : IDisposable
         try
         {
             NetworkCutoff.SnapshotWorld(new[] { zones[zones.Count - 1] });
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             foreach (Vector2s zone in zones)
             {
                 Assert.Equal(0, StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full));
@@ -106,7 +106,7 @@ public sealed class BridgeLifecycleTests : IDisposable
 
             NetworkCutoff.Forget();
             NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             Assert.Equal(StructurePlans.TotalPlannedPieces, zones.Sum(z => StructurePlacement.OnZoneSpawned(z, ZoneSystem.SpawnMode.Full)));
         }
         finally { NetworkCutoff.Forget(); }
@@ -197,16 +197,21 @@ public sealed class BridgeLifecycleTests : IDisposable
         }
     }
 
-    /// <summary>A generated bridge whose first zone gets its pieces through the append queue (another structure's
-    /// addition there) is saved as it goes out, as a zone spawn saves it.</summary>
-    [Fact] public void AGeneratedBridgeFirstBuiltByAnAppendIsSaved()
+    /// <summary>An addition beside a bridge not built yet owes only its own pieces: in a generated zone the bridge is not
+    /// the request's, so it is neither queued nor saved because of it; in a zone not generated yet the addition waits for
+    /// generation, which lays the zone's plan whole with it (StructureAppendQueue.Prepare).</summary>
+    [Fact] public void AnAdditionBesideAnUnbuiltBridgeOwesOnlyItsOwnPieces()
     {
         BuiltBridges.Reset();
         List<Vector2s> zones = GeneratedPlanZones();
         RoadCrossing site = Assert.Single(BridgeLayout.DistinctSites(RoadNetworkGenerator.GetRoadCrossings()), BridgeStructures.HasDeck);
         var added = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = StructurePlans.PlanFor(zones[0])![0].Position };
-        StructureAppendQueue.Enqueue(StructureAppendQueue.Prepare(new[] { added }));
-        Assert.NotNull(BuiltBridges.Of(site));
+        Assert.Empty(StructureAppendQueue.Prepare(new[] { added }));
+        ZoneSystem.instance!.Generated.Add(zones[0]);
+        var owed = Assert.Single(StructureAppendQueue.Prepare(new[] { added }));
+        Assert.Equal(zones[0], owed.Key);
+        Assert.Same(added, Assert.Single(owed.Value));
+        Assert.Null(BuiltBridges.Of(site));
     }
 
     /// <summary>A second addition to a zone still owed pieces by the first brings no old plan again: the first queued it, and a
@@ -217,6 +222,7 @@ public sealed class BridgeLifecycleTests : IDisposable
         Vector3 at = StructurePlans.PlanFor(zones[0])![0].Position;
         var first = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = at };
         var second = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = new Vector3(at.x, at.y + 1f, at.z) };
+        ZoneSystem.instance!.Generated.Add(ZoneSystem.GetZone(at));
         StructureAppendQueue.Enqueue(StructureAppendQueue.Prepare(new[] { first }));
         Assert.NotNull(StructureAppendQueue.ForZone(zones[0]));
         List<StructurePiece> again = StructureAppendQueue.Prepare(new[] { second })[ZoneSystem.GetZone(at)];
@@ -345,6 +351,41 @@ public sealed class BridgeLifecycleTests : IDisposable
     }
 
     /// <summary>
+    /// A bridge held back by a zone the network leaves as it is is built only whole, once a manual road opens the last such
+    /// zone of it (NetworkCutoff.Admit): a zone of it built meanwhile (recorded spawned by another structure's plan) is owed
+    /// its part through the queue, and the opened zone gets its own; never half of it. While any of its zones is left as it
+    /// is, nothing of it is owed. Before, the zone built meanwhile never got its part: half a bridge after the admit.
+    /// </summary>
+    [Fact] public void AWithheldBridgeIsBuiltWholeOnceAManualRoadOpensItsLastProtectedZone()
+    {
+        List<Vector2s> zones = GeneratedPlanZones();
+        // The zones of the two banks: one built meanwhile, the east bank's protected.
+        Vector2s built = zones.OrderBy(z => z.x).First(), kept = zones.OrderBy(z => z.x).Last();
+        var planned = zones.ToDictionary(z => z, z => StructurePlans.PlanFor(z)!.Select(StructureAppendQueue.Key).OrderBy(k => k).ToList());
+        NetworkCutoff.Forget();
+        try
+        {
+            NetworkCutoff.SnapshotWorld(new[] { kept });
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
+            Assert.All(zones, z => Assert.Null(StructurePlans.BuildablePlanFor(z)));
+            // Built meanwhile, by another structure's plan there.
+            ZoneSystem.instance!.Generated.Add(built);
+            StructurePlans.MarkSpawned(built);
+
+            // A manual road in the protected zone (the east bank, beside the road onto the bridge): it opens that zone.
+            var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-216, -120), Max = new Vector2(216, 120) };
+            for (int x = -27; x <= 27; x++) for (int z = -15; z <= 15; z++) island.Cells.Add(new Vector2Int(x, z));
+            ManualRoads.Plan plan = ManualRoads.Prepare(new[] { new Vector2(52f, -100f), new Vector2(84f, -100f) }, false, new[] { island });
+            ManualRoads.Commit(plan);
+            Assert.Contains(kept, plan.ExploredZonesWritten);
+            Assert.False(NetworkCutoff.Excludes(kept));
+            Assert.NotNull(StructureAppendQueue.ForZone(built));
+            Assert.Equal(planned[built], StructureAppendQueue.ForZone(built)!.Select(StructureAppendQueue.Key).OrderBy(k => k).ToList());
+        }
+        finally { NetworkCutoff.Forget(); }
+    }
+
+    /// <summary>
     /// road_generate or road_regen_island in a running session: the new network leaves every zone generated so far
     /// as it is, so the respawn that follows destroys none of the bridge pieces standing there and builds no second
     /// copy over them, though the zones are loaded.
@@ -357,14 +398,14 @@ public sealed class BridgeLifecycleTests : IDisposable
         try
         {
             NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             foreach (Vector2s zone in zones) StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full);
             var standing = Live().Where(z => z.GetInt(StructurePlans.MarkerHash) == 1).ToList();
             Assert.Equal(StructurePlans.TotalPlannedPieces, standing.Count);
 
             NetworkCutoff.Forget();
             NetworkCutoff.SnapshotWorld(zones);   // every zone of the bridge explored before the next network
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             StructurePlacement.RespawnFromPlans();
 
             Assert.All(standing, z => Assert.DoesNotContain(z, ZDOMan.instance!.DestroyQueue));
@@ -373,7 +414,7 @@ public sealed class BridgeLifecycleTests : IDisposable
             // Control: with nothing explored the same respawn destroys the pieces and builds the plan again.
             NetworkCutoff.Forget();
             NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             StructurePlacement.RespawnFromPlans();
             Assert.All(standing, z => Assert.Contains(z, ZDOMan.instance!.DestroyQueue));
             Assert.Equal(StructurePlans.TotalPlannedPieces, Live().Count(z => z.GetInt(StructurePlans.MarkerHash) == 1));
@@ -445,8 +486,9 @@ public sealed class BridgeLifecycleTests : IDisposable
         StructureAppendQueue.Acknowledge(zone, key); StructureAppendQueue.Acknowledge(zone, "not-a-piece");
         StructureAppendQueue.Acknowledge(new Vector2s(999, 999), key);
         Assert.Equal(left, StructureAppendQueue.ForZone(zone)!.Count);
+        // Completing the append marks only its own work done: the zone's plan, none of it out, is still owed.
         StructureAppendQueue.Complete(zone); StructureAppendQueue.Acknowledge(zone, key);
-        Assert.Null(StructureAppendQueue.ForZone(zone)); Assert.True(StructurePlans.IsSpawned(zone));
+        Assert.Null(StructureAppendQueue.ForZone(zone)); Assert.False(StructurePlans.IsSpawned(zone));
     }
     // (d) An append into zones neither generated nor loaded: the server places the pieces as ZDOs, the restart keeps
     // what was done, and the zones' own generation later neither repeats nor loses a piece.

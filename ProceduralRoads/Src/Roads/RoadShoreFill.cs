@@ -3,9 +3,9 @@ using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
-/// Shallow water beside a place is land the road builds, not a reason to squeeze the road
+/// Shallow water beside a location is land the road builds, not a reason to squeeze the road
 /// out. The squeeze (<see cref="RoadPathfinder.SqueezeCorridor"/>, 12 m) still refuses road between a
-/// place's footprint and water nearer than that, unchanged; only what counts as water there changes:
+/// location's footprint and water nearer than that, unchanged; only what counts as water there changes:
 /// water no more than <see cref="FillDepth"/> under the ground a road may stand on is buildable, and
 /// the road raises it as it passes (<see cref="Reach"/>); a river channel never is. One owner for the
 /// search's test and the terrain writer's fill, so the land the search assumed is the land laid.
@@ -14,7 +14,7 @@ namespace ProceduralRoads;
 public static class RoadShoreFill
 {
     /// <summary>How far under the ground a road may stand on (the shallow line; a swamp's deep line) water beside a
-    /// place is still land the road builds. Settable for tests; 0 is off (every water is water).</summary>
+    /// location is still land the road builds. Settable for tests; 0 is off (every water is water).</summary>
     internal static float FillDepth = 2f;
 
     /// <summary>Water the search would not walk at <paramref name="q"/> (<see cref="RoadWater.Walked"/>).</summary>
@@ -33,7 +33,7 @@ public static class RoadShoreFill
     }
 
     /// <summary>
-    /// Whether <paramref name="p"/> lies between a place's footprint and water less than the squeeze corridor apart
+    /// Whether <paramref name="p"/> lies between a location's footprint and water less than the squeeze corridor apart
     /// (<paramref name="buildable"/>: only water the road cannot build out counts); <paramref name="gap"/>, how far
     /// it is from the footprint's edge (infinity where no footprint is that near). Inside a footprint it is not:
     /// the search's own ends reach their centres there, and every other footprint is refused anyway.
@@ -43,15 +43,16 @@ public static class RoadShoreFill
         gap = float.PositiveInfinity;
         float corridor = RoadPathfinder.SqueezeCorridor;
         if (corridor <= 0f) return false;
-        gap = RoadSiteProtection.EdgeDistance(p, corridor);
+        gap = RoadLocationProtection.EdgeDistance(p, corridor);
         if (gap < 0f || gap >= corridor) return false;
         float reach = corridor - gap, here = RoadWater.Ground(world, p);
         for (int i = 0; i < 8; i++)
         {
             float a = i * Mathf.PI / 4f;
             var dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
-            for (float r = reach * 0.5f; r <= reach + 0.01f; r += reach * 0.5f)
+            for (int radius = 0; radius < 2; radius++)
             {
+                float r = radius == 0 ? reach * 0.5f : reach;
                 Vector2 q = p + dir * r;
                 if (buildable && FillDepth > 0f ? Unbuildable(world, q, here, wade) : Wet(world, q, wade)) return true;
             }
@@ -66,8 +67,8 @@ public static class RoadShoreFill
 
     /// <summary>
     /// How much wider a road point's side slope is (on top of its blend margin) where the search let it through on
-    /// built-out shallows (<see cref="LetThrough"/>): out to the squeeze corridor past the place's edge, at most the
-    /// fill spread's widest (<see cref="RoadEarthworkNoise.FillSpreadMax"/>; a road's centre keeps the site clearance
+    /// built-out shallows (<see cref="LetThrough"/>): out to the squeeze corridor past the location's edge, at most the
+    /// fill spread's widest (<see cref="RoadEarthworkNoise.FillSpreadMax"/>; a road's centre keeps the location clearance
     /// off a footprint, so that reaches the corridor). 0 elsewhere. Read by the fill-spread owner
     /// (<see cref="RoadTerrainModifier.FillExtras"/>), so the zone gather's reach is unchanged. The same test as the
     /// search's, so a network the old squeeze built has no point that gets it.

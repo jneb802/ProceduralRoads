@@ -13,15 +13,15 @@ public readonly struct RockClearance
     public readonly Vector3 Half;
     public readonly Quaternion Turn;
     public readonly float Surface;
-    /// <summary>A rock here is removed whole, never carved (a bridge deck).</summary>
+    /// <summary>A rock here is removed whole, never carved (a bridge's deck or end step).</summary>
     public readonly bool WholeOnly;
-    /// <summary>The box is an approach to a place: a rock in a place's site area is the place's own.</summary>
-    public readonly bool KeepsSiteRocks;
+    /// <summary>The box is an approach to a location: a rock in a location's location area is the location's own.</summary>
+    public readonly bool KeepsLocationRocks;
 
-    internal RockClearance(Vector3 centre, Vector3 half, Quaternion turn, float surface, bool wholeOnly, bool keepsSiteRocks)
+    internal RockClearance(Vector3 centre, Vector3 half, Quaternion turn, float surface, bool wholeOnly, bool keepsLocationRocks)
     {
         Centre = centre; Half = half; Turn = turn; Surface = surface;
-        WholeOnly = wholeOnly; KeepsSiteRocks = keepsSiteRocks;
+        WholeOnly = wholeOnly; KeepsLocationRocks = keepsLocationRocks;
     }
 
     /// <summary>The box's top.</summary>
@@ -29,9 +29,9 @@ public readonly struct RockClearance
 }
 
 /// <summary>
-/// The one owner of the space a walker needs clear of rock round a point: every road point's clearance
-/// (<see cref="Road"/>, at the ground under it, <see cref="RoadRockPolicy.ClearanceSurface"/>), every
-/// bridge deck's, and every staircase's walking box (StairLayout.AddClearance, stored with its run). The road-rock pass
+/// The one owner of the space a walker needs clear of rock round a point: every walked road point's clearance
+/// (<see cref="Road"/>, at the ground under it: a waded ford's over its riverbed), every
+/// bridge's deck and end step's (BridgeStructures.AddClearances, given as they are), and every staircase's walking box (StairLayout.AddClearance, stored with its run). The road-rock pass
 /// judges the rocks in these boxes (RoadRockProbe) and the carve takes the chunks in them (RoadRockCarve), from this one list;
 /// nothing else decides what rock a road or a staircase clears (a staircase's clear areas keep only vegetation out of it,
 /// its cuts are terrain).
@@ -39,32 +39,35 @@ public readonly struct RockClearance
 public static class RockClearances
 {
     /// <summary>Every clearance within <paramref name="radius"/> of <paramref name="centre"/> (a road point's heading is read from
-    /// the road points a little further out, so a point at the edge has its neighbours).
-    /// <paramref name="generating"/>: a zone generated for a remote peer, whose ground may not be there to read (a road
-    /// point is then probed at its own stored height). <paramref name="groundMisses"/>: road points skipped for want of
-    /// ground; <paramref name="roadHeightPoints"/>: those probed at the road's own height. <paramref name="ground"/>: the
-    /// finished ground (the game's ZoneSystem.GetGroundHeight). The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
-    public static List<RockClearance> Near(Vector3 centre, float radius, bool generating, GroundAt ground,
-        out int groundMisses, out int roadHeightPoints)
+    /// the road points a little further out, so a point at the edge has its neighbours). <paramref name="ground"/>: the
+    /// ground as the players will have it, the one the carve grounds its fragments on (RoadRockCarve.GroundReader: the
+    /// loaded terrain where its zone's terrain is written, else the finished ground the writer leaves).
+    /// <paramref name="groundMisses"/>: road points skipped where that ground is not known (inside a location whose ground is
+    /// not read yet): their rock waits. The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
+    public static List<RockClearance> Near(Vector3 centre, float radius, GroundAt ground, out int groundMisses)
     {
-        groundMisses = 0; roadHeightPoints = 0;
+        groundMisses = 0;
         var boxes = new List<RockClearance>();
         List<RoadSpatialGrid.RoadPoint> line = RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius + HeadingReach);
-        // A staircase's cuts are not road: left in the line, one half a metre off a road point turned that point's
-        // heading, and so its clearance box, toward it.
-        line.RemoveAll(p => p.cutOnly);
+        // Only walked points (RoadSpatialGrid.RoadPoint.Walked, the one test of walking space, as vegetation's): road,
+        // unpainted road and a waded ford's paint-only points, whose box stands on the riverbed it is waded on. A staircase's
+        // cuts and a structure's mounds are not walked: left in the line, one half a metre off a road point turned that
+        // point's heading, and so its clearance box, toward it.
+        line.RemoveAll(p => !p.Walked);
         var c = new Vector2(centre.x, centre.z);
         foreach (var point in line)
         {
-            if (!point.IsRoad || (point.p - c).sqrMagnitude > radius * radius) continue;
-            bool read = ground(new Vector3(point.p.x, 0f, point.p.y), out float surface);
-            if (!RoadRockPolicy.ClearanceSurface(read, surface, point.h, generating, out surface)) { groundMisses++; continue; }
-            if (!read) roadHeightPoints++;
-            boxes.Add(Road(point, surface, line, RoadRockPolicy.ClearanceHeight, wholeOnly: false, keepsSiteRocks: point.intoSite));
+            if ((point.p - c).sqrMagnitude > radius * radius) continue;
+            if (!ground(new Vector3(point.p.x, 0f, point.p.y), out float surface)) { groundMisses++; continue; }
+            // A road point into a location, or one in any location's footprint, keeps the rocks of a location's area (unchanged by
+            // which location a point may change the ground of: RoadLocationProtection.Admits).
+            boxes.Add(Road(point, surface, line, RoadRockPolicy.ClearanceHeight, wholeOnly: false,
+                keepsLocationRocks: point.intoLocation || RoadLocationProtection.Contains(point.p)));
         }
+        // A deck's box (WholeOnly, BridgeStructures.AddClearances) is the deck's own: given as it is, never read as a stair's.
         foreach (var s in StructurePlans.ClearancesNear(centre, radius))
-            if (s.IsBox) AddBox(s, boxes);
-            else boxes.Add(Road(s.Point, s.Surface, s.Line!, s.Height, s.WholeOnly, keepsSiteRocks: false));
+            if (s.WholeOnly) boxes.Add(Of(s, Quaternion.Euler(0f, s.YawDegrees, 0f), s.Centre, s.Half));
+            else AddBox(s, boxes);
         return boxes;
     }
 
@@ -74,8 +77,8 @@ public static class RockClearances
 
     /// <summary>The highest a road's box stands over its walking surface <paramref name="surface"/>
     /// (<see cref="RoadRockPolicy.ClearanceHeight"/> over <see cref="Bottom"/>): a rock standing wholly over it is over the
-    /// walker's head. A place's rocks are judged in the way of its approach and landing by the same heights
-    /// (<see cref="SiteRock.InTheWay"/>). The one owner of headroom (docs/OWNERS.md).</summary>
+    /// walker's head. A location's rocks are judged in the way of its approach and landing by the same heights
+    /// (<see cref="LocationRock.InTheWay"/>). The one owner of headroom (docs/OWNERS.md).</summary>
     public static float Top(float surface) => Bottom(surface) + RoadRockPolicy.ClearanceHeight;
 
     /// <summary>The ground under a point, if any answers there.</summary>
@@ -88,17 +91,17 @@ public static class RockClearances
     /// boxes overlap.</summary>
     public const float ClearanceHalfLength = 0.6f;
 
-    /// <summary>A road's (or a deck's) clearance at a point: a box turned to the road's heading, as wide as the solid paint,
+    /// <summary>A road's clearance at a point: a box turned to the road's heading, as wide as the solid paint,
     /// from <see cref="RoadRockPolicy.ClearanceLift"/> over the surface <paramref name="height"/> tall, its own roof: a rock
     /// arching over the road over that stays (the carve took what hung over it up to 4 m). It was a capsule as wide as the road; a capsule is never
     /// shorter than its width, so on a 4 m road it was a 4 m ball, reaching 4 m up and leaving arches. The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     internal static RockClearance Road(RoadSpatialGrid.RoadPoint point, float surface, List<RoadSpatialGrid.RoadPoint> line, float height,
-        bool wholeOnly, bool keepsSiteRocks)
+        bool wholeOnly, bool keepsLocationRocks)
     {
         var dir = RoadRockPolicy.Heading(point, line);
         var half = new Vector3(RoadProfile.PaintEdge(point.w), height * 0.5f, ClearanceHalfLength);
         return new RockClearance(new Vector3(point.p.x, Bottom(surface) + half.y, point.p.y), half,
-            Quaternion.Euler(0f, Mathf.Atan2(dir.x, dir.y) * Mathf.Rad2Deg, 0f), surface, wholeOnly, keepsSiteRocks);
+            Quaternion.Euler(0f, Mathf.Atan2(dir.x, dir.y) * Mathf.Rad2Deg, 0f), surface, wholeOnly, keepsLocationRocks);
     }
 
     /// <summary>
@@ -147,5 +150,5 @@ public static class RockClearances
     internal static float TreadLayer(float highest) => highest + StairLayout.StepUp;
 
     private static RockClearance Of(StructureClearance s, Quaternion turn, Vector3 centre, Vector3 half)
-        => new RockClearance(centre, half, turn, s.Surface, s.WholeOnly, s.KeepsSiteRocks);
+        => new RockClearance(centre, half, turn, s.Surface, s.WholeOnly, s.KeepsLocationRocks);
 }

@@ -102,6 +102,78 @@ public class CorridorSnapTests
         });
     }
 
+    /// <summary>A staircase's flight is a line of the network a road may be snapped onto only where its search may take it
+    /// (RoadPathfinder.ClosedByAStaircase): a road's own staircase, which a later road walks, but never a flight standing
+    /// there that no road climbed (a location's approach), whose cells the search keeps every road out of. Snapped onto
+    /// one, the road ran up the approach's flight and was refused under it, where its search had come in beside it.</summary>
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    public void ARoadIsSnappedOntoAStaircaseOnlyWhereItsSearchMayWalkIt(bool standing, bool climbed, bool snapped)
+    {
+        With(new Terrace(), () =>
+        {
+            // A flight at ground level along z 40, well away from the road along z 0; the road's waypoints 2 m beside it
+            // (within the road snap) and every 8 m along it.
+            var run = new StairRun { From = new Vector2(-79f, 40f), To = new Vector2(79f, 40f), Width = 2f };
+            for (float x = -79f; x <= 79f; x += 2f)
+                run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = "stone_stair", Position = new Vector3(x, 31f - StairLayout.StepMiddle, 40f) });
+            StairStructures.Reset();
+            try
+            {
+                StairStructures.Add(run);
+                if (standing) StairStructures.MarkStanding(run);
+                if (climbed) StairStructures.MarkLaid(run.Pieces.Select(p => new Vector2(p.Position.x, p.Position.z)));
+                var line = Line(42f, -60f, 60f);
+                var result = RoadNetworkGenerator.SnapToNetwork(line)!;
+                int onFlight = result.Skip(1).Take(result.Count - 2).Count(p => Mathf.Abs(p.y - 40f) < 0.5f);
+                if (snapped) Assert.True(onFlight >= result.Count - 4, $"{onFlight} of {result.Count - 2} interior waypoints on the flight");
+                else Assert.All(result, p => Assert.Equal(42f, p.y, 3));
+            }
+            finally { StairStructures.Reset(); }
+        });
+    }
+
+    /// <summary>A viaduct's deck is a line of the network a road may be snapped onto only where its search may take it
+    /// (RoadPathfinder.ClosedToARoad): the cells under a standing viaduct's deck (DvergrViaduct.Standing) are closed to every
+    /// road, which uses a viaduct only by its own jump, bank to bank. A deck whose cells are not closed (a bridge's line, say)
+    /// still takes the waypoints beside it.</summary>
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void ARoadIsSnappedOntoAViaductsDeckOnlyWhereItsSearchMayGo(bool standing, bool snapped)
+    {
+        With(new Terrace(), () =>
+        {
+            // A deck at the ground's height along z 40, well away from the road along z 0; the road's waypoints 2 m beside it
+            // (within the road snap) and every 8 m along it.
+            var deck = new RoadCrossing
+            {
+                FromBank = new Vector2(-79f, 40f), ToBank = new Vector2(79f, 40f), Center = new Vector2(0f, 40f),
+                Direction = new Vector2(1f, 0f), Width = 158f, Kind = CrossingKind.Bridge, ValleyJump = true, WaterLevel = 31f,
+            };
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static;
+            var gate = typeof(RoadNetworkGenerator).GetField("m_recordGate", flags)!.GetValue(null)!;
+            var crossings = (List<RoadCrossing>)typeof(RoadNetworkGenerator).GetField("m_roadCrossings", flags)!.GetValue(null)!;
+            lock (gate) crossings.Add(deck);
+            DvergrViaduct.ResetStanding();
+            try
+            {
+                if (standing) DvergrViaduct.MarkStanding(deck);
+                var result = RoadNetworkGenerator.SnapToNetwork(Line(42f, -60f, 60f))!;
+                int onDeck = result.Skip(1).Take(result.Count - 2).Count(p => Mathf.Abs(p.y - 40f) < 0.5f);
+                if (snapped) Assert.True(onDeck >= result.Count - 4, $"{onDeck} of {result.Count - 2} interior waypoints on the deck");
+                else Assert.All(result, p => Assert.Equal(42f, p.y, 3));
+            }
+            finally
+            {
+                lock (gate) crossings.Remove(deck);
+                DvergrViaduct.ResetStanding();
+            }
+        });
+    }
+
     [Fact]
     public void APlannedRoadKeepsAHeldMeetWithinTheSnapOfAnotherRoad()
     {

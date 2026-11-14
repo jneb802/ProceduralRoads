@@ -44,11 +44,11 @@ public sealed class SavedRecordBytesTests : IDisposable
     public void TheClearedZonesRecordIsFormatVersionCountZones()
     {
         RoadNetworkPersistence.SaveClearedZones(7, Zones);
-        Assert.Equal(Ints(1, 7, 2, 1, -2, -300, 4), RoadNetworkPersistence.SavedRecord("ProceduralRoads_ClearedZones"));
+        Assert.Equal(Ints(2, 7, 2, 1, -2, -300, 4, 0), RoadNetworkPersistence.SavedRecord("ProceduralRoads_ClearedZones"));
     }
 
     [Fact]
-    public void ZonesOwedOnlyAppendsMakeItFormatTwoWithTheirThroughVersion()
+    public void ZonesOwedOnlyAppendsAreListedWithTheirThroughVersion()
     {
         RoadNetworkPersistence.SaveClearedZones(7, Zones, new Dictionary<Vector2s, int> { [new Vector2s(5, 6)] = 3 });
         Assert.Equal(Ints(2, 7, 2, 1, -2, -300, 4, 1, 5, 6, 3), RoadNetworkPersistence.SavedRecord("ProceduralRoads_ClearedZones"));

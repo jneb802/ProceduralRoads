@@ -60,6 +60,8 @@ public static class RoadRide
     }
 
     private const float Cell = 4f;
+    /// <summary>How many cells either way of a point's own hold every point within <paramref name="reach"/> of it.</summary>
+    private static int CellRadius(float reach) => Mathf.CeilToInt(reach / Cell);
     /// <summary>Road abreast of a point lies within this along its heading: a stored road's points are about a metre apart.</summary>
     private const float Abreast = 1f;
 
@@ -72,7 +74,7 @@ public static class RoadRide
         private readonly List<Segment> m_segments = new();
         private Vector2[]? m_dirs;
 
-        internal Lines(IReadOnlyList<Vector2> around, float reach)
+        internal Lines(IReadOnlyList<Vector2> around, float reach, RoadNetworkGenerator.Proposed? proposed = null)
         {
             if (!RoadSpatialGrid.IsInitialized || around.Count == 0) return;
             // Road points: every 64 m grid cell within reach (and the heading's 4 m) of a point.
@@ -96,17 +98,17 @@ public static class RoadRide
             // Another island's road is not this island's network (CrossIslandReads); the crossings and staircases below are
             // read through their owners, which pass over another island's already.
             int me = CrossIslandReads.Me;
-            byte skipped = 0;
+            int skipped = 0;
             foreach (Vector2i c in gridCells)
                 if (RoadSpatialGrid.CellPoints(c) is RoadSpatialGrid.RoadPoint[] pts)
                     foreach (var q in pts)
                     {
-                        if (q.cutOnly) continue;
+                        if (!q.Walked) continue;
                         if (!CrossIslandReads.Sees(me, q.island)) { skipped = q.island; continue; }
                         var key = (Mathf.FloorToInt(q.p.x / Cell), Mathf.FloorToInt(q.p.y / Cell));
                         if (!m_cells.TryGetValue(key, out var list)) m_cells[key] = list = new List<int>();
                         list.Add(m_points.Count);
-                        m_points.Add(q);
+                        m_points.Add(proposed != null ? proposed.AsRaised(q, me) : q);
                     }
             if (skipped != 0) CrossIslandReads.Skipped(CrossIslandReads.Kind.Lines, skipped, around[0]);
             // A crossing's line, bank to bank, near the points (a grid cell along it read above), at the height of the road
@@ -124,12 +126,15 @@ public static class RoadRide
                 }
                 return false;
             }
+            // The road's surface at a bank by the one reader of a met road's height (RoadSpatialGrid.SurfaceReader).
+            float BankHeight(Vector2 bank, float otherwise) =>
+                RoadSpatialGrid.TryGetRoadHeightWithin(bank, Reach, out float met, proposed) ? met : otherwise;
             foreach (RoadCrossing c in RoadNetworkGenerator.CrossingsSnapshot())
                 if (Near(c))
-                    m_segments.Add(new Segment(c.FromBank, c.ToBank, StoredHeight(c.FromBank, c.WaterLevel), StoredHeight(c.ToBank, c.WaterLevel)));
+                    m_segments.Add(new Segment(c.FromBank, c.ToBank, BankHeight(c.FromBank, c.WaterLevel), BankHeight(c.ToBank, c.WaterLevel)));
             // A staircase's flight: its walked pieces in order.
             // Only flights in the grid cells read above (no lock held per piece, no scan per point).
-            foreach (StairRun run in StairStructuresRuns())
+            foreach (StairRun run in proposed != null ? proposed.Runs(StairStructuresRuns()) : StairStructuresRuns())
             {
                 StructurePiece? last = null;
                 foreach (StructurePiece p in run.Pieces)
@@ -144,21 +149,23 @@ public static class RoadRide
             }
         }
 
-        /// <summary>The height of the road read nearest <paramref name="p"/> within 4 m, or <paramref name="otherwise"/>.</summary>
-        internal float StoredHeight(Vector2 p, float otherwise)
+        /// <summary>Whether every road point read within <paramref name="reach"/> of <paramref name="p"/> meets a point there at
+        /// <paramref name="height"/> as two pieces of road meet (RoadNetworkGenerator.PiecesMeet, the one verdict).</summary>
+        internal bool MeetsEvery(Vector2 p, float height, float reach)
         {
-            float best = Reach * Reach, height = otherwise;
+            int r = CellRadius(reach);
             int cx = Mathf.FloorToInt(p.x / Cell), cz = Mathf.FloorToInt(p.y / Cell);
-            for (int dx = -1; dx <= 1; dx++)
-                for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -r; dx <= r; dx++)
+                for (int dz = -r; dz <= r; dz++)
                     if (m_cells.TryGetValue((cx + dx, cz + dz), out var list))
                         foreach (int i in list)
                         {
                             var q = m_points[i];
-                            float d = (q.p - p).sqrMagnitude;
-                            if (d < best && q.IsRoad) { best = d; height = q.h; }
+                            if (!q.IsRoad) continue;
+                            float d = Vector2.Distance(q.p, p);
+                            if (d <= reach && !RoadNetworkGenerator.PiecesMeet(Mathf.Abs(q.h - height), d)) return false;
                         }
-            return height;
+            return true;
         }
 
         /// <summary>A road's own piece, kept: its later pieces ride it as they ride the network.</summary>
@@ -207,10 +214,12 @@ public static class RoadRide
         /// <summary>The nearest point of the network's line within <paramref name="reach"/> of <paramref name="p"/>; with a
         /// <paramref name="heading"/>, only line heading that way (<see cref="Angle"/>); with a <paramref name="height"/>,
         /// only road within <paramref name="heightTolerance"/> of it (a structure's line at any height).</summary>
+        /// <param name="walk">With a <paramref name="height"/>, only road and structure line a player walks onto from it
+        /// (<see cref="StairLayout.Walkable"/>, the walker's step) in place of <paramref name="heightTolerance"/>.</param>
         /// <param name="abreast">Only road abreast of the point along <paramref name="heading"/> (within a point's spacing
         /// along it): beside it, not ahead of it or behind it (a road carrying on from where another ends rides nothing).</param>
         public bool Nearest(Vector2 p, float reach, out Hit hit, Vector2? heading = null, float? height = null, float heightTolerance = Height,
-            bool paintOnly = true, bool abreast = false, bool roads = true, bool structures = true)
+            bool paintOnly = true, bool abreast = false, bool roads = true, bool structures = true, bool walk = false)
         {
             hit = default;
             float best = reach * reach;
@@ -219,7 +228,7 @@ public static class RoadRide
             Vector2 head = heading is Vector2 hv && hv.sqrMagnitude > 1e-6f ? hv.normalized : new Vector2(0f, 0f);
             bool wantHeading = head.sqrMagnitude > 0.5f;
             int bestPoint = -1;
-            int r = Mathf.CeilToInt(reach / Cell);
+            int r = CellRadius(reach);
             int cx = Mathf.FloorToInt(p.x / Cell), cz = Mathf.FloorToInt(p.y / Cell);
             for (int dx = -r; dx <= r && roads; dx++)
                 for (int dz = -r; dz <= r; dz++)
@@ -230,7 +239,7 @@ public static class RoadRide
                             if (!paintOnly && q.paintOnly) continue;
                             float d = (q.p - p).sqrMagnitude;
                             if (d > best) continue;
-                            if (height is float h && Mathf.Abs(q.h - h) > heightTolerance) continue;
+                            if (height is float h && (walk ? !StairLayout.Walkable(q.h, h) : Mathf.Abs(q.h - h) > heightTolerance)) continue;
                             if (abreast && wantHeading && Mathf.Abs(Vector2.Dot(q.p - p, head)) > Abreast) continue;
                             Vector2 dir = new(0f, 0f);
                             if (wantHeading)
@@ -255,7 +264,7 @@ public static class RoadRide
                 if (d > best) continue;
                 Vector2 dir = ab * (1f / Mathf.Sqrt(len2));
                 if (wantHeading && (dir.sqrMagnitude < 0.5f || Mathf.Abs(Vector2.Dot(dir, head)) < cosLimit)) continue;
-                if (height is float hs && Mathf.Abs(Mathf.Lerp(s.Ha, s.Hb, t) - hs) > heightTolerance) continue;
+                if (height is float hs && (walk ? !StairLayout.Walkable(Mathf.Lerp(s.Ha, s.Hb, t), hs) : Mathf.Abs(Mathf.Lerp(s.Ha, s.Hb, t) - hs) > heightTolerance)) continue;
                 best = d; found = true; bestPoint = -1;
                 hit = new Hit(at, Mathf.Lerp(s.Ha, s.Hb, t), dir, true, Mathf.Sqrt(d));
             }
@@ -271,6 +280,11 @@ public static class RoadRide
 
     /// <summary>The network's lines near <paramref name="points"/>, within <paramref name="reach"/> of any. The one owner of A road riding or lying beside another (docs/OWNERS.md).</summary>
     public static Lines Around(IReadOnlyList<Vector2> points, float reach) => new(points, reach);
+
+    /// <summary><see cref="Around"/> on the network as it will stand once a road's proposed changes are made
+    /// (RoadNetworkGenerator.Proposed: the other roads it raises at their new heights, a staircase it lands on cut back), as
+    /// its checks read it before they are (RoadNetworkGenerator.Written).</summary>
+    internal static Lines Around(IReadOnlyList<Vector2> points, float reach, RoadNetworkGenerator.Proposed? proposed) => new(points, reach, proposed);
 
     /// <summary>A route's own heading at its point <paramref name="i"/>, from its points either side.</summary>
     private static Vector2 Heading(IReadOnlyList<Vector2> points, int i)

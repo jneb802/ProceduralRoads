@@ -170,7 +170,7 @@ public class StairStartPadTests : IDisposable
         Assert.DoesNotContain(pad.Points, p => p.x > 2.1f || p.y > 7.6f);
     }
 
-    /// <summary>A flight going down from the road's end (an approach to a place below): its top's floor, its exit edge on the
+    /// <summary>A flight going down from the road's end (an approach to a location below): its top's floor, its exit edge on the
     /// ring, is padded with the road's end; the flight going down from it is not (no fill up to it).</summary>
     [Fact]
     public void ATopGoingDownFromTheRoadsEndStandsOnALevelPad()
@@ -206,10 +206,10 @@ public class StairStartPadTests : IDisposable
         StairPlan plan = FootFlight(90f, 90f);
         // A wall 9 m over the road's end under the first stair.
         Assert.Null(RoadEndRing.PadUnder(plan, (x, z) => x > 2.5f ? H + 9f : H, 8f, out string why));
-        Assert.Contains("past the 8 m cap", why);
+        Assert.StartsWith(RoadEndRing.PastTheCap, why);
         // Still none with ground left out elsewhere under it: the cap is the whole pad's.
         Assert.Null(RoadEndRing.PadUnder(plan, (x, z) => x > 2.5f ? (z > 0f ? H + 9f : H - 1.5f) : H, 8f, out why));
-        Assert.Contains("past the 8 m cap", why);
+        Assert.StartsWith(RoadEndRing.PastTheCap, why);
         // The ground falling 1.5 m away under its far half: a fill over a metre off the road's end, left as it is there, and
         // a lattice step short of it (a pad point's flat core would level that too); the road's end and the stair's near
         // edge padded.
@@ -354,5 +354,65 @@ public class StairStartPadTests : IDisposable
             float there = top - Under(padded, end - up * along);
             Assert.True(Mathf.Abs(there) <= StairLayout.StepUp, $"{there:F2} m from the road onto the floor {along:F2} m past the road's end");
         }
+    }
+
+    /// <summary>
+    /// A pad is judged as every road's earthwork is (RoadNetworkGenerator.EarthworkAcross, its points as stored, each
+    /// RoadEndRing.PadPointWidth wide): the writer levels the vertex half a metre past its outermost lattice points to the
+    /// pad's height too, so a wall standing there, 9 m over the pad, is cut past the cap. Its lattice points alone all stand
+    /// on level ground, and the lattice check laid it.
+    /// </summary>
+    [Fact]
+    public void APadWhoseFlatCoreReachesAWallPastItsLatticeIsNotLaid()
+    {
+        StairPlan plan = FootFlight(90f, 90f);
+        RoadEndRing.Pad? level = RoadEndRing.PadUnder(plan, (x, z) => H, 8f, out string why);
+        Assert.True(level != null, why);
+        float edge = level!.Points.Max(p => p.x);
+        Assert.Equal(0.5f, edge - Mathf.Floor(edge));
+        // The wall begins a quarter metre past the pad's last lattice column: no lattice point stands on it, the vertex half
+        // a metre out (within a pad point's flat core) does.
+        float Wall(float x, float z) => x > edge + 0.25f ? H + 9f : H;
+        Assert.All(level.Points, p => Assert.Equal(H, Wall(p.x, p.y)));
+
+        Assert.Null(RoadEndRing.PadUnder(plan, Wall, 8f, out why));
+        Assert.StartsWith(RoadEndRing.PastTheCap, why);
+    }
+
+    /// <summary>A start pad is decided by the one owner for a generated road (RoadStairRuns.StartPads, as
+    /// RoadNetworkGenerator.GenerateRoadCore lays it) and a manual road's append (RoadNetworkGenerator.AppendOf) alike, with
+    /// the mod's cap: none where the writer would cut it past the cap, the same pad where it would not.</summary>
+    [Fact]
+    public void APadIsLaidOrRefusedAlikeForAGeneratedRoadAndAManualRoad()
+    {
+        StairPlan plan = FootFlight(90f, 90f);
+        float edge = RoadEndRing.PadUnder(plan, (x, z) => H, 8f, out _)!.Points.Max(p => p.x);
+        float cap = RoadNetworkGenerator.EarthworkCap;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
+        try
+        {
+            foreach (float wall in new[] { 0f, 9f })
+            {
+                var world = new World { Height = (x, z) => x > edge + 0.25f ? H + wall : H };
+                _scope.WithWorld(world);
+                RoadSpatialGrid.Clear();
+                var span = new RoadStairSpan { FromPoint = End, FromHeight = H, ToPoint = new Vector2(11.5f, 0f), ToHeight = H + 5f, Kit = StairKit.Stone, Plan = plan };
+                var path = Enumerable.Range(0, 41).Select(k => new Vector2(0f, -40f + k)).ToList();
+                RoadSpatialGrid.PlannedPath road = RoadSpatialGrid.PlanRoadPath(path, RoadNetworkGenerator.RoadWidth, world, null, H)!;
+                Assert.NotNull(road);
+                var own = new List<RoadSpatialGrid.PlannedPath> { road };
+                List<RoadSpatialGrid.PlannedPath> generated = RoadStairRuns.StartPads(own, new[] { span }, world);
+                var appended = RoadNetworkGenerator.AppendOf(own, new List<RoadCrossing>(), new List<RoadStairSpan> { span }).WithFills
+                    .Where(p => p.Unpainted != null && p.Unpainted.All(u => u)).ToList();
+                Assert.Equal(wall > 8f ? 0 : 1, generated.Count);
+                Assert.Equal(generated.Count, appended.Count);
+                for (int i = 0; i < generated.Count; i++)
+                {
+                    Assert.Equal(generated[i].Points, appended[i].Points);
+                    Assert.Equal(generated[i].Heights, appended[i].Heights);
+                }
+            }
+        }
+        finally { RoadNetworkGenerator.EarthworkCap = cap; }
     }
 }

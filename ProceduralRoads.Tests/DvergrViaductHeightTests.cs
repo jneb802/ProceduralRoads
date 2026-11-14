@@ -34,12 +34,12 @@ public sealed class DvergrViaductHeightTests : IDisposable
         _scope.Dispose();
     }
 
-    private static RoadPathfinder Finder(WorldGenerator world) =>
-        new(world) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
+    private static RoadPathfinder Finder(WorldGenerator world, float approachReach = RoadConstants.DefaultViaductApproachReach) =>
+        new(world) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f, ViaductApproachReach = approachReach };
 
-    private static (Vector2 from, Vector2 to)? Jump(StepValley world, float z)
+    private static (Vector2 from, Vector2 to)? Jump(StepValley world, float z, float approachReach = RoadConstants.DefaultViaductApproachReach)
     {
-        RoadPathfinder finder = Finder(world);
+        RoadPathfinder finder = Finder(world, approachReach);
         Assert.NotNull(finder.FindPath(new Vector2(-100f, z), new Vector2(100f, z)));
         return finder.LastViaductJumps.Count == 0 ? null : finder.LastViaductJumps[0];
     }
@@ -100,7 +100,9 @@ public sealed class DvergrViaductHeightTests : IDisposable
     }
 
     /// <summary>One valley, 18 m deep south of z = 0 and 13 m north of it; the road runs along z = 100. The inverse price
-    /// crossed where the road is (13 m piers); the height price goes 100 m south to the 18 m piers.</summary>
+    /// crossed where the road is (13 m piers); the height price goes 100 m south to the 18 m piers. The control compares the
+    /// two jumps' own prices, so it is searched without the approach discount (RoadPathfinder.ViaductApproachReach), which
+    /// prices down the road near either crossing alike and so makes the detour south cheaper at any jump price.</summary>
     [Fact]
     public void OfATallAndALowCrossingOfOneValleyTheTallOneIsChosen()
     {
@@ -110,9 +112,9 @@ public sealed class DvergrViaductHeightTests : IDisposable
         Assert.True(tall.HasValue, "no viaduct");
         Assert.True(Tallest(world, tall!.Value) >= 16f, $"crossed on {Tallest(world, tall.Value):F1} m piers");
 
-        // Control: the inverse price (a half share at the ceiling) keeps the low crossing.
+        // Control: the inverse price (a half share at the ceiling) keeps the low crossing, its jump priced alone.
         DvergrViaduct.CeilingPriceShare = 0.5f;
-        var low = Jump(world, 100f);
+        var low = Jump(world, 100f, approachReach: 0f);
         Assert.True(low.HasValue, "no viaduct at the inverse price");
         Assert.True(Tallest(world, low!.Value) < 14f, $"the inverse price crossed on {Tallest(world, low.Value):F1} m piers");
     }

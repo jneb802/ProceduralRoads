@@ -18,14 +18,14 @@ public class ManualRoadTests : IDisposable
         public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0; width = 0; }
     }
     private readonly WorldGenerator world = new FlatWorld();
-    private readonly ValheimWorldScope _scope = new ValheimWorldScope();
+    private readonly ValheimWorldScope _scope = new ValheimWorldScope().WithNetwork(server: true);
     public ManualRoadTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         _scope.WithWorld(world).WithZdos().WithZoneSystem(); RoadNetworkGenerator.MarkLocationsReady();
         Heightmap.Registered = null; RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade;
         RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
-        RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
     }
     public void Dispose()
     {
@@ -122,7 +122,7 @@ public class ManualRoadTests : IDisposable
         int original = BaseRoad(); var before = RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0,0)).Where(p=>p.addition==0).ToArray();
         Add(16); int appended = RoadSpatialGrid.RoadNetworkVersion;
         var bytes = RoadSpatialGrid.SerializeAllRoadPoints()!;
-        Assert.Equal(4, BitConverter.ToInt32(bytes,0)); Assert.Equal(3, BitConverter.ToInt32(bytes,4));
+        Assert.Equal(4, BitConverter.ToInt32(bytes,0)); Assert.Equal(8, BitConverter.ToInt32(bytes,4));
         RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(bytes));
         Assert.Equal(appended,RoadSpatialGrid.RoadNetworkVersion);
         var all = RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0,0));
@@ -140,10 +140,10 @@ public class ManualRoadTests : IDisposable
         Assert.Equal(all,RoadSpatialGrid.PendingPoints(all,0));
         Assert.Equal(all,RoadSpatialGrid.PendingPoints(all,123456));
     }
-    [Fact] public void OrdinaryNetworksKeepPlainGeometryInsideTheStatisticsEnvelope()
+    [Fact] public void OrdinaryNetworksSaveInTheOneCurrentFormat()
     {
         BaseRoad(); var before=RoadSpatialGrid.SerializeAllRoadPoints()!;
-        Assert.Equal(4,BitConverter.ToInt32(before,0)); Assert.Equal(2,BitConverter.ToInt32(before,4));
+        Assert.Equal(4,BitConverter.ToInt32(before,0)); Assert.Equal(8,BitConverter.ToInt32(before,4));
         RoadSpatialGrid.Clear(); Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(before));
         Assert.Equal(before,RoadSpatialGrid.SerializeAllRoadPoints());
     }
@@ -152,6 +152,19 @@ public class ManualRoadTests : IDisposable
         BaseRoad(); Add(16); var before=RoadSpatialGrid.SerializeAllRoadPoints()!;
         Assert.False(RoadSpatialGrid.DeserializeAllRoadPoints(before.Take(before.Length-1).ToArray()));
         Assert.Equal(before,RoadSpatialGrid.SerializeAllRoadPoints());
+    }
+    /// <summary>A zone no road point reaches owes no road write: its terrain is settled with no compiler at all (a
+    /// structure-only zone, a bridge's mid-span), so the rock pass and the carve's fragment ground alike may judge it
+    /// (RoadRockClearing.TerrainWritten); a road's zone waits for its compiler and its write.</summary>
+    [Fact] public void AZoneNoRoadReachesIsSettledWithoutACompilerAndARoadZoneWaitsForItsWrite()
+    {
+        BaseRoad(); var road=new Vector2s(0,0); var roadless=new Vector2s(5,5);
+        Assert.Empty(RoadSpatialGrid.GetRoadPointsInZone(roadless));
+        Assert.True(RoadTerrainModifier.TerrainSettled(ZoneSystem.GetZonePos(roadless)));
+        Assert.False(RoadTerrainModifier.TerrainSettled(ZoneSystem.GetZonePos(road)));
+        var hm=_scope.RegisterHeightmap(road); RoadTerrainModifier.OnTerrainCompilerReady(hm.m_terrainComp!);
+        Assert.True(RoadTerrainModifier.CarriesCurrentRoads(hm.m_terrainComp!));
+        Assert.True(RoadTerrainModifier.TerrainSettled(ZoneSystem.GetZonePos(road)));
     }
     [Fact] public void UnchangedZoneIsNotRewrittenAfterAnAppendElsewhere()
     {
@@ -170,7 +183,6 @@ public class ManualRoadTests : IDisposable
         Add(16);
         Assert.False(VegetationClearing.IsCleared(zone,RoadSpatialGrid.RoadNetworkVersion));
         // It owes the clearing of the roads appended since it was cleared, not the older roads' again.
-        VegetationClearing.CarryOver(RoadSpatialGrid.RoadNetworkVersion);
         int since=VegetationClearing.OwedSince(zone);
         Assert.InRange(since,0,RoadSpatialGrid.AppendCount-1);
         Assert.Contains(RoadSpatialGrid.GetRoadPointsInZone(zone),q=>q.addition>since);
@@ -185,7 +197,6 @@ public class ManualRoadTests : IDisposable
         int version=BaseRoad(); var zone=new Vector2s(0,0);
         VegetationClearing.MarkCleared(zone,version);
         Add(200); Add(16);
-        VegetationClearing.CarryOver(RoadSpatialGrid.RoadNetworkVersion);
         int since=VegetationClearing.OwedSince(zone);
         Assert.InRange(since,0,RoadSpatialGrid.AppendCount-1);
         RoadNetworkPersistence.EnsureMetadataInstance();
@@ -195,6 +206,30 @@ public class ManualRoadTests : IDisposable
         Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData());
         Assert.Equal(since,VegetationClearing.OwedSince(zone));
         Assert.False(VegetationClearing.IsCleared(zone,RoadSpatialGrid.RoadNetworkVersion));
+    }
+    /// <summary>Two appends into a cleared zone before any bake or save: it owes both from the first, as soon as each is
+    /// published, through a save and reload; and a clearing done on what was read before the second append certifies the
+    /// first only.</summary>
+    [Fact] public void TwoAppendsIntoAClearedZoneStayOwedThroughAReloadAndAnEarlierClearingCertifiesOnlyTheFirst()
+    {
+        int version=BaseRoad(); var zone=new Vector2s(0,0);
+        VegetationClearing.MarkCleared(zone,version);
+        Add(16); int first=RoadSpatialGrid.RoadNetworkVersion;
+        Assert.Equal(0,VegetationClearing.OwedSince(zone));
+        Add(8);
+        Assert.Equal(0,VegetationClearing.OwedSince(zone));
+        RoadNetworkPersistence.EnsureMetadataInstance();
+        RoadNetworkPersistence.SetSavedRecord("ProceduralRoads_GlobalData",RoadSpatialGrid.SerializeAllRoadPoints()!);
+        RoadNetworkGenerator.SaveClearedZones();
+        RoadNetworkGenerator.Reset(); Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData());
+        Assert.Equal(0,VegetationClearing.OwedSince(zone));
+        Assert.False(VegetationClearing.IsCleared(zone,RoadSpatialGrid.RoadNetworkVersion));
+        VegetationClearing.MarkCleared(zone,first);
+        Assert.Equal(1,VegetationClearing.OwedSince(zone));
+        Assert.False(VegetationClearing.IsCleared(zone,RoadSpatialGrid.RoadNetworkVersion));
+        VegetationClearing.MarkCleared(zone,RoadSpatialGrid.RoadNetworkVersion);
+        Assert.Equal(-1,VegetationClearing.OwedSince(zone));
+        Assert.True(VegetationClearing.IsCleared(zone,RoadSpatialGrid.RoadNetworkVersion));
     }
     /// <summary>A zone whose clearing is unknown (the saved record could not be read) is not cleared again for the roads it
     /// had, but a road appended into it later is cleared there, its own roads only.</summary>
@@ -218,6 +253,42 @@ public class ManualRoadTests : IDisposable
         Assert.Equal(-1,VegetationClearing.OwedSince(zone));
     }
 
+    /// <summary>A zone with no road of its own whose trees or logs a road reaches (RoadClearAreaManager.GetOrCreateRoadCentres
+    /// gathers points VegetationClearing.TreeReach past it) is owed clearing as the road's own zones are: the whole network's
+    /// zone set holds it (RoadClearAreaManager.ZonesReached, zone for zone as the road centres gather), and an append whose
+    /// road comes that near a cleared one owes it again (RoadSpatialGrid.ZonesChangedSince, ZoneChangedSince, the clearing
+    /// record). Before, only the zones a road writes terrain into were, so a tree next door with its trunk over the road was
+    /// never judged by the bake.</summary>
+    [Fact] public void AZoneOnlyTheRoadsTreeReachTakesInIsOwedItsClearing()
+    {
+        // The road centres are cached per zone for the world: none left from another network.
+        RoadClearAreaManager.ClearCache();
+        int version=BaseRoad();
+        // The road at z -16: zone (0,-1) (centre z -64) holds none of its terrain, but its trees reach it.
+        var below=new Vector2s(0,-1);
+        Assert.Empty(RoadSpatialGrid.GetRoadPointsInZone(below));
+        Assert.NotEmpty(RoadClearAreaManager.GetOrCreateRoadCentres(below));
+        HashSet<Vector2s> reached=RoadClearAreaManager.ZonesReached();
+        Assert.Contains(below,reached);
+        for(int x=-6;x<=6;x++) for(int y=-4;y<=4;y++)
+        {
+            var zone=new Vector2s(x,y);
+            Assert.Equal(RoadClearAreaManager.RoadCentresSince(zone,-1).Count>0,reached.Contains(zone));
+        }
+        // A cleared zone (0,1) (centre z 64): a road appended at z 110 writes none of its terrain, but its trees reach that road.
+        var above=new Vector2s(0,1);
+        ZoneSystem.instance!.Generated.Add(above);
+        VegetationClearing.MarkCleared(above,RoadSpatialGrid.RoadNetworkVersion);
+        Assert.True(VegetationClearing.IsCleared(above,RoadSpatialGrid.RoadNetworkVersion));
+        int appends=RoadSpatialGrid.AppendCount;
+        Add(110);
+        Assert.DoesNotContain(RoadSpatialGrid.GetRoadPointsInZone(above),q=>q.addition>appends);
+        Assert.Contains(above,RoadSpatialGrid.ZonesChangedSince(version)!);
+        Assert.True(RoadSpatialGrid.ZoneChangedSince(above,version));
+        Assert.False(VegetationClearing.IsCleared(above,RoadSpatialGrid.RoadNetworkVersion));
+        Assert.Equal(appends,VegetationClearing.OwedSince(above));
+        Assert.NotEmpty(RoadClearAreaManager.RoadCentresSince(above,appends).Where(c=>float.IsNaN(c.Bottom)));
+    }
     [Fact] public void AnAppendOwesOnlyTheZonesItReachesAndAnotherNetworkOwesAll()
     {
         int version=BaseRoad(); Add(200);
@@ -332,18 +403,21 @@ public class ManualRoadTests : IDisposable
         RoadNetworkGenerator.Reset(); Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData()); Assert.Equal(bytes,RoadSpatialGrid.SerializeAllRoadPoints());
     }
     /// <summary>A manual road is stored by the generated road's own loop: each point at its own width (a switchback's
-    /// turns), and a point inside a place's footprint into it.</summary>
+    /// turns), and a point inside the footprint of the location it was planned to into that location.</summary>
     [Fact] public void AManualRoadKeepsItsPointWidthsAndIsStoredIntoAFootprintAsAGeneratedRoadIs()
     {
         BaseRoad();
-        RoadSiteProtection.Set(new[]{new RoadSiteProtection.Footprint(new Vector2(100,40),6)});
+        RoadLocationProtection.Set(new[]{new RoadLocationProtection.Footprint(new Vector2(100,40),6)});
+        // A location on the preload list (RoadLocationProtection.Enterable): only such a location is stored into.
+        PlacedLocations.Preload(new Vector2(100,40));
         var points=new List<Vector2>{new(88,40),new(94,40),new(100,40),new(106,40),new(112,40)};
         var plan=new RoadSpatialGrid.PlannedPath(points,new List<float>{40,40,40,40,40},new List<RoadPointDebugInfo>(),4,24,false)
-            {Widths=new List<float>{4,4,7,4,4}};
+            {Widths=new List<float>{4,4,7,4,4},Locations=new RoadLocationProtection.Targets(null,new Vector2(100,40))};
         RoadSpatialGrid.CommitAppend(new[]{plan},RoadSpatialGrid.RoadNetworkVersion);
         var stored=RoadSpatialGrid.SnapshotAllRoadPoints().Where(p=>p.addition==1).ToList();
-        Assert.Contains(stored,p=>p.p==new Vector2(100,40)&&p.w==7f&&p.intoSite);
-        Assert.Contains(stored,p=>p.p==new Vector2(88,40)&&p.w==4f&&!p.intoSite);
+        Assert.Contains(stored,p=>p.p==new Vector2(100,40)&&p.w==7f&&p.intoLocation&&p.location==new Vector2(100,40));
+        Assert.Contains(stored,p=>p.p==new Vector2(88,40)&&p.w==4f&&!p.intoLocation);
+        PlacedLocations.Reset();
     }
     /// <summary>The zones a manual road writes are read off the append it commits: its cuts and the other roads' points it
     /// raises are in them, not only its own points.</summary>
@@ -382,7 +456,7 @@ public class ManualRoadTests : IDisposable
     }
     [Fact] public void ProtectedWaypointIsRefusedWithoutExemptingItsOwnFootprint()
     {
-        RoadSiteProtection.Set(new[]{new RoadSiteProtection.Footprint(new Vector2(0,0),20)});
+        RoadLocationProtection.Set(new[]{new RoadLocationProtection.Footprint(new Vector2(0,0),20)});
         Assert.Throws<ArgumentException>(()=>ManualRoads.Prepare(new[]{new Vector2(0,0),new Vector2(80,0)},false,new[]{Group()}));
         Assert.False(RoadSpatialGrid.IsInitialized); Assert.False(ManualRoads.Busy);
     }
@@ -397,7 +471,7 @@ public class ManualRoadTests : IDisposable
         Assert.True(RoadSpatialGrid.TryGetRoadWithin(new Vector2(0,60),100,out var near,p=>p.y<0));
         Assert.True(near.y<0);
         var finder=new RoadPathfinder(world);
-        var path=finder.FindPathToNetwork(new Vector2(0,60), RoadPathfinder.CellSize,new[]{new Vector2(0,-16)},p=>p.y<0);
+        var path=finder.FindPathToNetwork(new Vector2(0,60), RoadPathfinder.CellSize,()=>RoadNetworkGenerator.Reached(new Vector2(0,60),p=>p.y<0),new[]{new Vector2(0,-16)},p=>p.y<0);
         Assert.NotNull(path); Assert.True(path![path.Count-1].y<0);
     }
     [Fact] public void AlreadyConnectedIsANoop()
@@ -432,7 +506,8 @@ public class ManualRoadTests : IDisposable
         Assert.Equal(StructureAppendQueue.Key(piece),StructureAppendQueue.Key(StructureAppendQueue.ForZone(zone)![0]));
         Assert.Throws<EndOfStreamException>(()=>StructureAppendQueue.Load(data.Take(data.Length-1).ToArray()));
         Assert.Equal(data,StructureAppendQueue.Serialize());
-        StructureAppendQueue.Complete(zone);Assert.True(StructurePlans.IsSpawned(zone));Assert.Empty(StructureAppendQueue.Zones);
+        // Completing marks only the queue's own work done: the zone is recorded spawned by its placement once its plan is out.
+        StructureAppendQueue.Complete(zone);Assert.False(StructurePlans.IsSpawned(zone));Assert.Empty(StructureAppendQueue.Zones);
     }
 }
 
@@ -443,12 +518,12 @@ public class ManualRoadFailureTests : IDisposable
         public override float GetHeight(float x,float z)=>x<64 ? 40 : 180;
         public override void GetRiverWeight(float x,float z,out float weight,out float width){weight=0;width=0;}
     }
-    private readonly ValheimWorldScope _world=new ValheimWorldScope().WithWorld(new Cliff()).WithZdos().WithZoneSystem();
+    private readonly ValheimWorldScope _world=new ValheimWorldScope().WithWorld(new Cliff()).WithZdos().WithZoneSystem().WithNetwork(server: true);
     public ManualRoadFailureTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady();RoadGrade.Configured=.35f;RoadNetworkGenerator.RoadWidth=4;
-        RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
     }
     public void Dispose()
     {
@@ -495,11 +570,11 @@ public class ManualRoadFailureTests : IDisposable
 
 public class ManualBridgeTests : IDisposable
 {
-    private readonly ValheimWorldScope _world=new ValheimWorldScope().WithWorld(new BridgeTests.WideRiverWorld()).WithZdos().WithZoneSystem();
+    private readonly ValheimWorldScope _world=new ValheimWorldScope().WithWorld(new BridgeTests.WideRiverWorld()).WithZdos().WithZoneSystem().WithNetwork(server: true);
     public ManualBridgeTests()
     {
         RoadNetworkGenerator.Reset();RoadTerrainModifier.ResetForWorld();
-        RoadNetworkGenerator.MarkLocationsReady();RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadNetworkGenerator.MarkLocationsReady();RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         RoadGrade.Configured=.35f;RoadNetworkGenerator.RoadWidth=4;
     }
     public void Dispose()

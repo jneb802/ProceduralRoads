@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Xunit;
 using Valheim.Testing.Doubles;
@@ -47,7 +48,7 @@ public class JunctionFilletTests
         var world = new Flat();
         float before = RoadJunctionFillet.Radius;
         using var worldScope = new ValheimWorldScope().WithWorld(world);
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         RoadSpatialGrid.Clear();
         try
         {
@@ -148,7 +149,7 @@ public class JunctionFilletTests
         var world = new Flat();
         float before = RoadJunctionFillet.Radius;
         using var worldScope = new ValheimWorldScope().WithWorld(world);
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         RoadSpatialGrid.Clear();
         try
         {
@@ -184,7 +185,7 @@ public class JunctionFilletTests
         var world = new Flat();
         float before = RoadJunctionFillet.Radius;
         using var worldScope = new ValheimWorldScope().WithWorld(world);
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         RoadSpatialGrid.Clear();
         StairStructures.Reset();
         try
@@ -210,6 +211,96 @@ public class JunctionFilletTests
         finally { RoadJunctionFillet.Radius = before; RoadSpatialGrid.Clear(); StairStructures.Reset(); }
     }
 
+    /// <summary>Ground at <see cref="Height"/> within half a metre of the given points, a wall 10 m over it everywhere else.</summary>
+    private sealed class Walled : WorldGenerator
+    {
+        private readonly List<Vector2> _level;
+        public Walled(List<Vector2> level) { _level = level; }
+        public override float GetHeight(float x, float z)
+        {
+            var q = new Vector2(x, z);
+            foreach (Vector2 p in _level) if ((p - q).sqrMagnitude <= 0.25f) return Height;
+            return Height + 10f;
+        }
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
+    }
+
+    /// <summary>A T junction's corners on ground level with the road under every point of their fill, and a wall past the
+    /// earthwork cap half a road's width in from the curve: each corner's edge stands on the wall, so neither corner is filled,
+    /// by generation's fill (RoadJunctionFillet.For) and a manual road's append (RoadNetworkGenerator.AppendOf) alike, with the mod's cap. Its
+    /// earthwork is measured across its width as every road's is; read at its points alone, the wall was missed.</summary>
+    [Fact]
+    public void ACornerWhoseEdgeIsPastTheEarthworkCapIsNotFilled()
+    {
+        var (trunk, branch, level) = Junction(90f, 2f, Radius);
+        // On level ground both corners are filled, out past the stretch onto the trunk's centreline.
+        Assert.Contains(level, q => q.magnitude > 2.4f);
+        var world = new Walled(level);
+        float before = RoadJunctionFillet.Radius, cap = RoadNetworkGenerator.EarthworkCap;
+        using var worldScope = new ValheimWorldScope().WithWorld(world);
+        RoadLocationProtection.Reset();
+        RoadSpatialGrid.Clear();
+        try
+        {
+            RoadJunctionFillet.Radius = Radius;
+            RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
+            RoadSpatialGrid.Commit(Piece(trunk));
+            var own = new List<RoadSpatialGrid.PlannedPath> { Piece(branch) };
+            var generated = RoadJunctionFillet.For(own, world).SelectMany(f => f.Points).ToList();
+            var appended = RoadNetworkGenerator.AppendOf(own, new List<RoadCrossing>(), new List<RoadStairSpan>()).WithFills.Skip(1)
+                .SelectMany(f => f.Points).ToList();
+            foreach (var fill in new[] { generated, appended })
+                Assert.DoesNotContain(fill, q => q.magnitude > 2.4f);
+        }
+        finally { RoadJunctionFillet.Radius = before; RoadNetworkGenerator.EarthworkCap = cap; RoadSpatialGrid.Clear(); }
+    }
+
     /// <summary>Nothing laid past the trunk's centreline: no spur on the junction's outside.</summary>
     private static void AssertNoSpur(List<Vector2> fill) => Assert.All(fill, q => Assert.True(q.y >= -0.05f, $"{q} past the trunk"));
+    /// <summary>Ground climbing 0.3 m/m along x.</summary>
+    private sealed class Climb : WorldGenerator
+    {
+        public override float GetHeight(float x, float z) => Height + 0.3f * x;
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
+    }
+
+    /// <summary>The fill on the road it meets stands on that road's surface as the one reader of a met road's height reads it
+    /// (RoadSpatialGrid.TryGetRoadHeightWithin: along its line as the terrain writer fits it), not on its nearest point's own
+    /// height: a trunk climbing 0.3 m/m with points 2 m apart, met halfway between two of them, is 0.3 m off either point.</summary>
+    [Fact]
+    public void AFillOnTheRoadItMeetsStandsOnThatRoadsSurfaceAsTheOneReaderReadsIt()
+    {
+        var world = new Climb();
+        var trunk = new List<Vector2>();
+        for (int x = -40; x <= 40; x += 2) trunk.Add(new Vector2(x, 0f));
+        var branch = Dense(new Vector2(1f, 40f), new Vector2(1f, 3f));
+        float before = RoadJunctionFillet.Radius;
+        using var worldScope = new ValheimWorldScope().WithWorld(world);
+        RoadLocationProtection.Reset();
+        RoadSpatialGrid.Clear();
+        try
+        {
+            RoadJunctionFillet.Radius = Radius;
+            RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(trunk, trunk.ConvertAll(p => Height + 0.3f * p.x),
+                trunk.ConvertAll(_ => default(RoadPointDebugInfo)), Width, 80f, false));
+            var piece = new RoadSpatialGrid.PlannedPath(branch, branch.ConvertAll(_ => Height + 0.3f),
+                branch.ConvertAll(_ => default(RoadPointDebugInfo)), Width, Vector2.Distance(branch[0], branch[branch.Count - 1]), false);
+            var fills = RoadJunctionFillet.For(new List<RoadSpatialGrid.PlannedPath> { piece }, world);
+            int onTrunk = 0;
+            foreach (var f in fills)
+                for (int k = 0; k < f.Points.Count; k++)
+                {
+                    Vector2 q = f.Points[k];
+                    if (Mathf.Abs(q.y) > 0.01f) continue;
+                    Assert.True(RoadSpatialGrid.TryGetRoadHeightWithin(q, Width, out float surface));
+                    Assert.True(Mathf.Abs(f.Heights[k] - surface) <= 0.01f,
+                        System.FormattableString.Invariant($"the fill at ({q.x:F1}, {q.y:F1}) stands at {f.Heights[k]:F2} m on a road whose surface is {surface:F2} m"));
+                    onTrunk++;
+                }
+            Assert.True(onTrunk > 0, "no fill on the trunk's centreline");
+        }
+        finally { RoadJunctionFillet.Radius = before; RoadSpatialGrid.Clear(); }
+    }
 }

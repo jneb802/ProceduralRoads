@@ -10,9 +10,9 @@ using Valheim.Testing.Doubles;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// A place with no flat (a cabin that only smooths round its centre) gets the level landing every place's road end gets
-/// (RoadSpatialGrid.PlaceEnds, from RoadNetworkGenerator.ApproachGround), where the road arrives at its ring, at its ground
-/// there, and the same whether the place is the road's start or its end. In game: AbandonedLogCabin04 (-1867, 7101), placed
+/// A location with no flat (a cabin that only smooths round its centre) gets the level landing every location's road end gets
+/// (RoadSpatialGrid.LocationEnds, from RoadNetworkGenerator.ApproachGround), where the road arrives at its ring, at its ground
+/// there, and the same whether the location is the road's start or its end. In game: AbandonedLogCabin04 (-1867, 7101), placed
 /// with no landing to go onto, its road climbing on into the cabin's edge without levelling out.
 /// </summary>
 [Collection("RoadStatics")]
@@ -24,7 +24,7 @@ public partial class NoFlatLandingTests : IDisposable
         .AndKeep(() => RoadSpatialGrid.FollowGround);
 
     /// <summary>Ground rising north at <see cref="Slope"/> from 50 m at the origin, out to 200 m; sea beyond. Black Forest: no
-    /// approach staircase onto a place.</summary>
+    /// approach staircase onto a location.</summary>
     private sealed class SlopeWorld : WorldGenerator
     {
         public override float GetHeight(float wx, float wy) => Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f ? 0f : 50f + Slope * wy;
@@ -39,7 +39,7 @@ public partial class NoFlatLandingTests : IDisposable
     private static readonly Vector2 Origin = new(0f, 0f);
     /// <summary>A cabin's levelling: it only smooths round its centre out to 10 m, no flat.</summary>
     private static readonly IReadOnlyList<LevelOp> CabinSmooth = new[] { new LevelOp(0f, 0f, 0f, 0f, false, 10f, 3f) };
-    /// <summary>A place with a flat 6 m round its centre.</summary>
+    /// <summary>A location with a flat 6 m round its centre.</summary>
     private static readonly IReadOnlyList<LevelOp> Flat = new[] { new LevelOp(0f, 0f, 0f, 6f, false, 10f, 3f) };
     private readonly SlopeWorld _world = new();
 
@@ -54,9 +54,9 @@ public partial class NoFlatLandingTests : IDisposable
     public void Dispose()
     {
         SetPathfinder(null);
-        PlacedSites.Reset();
+        PlacedLocations.Reset();
         LocationLevelling.Source = null;
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
         _landing.Dispose();
@@ -71,26 +71,29 @@ public partial class NoFlatLandingTests : IDisposable
     {
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
-        PlacedSites.Reset();
-        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(0f, 0f), 20f, Radius) });
+        PlacedLocations.Reset();
+        // Placed first with no landing to go onto (PlacedLocations.FlatlessPlaced): on the preload list, so its road may be
+        // carried on into it (RoadLocationProtection.Enterable).
+        PlacedLocations.Preload(new Vector2(0f, 0f));
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 20f, Radius) });
         LocationLevelling.Source = c => c.magnitude < 0.5f ? ops : null;
         SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
     }
 
-    /// <summary>The road's own points near the place at the origin after a road between it and <see cref="Far"/>, the place
-    /// the road's start or its end; with how many of the road's ends were stored on a place's level landing.</summary>
-    private (List<RoadSpatialGrid.RoadPoint> near, int landings) Road(IReadOnlyList<LevelOp> ops, bool placeAtStart)
+    /// <summary>The road's own points near the location at the origin after a road between it and <see cref="Far"/>, the location
+    /// the road's start or its end; with how many of the road's ends were stored on a location's level landing.</summary>
+    private (List<RoadSpatialGrid.RoadPoint> near, int landings) Road(IReadOnlyList<LevelOp> ops, bool locationAtStart)
     {
         Setup(ops);
-        bool built = placeAtStart
-            ? RoadNetworkGenerator.GenerateRoad(Origin, Radius, Far, 0f, Width, "from the place")
-            : RoadNetworkGenerator.GenerateRoad(Far, 0f, Origin, Radius, Width, "to the place");
+        bool built = locationAtStart
+            ? RoadNetworkGenerator.GenerateRoad(Origin, Radius, Far, 0f, Width, "from the location")
+            : RoadNetworkGenerator.GenerateRoad(Far, 0f, Origin, Radius, Width, "to the location");
         Assert.True(built, "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
         var near = RoadSpatialGrid.GetRoadPointsNearPosition(Vector3.zero, 40f).Where(p => p.IsRoad).OrderBy(p => p.p.magnitude).ToList();
-        return (near, RoadSpatialGrid.PlaceLandingsStored);
+        return (near, RoadSpatialGrid.LocationLandingsStored);
     }
 
-    /// <summary>The road's height at <paramref name="distance"/> from the place's centre, between its points either side.</summary>
+    /// <summary>The road's height at <paramref name="distance"/> from the location's centre, between its points either side.</summary>
     private static float HeightAt(List<RoadSpatialGrid.RoadPoint> near, float distance)
     {
         var inside = near.Where(p => p.p.magnitude <= distance).ToList();
@@ -102,7 +105,7 @@ public partial class NoFlatLandingTests : IDisposable
         return span < 1e-3f ? inner.h : Mathf.Lerp(inner.h, outer.h, (distance - inner.p.magnitude) / span);
     }
 
-    /// <summary>The distances out from the place's centre the landing is read at: from its edge (where it is arrived at,
+    /// <summary>The distances out from the location's centre the landing is read at: from its edge (where it is arrived at,
     /// the footprint's arrival radius) to its ring and on along the road over the landing's length, a metre apart.</summary>
     private static IEnumerable<float> OverTheLanding()
     {
@@ -110,7 +113,7 @@ public partial class NoFlatLandingTests : IDisposable
         for (float d = Radius; d <= ring + RoadPitches.JunctionLanding - 1f + 1e-3f; d += 1f) yield return d;
     }
 
-    /// <summary>The road is level from the place's edge, at the place's ground there, out over its landing: within the
+    /// <summary>The road is level from the location's edge, at the location's ground there, out over its landing: within the
     /// landing's grade of that height all the way, on ground rising at <see cref="Slope"/>.</summary>
     private static void AssertLevelLanding(List<RoadSpatialGrid.RoadPoint> near, string which)
     {
@@ -120,26 +123,26 @@ public partial class NoFlatLandingTests : IDisposable
         {
             float h = HeightAt(near, d), allowed = RoadPitches.JunctionLandingGrade * (d - Radius) + 0.02f;
             Assert.True(Mathf.Abs(h - edge) <= allowed,
-                $"the road's {which} at the place: {h:F2} m at {d:F1} m out, {h - edge:+0.00;-0.00} m off the place's ground at its edge ({edge:F2}); ground there {50f + Slope * d:F2}");
+                $"the road's {which} at the location: {h:F2} m at {d:F1} m out, {h - edge:+0.00;-0.00} m off the location's ground at its edge ({edge:F2}); ground there {50f + Slope * d:F2}");
         }
     }
 
-    /// <summary>The road's end at the place carried on to its edge (CarryOnToEdges), both stored on a level landing: the
-    /// road's own end at the ring and the stretch on into the place.</summary>
+    /// <summary>The road's end at the location carried on to its edge (CarryOnToEdges), both stored on a level landing: the
+    /// road's own end at the ring and the stretch on into the location.</summary>
     [Fact]
-    public void ARoadEndingAtAPlaceWithNoFlatEndsOnALevelLanding()
+    public void ARoadEndingAtALocationWithNoFlatEndsOnALevelLanding()
     {
-        var (near, landings) = Road(CabinSmooth, placeAtStart: false);
+        var (near, landings) = Road(CabinSmooth, locationAtStart: false);
         Assert.Equal(1, RoadNetworkGenerator.CarriedToEdgeCount);
         Assert.Equal(2, landings);
         AssertLevelLanding(near, "end");
     }
 
     [Fact]
-    public void ARoadStartingAtAPlaceWithNoFlatStartsOnTheSameLanding()
+    public void ARoadStartingAtALocationWithNoFlatStartsOnTheSameLanding()
     {
-        var (atEnd, endLandings) = Road(CabinSmooth, placeAtStart: false);
-        var (atStart, startLandings) = Road(CabinSmooth, placeAtStart: true);
+        var (atEnd, endLandings) = Road(CabinSmooth, locationAtStart: false);
+        var (atStart, startLandings) = Road(CabinSmooth, locationAtStart: true);
         Assert.Equal(1, RoadNetworkGenerator.CarriedToEdgeCount);
         Assert.Equal(endLandings, startLandings);
         AssertLevelLanding(atStart, "start");
@@ -148,11 +151,11 @@ public partial class NoFlatLandingTests : IDisposable
                 $"at {d:F1} m out the road's start stands at {HeightAt(atStart, d):F2}, its end at {HeightAt(atEnd, d):F2}");
     }
 
-    /// <summary>The landing is at the place's ground where the road arrives (its edge on the road's side, ArrivalHeight), the
-    /// end held there as an end level with a place's flat is held (ApproachGround); not where the ground is further off it than
+    /// <summary>The landing is at the location's ground where the road arrives (its edge on the road's side, ArrivalHeight), the
+    /// end held there as an end level with a location's flat is held (ApproachGround); not where the ground is further off it than
     /// the reached test allows (ReachRise).</summary>
     [Fact]
-    public void ANoFlatPlacesEndIsHeldAtItsArrivalHeight()
+    public void ANoFlatLocationsEndIsHeldAtItsArrivalHeight()
     {
         Setup(CabinSmooth);
         float ring = RoadNetworkGenerator.KeepOutEdge(Origin, Radius, Width);
@@ -166,9 +169,9 @@ public partial class NoFlatLandingTests : IDisposable
         Assert.Null(RoadNetworkGenerator.ApproachGround(off, Origin, Radius));
     }
 
-    /// <summary>A place with a flat is unchanged: its end held at its ground only within StairLayout.StairFitsFrom of its flat, as before.</summary>
+    /// <summary>A location with a flat is unchanged: its end held at its ground only within StairLayout.StairFitsFrom of its flat, as before.</summary>
     [Fact]
-    public void APlaceWithAFlatIsUnchanged()
+    public void ALocationWithAFlatIsUnchanged()
     {
         Setup(Flat);
         float? platform = LocationLevelling.ApproachHeight(50f, Flat);

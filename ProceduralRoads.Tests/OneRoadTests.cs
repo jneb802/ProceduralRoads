@@ -193,7 +193,7 @@ public class OneRoadTests
         using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!
-            .SetValue(null, new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0f });
+            .SetValue(null, new RoadPathfinder(world) { Fords = true, Bridges = true });
         RoadCrossingDetector.SetFordStyleWeights(0f, 0f, 1f);
         var pieces = new List<(string? label, RoadSpatialGrid.PlannedPath plan)>();
         RoadNetworkGenerator.PieceCommitted = (p, l) => pieces.Add((l, p));

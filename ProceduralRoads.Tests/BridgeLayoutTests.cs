@@ -81,11 +81,11 @@ public sealed class BridgeLayoutTests
     [Fact]
     public void ABridgeReachingAnExcludedZoneIsNotBuiltAnywhere()
     {
-        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        var world = BridgeTests.HeldRiverWorld();
         using var scope = new ValheimWorldScope().WithWorld(world).WithZoneSystem();
         NetworkCutoff.Forget();
         RoadNetworkGenerator.Reset();
-        SetPathfinder(new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0f });
+        SetPathfinder(new RoadPathfinder(world) { Fords = true, Bridges = true });
         try
         {
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
@@ -96,13 +96,13 @@ public sealed class BridgeLayoutTests
 
             // A fresh world: every zone's plan, untouched.
             NetworkCutoff.SnapshotWorld(new Vector2s[0]);
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             foreach (Vector2s zone in zones)
                 Assert.Same(StructurePlans.PlanFor(zone), StructurePlans.BuildablePlanFor(zone));
 
             // Explored land elsewhere: still untouched.
             NetworkCutoff.SnapshotWorld(new[] { new Vector2s(40, 40) });
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             foreach (Vector2s zone in zones)
                 Assert.Same(StructurePlans.PlanFor(zone), StructurePlans.BuildablePlanFor(zone));
 
@@ -110,7 +110,7 @@ public sealed class BridgeLayoutTests
             foreach (Vector2s explored in zones)
             {
                 NetworkCutoff.SnapshotWorld(new[] { explored });
-                NetworkCutoff.UseNewNetwork();
+                NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
                 foreach (Vector2s zone in zones)
                 {
                     Assert.NotNull(StructurePlans.PlanFor(zone));

@@ -130,10 +130,10 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
         {
             List<StructurePiece> column = laid.Where(p => p.Prefab == StairRailing.ParapetHalfCoursePrefab && Mathf.Abs(p.Position.x - x) < 0.01f)
                 .OrderByDescending(p => p.Position.y).ToList();
-            float low = BuriedPieces.LowestOver(new[]
+            float low = BuriedPieces.RangeOver(new[]
             {
                 new Vector2(x - hu, 125f), new Vector2(x + hu, 125f), new Vector2(x + hu, 126f), new Vector2(x - hu, 126f),
-            }, Ground);
+            }, Ground).lowest;
             for (int k = 1; k < column.Count; k++)
                 Assert.Equal(column[k - 1].Position.y - 2f * hy, column[k].Position.y, 3);
             Assert.True(column[column.Count - 1].Position.y - hy <= low - StairSupport.Bury + 1e-3f, $"x {x}: lowest at {column[column.Count - 1].Position.y} not sunk into {low}");
@@ -174,21 +174,48 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
             {
                 float lowest = supports.Where(p => Mathf.Abs(p.Position.x - x) < 0.01f).Min(p => p.Position.y) - hy;
                 Vector2 c = new(x, supports.First(p => Mathf.Abs(p.Position.x - x) < 0.01f).Position.z);
-                float ground = BuriedPieces.LowestOver(new[]
+                float ground = BuriedPieces.RangeOver(new[]
                 {
                     c + new Vector2(-hu, -hv), c + new Vector2(hu, -hv), c + new Vector2(hu, hv), c + new Vector2(-hu, hv),
-                }, EastEndGround);
+                }, EastEndGround).lowest;
                 Assert.True(lowest <= ground - StairSupport.Bury + 1e-3f, $"column at x {x}: lowest {lowest} does not reach ground {ground}");
             }
         }
+    }
+
+    /// <summary>
+    /// A bank parapet's arch is never left out on a burial verdict but the one owner's (BuriedPieces.Buried, the game's mesh
+    /// over its whole footprint, read by the viaduct's whole-structure omission): on ground not known (NaN), where the nine
+    /// samples' "lower than its top" never held and so left it out; and over a bank standing over it everywhere but at one
+    /// vertex inside its footprint, a dip between those nine samples, where it shows.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ABankParapetsArchIsNotLeftOutOverADipOrUnknownGround(bool unknown)
+    {
+        // The deck along +z, the arches 2.5 m either side of its edge at (12.6, 20.6) and (7.6, 20.6), their tops at 32; the
+        // bank at 33.1 but 31.9 at the vertices (12, 20) and (7, 20), inside each arch's footprint and at most 0.4 into the
+        // triangles any of the nine samples reads.
+        var end = new StructureEnds.End(new Vector2(10.1f, 20.6f), new Vector2(0f, 1f), 30f, 0);
+        float Vertex(int x, int z) => (x == 12 || x == 7) && z == 20 ? 31.9f : 33.1f;
+        Func<Vector2, float> finished = unknown ? _ => float.NaN : p => BuriedPieces.MeshHeight(p.x, p.y, Vertex);
+        Vector2 dir = new(0f, 1f), side = new(-1f, 0f);
+        List<List<StructurePiece>> sides = DvergrViaduct.BankParapet(end, finished, dir, side, 90f, BridgeLayout.YawDegrees(dir));
+        Assert.Equal(2, sides.Count(laid => laid.Exists(p => p.Prefab == DvergrViaduct.Arch)));
+        // And the owner's verdict, which the viaduct's omission asks of every piece, keeps each over the dip.
+        if (!unknown)
+            foreach (StructurePiece arch in sides.SelectMany(laid => laid).Where(p => p.Prefab == DvergrViaduct.Arch))
+                Assert.False(BuriedPieces.Buried(arch.Prefab, arch.Position, arch.YawDegrees, Vertex), $"arch at {arch.Position}");
     }
 
     // ------------------------------------------------------------ where it runs on, and where not
 
     /// <summary>A bank beside the road level with it, a step under it within the ledge, or rising over it: the parapet runs
     /// on past the deck's end on both sides all the same (one side alone looks uneven), its cap and parapet piece, the
-    /// deck's course carried on under the cap flush with the road, black marble under the parapet piece only over the step
-    /// down (the courses stop sunk in the ground), none wholly in it. None at an end with stairs
+    /// deck's course carried on under the cap flush with the road (laid on a level or rising bank too: flush with the ground,
+    /// the game grounds it), black marble under the parapet piece only over the step down (the courses stop sunk in the
+    /// ground), none wholly in it. None at an end with stairs
     /// (their own parapet) or none set.</summary>
     [Theory]
     [InlineData(0f)]
@@ -208,9 +235,9 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
             Assert.Single(pieces, p => p.Prefab == StairRailing.ParapetPrefab);
             Assert.Single(pieces, p => p.Prefab == StairRailing.ParapetCapPrefab);
             // The deck's course carried on under the arch and cap, its top at the road's, sunk into the bank; black marble
-            // under the parapet piece only where the bank stands under it (the step down).
-            // (A bank level with the road or rising over it leaves it wholly in the ground: left out.)
-            Assert.True(under > 0f == pieces.Exists(p => p.Prefab == StairRailing.ParapetHalfCoursePrefab && Mathf.Abs(p.Position.x + 1f) < 0.01f
+            // under the parapet piece only where the bank stands under it (the step down). On a bank level with the road or
+            // rising over it the course is flush with the road's ground, not wholly in it: laid.
+            Assert.True(pieces.Exists(p => p.Prefab == StairRailing.ParapetHalfCoursePrefab && Mathf.Abs(p.Position.x + 1f) < 0.01f
                 && Mathf.Abs(p.Position.y + DvergrViaduct.Extents(p.Prefab).y - level.Height) < 0.01f), Say(pieces));
             Assert.True(under > 0f == pieces.Exists(p => p.Prefab != StairRailing.ParapetPrefab && Mathf.Abs(p.Position.x + 3f) < 0.01f
                 && p.Position.y < level.Height - 1f), Say(pieces));
@@ -431,7 +458,7 @@ public sealed class DvergrViaductBankParapetTests : IDisposable
         var lo = new Vector3(c.x - hu, c.y - hy, c.z - hv);
         var hi = new Vector3(c.x + hu, c.y + hy, c.z + hv);
         if (prefab == DvergrViaduct.StepPrefab) { lo.y = c.y; hi.y = c.y + 1f; }
-        return new SupportGraph.Piece(c, lo, hi, ViaductSupport.MaterialOf(prefab)!.Value, grounded);
+        return new SupportGraph.Piece(c, lo, hi, (BuriedPieces.DataOf(prefab, out BuriedPieces.Measured measured) ? measured.Material : null)!.Value, grounded);
     }
 
     private static bool OnTheGround(StructurePiece p)

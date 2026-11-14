@@ -11,14 +11,17 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadBeside
 {
-    /// <summary>A centreline (or a staircase's walked piece) this far or less across from a road's runs beside it: a road's
-    /// width and its terrain blend. Nearer, the two roads' levelled ground and blend overlap and they read as one smeared road
-    /// (a road wavering just past a narrower reach would slip through it). At the default width; what is asked is
-    /// <see cref="Current"/>, the Roads/RoadWidth setting's.</summary>
-    public const float Reach = RoadConstants.DefaultRoadWidth + RoadConstants.TerrainBlendMargin;
+    /// <summary>The visual beside-road corridor for a road of <paramref name="width"/>: a centreline (or a staircase's walked
+    /// piece) this far or less across from a road's runs beside it, the road's width and one terrain blend margin (6 m at
+    /// the default width). A rule of how roads read: nearer, two roads read as one smeared road (a road wavering just past a
+    /// narrower reach would slip through it). It is not where two roads' terrain stops meeting: each road's levelled ground
+    /// and blend reach half its width and a blend margin from its centre (two default roads 8 m apart still touch), and batter
+    /// and fill spread reach further; the corridor is not widened to cover them. The one owner of the visual beside-road
+    /// corridor distance (docs/OWNERS.md).</summary>
+    public static float CorridorDistance(float width) => width + RoadConstants.TerrainBlendMargin;
 
-    /// <summary>The reach at the Roads/RoadWidth setting: the road's width and its terrain blend. The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
-    public static float Current => RoadNetworkGenerator.RoadWidth + RoadConstants.TerrainBlendMargin;
+    /// <summary>The corridor (<see cref="CorridorDistance"/>) at the Roads/RoadWidth setting: what the beside-road rules ask. The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
+    public static float Current => CorridorDistance(RoadNetworkGenerator.RoadWidth);
     /// <summary>Nearer than this a road is on the other road: the trunk the two share, not beside it.</summary>
     public const float OnRoad = 1f;
     /// <summary>Within this of the other road's surface it is beside it at its height.</summary>

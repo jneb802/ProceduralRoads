@@ -10,7 +10,7 @@ namespace ProceduralRoads;
 /// Harmony patches for ZoneSystem and related classes to integrate road generation.
 /// This file contains thin wrappers that delegate to dedicated modules.
 /// </summary>
-public static class ZoneSystem_Patch
+public static partial class ZoneSystem_Patch
 {
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))]
     public static class ZoneSystem_Start_Patch
@@ -27,31 +27,44 @@ public static class ZoneSystem_Patch
     {
         /// <summary>Where the roads' clear areas start in the zone being generated, and the structures' after them (the game's
         /// own come first); none before the prefix, and none while no roads are available: every area is then the game's.</summary>
-        private static int s_firstRoadArea = int.MaxValue, s_firstStructureArea = int.MaxValue, s_firstRockKeepingArea = int.MaxValue;
+        private static int s_firstRoadArea = int.MaxValue, s_firstStructureArea = int.MaxValue;
+        private static readonly List<StairSupport.Walk> NoWalks = new();
+        /// <summary>The structures' walks the zone being generated judges its vegetation against.</summary>
+        private static IReadOnlyList<StairSupport.Walk> s_walks = NoWalks;
         private static readonly List<VegetationClearing.RoadCentre> NoRoad = new();
         /// <summary>The road points the zone being generated tests its grown trees against.</summary>
         private static List<VegetationClearing.RoadCentre> s_road = NoRoad;
+        /// <summary>The network version the zone being generated read its clear areas and road points at, when it has any
+        /// (0: none): its clearing is recorded at that version once placement is done (<see cref="Postfix"/>).</summary>
+        private static int s_clearedFor;
 
         [HarmonyPrefix]
         public static void Prefix(Vector2s zoneID, List<ZoneSystem.ClearArea> clearAreas)
         {
             s_firstRoadArea = int.MaxValue;
             s_firstStructureArea = int.MaxValue;
-            s_firstRockKeepingArea = int.MaxValue;
+            s_walks = NoWalks;
             s_road = NoRoad;
-            if (!RoadNetworkGenerator.RoadsAvailable)
+            s_clearedFor = 0;
+            s_owedToBake = false;
+            if (!RoadLifecycleManager.WritesTheNetwork)
                 return;
-            s_road = RoadClearAreaManager.GetOrCreateRoadCentres(zoneID);
-            VegetationClearing.ZoneAreas areas = RoadClearAreaManager.AddRoadAreas(zoneID, clearAreas);
+            // Recorded once the placement is done (Postfix), not before it has run; never where the transpiler did not put the
+            // road's test in (the server bake clears such a zone, RoadClearAreaManager.ForGeneration).
+            VegetationClearing.ZoneAreas areas = RoadClearAreaManager.ForGeneration(zoneID, clearAreas, s_judged, out s_road, out s_clearedFor);
             s_firstRoadArea = areas.FirstRoad;
             s_firstStructureArea = areas.FirstStructure;
-            s_firstRockKeepingArea = areas.FirstRockKeeping ?? areas.FirstStructure;
-
-            // Generated with the road's clear areas: its vegetation matches the
-            // network from the start, and the server never clears it later.
-            if (areas.AnyRoadOrStructure || s_road.Count > 0)
-                VegetationClearing.MarkCleared(zoneID, RoadSpatialGrid.RoadNetworkVersion);
+            s_walks = areas.Walks;
+            s_owedToBake = !s_judged && (areas.AnyRoadOrStructure || s_road.Count > 0);
         }
+
+        /// <summary>Whether the transpiler put the road's test (<see cref="InsideClearArea"/>, VegetationClearing.Judge) into
+        /// PlaceVegetation: without it a zone is generated with the game's own test over the clear areas alone, and its clearing
+        /// is left to the server bake.</summary>
+        private static bool s_judged;
+        /// <summary>The zone being generated reaches the roads or structures but is generated without the road's test: handed
+        /// to the server bake once placed (<see cref="Postfix"/>).</summary>
+        private static bool s_owedToBake;
 
         /// <summary>
         /// PlaceVegetation tests each candidate against the clear areas with ZoneSystem.InsideClearArea, which cannot
@@ -73,11 +86,15 @@ public static class ZoneSystem_Patch
                 field.FieldType == typeof(ZoneSystem.ZoneVegetation));
             if (veg < 1 || !code[veg - 1].IsLdloc())
             {
+                s_judged = false;
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
-                    "PlaceVegetation has changed shape: large rocks are kept out of the road's clear areas at generation, as vegetation is, " +
-                    "and grown trees only out of the clear areas");
+                    "ZoneSystem_PlaceVegetation_Patch.Transpiler did not apply (PlaceVegetation has changed shape): generation keeps " +
+                    "vegetation and large rocks out of the roads' and staircases' clear areas only, and clears nothing off a bridge's or " +
+                    "staircase's walk, no grown tree whose trunk reaches a road and no log lying across one; every zone it generates is " +
+                    "left to the server bake's clearing, which judges it by the road's rule");
                 return code;
             }
+            s_judged = true;
             FieldInfo scaleMax = AccessTools.Field(typeof(ZoneSystem.ZoneVegetation), nameof(ZoneSystem.ZoneVegetation.m_scaleMax));
             MethodInfo range = AccessTools.Method(typeof(UnityEngine.Random), nameof(UnityEngine.Random.Range), new[] { typeof(float), typeof(float) });
             int drawn = call < 0 ? -1 : code.FindLastIndex(call, c => c.LoadsField(scaleMax));
@@ -146,27 +163,54 @@ public static class ZoneSystem_Patch
         }
 
         /// <summary>The replaced clear-area test. The point stands on the ground; the game raises the object's origin by its
-        /// entry's m_groundOffset after the test.</summary>
+        /// entry's m_groundOffset after the test. How high it will stand is its prefab's solid colliders' box
+        /// (PlacedLocationReader.LocalBox) at its scale over that origin (VegetationClearing.Body.Of).</summary>
         public static bool InsideClearArea(ZoneSystem zones, List<ZoneSystem.ClearArea> areas, Vector3 point, ZoneSystem.ZoneVegetation veg, float scale,
-            ref float yaw, float tiltX, float tiltZ) =>
-            RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(areas, s_firstRoadArea, s_firstStructureArea, s_firstRockKeepingArea),
-                s_road, point, veg.m_prefab.name, scale, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset),
-                turns: s_yawFound);
+            ref float yaw, float tiltX, float tiltZ)
+        {
+            float origin = point.y + veg.m_groundOffset;
+            return RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(areas, s_firstRoadArea, s_firstStructureArea, s_walks),
+                s_road, point, veg.m_prefab.name, scale, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, origin),
+                turns: s_yawFound, body: VegetationClearing.Body.Of(PlacedLocationReader.LocalBox(veg.m_prefab), origin, scale),
+                groundTilt: GroundTilted(veg));
+        }
 
-        private static Heightmap.Biome BiomeAt(Vector3 point) => WorldGenerator.instance.GetBiome(point);
+        /// <summary>Whether PlaceVegetation will lay this candidate on the ground's tilt (RoadClearAreaManager.OnRoad's
+        /// groundTilt), asked only of one lying along the ground, whose heading it turns. The game draws Random.value against
+        /// the entry's m_chanceToUseGroundTilt straight after this test, with no draw between; Random.value is in [0, 1], so a
+        /// chance of 1 always takes it, and a lesser one is read off a copy of the generator's state, which is put back.</summary>
+        private static bool GroundTilted(ZoneSystem.ZoneVegetation veg)
+        {
+            float chance = veg.m_chanceToUseGroundTilt;
+            if (!(chance > 0f) || !VegetationClearing.IsLying(veg.m_prefab.name.GetStableHashCode())) return false;
+            if (chance >= 1f) return true;
+            UnityEngine.Random.State state = UnityEngine.Random.state;
+            float drawn = UnityEngine.Random.value;
+            UnityEngine.Random.state = state;
+            return drawn <= chance;
+        }
+
+        private static Heightmap.Biome BiomeAt(Vector3 point) => RoadBiome.At(point);
 
         /// <summary>
         /// A zone generated for a remote peer (ghost mode) is torn down as
         /// soon as it has been populated and only its ZDOs remain, so its road
         /// terrain has to go into a ZDO now, while its heightmap still exists.
         /// SpawnZone's postfix is too late: the zone root is gone by then.
+        /// The vegetation is placed (a placement that throws never gets here): the zone's clearing is recorded at the
+        /// version its clear areas were read at (VegetationClearing.MarkCleared).
         /// </summary>
         [HarmonyPostfix]
         public static void Postfix(Vector2s zoneID, Heightmap hmap, ZoneSystem.SpawnMode mode)
         {
+            if (s_clearedFor != 0) VegetationClearing.MarkCleared(zoneID, s_clearedFor);
+            // Generated without the road's test: the bake judges its vegetation now, as a zone generated before its roads.
+            if (s_owedToBake) VegetationClearing.Reached(new[] { zoneID });
+            s_clearedFor = 0;
+            s_owedToBake = false;
             s_firstRoadArea = int.MaxValue;
             s_firstStructureArea = int.MaxValue;
-            s_firstRockKeepingArea = int.MaxValue;
+            s_walks = NoWalks;
             s_road = NoRoad;
             if (mode == ZoneSystem.SpawnMode.Ghost)
                 ServerTerrainBake.OnGhostZoneGenerated(zoneID, hmap);
@@ -189,41 +233,41 @@ public static class ZoneSystem_Patch
         public static void Postfix(ZoneSystem __instance)
         {
             if (!RoadLifecycleManager.IsGenerating) ServerTerrainBake.Tick();
-            RevealSiteIcons(__instance);
+            RevealLocationIcons(__instance);
         }
 
-        /// <summary>A place placed before its roads goes on the map once a player has come as near as the
-        /// game would have placed it from (<see cref="HiddenSiteIcons"/>): checked twice a second, as the
+        /// <summary>A location placed before its roads goes on the map once a player has come as near as the
+        /// game would have placed it from (<see cref="HiddenLocationIcons"/>): checked twice a second, as the
         /// game's own zone creation for each player and the server's own position.</summary>
-        private static void RevealSiteIcons(ZoneSystem zones)
+        private static void RevealLocationIcons(ZoneSystem zones)
         {
-            if (HiddenSiteIcons.Count == 0 || !RoadLifecycleManager.HoldsTheNetwork || Time.time < s_nextReveal) return;
+            if (HiddenLocationIcons.Count == 0 || !RoadLifecycleManager.HoldsTheNetwork || Time.time < s_nextReveal) return;
             s_nextReveal = Time.time + 0.5f;
             var references = new List<Vector3> { ZNet.instance.GetReferencePosition() };
             foreach (ZNetPeer peer in ZNet.instance.GetPeers()) references.Add(peer.GetRefPos());
-            List<Vector3> shown = HiddenSiteIcons.Reveal(references, zones.m_simulationDistance.TotalSimulationDistance, zones.m_simulationDistance.IsClassic);
+            List<Vector3> shown = HiddenLocationIcons.Reveal(references, zones.m_simulationDistance.TotalSimulationDistance, zones.m_simulationDistance.IsClassic);
             if (shown.Count == 0) return;
             if (RoadNetworkGenerator.RoadsLog)
                 foreach (Vector3 p in shown)
-                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[SITES] icon at {p} on the map: a player came near enough for the game to have placed it");
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[LOCATIONS] icon at {p} on the map: a player came near enough for the game to have placed it");
             zones.SendLocationIcons(0L);
         }
     }
 
-    /// <summary>The server's map icons without the places placed before their roads that no player has come
-    /// near yet (<see cref="HiddenSiteIcons"/>); the list the server sends every player is built here too.</summary>
+    /// <summary>The server's map icons without the locations placed before their roads that no player has come
+    /// near yet (<see cref="HiddenLocationIcons"/>); the list the server sends every player is built here too.</summary>
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.GetLocationIcons))]
     public static class ZoneSystem_GetLocationIcons_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(Dictionary<Vector3, string> icons)
         {
-            if (RoadLifecycleManager.HoldsTheNetwork) HiddenSiteIcons.Filter(icons);
+            if (RoadLifecycleManager.HoldsTheNetwork) HiddenLocationIcons.Filter(icons);
         }
     }
 
-    /// <summary>A location the mod has the game place early (<see cref="HiddenSiteIcons.PlacingEarly"/>) that the game shows
-    /// on the map once placed is hidden before PlaceLocations sends the icons (<see cref="HiddenSiteIcons.BeforePlacing"/>);
+    /// <summary>A location the mod has the game place early (<see cref="HiddenLocationIcons.PlacingEarly"/>) that the game shows
+    /// on the map once placed is hidden before PlaceLocations sends the icons (<see cref="HiddenLocationIcons.BeforePlacing"/>);
     /// the game's own placing for a player is left alone.</summary>
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.PlaceLocations))]
     public static class ZoneSystem_PlaceLocations_Icons_Patch
@@ -232,16 +276,16 @@ public static class ZoneSystem_Patch
         public static void Prefix(ZoneSystem __instance, Vector2s zoneID, out bool __state)
         {
             __state = __instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance) &&
-                      HiddenSiteIcons.BeforePlacing(instance.m_position, instance.m_location.m_iconPlaced, instance.m_location.m_iconAlways, instance.m_placed);
+                      HiddenLocationIcons.BeforePlacing(instance.m_position, instance.m_location.m_iconPlaced, instance.m_location.m_iconAlways, instance.m_placed);
         }
 
         [HarmonyPostfix]
         public static void Postfix(ZoneSystem __instance, Vector2s zoneID, bool __state)
         {
             if (!__state || !__instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance)) return;
-            HiddenSiteIcons.AfterPlacing(instance.m_position, __state, instance.m_placed);
+            HiddenLocationIcons.AfterPlacing(instance.m_position, __state, instance.m_placed);
             if (instance.m_placed && RoadNetworkGenerator.RoadsLog)
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[SITES] {instance.m_location.m_prefab.Name} at {instance.m_position} placed before its roads: off the map until a player comes near");
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[LOCATIONS] {instance.m_location.m_prefab.Name} at {instance.m_position} placed before its roads: off the map until a player comes near");
         }
     }
 
@@ -294,38 +338,6 @@ public static class ZoneSystem_Patch
 
         /// <summary>The random turn's draw, in steps of 22.5 degrees.</summary>
         public static int RandomTurn(int min, int max) => FixedLocationYaw.Draw(min, max, s_step, UnityEngine.Random.Range);
-    }
-
-    [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.SpawnZone))]
-    public static class ZoneSystem_SpawnZone_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix(ZoneSystem __instance, Vector2s zoneID, ZoneSystem.SpawnMode mode, ref bool __result)
-        {
-            // Every zone that comes alive gets its road terrain, whether the
-            // network was generated this session or loaded from the save, and
-            // whether the zone spawns Full (first time) or Client (generated
-            // earlier, as a ghost zone or in another session). Ghost spawns
-            // are skipped: their zone root is destroyed on the spot, and a
-            // terrain compiler made for it would only duplicate the one the
-            // real spawn makes. A zone already stamped with the current network
-            // version is left alone, so a reload does not overwrite the
-            // player's terrain edits in the road. See RoadTerrainModifier.
-            if (!__result || !RoadNetworkGenerator.RoadsAvailable)
-                return;
-
-            // Bridge pieces (prototype) go in under every mode: as ZDOs only
-            // under ghost generation, the way the game places its own
-            // objects, and a zone that already has them is left alone.
-            StructurePlacement.OnZoneSpawned(zoneID, mode);
-
-            if (mode == ZoneSystem.SpawnMode.Ghost)
-                return;
-
-            List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
-            if (roadPoints.Count > 0)
-                RoadTerrainModifier.OnZoneSpawned(zoneID, roadPoints);
-        }
     }
 
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.OnDestroy))]

@@ -42,14 +42,19 @@ public sealed class CrossIslandReadsTests : IDisposable
         finally { CrossIslandReads.Current = 0; }
     }
 
-    [Fact]
-    public void AnotherIslandsRoadPointIsNotSeenButAnUntaggedOneIs()
+    [Theory]
+    [InlineData(1, 2)]
+    [InlineData(255, 256)]
+    [InlineData(256, 1)]
+    [InlineData(256, 257)]
+    [InlineData(int.MaxValue, 1)]
+    public void AnotherIslandsRoadPointIsNotSeenButAnUntaggedOneIs(int writer, int reader)
     {
-        CommitAs(1, new Vector2(0f, 0f));       // island A's road, 10 m from where island B asks
+        CommitAs(writer, new Vector2(0f, 0f));       // island A's road, 10 m from where island B asks
         CommitAs(0, new Vector2(40f, 0f));      // laid before the islands: untagged, 30 m away
         var asked = new Vector2(10f, 0f);
 
-        CrossIslandReads.Current = 2;
+        CrossIslandReads.Current = reader;
         Assert.False(RoadSpatialGrid.TryGetRoadWithin(asked, 20f, out _));
         Assert.True(RoadSpatialGrid.TryGetRoadWithin(asked, 50f, out Vector2 nearest));
         Assert.Equal(new Vector2(40f, 0f), nearest);
@@ -59,10 +64,10 @@ public sealed class CrossIslandReadsTests : IDisposable
         Assert.All(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(10f, 0f, 0f), 50f), p => Assert.Equal(0, p.island));
         Assert.False(RoadSpatialGrid.AnyRoadAt(0f, 0f));
         Assert.True(CrossIslandReads.Total > 0);
-        Assert.Contains("of island 1 passed over by island 2", CrossIslandReads.Describe());
+        Assert.Contains($"of island {writer} passed over by island {reader}", CrossIslandReads.Describe());
 
         // Island A sees its own; off an island worker, everything is seen and nothing counted.
-        CrossIslandReads.Current = 1;
+        CrossIslandReads.Current = writer;
         Assert.True(RoadSpatialGrid.TryGetRoadWithin(asked, 20f, out nearest));
         Assert.Equal(new Vector2(0f, 0f), nearest);
         CrossIslandReads.Current = 0;
@@ -73,17 +78,22 @@ public sealed class CrossIslandReadsTests : IDisposable
         Assert.Equal(counted, CrossIslandReads.Total);
     }
 
-    [Fact]
-    public void AnotherIslandsStaircaseIsNotSeen()
+    [Theory]
+    [InlineData(1, 2)]
+    [InlineData(255, 256)]
+    [InlineData(256, 1)]
+    [InlineData(256, 257)]
+    [InlineData(int.MaxValue, 1)]
+    public void AnotherIslandsStaircaseIsNotSeen(int writer, int reader)
     {
         var run = new StairRun { From = new Vector2(0f, 0f), To = new Vector2(8f, 0f), Width = 2f };
         run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairStep, Position = new Vector3(2f, 30f, 0f) });
         run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairStep, Position = new Vector3(6f, 31f, 0f) });
-        CrossIslandReads.Current = 1;
+        CrossIslandReads.Current = writer;
         StairStructures.Add(run);
         StairStructures.MarkLaid(new[] { new Vector2(2f, 0f) });
 
-        CrossIslandReads.Current = 2;
+        CrossIslandReads.Current = reader;
         Assert.Empty(StairStructures.PiecesNear(new Vector3(3f, 0f, 0f), 5f));
         Assert.Empty(StairStructures.PiecesNearAny(new[] { new Vector2(3f, 0f) }, 5f));
         Assert.Null(StairStructures.Carrying(new Vector2(2f, 0f), new Vector2(6f, 0f), 2f));
@@ -92,7 +102,7 @@ public sealed class CrossIslandReadsTests : IDisposable
         int cellX = Mathf.RoundToInt(2f / RoadPathfinder.CellSize);
         Assert.False(StairStructures.OnLaidStair(cellX, 0));
 
-        CrossIslandReads.Current = 1;
+        CrossIslandReads.Current = writer;
         Assert.Equal(2, StairStructures.PiecesNear(new Vector3(3f, 0f, 0f), 5f).Count);
         Assert.True(StairStructures.OnLaidStair(cellX, 0));
         CrossIslandReads.Current = 0;
@@ -100,17 +110,18 @@ public sealed class CrossIslandReadsTests : IDisposable
         Assert.NotNull(StairStructures.Carrying(new Vector2(2f, 0f), new Vector2(6f, 0f), 2f));
     }
 
-    /// <summary>An island past what a tag holds neither tags its work nor filters what it reads.</summary>
-    [Fact]
-    public void AnIslandPastTheTagIsUnfiltered()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(255)]
+    [InlineData(256)]
+    [InlineData(300)]
+    [InlineData(int.MaxValue)]
+    public void EveryIslandKeepsItsTag(int island)
     {
-        CrossIslandReads.Current = 300;
-        Assert.Equal(0, CrossIslandReads.Tag);
-        Assert.True(CrossIslandReads.Sees(5));
-        CrossIslandReads.Current = 3;
-        Assert.Equal(3, CrossIslandReads.Tag);
-        Assert.False(CrossIslandReads.Sees(5));
+        CrossIslandReads.Current = island;
+        Assert.Equal(island, CrossIslandReads.Tag);
+        Assert.False(CrossIslandReads.Sees((byte)(island == 1 ? 2 : 1)));
         Assert.True(CrossIslandReads.Sees(0));
-        Assert.True(CrossIslandReads.Sees(3));
+        Assert.True(CrossIslandReads.Sees(CrossIslandReads.Tag));
     }
 }

@@ -1,3 +1,4 @@
+using System.Linq;
 using Xunit;
 namespace ProceduralRoads.Tests;
 public class MeanderTests
@@ -61,9 +62,9 @@ public class MeanderTests
         var level = new System.Collections.Generic.List<float> { 0f, 0f, 0f };
         var north = new System.Collections.Generic.List<UnityEngine.Vector2> { new(0, 0), new(10, 3), new(20, 0) };
         // Swayed 3 m north onto ground 3 m higher: a 3 m cut the plain road does not have.
-        Assert.False(RoadWiggle.NoMoreEarth(north, level, plain, level, ground));
+        Assert.False(RoadWiggle.NoMoreEarth(Plan(north, level), RoadWiggle.EarthOf(Plan(plain, level), ground), ground));
         var slight = new System.Collections.Generic.List<UnityEngine.Vector2> { new(0, 0), new(10, 0.4f), new(20, 0) };
-        Assert.True(RoadWiggle.NoMoreEarth(slight, level, plain, level, ground));
+        Assert.True(RoadWiggle.NoMoreEarth(Plan(slight, level), RoadWiggle.EarthOf(Plan(plain, level), ground), ground));
     }
 
     [Fact]
@@ -76,8 +77,9 @@ public class MeanderTests
         var plain = new System.Collections.Generic.List<UnityEngine.Vector2> { new(0, 0), new(10, 9), new(20, 0), new(30, 0) };
         var swayed = new System.Collections.Generic.List<UnityEngine.Vector2> { new(0, 0), new(10, 8.5f), new(20, 8.5f), new(30, 0) };
         var level = new System.Collections.Generic.List<float> { 0f, 0f, 0f, 0f };
-        Assert.False(RoadWiggle.NoMoreEarth(swayed, level, plain, level, ground));
-        Assert.Empty(RoadWiggle.MoreEarthAt(swayed, level, plain, level, ground));
+        RoadNetworkGenerator.Earthwork plainEarth = RoadWiggle.EarthOf(Plan(plain, level), ground);
+        Assert.False(RoadWiggle.NoMoreEarth(Plan(swayed, level), plainEarth, ground));
+        Assert.Empty(RoadWiggle.MoreEarthAt(Plan(swayed, level), plainEarth, ground));
     }
 
     [Fact]
@@ -114,11 +116,45 @@ public class MeanderTests
         return path;
     }
 
+    /// <summary>A plan of these points and heights, 4 m wide, for the sway's earth comparison.</summary>
+    private static RoadSpatialGrid.PlannedPath Plan(System.Collections.Generic.List<UnityEngine.Vector2> points, System.Collections.Generic.List<float> heights) =>
+        new(points, heights, points.ConvertAll(_ => default(RoadPointDebugInfo)), 4f, 0f, false);
+
     private static System.Collections.Generic.List<UnityEngine.Vector2> Swayed(System.Func<UnityEngine.Vector2, float> ground)
     {
         System.Collections.Generic.List<UnityEngine.Vector2> swayed = null!;
         PlainRoads.WithModDefaults(() => swayed = RoadWiggle.Apply(Straight(-150f, 150f), ground, _ => false, _ => Heightmap.Biome.Meadows, 4f));
         return swayed;
+    }
+
+    /// <summary>A road shaped before its crossings is kept only as the sway keeps a swayed plan (RoadWiggle.NoMoreEarth over the
+    /// whole road, PlanCandidate's Plan): its pieces moving 2 m more earth than the plain road's are not kept; within the slack, or
+    /// with less, they are.</summary>
+    [Fact]
+    public void AShapedRoadIsKeptOnlyWhereItMovesNoMoreEarthThanThePlainOne()
+    {
+        var line = Straight(0f, 80f, 1f);
+        var flat = Plan(line, line.ConvertAll(_ => 40f));
+        var filled = Plan(line, line.ConvertAll(p => p.x > 30f && p.x < 50f ? 42f : 40f));
+        static float Ground(UnityEngine.Vector2 q) => 40f;
+        Assert.False(RoadWiggle.NoMoreEarth(new[] { flat, filled }, new[] { flat, flat }, Ground));
+        Assert.True(RoadWiggle.NoMoreEarth(new[] { flat, flat }, new[] { flat, filled }, Ground));
+        Assert.True(RoadWiggle.NoMoreEarth(new[] { flat }, new[] { flat }, Ground));
+    }
+
+    /// <summary>A swamp road through shallows rising gently to one side: a waded point sways onto the drier side as on dry
+    /// ground, and never toward the deeper side, where it keeps its line (RoadWiggle.Apply: never onto wetter ground). Before,
+    /// a waded point never swayed at all, so a swamp road ran dead straight through its shallows.</summary>
+    [Fact]
+    public void AWadedPointSwaysOntoDrierGroundAndNeverWetter()
+    {
+        static float Shallows(UnityEngine.Vector2 q) => 29f + 0.05f * q.y;
+        static bool Wet(UnityEngine.Vector2 q) => !RoadWater.BuiltDry(Shallows(q));
+        System.Collections.Generic.List<UnityEngine.Vector2> swayed = null!;
+        PlainRoads.WithModDefaults(() => swayed = RoadWiggle.Apply(Straight(-150f, 150f), Shallows, Wet, _ => Heightmap.Biome.Swamp, 4f));
+        Assert.All(swayed, q => Assert.True(Shallows(q) >= Shallows(new UnityEngine.Vector2(q.x, 0f)) - 1e-4f, $"{q} swayed into deeper water"));
+        Assert.Contains(swayed, q => q.y > 1f);
+        Assert.DoesNotContain(swayed, q => q.y < -1e-3f);
     }
 
     // Ground that wrinkles along the road: a sideways step only meets it on a sidehill.
@@ -174,10 +210,10 @@ public class MeanderTests
             finally { RoadWiggle.ShortWaveShare = was; }
             return swayed;
         }
-        // No protected site from another test may take a swayed point back onto the plain line (KeepClearOfSites):
+        // No protected location from another test may take a swayed point back onto the plain line (KeepClearOfLocations):
         // that splits a swing, and the swings measured here would not be the ones eased.
-        var source = RoadSiteProtection.Source;
-        RoadSiteProtection.Source = null; RoadSiteProtection.Reset();
+        var source = RoadLocationProtection.Source;
+        RoadLocationProtection.Source = null; RoadLocationProtection.Reset();
         int shortSwings = 0, longSwings = 0;
         try
         {
@@ -215,7 +251,7 @@ public class MeanderTests
                 }
             }
         }
-        finally { RoadSiteProtection.Source = source; RoadSiteProtection.Reset(); }
+        finally { RoadLocationProtection.Source = source; RoadLocationProtection.Reset(); }
         Assert.True(shortSwings > 0, "no short swing to ease");
         Assert.True(longSwings > 0, "no long swing to keep");
     }
@@ -262,7 +298,7 @@ public class MeanderTests
                 RoadSpatialGrid.PlannedPath? straight;
                 try { straight = RoadSpatialGrid.PlanRoadPath(Straight(-150f, 150f), 4f, world, terrainHeight: ground); }
                 finally { RoadSpatialGrid.SuppressWiggle = false; }
-                Assert.True(RoadWiggle.NoMoreEarth(plan.Points, plan.Heights, straight!.Points, straight.Heights, ground));
+                Assert.True(RoadWiggle.NoMoreEarth(plan, RoadWiggle.EarthOf(straight!, ground), ground));
                 // Over every 20 m the swayed road climbs within the cap.
                 for (int i = 0, j = 0; i < plan.Points.Count; i++)
                 {
@@ -315,6 +351,40 @@ public class MeanderTests
         }
         finally { RoadSpatialGrid.Clear(); }
     }
+    [Fact]
+    public void ASwayWhoseEdgeAloneCutsAWallIsHeldThere()
+    {
+        // Level ground with a wall 9 m high just outside where the sway swings furthest out: swayed there, the road's
+        // centre stays clear of it and its outer edge is cut 9 m into it, past the shaped limit; the plain line passes it
+        // by. Earth is measured across the road's width, as the earthwork cap measures it, so the sway is held there.
+        // Measured on the centre line alone, the swayed road moved no more earth and was kept with the cut at its edge.
+        var spot = new UnityEngine.Vector2(0f, 0f);
+        foreach (var p in Swayed(_ => 60f)) if (UnityEngine.Mathf.Abs(p.y) > UnityEngine.Mathf.Abs(spot.y)) spot = p;
+        Assert.True(UnityEngine.Mathf.Abs(spot.y) > 5f, $"the sway reached {spot.y:F2} m");
+        float side = spot.y < 0f ? -1f : 1f, edge = spot.y + side * 2f;
+        System.Func<UnityEngine.Vector2, float> ground = q =>
+            60f + (UnityEngine.Mathf.Abs(q.x - spot.x) < 6f && UnityEngine.Mathf.Abs(q.y - edge) <= 0.6f ? 9f : 0f);
+        var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
+        using var scope = new Valheim.Testing.Doubles.ValheimWorldScope().WithWorld(world);
+        RoadSpatialGrid.Clear();
+        try
+        {
+            PlainRoads.WithModDefaults(() =>
+            {
+                RoadSpatialGrid.SwayKept = RoadSpatialGrid.SwayKeptHeld = RoadSpatialGrid.SwayRefused = RoadSpatialGrid.SwayMoreEarth = 0;
+                var plan = RoadSpatialGrid.PlanRoadPath(Straight(-150f, 150f), 4f, world, terrainHeight: ground);
+                Assert.NotNull(plan);
+                Assert.Equal(1, RoadSpatialGrid.SwayKept);
+                Assert.Equal(1, RoadSpatialGrid.SwayKeptHeld);
+                float near = 0f;
+                foreach (var p in plan!.Points)
+                    if (UnityEngine.Mathf.Abs(p.x - spot.x) < 6f) near = UnityEngine.Mathf.Max(near, UnityEngine.Mathf.Abs(p.y));
+                Assert.True(near < UnityEngine.Mathf.Abs(spot.y) - 1f, $"beside the wall the road is {near:F2} m off its plain line");
+            });
+        }
+        finally { RoadSpatialGrid.Clear(); }
+    }
+
     private sealed class ForestWorld : SyntheticWorld
     {
         public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.BlackForest;
@@ -374,5 +444,26 @@ public class MeanderTests
         Assert.Equal(path[0], even[0]);
         Assert.Equal(path[path.Count - 1], even[even.Count - 1]);
         for (int i = 1; i < even.Count; i++) Assert.InRange(even[i].x - even[i - 1].x, 2.9f, 1.25f * 12f + 0.01f);
+    }
+    /// <summary>The sway never moves a dry point onto a river's core, whatever the ground's height there: the wet test the
+    /// network's sway reads (RoadSpatialGrid's, RoadWater.BuiltDry) is wet on a river's core at any height, so a point onto
+    /// ground as high or higher is still a dry point moved into water. A river's core beside the road on level ground: the
+    /// road keeps its line where the sway would reach it, and sways as before where nothing beside it is wet.</summary>
+    [Fact]
+    public void TheSwayNeverMovesADryPointOntoARiversCore()
+    {
+        System.Collections.Generic.List<UnityEngine.Vector2> Sway(System.Func<UnityEngine.Vector2, float> river)
+        {
+            System.Collections.Generic.List<UnityEngine.Vector2> swayed = null!;
+            System.Func<UnityEngine.Vector2, float> ground = _ => 60f;
+            PlainRoads.WithModDefaults(() => swayed = RoadWiggle.Apply(Straight(-150f, 150f), ground,
+                q => !RoadWater.BuiltDry(ground(q), river(q)), _ => Heightmap.Biome.Meadows, 4f));
+            return swayed;
+        }
+        float Furthest(System.Collections.Generic.List<UnityEngine.Vector2> line) => line.ConvertAll(q => UnityEngine.Mathf.Abs(q.y)).Max();
+        Assert.True(Furthest(Sway(_ => 0f)) > 5f, "the sway does not reach off the line where nothing is wet");
+        // Everything more than a metre off the line a river's core, its ground as high as the road's.
+        var held = Sway(q => UnityEngine.Mathf.Abs(q.y) > 1f ? 1f : 0f);
+        Assert.True(Furthest(held) <= 1f, $"a dry point swayed {Furthest(held):F2} m onto a river's core");
     }
 }

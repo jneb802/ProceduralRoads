@@ -17,8 +17,11 @@ public sealed class StoneBridgeTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
-    public StoneBridgeTests() { RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); }
-    public void Dispose() { RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); _scope.Dispose(); }
+    // The fixtures here are kits' structure cases whose water only raises a deck (standing it just under the deck, over ground
+    // above the sea) or lies under a valley deepened past the sea: none is water a ship is meant to sail, so no lane off a
+    // river here (BridgeLayout.DeepWaterLanes; ShipGapTests has the lanes, river or not).
+    public StoneBridgeTests() { BridgeLayout.DeepWaterLanes = false; RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); }
+    public void Dispose() { BridgeLayout.DeepWaterLanes = true; RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); _scope.Dispose(); }
 
     /// <summary>
     /// The hand-built half (pieces.txt, 89 stone pieces), in the bridge's frame: prefab, along the deck from the full
@@ -146,7 +149,7 @@ public sealed class StoneBridgeTests : IDisposable
     /// whose one step lands there. A Black Forest world, no river. <see cref="Bank"/>: past the deck's ends, its own ground
     /// instead (taller ends); <see cref="Drop"/> lowers the bed under the arches and the inner piers.
     /// </summary>
-    private sealed class ReferenceWorld : WorldGenerator
+    internal sealed class ReferenceWorld : WorldGenerator
     {
         public Func<float, float>? Bank;
         public float Drop;
@@ -206,6 +209,21 @@ public sealed class StoneBridgeTests : IDisposable
         var c = RoadCrossing.Between(new Vector2(-w.Half, 0f), new Vector2(w.Half, 0f), w.Bed, new Vector2(0f, 0f), 0f, CrossingKind.Bridge);
         c.WaterLevel = Deck - BridgeLayout.DeckFreeboard;
         return c;
+    }
+
+    /// <summary>The ruins of a valley's bridge (<see cref="Valley"/>) by seed, solved once for the tests that count them:
+    /// <see cref="TheStoneKitRuinsAtTheSharedProfileWithOnlyJumpableGaps"/> and the 76 m row of
+    /// <see cref="TheRailingIsLostAtTheCourseShare"/> each solved the same 300 ruins of the same deck (15 s under Mono). The
+    /// solve reads its crossing, its world and the seed, the valley is named by every field of its world, and the tests only
+    /// count the pieces.</summary>
+    private static readonly Dictionary<string, Dictionary<int, List<StructurePiece>>> s_ruins = new();
+
+    private static List<StructurePiece> Ruined(RoadCrossing c, ValleyWorld w, int seed)
+    {
+        string valley = FormattableString.Invariant($"{w.Half:R} {w.Bed:R} {w.Bank:R} {w.River} {w.Biome} {w.Seed} {c.WaterLevel:R}");
+        if (!s_ruins.TryGetValue(valley, out var ruins)) s_ruins[valley] = ruins = new Dictionary<int, List<StructurePiece>>();
+        if (!ruins.TryGetValue(seed, out var ruined)) ruins[seed] = ruined = BridgeLayout.SolveStone(c, w, seed);
+        return ruined;
     }
 
     /// <summary>A shallow ford 12 m between banks at 30 m, its bed at 29 m: a span's deck 1 m over the higher bank, at 31 m.</summary>
@@ -319,11 +337,9 @@ public sealed class StoneBridgeTests : IDisposable
 
     /// <summary>
     /// The hand-built half and its mirror (one top course block over the middle, shared), with the three blocks the hand
-    /// build left out of its lowest courses and the bank piers' course sunk under the ground (<see cref="SunkUnderTheBank"/>), is the stone kit on the reference's ground, piece for piece but for the floors:
+    /// build left out of its lowest courses and the bank piers' course sunk under the ground (<see cref="SunkUnderTheBank"/>), is the stone kit on the reference's ground, piece for piece:
     /// ten bays (a pier, two arches, a pier, ...), the walking surface the network's deck, one step down at each end on its
-    /// footing. The hand build laid its floors on the bays; the kit lays them a metre along, on the joints between bays
-    /// (<see cref="BridgeLayout.StoneFloorOffset"/>), so a floor can rest half on each of two crowns over a 6 m opening:
-    /// nine floors a lane where the hand build had ten, and at each end a 1 m strip, a block laid across each lane.
+    /// footing, and the deck a floor a lane on each bay, as the hand build laid it, ten a lane and no part floor.
     /// </summary>
     [Fact]
     public void TheStoneKitIsTheHandBuiltHalfMirrored()
@@ -339,17 +355,13 @@ public sealed class StoneBridgeTests : IDisposable
 
         Assert.True(BridgeLayout.StoneFits(c, w));
         var plan = BridgeLayout.SolveStoneComplete(c, w, 1);
-        float worst = Match(whole.Where(p => p.Prefab != BridgeLayout.StoneFloorPrefab),
-            plan.Where(p => p.Prefab != BridgeLayout.StoneFloorPrefab && !IsStrip(p)).ToList(), 0.05f);
+        float worst = Match(whole, plan, 0.05f);
         Assert.True(worst < 0.04f, $"worst piece {worst:F3} m off");
-        // The deck: floors on the joints (along -8 .. 8 m from the middle), a strip on each end pier (along +-9.5 m).
+        // The deck: floors on the bays (along -9 .. 9 m from the middle), no part floor.
         var deck = new List<FramePiece>();
-        for (int i = 1; i <= 9; i++)
+        for (int j = 0; j < 10; j++)
             foreach (float across in new[] { -1f, 1f })
-                deck.Add(new FramePiece(BridgeLayout.StoneFloorPrefab, new Vector3(-10f + 2f * i, across, Deck - 0.5f), 0f));
-        foreach (float along in new[] { -9.5f, 9.5f })
-            foreach (float across in new[] { -1f, 1f })
-                deck.Add(new FramePiece(BridgeLayout.StonePierBlock, new Vector3(along, across, Deck - 0.5f), 0f));
+                deck.Add(new FramePiece(BridgeLayout.StoneFloorPrefab, new Vector3(-9f + 2f * j, across, Deck - 0.5f), 0f));
         Match(deck, plan.Where(p => p.Prefab == BridgeLayout.StoneFloorPrefab || IsStrip(p)).ToList(), 0.01f);
 
         var P = BridgeLayout.StoneBay.Pier;
@@ -360,6 +372,53 @@ public sealed class StoneBridgeTests : IDisposable
         Assert.All(plan.Where(p => p.Prefab == BridgeLayout.StoneFloorPrefab), p => Assert.Equal(Deck - 0.5f, p.Position.y, 3));
         var (near, far) = BridgeStructures.Ends(c, w);
         Assert.Equal((1, 1), (near.Steps, far.Steps));
+    }
+
+    /// <summary>
+    /// A stone deck is laid in whole floors (stone_floor_2x2) from end to end, its ends included: a deck is whole 2 m bays,
+    /// a floor a lane on each, so no part floor (a stone_wall_2x1 laid flat) is ever needed. Every deck length the kit
+    /// lays, 8 to 80 m, complete and ruined, over a valley, a river's opening and as a ford's span: no block at the floors'
+    /// level on the deck, and the complete deck has a floor a lane on every bay not open over a river.
+    /// </summary>
+    [Fact]
+    public void AStoneDeckIsWholeFloorsEndToEnd()
+    {
+        void Check(RoadCrossing c, WorldGenerator w, string what)
+        {
+            float deck = BridgeStructures.DeckHeight(c, w);
+            int bays = BridgeLayout.Bays(c.Width);
+            var layout = BridgeLayout.StoneBays(bays);
+            if (layout == null || !BridgeLayout.StoneNavigationBays(c, w, layout, out int first, out int count)) return;
+            int opened = Mathf.Max(0, count - 2 * BridgeLayout.StoneGapHalfArches);
+            var complete = BridgeLayout.SolveStoneComplete(c, w, 1);
+            Assert.True(complete.Count > 0, what);
+            Assert.Equal(2 * (bays - opened), complete.Count(p => p.Prefab == BridgeLayout.StoneFloorPrefab && Mathf.Abs(p.Position.y - (deck - 0.5f)) < 0.01f));
+            foreach (var plan in new[] { complete }.Concat(Enumerable.Range(1, 5).Select(seed => BridgeLayout.SolveStone(c, w, seed))))
+                Assert.DoesNotContain(plan, p => IsStrip(p, deck));
+        }
+        for (float half = 4f; half <= 40f; half += 1f)
+        {
+            var w = new ValleyWorld { Half = half };
+            Check(Valley(w), w, $"valley {2f * half} m");
+        }
+        foreach (float half in new[] { 12f, 16f, 20f })
+        {
+            var (c, w) = River(half);
+            Check(c, w, $"river {2f * half} m");
+        }
+        var (fc, fw) = FordSpan();
+        Check(fc, fw, "ford span");
+        // A floor over a 6 m opening's open bay rests on the two crowns either side: the support rule holds such a deck with
+        // its piers at their limit (nine courses) as with shorter ones.
+        foreach (float bed in new[] { 28f, 26f, 25.5f })
+        {
+            var w = new ValleyWorld { Half = 38f, Bed = bed };
+            var c = Valley(w);
+            Assert.Contains(BridgeLayout.StoneBay.Open, BridgeLayout.StoneBays(BridgeLayout.Bays(c.Width))!);
+            Assert.True(BridgeLayout.StoneFits(c, w), $"bed {bed}");
+            BridgeStructures.SupportCheck read = BridgeStructures.CheckSupport(c, w, BridgeStructures.Kit.Stone);
+            Assert.True(read.Holds, BridgeStructures.SupportLine(c, read, "read"));
+        }
     }
 
     // ------------------------------------------------------------ snap points
@@ -458,7 +517,7 @@ public sealed class StoneBridgeTests : IDisposable
     /// <summary>
     /// A 48 m deck (24 bays: seven openings, the two either side of the middle one 6 m) repeats the reference's unit: a pier
     /// between openings, two arches in each, their tall ends on the piers, an open bay between the long openings' arches,
-    /// each pier's courses down to the bed; over an open bay no railing beside the deck, the floors and the top course
+    /// each pier's courses down to the bed; over an open bay no railing beside the deck, its floors and the top course
     /// carried over it on the two crowns either side.
     /// </summary>
     [Fact]
@@ -483,12 +542,10 @@ public sealed class StoneBridgeTests : IDisposable
         {
             Assert.DoesNotContain(plan, x => Bay(x.f) == open && x.p.Prefab != BridgeLayout.StoneFloorPrefab && x.f.At.z < Deck);   // nothing under the deck, no railing beside it
             float a = -24f + 2f * open;
-            // The two floors of each lane either side of its middle, each centred on a crown; the top course the same.
+            // A floor a lane on the open bay, resting on the two crowns either side; the top course centred on each crown.
+            Assert.Equal(2, plan.Count(x => x.p.Prefab == BridgeLayout.StoneFloorPrefab && Mathf.Abs(x.f.At.x - (a + 1f)) < 0.01f));
             foreach (float along in new[] { a, a + 2f })
-            {
-                Assert.Equal(2, plan.Count(x => x.p.Prefab == BridgeLayout.StoneFloorPrefab && Mathf.Abs(x.f.At.x - along) < 0.01f));
                 Assert.Equal(2, plan.Count(x => x.p.Prefab == BridgeLayout.StonePierBlock && x.f.At.z > Deck && Mathf.Abs(x.f.At.x - along) < 0.01f));
-            }
         }
         // Every pier's courses: the top one level with the arches, the lowest with its foot in the bed (28 m): six.
         foreach (int bay in pierBays)
@@ -496,6 +553,43 @@ public sealed class StoneBridgeTests : IDisposable
             var heights = plan.Where(x => IsPierBlock(x.p) && Bay(x.f) == bay).Select(x => x.f.At.z).Distinct().OrderByDescending(z => z).ToList();
             Assert.Equal(Enumerable.Range(0, 6).Select(k => Deck - 1.5f - k), heights, new FloatNear());
         }
+    }
+
+    /// <summary>
+    /// A floor over a 6 m opening's open bay, read by the support rule (BridgeStructures.CheckSupport's reading, ViaductSupport):
+    /// it rests between the two crowns either side, and is carried by the game's rule for two support points opposite each
+    /// other (SupportGraph.OppositeDegrees: their mean, each at the vertical loss over the reach to its arch), the derivation
+    /// of BridgeSupport.StoneFloorBetweenCrownsFactor. With the piers at their limit (nine courses), no such floor falls, and
+    /// each keeps that factor of the arches it rests on.
+    /// </summary>
+    [Fact]
+    public void AFloorOverASixMetreOpeningsOpenBayIsCarriedBetweenTheTwoCrowns()
+    {
+        var w = new ValleyWorld { Half = 38f, Bed = 25.5f };
+        var c = Valley(w);
+        BridgeLayout.StoneBay[] bays = BridgeLayout.StoneBays(BridgeLayout.Bays(c.Width))!.ToArray();
+        int[] open = Enumerable.Range(0, bays.Length).Where(i => bays[i] == BridgeLayout.StoneBay.Open).ToArray();
+        Assert.NotEmpty(open);
+        BridgeStructures.SupportCheck check = BridgeStructures.CheckSupport(c, w, BridgeStructures.Kit.Stone);
+        Assert.True(check.Holds, BridgeStructures.SupportLine(c, check, "read"));
+        var held = ViaductSupport.Of(c, w, BridgeLayout.SolveStoneComplete(c, w, w.GetSeed()));
+        int Bay(StructurePiece p) => Mathf.FloorToInt((Frame(p).At.x + c.Width / 2f) / 2f);
+        int floors = 0;
+        foreach (int bay in open)
+        {
+            var arches = held.Where(h => h.Piece.Prefab == BridgeLayout.StoneArchPrefab && (Bay(h.Piece) == bay - 1 || Bay(h.Piece) == bay + 1)).ToList();
+            Assert.NotEmpty(arches);
+            float least = arches.Min(h => h.Support), most = arches.Max(h => h.Support);
+            foreach (var floor in held.Where(h => h.Piece.Prefab == BridgeLayout.StoneFloorPrefab && Bay(h.Piece) == bay))
+            {
+                floors++;
+                string line = FormattableString.Invariant($"bay {bay}: floor at {Frame(floor.Piece)} support {floor.Support:F1} (min {floor.Min:F0}), arches {least:F1}..{most:F1}, factor {BridgeSupport.StoneFloorBetweenCrownsFactor:F3}");
+                Assert.False(floor.Falls, line);
+                Assert.True(floor.Support >= least * BridgeSupport.StoneFloorBetweenCrownsFactor - 0.5f
+                    && floor.Support <= most * BridgeSupport.StoneFloorBetweenCrownsFactor + 0.5f, line);
+            }
+        }
+        Assert.True(floors >= 2 * open.Length, $"{floors} floor(s) over {open.Length} open bay(s)");
     }
 
     private sealed class FloatNear : IEqualityComparer<float>
@@ -515,8 +609,10 @@ public sealed class StoneBridgeTests : IDisposable
     public void PiersStackToTheGroundAndPastTheSupportLimitTheKitDoesNotFit()
     {
         Assert.Equal(9, BridgeSupport.StoneMaxPierCourses());
-        // A floor half on a crown over a 6 m opening keeps more of the arch than the railing over a crown does.
+        // A top course block half on a crown over a 6 m opening, and a floor between the two crowns, keep more of the arch
+        // than the railing over a crown does.
         Assert.True(BridgeSupport.StoneOnCrownFactor > BridgeSupport.StoneOnArchFactor * BridgeSupport.StoneRailOnRailFactor);
+        Assert.True(BridgeSupport.StoneFloorBetweenCrownsFactor > BridgeSupport.StoneOnArchFactor * BridgeSupport.StoneRailOnRailFactor);
         Assert.Equal(7, BridgeSupport.StoneMaxFootingPillars());
         var (c, w) = Reference();
         w.Drop = 2.5f;
@@ -542,6 +638,32 @@ public sealed class StoneBridgeTests : IDisposable
         {
             w.Seed = seed;
             Assert.NotEqual(BridgeStructures.Kit.Stone, BridgeStructures.KitFor(c, w));
+        }
+    }
+
+    /// <summary>
+    /// A stone bridge drawn on the mounds its road stores (BridgeStructures.StoneMounds: the bed 3 m lower, its inner piers
+    /// past the support limit) is read before its road is stored on those mounds, as at its first build: on the ground as
+    /// the road would be stored (RoadTerrainModifier.AsStored, its mound points in it) the stone kit fits, no further mounds
+    /// are found, and the no-kit verdict before storing (BridgeStructures.BuiltInNoKit) is the kit choice's own
+    /// (BridgeStructures.KitFor): one reader, with no exemption for the mounds.
+    /// </summary>
+    [Fact]
+    public void AStoneBridgeOnItsRoadsMoundsIsReadOnThemBeforeItsRoadIsStored()
+    {
+        var (c, w) = Reference();
+        w.Drop = 3f;
+        Assert.False(BridgeLayout.StoneFits(c, w));
+        List<StructureGround.Mound> mounds = new();
+        for (int seed = 1; seed <= 60 && mounds.Count == 0; seed++) { w.Seed = seed; mounds = BridgeStructures.StoneMounds(c, w); }
+        Assert.NotEmpty(mounds);
+        var points = mounds.SelectMany(m => RoadSpatialGrid.PointsOf(m.Plan(), intoLocation: false)).ToList();
+        using (RoadTerrainModifier.AsStored(points, new List<(RoadSpatialGrid.RoadPoint, float)>()))
+        {
+            Assert.True(BridgeLayout.StoneFits(c, w));
+            Assert.Empty(BridgeStructures.StoneMounds(c, w));
+            Assert.Equal(BridgeStructures.Kit.Stone, BridgeStructures.KitFor(c, w));
+            Assert.Equal(BridgeStructures.KitFor(c, w) == null, BridgeStructures.BuiltInNoKit(c, w));
         }
     }
 
@@ -685,8 +807,8 @@ public sealed class StoneBridgeTests : IDisposable
     /// <summary>
     /// The ruin: fixed by the seed and the crossing; every piece standing is the complete bridge's, worn as a vanilla
     /// location's (<see cref="BridgeLayout.LocationDamageMin"/> to <see cref="BridgeLayout.LocationDamageMax"/>, as the
-    /// Dvergr viaduct's); the piers, the steps, their footing and the railing beside them always stand, and so do the end
-    /// strips and the floors and railing over the bank bays; most seeds lose some railing.
+    /// Dvergr viaduct's); the piers, the steps, their footing and the railing beside them always stand, and so do the floors
+    /// and railing over the bank bays; most seeds lose some railing.
     /// </summary>
     [Fact]
     public void TheRuinIsFixedWornAndThePiersStepsAndBankBaysStand()
@@ -696,11 +818,12 @@ public sealed class StoneBridgeTests : IDisposable
         int bays = BridgeLayout.Bays(c.Width);
         var complete = BridgeLayout.SolveStoneComplete(c, w, 1);
         var keys = new HashSet<string>(complete.Select(Key));
-        bool Kept(StructurePiece p) => IsPierBlock(p) || IsStrip(p) || p.Prefab is BridgeLayout.StoneStairPrefab or BridgeLayout.StonePillarPrefab
+        bool Kept(StructurePiece p) => IsPierBlock(p) || p.Prefab is BridgeLayout.StoneStairPrefab or BridgeLayout.StonePillarPrefab
             || (p.Prefab == BridgeLayout.StonePierBlock && Mathf.Abs(p.Position.x) > w.Half)
-            || (IsFloor(p) && (JointOf(w, p) == 1 || JointOf(w, p) == bays - 1))
+            || (IsFloor(p) && (BayOf(w, p) == 0 || BayOf(w, p) == bays - 1))
             || (IsEdgeCourse(w, p) && (BayOf(w, p) == 0 || BayOf(w, p) == bays - 1));
-        Assert.Equal(4, complete.Count(IsStrip));
+        Assert.Equal(0, complete.Count(IsStrip));
+        Assert.Equal(4, complete.Count(p => IsFloor(p) && (BayOf(w, p) == 0 || BayOf(w, p) == bays - 1)));
         int lostRailing = 0;
         for (int seed = 1; seed <= 20; seed++)
         {
@@ -721,9 +844,9 @@ public sealed class StoneBridgeTests : IDisposable
     /// <summary>
     /// The stone kit ruins at every kit's shares of the base curve's losses
     /// (<see cref="BridgeLayout.BridgeRuin"/>): over a 76 m deck (four 6 m openings among eleven) and 300 seeds, the floors
-    /// lost at the deck share (and the open joints'), the arches under the deck at the support share, the railing at the course
-    /// share (and more, for the pieces that go with a neighbour), and joints open from side to side, both floors and the top
-    /// course over them, at the hole share; a floor over a bank bay never lost, and never two joints running open.
+    /// lost at the deck share (and the open bays'), the arches under the deck at the support share, the railing at the course
+    /// share (and more, for the pieces that go with a neighbour), and bays open from side to side, both their floors, at the
+    /// hole share; a floor over a bank bay never lost, and never two bays running open.
     /// </summary>
     [Fact]
     public void TheStoneKitRuinsAtTheSharedProfileWithOnlyJumpableGaps()
@@ -739,14 +862,17 @@ public sealed class StoneBridgeTests : IDisposable
             BridgeLayout.RuinProfile.Survives(BridgeLayout.SpanSurvival(1f - Mathf.Abs(at - bays * 0.5f) / (bays * 0.5f)), share);
 
         // Expected losses per seed, from the shares alone.
-        float expectFloors = 0f, expectArches = 0f, expectEdges = 0f, expectTops = 0f, expectHoles = 0f;
-        for (int i = 2; i <= bays - 2; i++)
+        float expectFloors = 0f, expectArches = 0f, expectEdges = 0f, expectTops = 0f, expectHoles = 0f, expectBothLost = 0f;
+        for (int j = 1; j <= bays - 2; j++)
         {
-            float open = 1f - Survives(i, shares.HoleShare);
+            float open = 1f - Survives(j + 0.5f, shares.HoleShare);
             expectHoles += open;
-            expectFloors += 2f * (1f - Survives(i, shares.DeckShare) * (1f - open));
-            expectTops += 2f * (1f - Survives(i, shares.CourseShare) * (1f - open));
+            expectFloors += 2f * (1f - Survives(j + 0.5f, shares.DeckShare) * (1f - open));
+            // A bay whose two floors the deck's rolls both took is open from side to side too.
+            float lost = 1f - Survives(j + 0.5f, shares.DeckShare);
+            expectBothLost += lost * lost * (1f - open);
         }
+        for (int i = 2; i <= bays - 2; i++) expectTops += 2f * (1f - Survives(i, shares.CourseShare));
         for (int j = 0; j < bays; j++)
         {
             if (layout[j] is BridgeLayout.StoneBay.ArchNear or BridgeLayout.StoneBay.ArchFar) expectArches += 4f * (1f - Survives(j + 0.5f, shares.SupportShare));
@@ -755,29 +881,25 @@ public sealed class StoneBridgeTests : IDisposable
 
         int floors = complete.Count(IsFloor), arches = complete.Count(IsUnderArch);
         int edges = complete.Count(p => IsEdgeCourse(w, p)), tops = complete.Count(p => IsTopCourse(w, p));
-        Assert.Equal(2 * (bays - 1), floors);
+        Assert.Equal(2 * bays, floors);
         int lostFloors = 0, lostArches = 0, lostEdges = 0, lostTops = 0, holes = 0;
         const int Seeds = 300;
         for (int seed = 1; seed <= Seeds; seed++)
         {
-            var ruined = BridgeLayout.SolveStone(c, w, seed);
+            var ruined = Ruined(c, w, seed);
             lostFloors += floors - ruined.Count(IsFloor);
             lostArches += arches - ruined.Count(IsUnderArch);
             lostEdges += edges - ruined.Count(p => IsEdgeCourse(w, p));
             lostTops += tops - ruined.Count(p => IsTopCourse(w, p));
-            var floored = new int[bays + 1];
-            var topped = new int[bays + 1];
+            var floored = new int[bays];
             foreach (StructurePiece p in ruined)
+                if (IsFloor(p)) floored[BayOf(w, p)]++;
+            for (int j = 0; j < bays; j++)
             {
-                if (IsFloor(p)) floored[JointOf(w, p)]++;
-                else if (IsTopCourse(w, p)) topped[JointOf(w, p)]++;
-            }
-            for (int i = 1; i < bays; i++)
-            {
-                if (floored[i] > 0) continue;
-                Assert.True(i > 1 && i < bays - 1, $"seed {seed}: a floor over a bank bay lost");
-                Assert.True(floored[i - 1] > 0, $"seed {seed}: joints {i - 1} and {i} both open from side to side: not a gap a player jumps");
-                if (topped[i] == 0) holes++;
+                if (floored[j] > 0) continue;
+                Assert.True(j > 0 && j < bays - 1, $"seed {seed}: a floor over a bank bay lost");
+                Assert.True(floored[j - 1] > 0, $"seed {seed}: bays {j - 1} and {j} both open from side to side: not a gap a player jumps");
+                holes++;
             }
         }
         void Rate(string what, int lost, float expected, float low, float high)
@@ -788,8 +910,8 @@ public sealed class StoneBridgeTests : IDisposable
         }
         Rate("floors", lostFloors, expectFloors, 0.85f, 1.15f);
         Rate("arches", lostArches, expectArches, 0.9f, 1.1f);
-        Rate("open joints", holes, expectHoles, 0.75f, 1.25f);
-        // On average over the deck, about the viaduct's: floors 6 % (with the open joints, 7 %), arches 32 %, the railing its
+        Rate("open bays", holes, expectHoles + expectBothLost, 0.75f, 1.25f);
+        // On average over the deck, about the viaduct's: floors 6 % (with the open bays, 7 %), arches 32 %, the railing its
         // course's 17 % (TheRailingIsLostAtTheCourseShare).
         Assert.InRange(lostFloors / (float)(Seeds * floors), 0.05f, 0.09f);
         Assert.InRange(lostArches / (float)(Seeds * arches), 0.27f, 0.36f);
@@ -798,7 +920,7 @@ public sealed class StoneBridgeTests : IDisposable
     /// <summary>
     /// The railing is lost at the profile's course share, no more: a piece the rolls left with no neighbour (or a top block
     /// with nothing under it) has a neighbour put back, not dropped. Both courses, over an ordinary 60 m deck and over a 76 m
-    /// one with four 6 m openings, against the share at each piece's place (the open joints' top blocks included).
+    /// one with four 6 m openings, against the share at each piece's place.
     /// </summary>
     [Theory]
     [InlineData(34f, 0)]
@@ -815,11 +937,7 @@ public sealed class StoneBridgeTests : IDisposable
         float Survives(float at, float share) =>
             BridgeLayout.RuinProfile.Survives(BridgeLayout.SpanSurvival(1f - Mathf.Abs(at - bays * 0.5f) / (bays * 0.5f)), share);
         float expectEdges = 0f, expectTops = 0f;
-        for (int i = 2; i <= bays - 2; i++)
-        {
-            float open = 1f - Survives(i, shares.HoleShare);
-            expectTops += 2f * (1f - Survives(i, shares.CourseShare) * (1f - open));
-        }
+        for (int i = 2; i <= bays - 2; i++) expectTops += 2f * (1f - Survives(i, shares.CourseShare));
         for (int j = 1; j < bays - 1; j++)
             if (layout[j] != BridgeLayout.StoneBay.Open) expectEdges += 2f * (1f - Survives(j + 0.5f, shares.CourseShare));
         int edges = complete.Count(p => IsEdgeCourse(w, p)), tops = complete.Count(p => IsTopCourse(w, p));
@@ -827,7 +945,7 @@ public sealed class StoneBridgeTests : IDisposable
         const int Seeds = 300;
         for (int seed = 1; seed <= Seeds; seed++)
         {
-            var ruined = BridgeLayout.SolveStone(c, w, seed);
+            var ruined = Ruined(c, w, seed);
             lostEdges += edges - ruined.Count(p => IsEdgeCourse(w, p));
             lostTops += tops - ruined.Count(p => IsTopCourse(w, p));
         }
@@ -840,10 +958,11 @@ public sealed class StoneBridgeTests : IDisposable
     }
 
     /// <summary>
-    /// A floor rests on a pier under it, on an arch of its lane under either half, or between the two floors of its lane
-    /// either side (stone held between two neighbours keeps their support less its vertical loss, WearNTear.UpdateSupport):
-    /// where the ruin would leave one on none of them, an arch under it stands. Found over many seeds and checked floor by
-    /// floor, against the rolls that would have taken every arch under it.
+    /// A floor rests on a pier under it, on an arch of its lane under it, or between the two floors of its lane either side
+    /// (stone held between two neighbours keeps their support less its vertical loss, WearNTear.UpdateSupport); over a 6 m
+    /// opening's open bay it rests on each side on a crown of its lane or a floor. Where the ruin would leave one on none of
+    /// them, an arch under it stands. Found over many seeds and checked floor by floor, against the rolls that would have
+    /// taken every arch under it.
     /// </summary>
     [Fact]
     public void AFloorOnNothingKeepsAnArchUnderIt()
@@ -852,35 +971,43 @@ public sealed class StoneBridgeTests : IDisposable
         var c = Valley(w);
         int bays = BridgeLayout.Bays(c.Width);
         var layout = BridgeLayout.StoneBays(bays)!;
-        bool IsArchBay(int j) => layout[j] is BridgeLayout.StoneBay.ArchNear or BridgeLayout.StoneBay.ArchFar;
-        int found = 0;
-        for (int seed = 1; seed <= 3000 && found < 3; seed++)
+        Assert.Contains(BridgeLayout.StoneBay.Open, layout);
+        bool Rolled(BridgeLayout.Ruin r, int bay, int k) => r.Roll(bay, k, BridgeLayout.RoleStoneArch) >=
+            BridgeLayout.RuinProfile.Survives(BridgeLayout.SpanSurvival(1f - Mathf.Abs(bay + 0.5f - bays * 0.5f) / (bays * 0.5f)),
+                BridgeLayout.BridgeRuin.SupportShare);
+        int found = 0, foundOpen = 0;
+        for (int seed = 1; seed <= 3000 && (found < 3 || foundOpen < 1); seed++)
         {
             var ruined = BridgeLayout.SolveStone(c, w, seed);
-            var floor = new bool[bays + 1, 2];
+            var floor = new bool[bays, 2];
             var arch = new bool[bays, 4];
             foreach (StructurePiece p in ruined)
             {
-                if (IsFloor(p) || IsStrip(p)) floor[JointOf(w, p), p.Position.z < 0f ? 0 : 1] = true;
+                if (IsFloor(p)) floor[BayOf(w, p), p.Position.z < 0f ? 0 : 1] = true;
                 else if (IsUnderArch(p)) arch[BayOf(w, p), Mathf.RoundToInt(p.Position.z + 1.5f)] = true;
             }
             var r = new BridgeLayout.Ruin(seed, c);
-            for (int i = 1; i < bays; i++)
-            {
-                if (layout[i - 1] == BridgeLayout.StoneBay.Pier || layout[i] == BridgeLayout.StoneBay.Pier) continue;
+            for (int j = 1; j < bays - 1; j++)
                 for (int l = 0; l < 2; l++)
                 {
-                    if (!floor[i, l] || (floor[i - 1, l] && floor[i + 1, l])) continue;
-                    var under = new[] { i - 1, i }.Where(IsArchBay).SelectMany(j => new[] { (j, 2 * l), (j, 2 * l + 1) }).ToList();
-                    Assert.True(under.Any(a => arch[a.Item1, a.Item2]), $"seed {seed}: the floor on joint {i} rests on nothing");
-                    if (under.All(a => r.Roll(a.Item1, a.Item2, BridgeLayout.RoleStoneArch) >=
-                            BridgeLayout.RuinProfile.Survives(BridgeLayout.SpanSurvival(1f - Mathf.Abs(a.Item1 + 0.5f - bays * 0.5f) / (bays * 0.5f)),
-                                BridgeLayout.BridgeRuin.SupportShare)))
-                        found++;
+                    if (!floor[j, l] || layout[j] == BridgeLayout.StoneBay.Pier) continue;
+                    if (layout[j] == BridgeLayout.StoneBay.Open)
+                    {
+                        foreach (int side in new[] { j - 1, j + 1 })
+                        {
+                            if (floor[side, l]) continue;
+                            Assert.True(arch[side, 2 * l] || arch[side, 2 * l + 1], $"seed {seed}: the floor on open bay {j} has nothing on its side {side}");
+                            if (Rolled(r, side, 2 * l) && Rolled(r, side, 2 * l + 1)) foundOpen++;
+                        }
+                        continue;
+                    }
+                    if (floor[j - 1, l] && floor[j + 1, l]) continue;
+                    Assert.True(arch[j, 2 * l] || arch[j, 2 * l + 1], $"seed {seed}: the floor on bay {j} rests on nothing");
+                    if (Rolled(r, j, 2 * l) && Rolled(r, j, 2 * l + 1)) found++;
                 }
-            }
         }
         Assert.True(found >= 1, "no seed rolled every arch under a floor away");
+        Assert.True(foundOpen >= 1, "no seed rolled every arch beside an open bay's floor away");
     }
 
     // ------------------------------------------------------------ kit choice
@@ -889,30 +1016,50 @@ public sealed class StoneBridgeTests : IDisposable
     /// From the Black Forest on (every biome but the Meadows and the Mistlands) a crossing the stone kit fits draws it, WoodRail
     /// or WoodBraced at even odds by the seed, every visit the same; a Meadows crossing never draws it, a Mistlands one is
     /// Dvergr wood. A crossing it does not fit draws the railed kits as the two-kit pick always did.
+    /// <para>The odds are counted over 240 seeds in the Black Forest, each kit within 30 % of a third (about 3.3 standard
+    /// deviations of an even draw). The draw reads the biome only through the kits that fit (<see cref="BridgeStructures.KitsThatFit"/>),
+    /// so each other biome from the Black Forest on fits the same three kits and draws the Black Forest's kit seed by seed over
+    /// the first 60 seeds (each kit about 20 times), and the Meadows fits only the railed kits: each of the 1680 draws the
+    /// six other biomes' counts took, each a support reading, was the Black Forest's again.</para>
     /// </summary>
     [Fact]
     public void FromTheBlackForestOnTheStoneKitIsDrawnAtEvenOddsWithTheRailedKits()
     {
         var (c, w) = Reference();
-        const int n = 240;
-        foreach (Heightmap.Biome b in new[] { Heightmap.Biome.BlackForest, Heightmap.Biome.Swamp, Heightmap.Biome.Mountain, Heightmap.Biome.Plains,
+        const int n = 240, perBiome = 60;
+        w.Biome = Heightmap.Biome.BlackForest;
+        var three = new[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced, BridgeStructures.Kit.Stone };
+        Assert.Equal(three.OrderBy(k => k), BridgeStructures.KitsThatFit(c, w).OrderBy(k => k));
+        var drawn = new BridgeStructures.Kit[n];
+        var count = new Dictionary<BridgeStructures.Kit, int>();
+        for (int i = 0; i < n; i++)
+        {
+            w.Seed = 1000 + i;
+            BridgeStructures.Kit k = BridgeStructures.KitFor(c, w)!.Value;
+            Assert.Equal(k, BridgeStructures.KitFor(c, w));
+            drawn[i] = k;
+            count[k] = count.TryGetValue(k, out int v) ? v + 1 : 1;
+        }
+        foreach (var kit in three)
+            Assert.InRange(count.TryGetValue(kit, out int m) ? m : 0, n / 3 * 0.7f, n / 3 * 1.3f);
+        Assert.Equal(n, count.Values.Sum());
+        Assert.Equal(three.OrderBy(k => k), drawn.Take(perBiome).Distinct().OrderBy(k => k));
+        foreach (Heightmap.Biome b in new[] { Heightmap.Biome.Swamp, Heightmap.Biome.Mountain, Heightmap.Biome.Plains,
             Heightmap.Biome.AshLands, Heightmap.Biome.DeepNorth, Heightmap.Biome.Ocean })
         {
             w.Biome = b;
-            var count = new Dictionary<BridgeStructures.Kit, int>();
-            for (int i = 0; i < n; i++)
+            w.Seed = 1000;
+            Assert.Equal(three.OrderBy(k => k), BridgeStructures.KitsThatFit(c, w).OrderBy(k => k));
+            for (int i = 0; i < perBiome; i++)
             {
                 w.Seed = 1000 + i;
-                BridgeStructures.Kit k = BridgeStructures.KitFor(c, w)!.Value;
-                Assert.Equal(k, BridgeStructures.KitFor(c, w));
-                count[k] = count.TryGetValue(k, out int v) ? v + 1 : 1;
+                Assert.True(drawn[i] == BridgeStructures.KitFor(c, w), $"{b}, seed {w.Seed}: not the Black Forest's {drawn[i]}");
             }
-            foreach (var kit in new[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced, BridgeStructures.Kit.Stone })
-                Assert.InRange(count.TryGetValue(kit, out int m) ? m : 0, n / 3 * 0.7f, n / 3 * 1.3f);
-            Assert.Equal(n, count.Values.Sum());
         }
         w.Biome = Heightmap.Biome.Meadows;
-        for (int i = 0; i < n; i++)
+        w.Seed = 1000;
+        Assert.Equal(new[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced }.OrderBy(k => k), BridgeStructures.KitsThatFit(c, w).OrderBy(k => k));
+        for (int i = 0; i < perBiome; i++)
         {
             w.Seed = 1000 + i;
             Assert.Contains(BridgeStructures.KitFor(c, w), new BridgeStructures.Kit?[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced });
@@ -966,9 +1113,9 @@ public sealed class StoneBridgeTests : IDisposable
     /// each pier either side, the deck and railing over it: the fewest whose span holds the ship's way, measured with the
     /// stone deck's own depth (<see cref="BridgeLayout.StoneDeckDepth"/>). Over a 34 m river (five openings, the middle one
     /// 6 m) that is the middle three, 18 m from the second pier's face to the fifth's, its half arches 2 m into it either
-    /// side: each half arch's four arches under the deck, the deck over it ending on a strip on its crown, the railing's
+    /// side: each half arch's four arches under the deck, the deck over it a floor a lane ending at its crown, the railing's
     /// lower course to its crown and its top course a metre short; nothing between the crowns, complete or ruined;
-    /// everything snapping. The crossing draws stone at even odds; the same valley without the river (a lake) is one deck.
+    /// everything snapping. The crossing draws stone at even odds; the same valley without the river (a lake as deep) opens the same.
     /// </summary>
     [Fact]
     public void OverARiverTheStoneKitOpensBetweenTwoHalfArches()
@@ -999,11 +1146,9 @@ public sealed class StoneBridgeTests : IDisposable
         }
         // The half arches: four arches abreast under the deck in the bays beside the piers (along 9 and 25 m).
         foreach (float along in new[] { 9f, 25f }) Assert.Equal(4, complete.Count(p => At(p, BridgeLayout.StoneArchPrefab, along, deck - 1.5f)));
-        // The deck over them: a floor on the joint at each pier's face (half on the pier, half on the arch), a strip on each
-        // crown.
-        foreach (float along in new[] { 8f, 26f }) Assert.Equal(2, complete.Count(p => At(p, BridgeLayout.StoneFloorPrefab, along, deck - 0.5f)));
-        Assert.Equal(new[] { 9.5f, 24.5f }, complete.Where(p => IsStrip(p, deck) && Mathf.Abs(Along(p) - 17f) < 10f)
-            .Select(Along).Distinct().OrderBy(a => a));
+        // The deck over them: a floor a lane on each half arch's bay, ending at its crown; the piers' floors beside them.
+        foreach (float along in new[] { 7f, 9f, 25f, 27f }) Assert.Equal(2, complete.Count(p => At(p, BridgeLayout.StoneFloorPrefab, along, deck - 0.5f)));
+        Assert.DoesNotContain(complete, p => IsStrip(p, deck));
         // The railing over them: its lower course an arch over each half arch's bay to its crown, the top course on the
         // joints at the piers' faces (8 and 26 m), a metre short of the crowns, none at 10 or 24 m.
         bool Rail(StructurePiece p, string prefab, float y, float along) => At(p, prefab, along, y)
@@ -1020,10 +1165,13 @@ public sealed class StoneBridgeTests : IDisposable
             if (BridgeStructures.KitFor(c, w) == BridgeStructures.Kit.Stone) stone++;
         }
         Assert.InRange(stone, 10, 35);
+        // The same valley without the river: a lake 3 m deep, which a ship sails too. The same way and the same opening.
+        BridgeLayout.DeepWaterLanes = true;
         w.River = false;
-        Assert.Null(BridgeLayout.StoneShipWay(c, w));
-        Assert.True(BridgeLayout.StoneNavigationBays(c, w, layout, out _, out int none));
-        Assert.Equal(0, none);
+        BridgeLayout.ShipWay lake = Assert.IsType<BridgeLayout.ShipWay>(BridgeLayout.StoneShipWay(c, w));
+        Assert.Equal((way.Centre, way.DeckWidth, way.PierWidth), (lake.Centre, lake.DeckWidth, lake.PierWidth));
+        Assert.True(BridgeLayout.StoneNavigationBays(c, w, layout, out int lakeFirst, out int lakeCount));
+        Assert.Equal((4, 9), (lakeFirst, lakeCount));
     }
 
     /// <summary>A stone_arch's colliders in its own frame (ValheimRIP stone_arch): its tall end, its crown's slab, and the
@@ -1050,6 +1198,11 @@ public sealed class StoneBridgeTests : IDisposable
             BridgeLayout.StonePillarPrefab => new[] { (Vector3.zero, new Vector3(1f, 2f, 1f), 0f) },
             _ => new[] { (Vector3.zero, new Vector3(2f, 1f, 2f), 0f) },
         };
+        // Every sample below lies within this of the piece's position (a turn keeps a length): a piece wholly over or under
+        // the heights has none in them, as sampling it would find.
+        static float Length(Vector3 v) => Mathf.Sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        float reach = boxes.Max(x => Length(x.Item1) + 0.5f * Length(x.Item2)) + 0.01f;
+        if (p.Position.y + reach < bottom || p.Position.y - reach > top) return null;
         float min = float.MaxValue, max = float.MinValue;
         const int n = 24;
         foreach (var (centre, size, turn) in boxes)
@@ -1135,13 +1288,12 @@ public sealed class StoneBridgeTests : IDisposable
     }
 
     /// <summary>
-    /// The ruin of an opening's half arches is the rest's, but the strip on each crown, which ends the deck there, always
-    /// stands on an arch of its lane: where the rolls took both, one is put back. Over 300 seeds the half arches lose some
-    /// arches, and every strip keeps one under it. The strip keeps more of the arch than the railing over an arch does, so
-    /// the piers' course limit is as it was.
+    /// The ruin of an opening's half arches is the rest's, but the floors over each, which end the deck there, always stand
+    /// on an arch of their lane: where the rolls took both, one is put back. Over 300 seeds the half arches lose some
+    /// arches, and every such floor keeps one under it.
     /// </summary>
     [Fact]
-    public void AStripOnAHalfArchsCrownAlwaysStandsOnAnArch()
+    public void AFloorOnAHalfArchAlwaysStandsOnAnArch()
     {
         var (c, w) = River(16f);
         float deck = BridgeStructures.DeckHeight(c, w);
@@ -1150,18 +1302,18 @@ public sealed class StoneBridgeTests : IDisposable
         for (int seed = 1; seed <= 300; seed++)
         {
             var ruined = BridgeLayout.SolveStone(c, w, seed);
-            foreach (var (strip, bay) in new[] { (9.5f, 9f), (24.5f, 25f) })
+            foreach (float bay in new[] { 9f, 25f })
                 foreach (float lane in new[] { -1f, 1f })
                 {
-                    Assert.Contains(ruined, p => IsStrip(p, deck) && Mathf.Abs(Along(p) - strip) < 0.01f && Mathf.Abs(p.Position.z - lane) < 0.01f);
+                    Assert.Contains(ruined, p => IsFloor(p) && Mathf.Abs(p.Position.y - (deck - 0.5f)) < 0.01f && Mathf.Abs(Along(p) - bay) < 0.01f
+                        && Mathf.Abs(p.Position.z - lane) < 0.01f);
                     int arches = ruined.Count(p => p.Prefab == BridgeLayout.StoneArchPrefab && Mathf.Abs(p.Position.y - (deck - 1.5f)) < 0.01f
                         && Mathf.Abs(Along(p) - bay) < 0.01f && Mathf.Abs(p.Position.z - lane) < 1f);
-                    Assert.True(arches >= 1, $"seed {seed}: the strip at {strip} m, lane {lane}, rests on no arch");
+                    Assert.True(arches >= 1, $"seed {seed}: the floor at {bay} m, lane {lane}, rests on no arch");
                     lost += 2 - arches;
                 }
         }
         Assert.True(lost > 100, $"the half arches lost only {lost} arches over 300 seeds");
-        Assert.True(BridgeSupport.StoneStripOnCrownFactor > BridgeSupport.StoneOnArchFactor * BridgeSupport.StoneRailOnRailFactor);
     }
 
     /// <summary>

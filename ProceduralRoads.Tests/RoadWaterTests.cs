@@ -76,7 +76,7 @@ public class RoadWaterTests
         Assert.True(RoadShoreFill.Unbuildable(world, Swamp, 29f, wade: false), "3.5 m under the shallow line");
     }
 
-    /// <summary>Named case BuiltDry: what is shaped or built (pull, sway, turn curves, staircases, a place's entry and
+    /// <summary>Named case BuiltDry: what is shaped or built (pull, sway, turn curves, staircases, a location's entry and
     /// platform) never wades: a swamp's shallows the search walks are not dry for it, nor a river's core.</summary>
     [Fact]
     public void ShapedAndBuiltGroundNeverWades()
@@ -157,19 +157,19 @@ public class RoadWaterTests
         Assert.True(RoadShoreFill.Wet(world, p));
     }
 
-    /// <summary>Where a place placed before its roads levels its ground, that levelled ground is what a water test judges
-    /// (PlacedSites.GroundAt, the owner): a place that raises its ground over the shallows the generator reads there is
+    /// <summary>Where a location placed before its roads levels its ground, that levelled ground is what a water test judges
+    /// (PlacedLocations.GroundAt, the owner): a location that raises its ground over the shallows the generator reads there is
     /// dry ground in its footprint; outside it the generator's water is water.</summary>
     [Fact]
-    public void APlacesLevelledGroundOverGeneratorWaterIsDry()
+    public void ALocationsLevelledGroundOverGeneratorWaterIsDry()
     {
         var world = new Bands { Height = 29f };
         using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
             var centre = new Vector2(0f, -50f);
-            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(centre, 20f) });
-            PlacedSites.Ready(new PlacedSite { Record = new PlacedSiteRecord { Prefab = "Test", Centre = centre }, Ground = (_, _) => 33f });
+            RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, 20f) });
+            PlacedLocations.Ready(new PlacedLocation { Record = new PlacedLocationRecord { Prefab = "Test", Centre = centre }, Ground = (_, _) => 33f });
             var inside = centre + new Vector2(6f, 3f);
             Assert.Equal(33f, RoadWater.Ground(world, inside));
             Assert.True(RoadWater.BuiltDry(world, inside));
@@ -178,8 +178,8 @@ public class RoadWaterTests
         }
         finally
         {
-            PlacedSites.Reset();
-            RoadSiteProtection.Reset();
+            PlacedLocations.Reset();
+            RoadLocationProtection.Reset();
         }
     }
 }

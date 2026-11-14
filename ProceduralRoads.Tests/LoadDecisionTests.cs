@@ -41,23 +41,23 @@ public class LoadDecisionTests : System.IDisposable
             .GetField("m_worldDataLoaded", BindingFlags.NonPublic | BindingFlags.Static)!
             .SetValue(null, value);
 
-    private static ZoneSystem FillPlaces(ZoneSystem zones)
+    private static ZoneSystem FillLocations(ZoneSystem zones)
     {
-        (string name, float x, float z)[] places =
+        (string name, float x, float z)[] locations =
         {
             ("StartTemple", 0f, 0f),
             ("Eikthyrnir", -220f, -120f),
             ("GDKing", 260f, 140f),
             ("Crypt4", -120f, 240f),
         };
-        foreach ((string name, float x, float z) place in places)
+        foreach ((string name, float x, float z) location in locations)
         {
             TestLocations.Add(zones, new ZoneSystem.LocationInstance
             {
-                m_position = new Vector3(place.x, 0f, place.z),
+                m_position = new Vector3(location.x, 0f, location.z),
                 m_location = new ZoneSystem.ZoneLocation
                 {
-                    m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(place.name),
+                    m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(location.name),
                     m_exteriorRadius = 16f,
                 },
             });
@@ -85,7 +85,7 @@ public class LoadDecisionTests : System.IDisposable
         RoadSpatialGrid.Clear();
         RoadNetworkGenerator.Reset();
 
-        ZoneSystem zones = FillPlaces(ZoneSystem.instance!);
+        ZoneSystem zones = FillLocations(ZoneSystem.instance!);
 
 
         if (savedNetworkExists)
@@ -368,13 +368,14 @@ public class LoadDecisionTests : System.IDisposable
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
         if (kind == "version 99") { w.Write(99); w.Write(0); return ms.ToArray(); }
-        // A v4 envelope (this build's own format) holding one bad point.
-        w.Write(4); w.Write(2); w.Write(1);
+        // This build's own format holding one bad point.
+        w.Write(RoadSpatialGrid.SavedFormat); w.Write(RoadSpatialGrid.SavedEncoding); w.Write(1);
         w.Write(0); w.Write(0); w.Write(1);
         w.Write(1f); w.Write(2f);
         w.Write(kind == "width 0" ? 0f : 4f);
         w.Write(kind == "NaN height" ? float.NaN : 40f);
-        w.Write(false);
+        w.Write(false); w.Write(false); w.Write(false); w.Write(false); w.Write(false); w.Write(0);
+        w.Write(0);
         w.Write((byte)0); w.Write(0f);
         return ms.ToArray();
     }
@@ -389,12 +390,12 @@ public class LoadDecisionTests : System.IDisposable
         try { NeverReplaced(kind); }
         finally { BepInEx.Logging.ManualLogSource.Captured = null; }
 
-        // The error says why: the envelope and encoding read, and the check that failed.
+        // The error says why: the format and encoding read, and the check that failed.
         string expected = kind switch
         {
-            "version 99" => "cannot read (envelope 99, encoding 99: a format this build does not know",
-            "NaN height" => "cannot read (envelope 4, encoding 2: point 0 of cell (0,0) has position (1,2), width 4, height NaN",
-            "width 0" => "cannot read (envelope 4, encoding 2: point 0 of cell (0,0) has position (1,2), width 0, height 40",
+            "version 99" => "cannot read (format 99, encoding 99: a format this build does not know",
+            "NaN height" => "cannot read (format 4, encoding 8: point 0 of cell (0,0) has position (1,2), width 4, height NaN",
+            "width 0" => "cannot read (format 4, encoding 8: point 0 of cell (0,0) has position (1,2), width 0, height 40",
             _ => throw new System.ArgumentException(kind),
         };
         Assert.Contains(log, l => l.Contains(expected));

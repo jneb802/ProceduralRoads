@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
+using Valheim.Testing;
 using Valheim.Testing.Doubles;
 using Xunit;
 
@@ -42,10 +43,12 @@ public sealed class StructureEndTests : IDisposable
     {
         public float Top = 60f, Depth = 18f, FloorHalf = 8f, Face = 1.2f;
         public Func<float, float> Far = _ => 0f;
+        /// <summary>How far north and south the land runs (the sea beyond it).</summary>
+        public float HalfWidth = 200f;
         public float Rim => FloorHalf + Depth / Face;
         public override float GetHeight(float wx, float wy)
         {
-            if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
+            if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > HalfWidth) return 0f;
             float floor = Top - Depth;
             float valley = Mathf.Min(Top, floor + Mathf.Max(0f, Mathf.Abs(wx) - FloorHalf) * Face);
             if (wx <= Rim) return valley;
@@ -80,7 +83,7 @@ public sealed class StructureEndTests : IDisposable
         _scope.WithWorld(world);
         SetPathfinder(new RoadPathfinder(world) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
         RoadNetworkGenerator.PieceCommitted = (plan, _) => roads.Add(plan);
-        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-110f, 0f, z0), 0f, new Vector3(110f, 0f, z1), 0f, 4f, "across"), "no road");
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-110f, 0f, z0), 0f, new Vector3(110f, 0f, z1), 0f, 4f, "across"), "no road: " + RoadSpatialGrid.LastRefusal);
         return Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), c => c.ValleyJump);
     }
 
@@ -108,7 +111,10 @@ public sealed class StructureEndTests : IDisposable
     [Fact]
     public void AStepRimRisingPastTheBankPoint()
     {
-        var world = new RimValley { Far = d => -2f + Mathf.Min(d, 7.3f) * 0.9f };
+        // The land 30 m either side of the road's line: 200 m either side, the search's knight's headings took the road 190 m
+        // south to a viaduct whose approach ran on fill by the sea there (refused along a ridge). The case is the lip at the
+        // east end, whichever heading the viaduct crosses on.
+        var world = new RimValley { Far = d => -2f + Mathf.Min(d, 7.3f) * 0.9f, HalfWidth = 30f };
         var roads = new List<RoadSpatialGrid.PlannedPath>();
         AssertEveryEndReachable(Build(world, roads), world, roads, "east");
     }
@@ -356,7 +362,7 @@ public sealed class StructureEndTests : IDisposable
     /// the deck, the road come straight from the south: no level end at a high bank, and no row it can be brought to the foot
     /// of down the line, but the landing at the first row fits, the road filled a metre up to its one step's foot, met from
     /// its pad a road's width out on the line (the east end is met by its one step, and the two ends are chosen as a pair,
-    /// StructureEnds.Pair: both stepped, not the road filled 2 m up to the deck's end). Under a 1 m cap, or with a place on the bank west and south of the end, no way fits: the end is not met, and the road is searched
+    /// StructureEnds.Pair: both stepped, not the road filled 2 m up to the deck's end). Under a 1 m cap, or with a location on the bank west and south of the end, no way fits: the end is not met, and the road is searched
     /// round the crossing.
     /// </summary>
     [Fact]
@@ -378,10 +384,10 @@ public sealed class StructureEndTests : IDisposable
         Assert.Same(c, Meet(path, c, world, 1f));
         try
         {
-            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(-38f, -4f), 9f) });
+            RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(-38f, -4f), 9f) });
             Assert.Same(c, Meet(path, c, world, RoadConstants.TerrainDeltaMax));
         }
-        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
+        finally { RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>()); }
     }
 
     /// <summary>
@@ -443,7 +449,7 @@ public sealed class StructureEndTests : IDisposable
     /// The west end of <see cref="AnEndWithNoLevelBankBesideItIsFilledLevelRatherThanAFlightTheRoadClimbsBackFrom"/> with
     /// the ground south of the bank a quarter metre over it, or level with it: of every way the road reaches (the grade is
     /// part of each way, StructureEnds.MeetEnds) the cheapest is taken, at the deck's edge or the row under it with its
-    /// fill, not the whole run's eight stairs. With a place on the ground west and south-west of the bank, where
+    /// fill, not the whole run's eight stairs. With a location on the ground west and south-west of the bank, where
     /// every landing and the stairs' foot would be, no way there is: the road crosses elsewhere, on a bridge whose ends it
     /// meets.
     /// </summary>
@@ -474,7 +480,7 @@ public sealed class StructureEndTests : IDisposable
         _scope.WithWorld(blocked);
         try
         {
-            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(-36f, -1f), 4f) });
+            RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(-36f, -1f), 4f) });
             SetPathfinder(new RoadPathfinder(blocked) { Stairs = true, Viaducts = true, Bridges = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
             var roads = new List<RoadSpatialGrid.PlannedPath>();
             RoadNetworkGenerator.PieceCommitted = (plan, _) => roads.Add(plan);
@@ -483,9 +489,9 @@ public sealed class StructureEndTests : IDisposable
             RoadCrossing c = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.Kind == CrossingKind.Bridge);
             Assert.True(Vector2.Distance(c.FromBank, new Vector2(-30f, 0f)) > 8f, $"the bridge {c} still springs from the blocked bank");
             Assert.Null(MetEnds.Unmet(roads, new List<RoadCrossing> { c }, blocked));
-            AssertNoStairsLeadingNowhere(c, blocked, roads, "round the place");
+            AssertNoStairsLeadingNowhere(c, blocked, roads, "round the location");
         }
-        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
+        finally { RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>()); }
     }
 
     /// <summary>A swamp channel across x from -30 to 30, its bed at 26 m; beyond either bank the ground stands at
@@ -581,7 +587,7 @@ public sealed class StructureEndTests : IDisposable
         Assert.True(clear);
         Assert.Equal(edge.Meet, way[0]);
         Assert.Equal(edge.Meet - edge.Up * StructureEnds.PadTurn, way[1]);
-        Assert.True(StructureEnds.PadTurn >= RoadSpatialGrid.DefaultRoadWidth - 1e-3f, "the road turns nearer the edge than a road's width");
+        Assert.True(StructureEnds.PadTurn >= RoadConstants.DefaultRoadWidth - 1e-3f, "the road turns nearer the edge than a road's width");
         // Every point of the road past the turn stands at least the turn's distance out from the edge, on its line.
         for (int i = 1; i < way.Count; i++)
             Assert.True(Vector2.Dot(way[i] - edge.Meet, -edge.Up) >= StructureEnds.PadTurn - 1e-3f, $"the road at {way[i]} is nearer the edge than the turn");
@@ -910,6 +916,77 @@ public sealed class StructureEndTests : IDisposable
         Assert.True(StairLayout.Walkable(left.MeetHeight, landing) && StairLayout.Walkable(right.MeetHeight, landing));
     }
 
+    /// <summary>Flat swamp at the road's height (30.5 m) with shallow standing water (its bed at 29.5 m, the water at sea
+    /// level) under each of <see cref="Spans"/>: a strip as wide as the span is long, from two metres inside one bank to
+    /// two metres inside the other.</summary>
+    private sealed class SwampSpans : WorldGenerator
+    {
+        public (Vector2 from, Vector2 to)[] Spans = Array.Empty<(Vector2, Vector2)>();
+        private bool Wet(float x, float z) => Spans.Any(s =>
+        {
+            Vector2 d = s.to - s.from, p = new Vector2(x, z) - s.from;
+            float along = Vector2.Dot(p, d.normalized), across = Mathf.Abs(Vector2.Dot(p, new Vector2(-d.normalized.y, d.normalized.x)));
+            return along > 2f && along < d.magnitude - 2f && across < 0.5f * d.magnitude;
+        });
+        public override float GetHeight(float x, float z) => Wet(x, z) ? 29.5f : 30.5f;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Swamp;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width)
+        {
+            weight = Wet(x, z) ? 1f : 0f;
+            width = 10f;
+        }
+        public override int GetSeed() => 67;
+    }
+
+    /// <summary>
+    /// Two spans of one road an 86 degree turn apart, their facing ends too close for each its own ground and not facing
+    /// each other (so they share no landing, StructureEnds.Share), as a swamp road's two fords stood: the second span's
+    /// near end is met from its pad, the road leaving it from its pad turn at the first span's bank. The first span's far
+    /// end is then met only up to where that pad way joins the road, never over it: with no ground left between, it comes
+    /// back unmet (the road is searched again without it), rather than its way running over the second span's pad turn and
+    /// hooking onto its foot from the side, the road over its bottom step. Either way the second end keeps its landing: its
+    /// pad turn on the road and no other road point within StructureEnds.PadLeave of its foot.
+    /// </summary>
+    [Fact]
+    public void APreviousEndsWayNeverCutsTheNextEndsPad()
+    {
+        var bank12 = (from: new Vector2(-4675.06f, 2286.42f), to: new Vector2(-4667.28f, 2278.64f));
+        var bank13 = (from: new Vector2(-4657.88f, 2270.71f), to: new Vector2(-4633.13f, 2295.46f));
+        var world = new SwampSpans { Spans = new[] { bank12, bank13 } };
+        _scope.WithWorld(world);
+        RoadCrossing Span((Vector2 from, Vector2 to) b)
+        {
+            var c = RoadCrossing.Between(b.from, b.to, 29.5f, (b.from + b.to) * 0.5f, Vector2.Distance(b.from, b.to), CrossingKind.Ford, FordStyle.Span);
+            c.WaterLevel = RoadConstants.SeaLevel;
+            c.Kit = BridgeStructures.Kit.WoodRail;
+            return c;
+        }
+        RoadCrossing first = Span(bank12), second = Span(bank13);
+        var (nearA, farA) = StructureEnds.Natural(first, world);
+        var (nearB, farB) = StructureEnds.Natural(second, world);
+        Assert.True(farA.Steps == 1 && nearB.Steps == 1, FormattableString.Invariant(
+            $"steps {nearA.Steps} {farA.Steps} {nearB.Steps} {farB.Steps}, decks {nearA.Height:F2} {nearB.Height:F2}, far edge ({farA.Edge.x:F2}, {farA.Edge.y:F2})"));
+        // The road as searched: in along the first span's line, over both, and on along the second's.
+        Vector2 back = (bank12.from - bank12.to).normalized, on = (bank13.to - bank13.from).normalized;
+        var path = new List<Vector2>
+        {
+            bank12.from + back * 16f, bank12.from + back * 8f, bank12.from, bank12.to, bank13.from, bank13.to, bank13.to + on * 8f, bank13.to + on * 16f,
+        };
+        (first.FromIndex, first.ToIndex, second.FromIndex, second.ToIndex) = (2, 3, 4, 5);
+        RoadCrossing? unmet = StructureEnds.MeetEnds(path, new List<RoadCrossing> { first, second }, world, RoadConstants.TerrainDeltaMax, null);
+        if (unmet == first) return;
+        Assert.Null(unmet);
+        Assert.True(second.FromPad, "the second span's near end is not met from its pad");
+        StructureEnds.End foot = second.FromEnd!.Value;
+        Vector2 padTurn = foot.Meet - foot.Up * StructureEnds.PadTurn;
+        int turn = path.FindIndex(p => Vector2.Distance(p, padTurn) <= 1e-3f);
+        Assert.True(turn >= 0 && turn == second.FromIndex - 1,
+            FormattableString.Invariant($"the pad turn ({padTurn.x:F2}, {padTurn.y:F2}) is not on the road before the foot: {string.Join(" ", path.Select(p => $"({p.x:F2}, {p.y:F2})"))}"));
+        for (int i = 0; i < second.FromIndex - 1; i++)
+            Assert.True(Vector2.Distance(path[i], foot.Meet) >= StructureEnds.PadLeave - 1e-3f,
+                FormattableString.Invariant($"the road at ({path[i].x:F2}, {path[i].y:F2}) is {Vector2.Distance(path[i], foot.Meet):F2} m from the second span's foot"));
+    }
+
     // ------------------------------------------------- the final check
 
     private static RoadSpatialGrid.PlannedPath Piece(Vector2 a, Vector2 b, float h) =>
@@ -931,6 +1008,216 @@ public sealed class StructureEndTests : IDisposable
         finder.ClearNoStairs();
         Assert.NotNull(finder.FindPath(new Vector2(-110f, 0f), new Vector2(110f, 0f)));
         Assert.Single(finder.LastViaductJumps);
+    }
+
+    /// <summary>Mistlands viaducts only: a valley viaduct the road was refused with is banned as the one jump it is
+    /// (RoadNetworkGenerator.BanForTheNextSearch, RoadPathfinder.BanViaduct): the search again is offered its neighbour, a
+    /// jump within a cell of each of its ends, which the one-cell ban of a water crossing closes too (RoadPathfinder.BanJump).</summary>
+    [Fact]
+    public void ABannedValleyViaductLeavesItsNeighboursOpen()
+    {
+        var world = new RimValley();
+        _scope.WithWorld(world);
+        Vector2 a = new(-110f, 0f), b = new(110f, 0f);
+        var finder = new RoadPathfinder(world) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
+        Assert.NotNull(finder.FindPath(a, b));
+        var (from, to) = Assert.Single(finder.LastViaductJumps);
+        RoadCrossing refused = DvergrViaduct.ValleyCrossing(from, to, world, out _)!;
+        Assert.True(refused.ValleyJump);
+        RoadNetworkGenerator.BanForTheNextSearch(finder, new List<RoadCrossing> { refused }, refused, fallbackLeft: true);
+        Assert.NotNull(finder.FindPath(a, b));
+        var (from2, to2) = Assert.Single(finder.LastViaductJumps);
+        Assert.False(DvergrViaduct.SameJump(from2, to2, from, to), $"the banned jump {from} -> {to} was bought again");
+        bool Near(Vector2 p, Vector2 q) => Vector2.Distance(p, q) <= RoadPathfinder.CellSize;
+        Assert.True((Near(from2, from) && Near(to2, to)) || (Near(from2, to) && Near(to2, from)), $"{from2} -> {to2} is not a neighbour of {from} -> {to}");
+        // The cell ban closes that neighbour.
+        var cellBanned = new RoadPathfinder(world) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
+        cellBanned.BanJump(from, to);
+        cellBanned.FindPath(a, b);
+        Assert.DoesNotContain(cellBanned.LastViaductJumps, j => DvergrViaduct.SameJump(j.from, j.to, from2, to2));
+    }
+
+    /// <summary><see cref="BankRisingBeside"/> with a slot <paramref name="depth"/> deep along the older road's north edge
+    /// (z = 2) a road point's spacing either side of <paramref name="at"/>.</summary>
+    private sealed class SlotBeside : WorldGenerator
+    {
+        private readonly BankRisingBeside _bank = new() { SouthRise = 0f };
+        private readonly float _at, _depth;
+        public SlotBeside(float at, float depth) { _at = at; _depth = depth; }
+        public override float GetHeight(float x, float z) =>
+            _bank.GetHeight(x, z) - (Mathf.Abs(x - _at) <= 0.6f && z >= 1.6f && z <= 2.4f ? _depth : 0f);
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => _bank.GetBiome(wx, wy, oceanLevel, waterAlwaysOcean);
+        public override void GetRiverWeight(float x, float z, out float weight, out float width) => _bank.GetRiverWeight(x, z, out weight, out width);
+        public override int GetSeed() => _bank.GetSeed();
+    }
+
+    /// <summary>The older road of <see cref="AnEndsLandingRaisesTheRoadOnItsGroundToo"/>, stored on <paramref name="world"/>
+    /// at the ground's height, and the west end met over it: what the landing raises.</summary>
+    private static (RoadCrossing? unmet, RoadCrossing c, List<RoadSpatialGrid.PlannedPath> older) MeetOverOlder(WorldGenerator world)
+    {
+        RoadSpatialGrid.Clear();
+        var points = new List<Vector2>();
+        for (float x = -80f; x <= -34f + 0.01f; x += 2f) points.Add(new Vector2(x, 0f));
+        var older = new RoadSpatialGrid.PlannedPath(points, points.Select(p => world.GetHeight(p.x, p.y)).ToList(),
+            points.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 46f, false);
+        RoadSpatialGrid.Commit(older);
+        var c = RoadCrossing.Between(new Vector2(-30f, 0f), new Vector2(30f, 0f), 28f, new Vector2(0f, 0f), 60f, CrossingKind.Bridge);
+        var path = new List<Vector2> { new(-31f, -40f), new(-30.5f, -20f), new(-30f, 0f), new(30f, 0f), new(70f, 0f) };
+        return (Meet(path, c, world, RoadConstants.TerrainDeltaMax), c, new List<RoadSpatialGrid.PlannedPath> { older });
+    }
+
+    /// <summary>The older road's points <paramref name="raised"/> moves, past the cap as every road's earthwork is measured
+    /// (RoadNetworkGenerator.EarthworkAcross over the ground before roads), the road raised as the landing raises it.</summary>
+    private static List<Vector2> RaisedPastTheCap(RoadSpatialGrid.PlannedPath older, List<(RoadSpatialGrid.RoadPoint at, float to)> raised, WorldGenerator world)
+    {
+        var heights = new List<float>(older.Heights);
+        var moved = new HashSet<Vector2>();
+        foreach (var (at, to) in raised)
+        {
+            int i = older.Points.IndexOf(at.p);
+            if (i < 0) continue;
+            heights[i] = to;
+            moved.Add(at.p);
+        }
+        var plan = new RoadSpatialGrid.PlannedPath(older.Points, heights, new List<RoadPointDebugInfo>(), older.Width, older.TotalLength, false);
+        var past = new List<Vector2>();
+        RoadNetworkGenerator.EarthworkAcross(plan, RoadNetworkGenerator.GroundBeforeRoads(world), RoadConstants.TerrainDeltaMax, p => { if (moved.Contains(p)) past.Add(p); });
+        return past;
+    }
+
+    private sealed class FlatLand : WorldGenerator
+    {
+        public override float GetHeight(float x, float z) => 60f;
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
+    }
+
+    /// <summary>A landing raises the other road on its ground as every road meets a foot (RoadStairRuns.Land through
+    /// RaiseOnTheGround, RoadPitches.ClimbToFoot): level over the foot's landing either side, then the cap. A road crossing
+    /// the landing's ground 1.5 m under it is raised to it and, 3 m along, stands within the landing's grade of it, not
+    /// 1.05 m down at the cap as the old ease from the landing's edge left it while the road the flight lands was eased so.</summary>
+    [Fact]
+    public void ALandingRaisesTheRoadOnItsGroundOnTheFootsLevelLandingAsItsOwnRoad()
+    {
+        _scope.WithWorld(new FlatLand());
+        RoadSpatialGrid.Clear();
+        try
+        {
+            using var overrides = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+            RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+            var across = new List<Vector2>(); var acrossHeights = new List<float>();
+            for (int x = -20; x <= 20; x++) { across.Add(new Vector2(x, 0f)); acrossHeights.Add(60f); }
+            RoadSpatialGrid.CommitLevelled(across, acrossHeights, 4f);
+            var points = new List<Vector2>(); var heights = new List<float>();
+            for (int y = -20; y <= 0; y++) { points.Add(new Vector2(0f, y)); heights.Add(60f); }
+            float height = 61.5f;
+            float[]? landed = RoadStairRuns.Land(points, heights, new List<Vector2> { new(0f, 0f), new(0f, -1f) }, new Vector2(0f, 0f), height,
+                (_, _) => 60f, _ => 60f, RoadConstants.TerrainDeltaMax, out var others);
+            Assert.NotNull(landed);
+            Assert.NotNull(others);
+            Assert.NotEmpty(others!);
+            foreach (var (at, to) in others!)
+                Assert.True(Mathf.Abs(to - height) <= RoadPitches.ClimbToFoot(Mathf.Abs(at.p.x), RoadGrade.Configured) + 1e-3f,
+                    $"at x = {at.p.x:F1}: raised to {to:F2}, the landing at {height:F2}");
+        }
+        finally { RoadSpatialGrid.Clear(); }
+    }
+
+    /// <summary>
+    /// A structure's end landing raises the roads on its ground as the finished road is judged (RoadStairRuns.Land, through
+    /// RoadNetworkGenerator.EarthworkAcross): the older road of <see cref="AnEndsLandingRaisesTheRoadOnItsGroundToo"/> with a
+    /// slot beside its north edge west of the end's apron, under the point the landing raises furthest there, deep enough that
+    /// the raised road's edge stands a metre past the cap over it while its centre is within it. Judged point by point (its
+    /// centre), the raise was laid; across its width it is not: no way that raises it there is taken.
+    /// </summary>
+    [Fact]
+    public void AnEndsLandingDoesNotRaiseARoadPastTheCapAtItsEdge()
+    {
+        var plain = new BankRisingBeside { SouthRise = 0f };
+        _scope.WithWorld(plain);
+        var (unmet, c, older) = MeetOverOlder(plain);
+        Assert.Null(unmet);
+        Assert.NotNull(c.FromRaised);
+        // The point raised furthest west of the end's apron, and its fill at its centre.
+        var west = c.FromRaised!.Where(r => r.at.p.x <= -41f).ToList();
+        Assert.NotEmpty(west);
+        var (at, to) = west.OrderByDescending(r => r.to - plain.GetHeight(r.at.p.x, r.at.p.y)).First();
+        float fill = to - plain.GetHeight(at.p.x, at.p.y);
+        Assert.InRange(fill, 0.5f, RoadConstants.TerrainDeltaMax - 0.5f);
+
+        var slot = new SlotBeside(at.p.x, RoadConstants.TerrainDeltaMax + 1f - fill);
+        _scope.WithWorld(slot);
+        // That raise, judged at each raised point's centre, is within the cap; across the road's width it is not.
+        Assert.All(c.FromRaised!, r => Assert.True(r.to - slot.GetHeight(r.at.p.x, r.at.p.y) <= RoadConstants.TerrainDeltaMax));
+        Assert.NotEmpty(RaisedPastTheCap(older[0], c.FromRaised!, slot));
+
+        var (_, onSlot, olderOnSlot) = MeetOverOlder(slot);
+        Assert.Empty(RaisedPastTheCap(olderOnSlot[0], onSlot.FromRaised ?? new List<(RoadSpatialGrid.RoadPoint at, float to)>(), slot));
+    }
+
+    /// <summary>A bridge over a channel (x -60 to -20, at 26 m) to land at 33 m, with a gully under RoadWater.LandingFloor
+    /// just past the bridge's east end (a raised river ford, x -16 to 4) and a dry dip to the same depth 100 m on (x 80 to
+    /// 140): one land stretch of 200 m from the bridge's end.</summary>
+    internal sealed class FordPastAnEndAndADip : WorldGenerator
+    {
+        public const float Low = 30.8f;
+        public override float GetHeight(float x, float z)
+        {
+            if (x <= -60f) return 33f;
+            if (x < -20f) return 26f;
+            float gully = Mathf.Lerp(Low, 33f, Mathf.Clamp01((Mathf.Abs(x + 6f) - 10f) / 6f));
+            float dip = Mathf.Lerp(Low, 33f, Mathf.Clamp01((Mathf.Abs(x - 110f) - 30f) / 20f));
+            return Mathf.Min(gully, dip);
+        }
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width)
+        {
+            weight = x > -60f && x < -20f ? 1f : 0f;
+            width = 40f;
+        }
+        public override int GetSeed() => 66;
+    }
+
+    /// <summary>
+    /// A raised ford on a structure end's levelled stretch keeps its own floor (RoadNetworkGenerator.RaisedFordFloor, the
+    /// landing floor for a river ford) over its banks and that stretch, and only there: the land stretch it is planned with
+    /// runs 200 m on, and a dip 100 m from the ford, under the landing floor but dry, is laid on its ground at the land's
+    /// floor (RoadConstants.DryRoadFloor), with no embankment. The whole stretch took the ford's floor, a causeway far
+    /// from any ford.
+    /// </summary>
+    [Fact]
+    public void ARaisedFordOnAnEndRaisesOnlyItsOwnStretch()
+    {
+        var world = new FordPastAnEndAndADip();
+        _scope.WithWorld(world);
+        var bridge = RoadCrossing.Between(new Vector2(-60f, 0f), new Vector2(-20f, 0f), 26f, new Vector2(-40f, 0f), 40f, CrossingKind.Bridge);
+        bridge.Kit = BridgeStructures.Kit.WoodRail;
+        var ford = RoadCrossing.Between(new Vector2(-16f, 0f), new Vector2(4f, 0f), FordPastAnEndAndADip.Low, new Vector2(-6f, 0f), 20f,
+            CrossingKind.Ford, FordStyle.Raise);
+        var path = new List<Vector2>();
+        for (float x = -100f; x <= 200f + 1e-3f; x += 4f) path.Add(new Vector2(x, 0f));
+        int At(float x) => path.FindIndex(p => Mathf.Abs(p.x - x) < 1e-3f);
+        (bridge.FromIndex, bridge.ToIndex, ford.FromIndex, ford.ToIndex) = (At(-60f), At(-20f), At(-16f), At(4f));
+        var crossings = new List<RoadCrossing> { bridge, ford };
+        Assert.Null(StructureEnds.MeetEnds(path, crossings, world, RoadConstants.TerrainDeltaMax, null));
+        var (near, far) = BridgeStructures.Ends(bridge, world);
+        Assert.True(near.IsSet, "the bridge's ends are met");
+        Assert.True(RoadNetworkGenerator.RaisedOnALevelledEnd(ford, new[] { (near, far) }), "the ford stands on the bridge end's levelled stretch");
+        Assert.True(RoadNetworkGenerator.RaisedFordFloor(ford) > RoadConstants.DryRoadFloor, "a river ford's floor is over the land's");
+
+        var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, crossings, 4f, null, null);
+        Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        var road = plans!.SelectMany(p => p.Points.Select((at, i) => (at, h: p.Heights[i]))).ToList();
+        // The dip, about 100 m on: on its ground, under the ford's floor.
+        var dip = road.Where(x => Mathf.Abs(x.at.x - 110f) < 8f).ToList();
+        Assert.NotEmpty(dip);
+        Assert.All(dip, x => Assert.True(x.h < RoadNetworkGenerator.RaisedFordFloor(ford) - 0.1f && x.h <= world.GetHeight(x.at.x, 0f) + 0.1f,
+            FormattableString.Invariant($"the road at ({x.at.x:F1}, {x.at.y:F1}) stands {x.h:F2} over ground at {world.GetHeight(x.at.x, 0f):F2}: an embankment far from the ford")));
+        // The ford, between its banks: at its own floor.
+        var onFord = road.Where(x => x.at.x > -16f && x.at.x < 4f).ToList();
+        Assert.NotEmpty(onFord);
+        Assert.All(onFord, x => Assert.True(x.h >= RoadNetworkGenerator.RaisedFordFloor(ford) - 1e-3f,
+            FormattableString.Invariant($"the ford's road at ({x.at.x:F1}, {x.at.y:F1}) stands {x.h:F2}, under its floor {RoadNetworkGenerator.RaisedFordFloor(ford):F2}")));
     }
 }
 

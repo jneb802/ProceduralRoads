@@ -69,7 +69,7 @@ public class LyingVegetationTests
     }
 
     [Fact]
-    public void ALogIsNeverTurnedOntoGroundAStaircaseOrAPlaceKeepsClear()
+    public void ALogIsNeverTurnedOntoGroundAStaircaseOrALocationKeepsClear()
     {
         // As the first test, but everything east of the log's middle kept clear (a staircase's clear area, say): every
         // turn that clears the road lays part of it there, so it goes.
@@ -134,8 +134,16 @@ public class LyingVegetationTests
         float yaw = 90f;
         Assert.True(RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue), Road, new Vector3(0f, 40f, 3f), "YggdrasilRoot",
             1f, _ => Heightmap.Biome.Mistlands, ref yaw));
-        // 30 m off, pointing at the road at its largest scale, it stops short of it.
-        Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 30f), 90f, 1.5f, Road, out float turned));
+        // 30 m off, pointing at the road at its largest scale, its shorter end (18.8 m at scale 1, 28.2 m at 1.5) dives
+        // into the ground: on a road level with the ground at its origin that end lies 11 m and more under the road, and it
+        // is left as it lies.
+        Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 30f), 90f, 1.5f, RoadAt(), out float turned,
+            lean: new VegetationClearing.Lean(0f, 0f, 40f)));
+        Assert.Equal(90f, turned);
+        // Where the heights are not known, its whole footprint counts: that end, widened by the road's half-width and the
+        // margin, reaches 30.7 m, onto the road 30 m off, and stops short of it 31 m off.
+        Assert.NotEqual(VegetationClearing.Lying.Clear, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 30f), 90f, 1.5f, Road, out _));
+        Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Lie("YggdrasilRoot", new Vector2(0f, 31f), 90f, 1.5f, Road, out turned));
         Assert.Equal(90f, turned);
     }
 
@@ -152,7 +160,76 @@ public class LyingVegetationTests
         Assert.Equal(VegetationClearing.Lying.Remove, VegetationClearing.Decide(root, new Vector2(0f, 3f), false, new HashSet<int> { root }, none,
             nobody, nobody, Road, 1f, null, 90f, out _));
         Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(root, new Vector2(0f, 30f), false, new HashSet<int> { root }, none,
+            nobody, nobody, RoadAt(), 1.5f, null, 90f, out _, new VegetationClearing.Lean(0f, 0f, 40f)));
+        Assert.Equal(VegetationClearing.Lying.Clear, VegetationClearing.Decide(root, new Vector2(0f, 31f), false, new HashSet<int> { root }, none,
             nobody, nobody, Road, 1.5f, null, 90f, out _));
+    }
+
+    // An ancient root across a road below a marble staircase in the Mistlands, as read in game: its origin, yaw and scale,
+    // and the road points near where its far end crosses the road (half-width 2), each with the road's height.
+    private static readonly Vector2 RootAt = new(4329.777f, -5733.032f);
+    private const float RootYaw = 47f, RootScale = 1.2865f, RootOrigin = 78.946f;
+    private static readonly (Vector2 at, float h)[] RootRoad =
+    {
+        (new Vector2(4306.3f, -5716.6f), 70.63f), (new Vector2(4309.4f, -5715.2f), 70.76f), (new Vector2(4310.5f, -5714.8f), 70.79f),
+        (new Vector2(4311.6f, -5714.3f), 70.85f), (new Vector2(4312.7f, -5713.8f), 70.90f), (new Vector2(4313.8f, -5713.4f), 70.89f),
+        (new Vector2(4318.4f, -5711.5f), 71.23f),
+    };
+
+    /// <summary><see cref="RootRoad"/>, each point at the height <paramref name="height"/> gives it, moved
+    /// <paramref name="towards"/> metres along the root's length towards its origin.</summary>
+    private static List<VegetationClearing.RoadCentre> RootRoadAt(System.Func<float, float> height, float towards = 0f)
+    {
+        float r = RootYaw * Mathf.Deg2Rad;
+        // The root's length is its local x, along (cos, -sin) at its yaw; the road crosses it on the negative side.
+        Vector2 length = new(Mathf.Cos(r), -Mathf.Sin(r));
+        return RootRoad.Select(p => new VegetationClearing.RoadCentre(p.at + length * towards, 2f, height(p.h))).ToList();
+    }
+
+    /// <summary>The root judged on <paramref name="road"/> by generation (RoadClearAreaManager.OnRoad, with the tilt and origin
+    /// PlaceVegetation draws) and by the server bake (VegetationClearing.Decide, with the saved one's), which must agree: the
+    /// verdict and the yaw it is turned to.</summary>
+    private static (VegetationClearing.Lying verdict, float turned) RootOnBothPaths(List<VegetationClearing.RoadCentre> road)
+    {
+        var laid = new VegetationClearing.Lean(0f, 0f, RootOrigin);
+        VegetationClearing.Lying lying = VegetationClearing.Lie("YggdrasilRoot", RootAt, RootYaw, RootScale, road, out float turned, lean: laid);
+        int root = "YggdrasilRoot".GetStableHashCode();
+        var nobody = new List<VegetationClearing.Footprint>();
+        Assert.Equal(lying, VegetationClearing.Decide(root, RootAt, false, new HashSet<int> { root }, new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>()),
+            nobody, nobody, road, RootScale, null, RootYaw, out float baked, laid));
+        Assert.Equal(turned, baked, 3);
+        float yaw = RootYaw;
+        Assert.Equal(lying == VegetationClearing.Lying.Remove, RoadClearAreaManager.OnRoad(new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>(), 0, int.MaxValue),
+            road, new Vector3(RootAt.x, RootOrigin, RootAt.y), "YggdrasilRoot", RootScale, _ => Heightmap.Biome.Mistlands, ref yaw, laid));
+        if (lying != VegetationClearing.Lying.Remove) Assert.Equal(turned, yaw, 3);
+        return (lying, turned);
+    }
+
+    [Fact]
+    public void AnAncientRootsEndStandingOnTheRoadDownASlopeIsTurnedOrRemoved()
+    {
+        // The ground falls 8 m from the root's origin to the road, so the end that dives into the ground at its origin
+        // stands on the road 26 m away: it is in the road's walking box, and the root is turned or removed, on both paths.
+        var (verdict, _) = RootOnBothPaths(RootRoadAt(h => h));
+        Assert.NotEqual(VegetationClearing.Lying.Clear, verdict);
+    }
+
+    [Fact]
+    public void AnAncientRootsBuriedEndUnderALevelRoadIsLeftAsItLies()
+    {
+        // The same road at the height of the ground at the root's origin: its end lies 4 m and more under the road there.
+        var (verdict, turned) = RootOnBothPaths(RootRoadAt(_ => RootOrigin));
+        Assert.Equal(VegetationClearing.Lying.Clear, verdict);
+        Assert.Equal(RootYaw, turned);
+    }
+
+    [Fact]
+    public void ARoadCutThatUncoversAnAncientRootsEndSeesIt()
+    {
+        // The road 2.6 m nearer the root's origin, past the end the old footprint kept: level with the ground at its origin,
+        // the end lies under it; cut 3 m into that ground (within the earthwork cap), the end stands in the cut.
+        Assert.Equal(VegetationClearing.Lying.Clear, RootOnBothPaths(RootRoadAt(_ => RootOrigin, 2.6f)).verdict);
+        Assert.NotEqual(VegetationClearing.Lying.Clear, RootOnBothPaths(RootRoadAt(_ => RootOrigin - 3f, 2.6f)).verdict);
     }
 
     /// <summary><see cref="Road"/> with its height: 40 m, or <paramref name="height"/>.</summary>
@@ -258,11 +335,12 @@ public class LyingVegetationTests
 #endif
 
     [Fact]
-    public void ZonesGatherTheRoadAsFarAsTheLongestLogReaches()
+    public void ZonesGatherTheRoadAsFarAsTheLongestLyingOneReaches()
     {
-        // The giant log at scale 2 reaches 29.7 m from its origin, past a standing tree's 15.5 m and the Mistlands root's
-        // 24.2 m at scale 1.5.
+        // The Mistlands root at scale 1.5 reaches 37.8 m from its origin, its whole length counted (its ends dive into the
+        // ground, and stand on a road down a slope or in a cut), past the giant log's 29.7 m at scale 2 and a standing
+        // tree's 15.5 m.
         Assert.True(VegetationClearing.TreeReach >= VegetationClearing.LyingReach);
-        Assert.InRange(VegetationClearing.LyingReach, 29f, 31f);
+        Assert.InRange(VegetationClearing.LyingReach, 38f, 39f);
     }
 }

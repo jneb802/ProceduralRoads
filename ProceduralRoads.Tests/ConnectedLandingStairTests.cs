@@ -12,9 +12,9 @@ public sealed class ConnectedLandingStairTests : IDisposable
 {
     private readonly ValheimWorldScope _scope=new();
     private readonly ITestOutputHelper _output;
-    public ConnectedLandingStairTests(ITestOutputHelper output) { _output = output; RoadNetworkGenerator.Reset(); RoadSiteProtection.Reset(); }
-    public void Dispose() { RoadNetworkGenerator.Reset(); RoadSiteProtection.Reset(); _scope.Dispose(); }
-    private static PlacedSiteShape Shape(CapturedLandingFile f) => PlacedSiteShape.Of(f.Record.Centre,f.Record.Yaw,RoadStairRuns.FlatOf(f.Record.Ops)!.Value,
+    public ConnectedLandingStairTests(ITestOutputHelper output) { _output = output; RoadNetworkGenerator.Reset(); RoadLocationProtection.Reset(); }
+    public void Dispose() { RoadNetworkGenerator.Reset(); RoadLocationProtection.Reset(); _scope.Dispose(); }
+    private static PlacedLocationShape Shape(CapturedLandingFile f) => PlacedLocationShape.Of(f.Record.Centre,f.Record.Yaw,RoadStairRuns.FlatOf(f.Record.Ops)!.Value,
         f.Record.RockRadius,f.Record.Rocks,f.Ground,f.Record.KeepSmallRocks,f.Record.Root,f.Record.Prefab);
 
     /// <summary>A floor top at a raised landing whose ground rises past its far edge: no finish is tried on it (it is the floor
@@ -26,7 +26,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
     public void ExistingFloorMustNotAcceptHigherGroundAfterFinishFallthrough(float rise, bool expectedArrival)
     {
         float Ground(float x, float z) => 40f + rise * Mathf.Clamp((z - 1f) * 2f, 0f, 1f);
-        var shape = PlacedSiteShape.Of(new Vector2(0,-6), 0, new LevelOp(0,0,0,4,false), 0, null, Ground, root:40);
+        var shape = PlacedLocationShape.Of(new Vector2(0,-6), 0, new LevelOp(0,0,0,4,false), 0, null, Ground, root:40);
         var region = shape.ConnectedLanding(Ground,1f);
         Assert.True(region.Contains(new Vector2(0,1)), "Real connected region must reach the floor exit");
         var plan = new StairPlan { Kit="stone", Reached=true, EndHeading=0, End=new Vector3(0,40,1),
@@ -70,7 +70,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
     {
         Vector2 dir=StairLayout.Forward(onward),across=StairLayout.Right(onward);
         float Ground(float x,float z)=>40f+rise*Mathf.Clamp((x*dir.x+z*dir.y-1f)*2f,0f,1f);
-        var shape=PlacedSiteShape.Of(-dir*6f,onward,new LevelOp(0,0,0,4,false),0,null,Ground,root:40);
+        var shape=PlacedLocationShape.Of(-dir*6f,onward,new LevelOp(0,0,0,4,false),0,null,Ground,root:40);
         var region=shape.ConnectedLanding(Ground,1f);
         Assert.True(region.Contains(dir));
         var existing=new StairPlan { Kit="stone",Reached=true,EndHeading=onward,End=new Vector3(dir.x,40,dir.y) };
@@ -116,7 +116,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
         Vector2 dir=StairLayout.Forward(onward),across=StairLayout.Right(onward);
         float sideRise=sideSteps*StairLayout.StepUp,start=sideRise<0f?0.5f:1f;
         float Ground(float x,float z)=>40f+sideRise*Mathf.Clamp((x*dir.x+z*dir.y-start)*2f,0f,1f)*Mathf.Clamp(Mathf.Abs(x*across.x+z*across.y),0f,1f);
-        var shape=PlacedSiteShape.Of(-dir*6f,onward,new LevelOp(0,0,0,4,false),0,null,Ground,root:40);
+        var shape=PlacedLocationShape.Of(-dir*6f,onward,new LevelOp(0,0,0,4,false),0,null,Ground,root:40);
         var region=shape.ConnectedLanding(Ground,1f);
         var plan=new StairPlan { Kit="stone",Reached=true,EndHeading=onward,End=new Vector3(-dir.x,40,-dir.y),LastRowKind=StairPieceKind.Stair };
         var existing=plan.Copy();
@@ -135,7 +135,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
     public void ExistingFloorSamplesItsOwnFarHalfRatherThanAnotherFloorAhead()
     {
         float Ground(float x,float z)=>40f+Mathf.Clamp((z-1.75f)*2f,0f,1f);
-        var shape=PlacedSiteShape.Of(new Vector2(0,-6),0,new LevelOp(0,0,0,4,false),0,null,Ground,root:40);
+        var shape=PlacedLocationShape.Of(new Vector2(0,-6),0,new LevelOp(0,0,0,4,false),0,null,Ground,root:40);
         var region=shape.ConnectedLanding(Ground,1f);
         var plan=new StairPlan { Kit="stone",Reached=true,EndHeading=0,End=new Vector3(0,40,-1),LastRowKind=StairPieceKind.Stair };
         Assert.Equal(1,StairLayout.AddTopFloor(plan,Ground,2).pieces);
@@ -148,13 +148,14 @@ public sealed class ConnectedLandingStairTests : IDisposable
     {
         var f=CapturedLandingFile.Tower();var r=f.Record;var shape=Shape(f);
         Assert.Equal("2c4cd8bbdf0c9e03c0de8ecffeaf7d8b9d85305a40db3e07c67c512f8547e77d",f.InputHash);
-        // The native capture omitted the global footprint index; all-protected cuts are a conservative diagnostic boundary.
+        // The native capture omitted the global footprint index: the tower's footprint as TowerPlacedFirstTests sets it.
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(r.Centre, 30f) });
         // A staircase from the captured road's end, set off from its ring (RoadEndRing), or where none is laid there, from where
         // the road is cut back for it (RoadNetworkGenerator.EntryCutBacks), over the captured ground carried on past its edge,
         // where a staircase from there may search. Before the ring every one from the road's end crossed it.
         float Carried(float x,float z)=>f.Ground(Mathf.Clamp(x,r.X0,r.X0+r.W-1.001f),Mathf.Clamp(z,r.Z0,r.Z0+r.H-1.001f));
-        RoadStairSpan? Lay(SiteApproachRequest q,Func<float,float,float> ground,out string refused)=>RoadStairRuns.PlanPlacedSiteApproach(q,r.Yaw,r.Ops,ground,(_,_)=>Heightmap.Biome.Mountain,f.Seed,out refused,
-            r.RockRadius,inFootprint:_=>true,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root);
+        RoadStairSpan? Lay(LocationApproachRequest q,Func<float,float,float> ground,out string refused)=>RoadStairRuns.PlanPlacedLocationApproach(q,r.Yaw,r.Ops,TestLattice.Of(ground),(_,_)=>Heightmap.Biome.Mountain,f.Seed,out refused,
+            r.RockRadius,inFootprint:RoadLocationProtection.Contains,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root);
         var span=Lay(f.Request,f.Ground,out string why);
         var from=f.Request;
         if(span==null){from=f.CutBack(RoadNetworkGenerator.EntryCutBacks[1]);span=Lay(from,Carried,out why);}
@@ -209,7 +210,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
         AssertInTheTower(plan!,false);
     }
 
-    /// <summary>Nor in the tower's own pieces, which the place's shape does not know (it keeps out of a place's pit, the
+    /// <summary>Nor in the tower's own pieces, which the location's shape does not know (it keeps out of a location's pit, the
     /// rock round it but for its whole front side, and its boulders): the game's staircase's top, read in game, stood
     /// between the tower's walls, 5.2 to 6.0 m from its centre, and nothing refused it. Past the lip, it is.</summary>
     [Fact]
@@ -227,13 +228,14 @@ public sealed class ConnectedLandingStairTests : IDisposable
     }
 
     /// <summary>The tower's staircase from where the game's set off (-4790.98,1751.43), its road arriving on <paramref name="arriving"/>.</summary>
-    private static StairPlan? TowerApproach(CapturedLandingFile f,PlacedSiteShape shape,float arriving,out string why)
+    private static StairPlan? TowerApproach(CapturedLandingFile f,PlacedLocationShape shape,float arriving,out string why)
     {
         var r=f.Record;Vector2 end=new Vector2(-4790.98f,1751.43f);
-        var request=new SiteApproachRequest { Centre=r.Centre,RoadEnd=end,RoadHeight=f.Ground(end.x,end.y),Arriving=arriving,Reach=f.Request.Reach,
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(r.Centre, 30f) });
+        var request=new LocationApproachRequest { Centre=r.Centre,RoadEnd=end,RoadHeight=f.Ground(end.x,end.y),Arriving=arriving,Reach=f.Request.Reach,
             TotalExpansions=f.Request.TotalExpansions,Stall=f.Request.Stall,Leg=f.Request.Leg,RoadTail=new List<Vector2>{end-StairLayout.Forward(arriving)*30f,end} };
-        return RoadStairRuns.PlanPlacedSiteApproach(request,r.Yaw,r.Ops,f.Ground,(_,_)=>Heightmap.Biome.Mountain,f.Seed,out why,
-            r.RockRadius,inFootprint:_=>true,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root,placed:shape)?.Plan;
+        return RoadStairRuns.PlanPlacedLocationApproach(request,r.Yaw,r.Ops,TestLattice.Of(f.Ground),(_,_)=>Heightmap.Biome.Mountain,f.Seed,out why,
+            r.RockRadius,inFootprint:RoadLocationProtection.Contains,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root,placed:shape)?.Plan;
     }
 
     /// <summary>The tower's own pieces as the game placed them, read beside its staircase (stone_wall_2x1 courses along
@@ -286,7 +288,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
         float step=StairLayout.StepUp,rise=0.75f*step,high=40f+1.5f*step,level=40f+rise;
         Vector2 dir=StairLayout.Forward(onward);
         float Terrain(float x,float z)=>40f+Mathf.Clamp(-(x*dir.x+z*dir.y),0f,rise);
-        var shape=PlacedSiteShape.Of(new Vector2(),0,new LevelOp(0,0,0,4,false),0,null,Terrain,root:40);
+        var shape=PlacedLocationShape.Of(new Vector2(),0,new LevelOp(0,0,0,4,false),0,null,Terrain,root:40);
         var region=shape.ConnectedLanding(Terrain,1f);
         var plan=new StairPlan { Kit="stone",Reached=true,EndHeading=onward };
         // A square floor's prefab can face back while the walker continues onward.
@@ -349,7 +351,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
         return 40f-Mathf.Clamp(outside,0f,10f);
     }
     private static readonly LevelOp[] Ops={new(0,0,0,4,false),new(0,8,0,6,false)};
-    private static PlacedSiteShape Extension()=>PlacedSiteShape.Of(new Vector2(),0,Ops[0],0,null,Extended,root:40);
+    private static PlacedLocationShape Extension()=>PlacedLocationShape.Of(new Vector2(),0,Ops[0],0,null,Extended,root:40);
 
     [Fact]
     public void TheOffsetExtensionIsConnectedButTheSeparateIslandIsNot()
@@ -376,9 +378,9 @@ public sealed class ConnectedLandingStairTests : IDisposable
     public void AnIndependentOffsetLandingHasAReachableOutsideApproach()
     {
         var end=new Vector2(0,26);
-        var request=new SiteApproachRequest { Centre=new Vector2(),RoadEnd=end,RoadHeight=Extended(end.x,end.y),Arriving=180,
+        var request=new LocationApproachRequest { Centre=new Vector2(),RoadEnd=end,RoadHeight=Extended(end.x,end.y),Arriving=180,
             RoadTail=new List<Vector2> { new Vector2(0,56),end } };
-        var span=RoadStairRuns.PlanPlacedSiteApproach(request,0,Ops,Extended,(_,_)=>Heightmap.Biome.Mountain,77,out string why,root:40);
+        var span=RoadStairRuns.PlanPlacedLocationApproach(request,0,Ops,TestLattice.Of(Extended),(_,_)=>Heightmap.Biome.Mountain,77,out string why,root:40);
         Assert.True(span!=null,why);
         Assert.NotEmpty(span!.Plan.Pieces);
         Assert.Equal((true,true),RoadStairRuns.RaisedLandingWalk(span.Plan,Extension().ConnectedLanding(Extended,1f)));

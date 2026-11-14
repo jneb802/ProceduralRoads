@@ -14,8 +14,8 @@ namespace ProceduralRoads.Tests;
 public class IslandRegenerationTests : System.IDisposable
 {
     private readonly ValheimWorldScope _world = new ValheimWorldScope();
-    /// <summary>SitesFirstLoad.PlacingStage (the mod's loading-panel label; SitesFirstLoad itself is not compiled here).</summary>
-    private const string PlacingStage = "Placing places before their roads";
+    /// <summary>LocationsFirstLoad.PlacingStage (the mod's loading-panel label; LocationsFirstLoad itself is not compiled here).</summary>
+    private const string PlacingStage = "Placing locations before their roads";
 
     private static readonly (string name, float x, float z, float radius)[] StandardLocations =
     {
@@ -105,6 +105,45 @@ public class IslandRegenerationTests : System.IDisposable
         finally { TearDown(); }
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public void OperatorGenerationKeepsCapturedOptionsWhenLiveOptionsChange(bool oneIsland, bool capturedQuestLocations)
+    {
+        SetUp(("StartTemple", 0f, 0f, 25f), ("Eikthyrnir", 260f, 40f, 10f), ("Hildir_cave", -220f, 150f, 18f));
+        RoadNetworkOptions previous = RoadNetworkGenerator.NetworkOptions;
+        try
+        {
+            RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions { HildirQuestLocations = capturedQuestLocations };
+            List<string>? chosen = null;
+            bool? duringPlacing = null;
+            IEnumerable<bool> Record(RoadNetworkGenerator.GenerationWork work)
+            {
+                chosen = work.AllSelected.Select(d => d.name).ToList();
+                duringPlacing = RoadNetworkGenerator.HildirRoads("Hildir_cave");
+                yield break;
+            }
+            RoadNetworkGenerator.LocationsFirst = (work, _) => Record(work);
+            Assert.Null(RoadLifecycleManager.BeginForOperator(oneIsland ? Vector3.zero : null, _ => { },
+                answer: ExistingWorldRoads.NewZonesOnly));
+            RoadNetworkGenerator.NetworkOptions.HildirQuestLocations = !capturedQuestLocations;
+            FinishLoad();
+
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+            Assert.NotNull(chosen);
+            Assert.Equal(capturedQuestLocations, chosen!.Contains("Hildir_cave"));
+            Assert.Equal(capturedQuestLocations, duringPlacing);
+        }
+        finally
+        {
+            RoadNetworkGenerator.LocationsFirst = null;
+            RoadNetworkGenerator.NetworkOptions = previous;
+            TearDown();
+        }
+    }
+
     [Fact]
     public void LoadTimeGenerationCanBeSwitchedOffAndIslandRegenerationStillWorks()
     {
@@ -135,7 +174,7 @@ public class IslandRegenerationTests : System.IDisposable
     /// starts it returns before any road is built, and the frames go on, each short, while workers build the
     /// network (the choosing once held the loading screen's main thread, so the harness's CLI answered nothing
     /// for 30 s). With the load-time lifecycle the choosing is sliced on the main thread and the
-    /// building runs on workers; the places are placed (SitesFirst) from a frame, on the main thread.</summary>
+    /// building runs on workers; the locations are placed (LocationsFirst) from a frame, on the main thread.</summary>
     [Fact]
     public void LoadTimeGenerationKeepsTheFramesGoingWhileWorkersBuildTheRoads()
     {
@@ -145,7 +184,7 @@ public class IslandRegenerationTests : System.IDisposable
             int main = Environment.CurrentManagedThreadId;
             var chosenOn = new List<int>();
             IEnumerable<bool> Record() { chosenOn.Add(Environment.CurrentManagedThreadId); yield break; }
-            RoadNetworkGenerator.SitesFirst = (_, _) => Record();
+            RoadNetworkGenerator.LocationsFirst = (_, _) => Record();
             var started = System.Diagnostics.Stopwatch.StartNew();
 
             StartLoad();
@@ -157,20 +196,20 @@ public class IslandRegenerationTests : System.IDisposable
             double total = started.Elapsed.TotalMilliseconds;
             Assert.True(RoadNetworkGenerator.RoadsAvailable);
             Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
-            // Places are placed (SitesFirst) on the main thread, from a frame.
+            // Locations are placed (LocationsFirst) on the main thread, from a frame.
             Assert.Equal(new[] { main }, chosenOn);
             Assert.True(frames > 2, $"{frames} frame(s) over {total:F0} ms");
             Assert.True(startMs < total / 2 && longest < total / 2,
                 $"the start held the main thread {startMs:F0} ms and the longest frame {longest:F0} ms of {total:F0} ms");
         }
-        finally { RoadNetworkGenerator.SitesFirst = null; TearDown(); }
+        finally { RoadNetworkGenerator.LocationsFirst = null; TearDown(); }
     }
 
-    /// <summary>At world load the roads wait for the places that are placed first ("sites first"):
+    /// <summary>At world load the roads wait for the locations that are placed first ("locations first"):
     /// the destinations are chosen, the placing runs, and only then are the roads built. Built at once
     /// when nothing waits. The placing is a preparation stage of its own on the loading panel.</summary>
     [Fact]
-    public void LoadTimeGenerationWaitsForItsPlacesToBePlacedBeforeBuildingRoads()
+    public void LoadTimeGenerationWaitsForItsLocationsToBePlacedBeforeBuildingRoads()
     {
         SetUp();
         try
@@ -180,11 +219,11 @@ public class IslandRegenerationTests : System.IDisposable
             IEnumerable<bool> Hold(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
             {
                 chosen = work.AllSelected.Select(d => d.name).ToList();
-                preparation.BeginStage(PlacingStage, 1, "places"); yield return true;
+                preparation.BeginStage(PlacingStage, 1, "locations"); yield return true;
                 while (!release) { preparation.EndSlice(); yield return true; }
                 preparation.CompleteUnit();
             }
-            RoadNetworkGenerator.SitesFirst = Hold;
+            RoadNetworkGenerator.LocationsFirst = Hold;
 
             StartLoad();
             var clock = System.Diagnostics.Stopwatch.StartNew();
@@ -205,13 +244,13 @@ public class IslandRegenerationTests : System.IDisposable
 
             // Nothing to place: built at once.
             RoadNetworkGenerator.Reset();
-            RoadNetworkGenerator.SitesFirst = (_, _) => Enumerable.Empty<bool>();
+            RoadNetworkGenerator.LocationsFirst = (_, _) => Enumerable.Empty<bool>();
             RoadLifecycleManager.OnWorldDataLoaded();
             Assert.True(RoadLifecycleManager.IsGenerating);
             FinishLoad();
             Assert.True(RoadNetworkGenerator.RoadsAvailable);
         }
-        finally { RoadNetworkGenerator.SitesFirst = null; TearDown(); }
+        finally { RoadNetworkGenerator.LocationsFirst = null; TearDown(); }
     }
 
     [Fact]

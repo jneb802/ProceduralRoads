@@ -6,21 +6,23 @@ using Valheim.Testing.Doubles;
 using Xunit;
 namespace ProceduralRoads.Tests;
 
-// Real writer against authored sloped inputs; expectations across the core,
-// release and outside are declared directly, not read back from RoadProfile.
+// Real writer against authored sloped inputs; heights across the core,
+// release and outside are declared directly. Paint asks the shared profile at both texel reads.
 // Roads are painted with the game's paving.
 public class TerrainPaintMatrixTests
 {
     [Theory]
-    [InlineData(0, .25f, 3f, 2f, false)]
-    [InlineData(0, -.25f, -3f, 4f, false)]
-    [InlineData(40, .25f, 3f, 8f, false)]
-    [InlineData(40, -.25f, -3f, 4f, false)]
-    [InlineData(0, .25f, 20f, 4f, false)]
-    [InlineData(40, -.25f, -20f, 4f, false)]
-    [InlineData(0, .25f, 3f, 4f, true)]
-    [InlineData(40, -.25f, -3f, 4f, true)]
-    public void SlopedGroundPreservesVergePaintAndVegetationWhileCoreChanges(int zoneX,float slope,float lift,float width,bool paintOnly)
+    // The last argument records which authored edge lies on a face: the narrow fill and the two shallow cuts.
+    // Their old unpainted verdict stays; the other fixtures may take their grass-cell fade.
+    [InlineData(0, .25f, 3f, 2f, false, true)]
+    [InlineData(0, -.25f, -3f, 4f, false, true)]
+    [InlineData(40, .25f, 3f, 8f, false, false)]
+    [InlineData(40, -.25f, -3f, 4f, false, true)]
+    [InlineData(0, .25f, 20f, 4f, false, false)]
+    [InlineData(40, -.25f, -20f, 4f, false, false)]
+    [InlineData(0, .25f, 3f, 4f, true, false)]
+    [InlineData(40, -.25f, -3f, 4f, true, false)]
+    public void SlopedGroundPreservesVergePaintAndVegetationWhileCoreChanges(int zoneX,float slope,float lift,float width,bool paintOnly,bool edgeOnFace)
     {
         using var scope=new ValheimWorldScope();
         using var overrides = StaticOverride.Keep(() => RoadEarthworkNoise.Amplitude).AndKeep(() => RoadEarthworkNoise.FillSpread).AndKeep(() => RoadTerrainModifier.BatterPerMetre);
@@ -75,8 +77,26 @@ public class TerrainPaintMatrixTests
                 Assert.Equal(original.a,tc.m_paintMask[i].a);
                 if(Math.Abs(z)>=width/2)
                 {
-                    Assert.False(tc.m_modifiedPaint[i]);
-                    Assert.Equal(original.r,tc.m_paintMask[i].r);Assert.Equal(original.g,tc.m_paintMask[i].g);Assert.Equal(original.b,tc.m_paintMask[i].b);
+                    // A vertex beyond the road's half width can still carry the fade required by its
+                    // grass cell's middle. Where the existing face veto allows it, paint exists exactly
+                    // where either profile read asks for it; a face keeps its original unpainted verdict.
+                    var vertex = new Vector2(zoneX * 64, z);
+                    bool asksForPaint = road.Exists(p => Mathf.Max(
+                        RoadProfile.PaintStrength(Vector2.Distance(vertex, p.p), p.w),
+                        RoadProfile.PaintStrength(Vector2.Distance(vertex + new Vector2(0.5f, 0.5f), p.p), p.w)) > 0f);
+                    Assert.Equal(asksForPaint && !edgeOnFace, tc.m_modifiedPaint[i]);
+                    if (asksForPaint && !edgeOnFace)
+                    {
+                        // The extra grass-cell fade blends toward paving and preserves the original alpha.
+                        Assert.True(tc.m_paintMask[i].r < original.r);
+                        Assert.True(tc.m_paintMask[i].g < original.g);
+                        Assert.True(tc.m_paintMask[i].b > original.b);
+                    }
+                    else
+                    {
+                        // Outside both reads, or on the authored face, the original paint is untouched.
+                        Assert.Equal(original.r,tc.m_paintMask[i].r);Assert.Equal(original.g,tc.m_paintMask[i].g);Assert.Equal(original.b,tc.m_paintMask[i].b);
+                    }
                 }
             }
             var savedPaint=(Color[])tc.m_paintMask.Clone();var savedHeights=hm.LastRenderedHeights.ToArray();int saves=tc.SaveCount;

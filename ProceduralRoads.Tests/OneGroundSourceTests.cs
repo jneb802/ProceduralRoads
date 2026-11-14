@@ -10,8 +10,8 @@ namespace ProceduralRoads.Tests;
 
 /// <summary>
 /// The ground the game renders has one owner: <see cref="BiomeBlendedHeight"/> for the natural ground, and
-/// <see cref="PlacedSites.GroundAt(float, float, WorldGenerator)"/> (through <see cref="RoadWater.Ground"/>) for the ground
-/// as places will leave it. WorldGenerator.GetHeight is the height of the biome at the point alone, which the game does not
+/// <see cref="PlacedLocations.GroundAt(float, float, WorldGenerator)"/> (through <see cref="RoadWater.Ground"/>) for the ground
+/// as locations will leave it. WorldGenerator.GetHeight is the height of the biome at the point alone, which the game does not
 /// render where a zone's heightmap corners are another biome: read in production it puts cliffs and water where the world
 /// has neither. The world doubles cannot catch such a read (their GetBiomeHeight returns GetHeight, so blended and raw agree
 /// on them), so this scans the mod's sources instead.
@@ -74,7 +74,7 @@ public class OneGroundSourceTests
             .ToList();
         var missing = Allowed.Keys.Where(k => !found.ContainsKey(k)).ToList();
         Assert.True(unexpected.Count == 0 && missing.Count == 0,
-            "Read the ground through BiomeBlendedHeight or PlacedSites.GroundAt, not WorldGenerator.GetHeight / GetBiomeHeight.\n"
+            "Read the ground through BiomeBlendedHeight or PlacedLocations.GroundAt, not WorldGenerator.GetHeight / GetBiomeHeight.\n"
             + string.Join("\n", unexpected.Concat(missing.Select(m => $"{m}: listed but has no raw reads (update the list)")))
             + "\nReads found:\n" + string.Join("\n", lines));
     }

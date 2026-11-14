@@ -62,4 +62,30 @@ public class CrossingLineTests : IDisposable
         Assert.True(RoadNetworkGenerator.CrossesNetwork(across, out Vector2 at), "the road across the trunk was not seen to cross it");
         Assert.True(Vector2.Distance(at, new Vector2(0f, -30f)) < 3f, $"crossed at {at}");
     }
+
+    /// <summary>A road crossing another at a shallow angle (14 degrees) touches it over a longer stretch than a shared trunk's
+    /// shortest (SharedRun), but shares nothing unless every point of the touch is within a walker's step of it (StairLayout.StepUp):
+    /// 2 m, 1 m or half a metre above it, it crosses it, as an X at grade does (1 m passed as shared under a 1.5 m, half-the-points
+    /// rule). At the trunk's height, or within a step of it, the same line shares it.</summary>
+    [Theory]
+    [InlineData(42f, true)]
+    [InlineData(41f, true)]
+    [InlineData(40.5f, true)]
+    [InlineData(40f, false)]
+    [InlineData(40.15f, false)]
+    public void AShallowCrossingAtAnotherHeightCrossesTheRoadItTouches(float height, bool crosses)
+    {
+        var world = new FlatWorld();
+        _scope.WithWorld(world);
+        SetPathfinder(new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f });
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, -80f), 0f, new Vector2(0f, 80f), 0f, 4f, "trunk"));
+        var points = new List<Vector2>();
+        var heights = new List<float>();
+        for (float z = -60f; z <= 60f; z += 1f) { points.Add(new Vector2(z * 0.25f, z)); heights.Add(height); }
+        var across = new List<RoadSpatialGrid.PlannedPath>
+        {
+            new(points, heights, points.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 120f, false),
+        };
+        Assert.Equal(crosses, RoadNetworkGenerator.CrossesNetwork(across, out _));
+    }
 }

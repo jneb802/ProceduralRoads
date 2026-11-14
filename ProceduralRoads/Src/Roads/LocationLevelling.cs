@@ -175,7 +175,7 @@ public static class LocationLevelling
 
     /// <summary>A single authored platform elevation, when all levelling
     /// operations agree. Offsets affect its footprint but not its height.
-    /// Multi-level sites deliberately have no guessed common doorstep.</summary>
+    /// Multi-level locations deliberately have no guessed common doorstep.</summary>
     public static float? PlatformHeight(float centreGround, IReadOnlyList<LevelOp>? ops)
     {
         float? height = null;
@@ -191,7 +191,7 @@ public static class LocationLevelling
         return height;
     }
 
-    /// <summary>An exterior arrival should reach the site, not descend into
+    /// <summary>An exterior arrival should reach the location, not descend into
     /// its excavation. Raised platforms matter, but a below-root modifier
     /// (a cave cut, well or pit) is not an instruction to lower its access road.</summary>
     public static float? ApproachHeight(float rootHeight, IReadOnlyList<LevelOp>? ops)
@@ -201,13 +201,13 @@ public static class LocationLevelling
     }
 
     /// <summary>
-    /// How far out a road to a place stops, from its centre: the ground the place SHAPES, its
+    /// How far out a road to a location stops, from its centre: the ground the location SHAPES, its
     /// exterior radius and each levelling and smoothing reach, but not the ground it only paints out to
     /// <paramref name="footprint"/> (its whole reach, paint included). A Crypt4 paints cleared ground out to
     /// 30 m round a structure 18 m across and levels 5 m; its roads all stopped 34 m out or more (median 37 m
     /// on one world, against 18 m for a Crypt2), on flat ground with nothing to show why.
-    /// The whole footprint where any operation is off the centre: where that ground lies turns with the place,
-    /// which is only known once it is placed (such places are come to on their landing, <see cref="PlacedSites"/>),
+    /// The whole footprint where any operation is off the centre: where that ground lies turns with the location,
+    /// which is only known once it is placed (such locations are come to on their landing, <see cref="PlacedLocations"/>),
     /// and where the operations are not known at all.
     /// </summary>
     public static float ArrivalReach(IReadOnlyList<LevelOp>? ops, float exterior, float footprint)

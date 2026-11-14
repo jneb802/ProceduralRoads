@@ -25,8 +25,22 @@ public static class RoadIslandDetector
         preparation.Drain(); return result!;
     }
 
+    /// <summary>How far apart a scan bounded to the world's land (<see cref="DetectSteps"/>'s <c>toLand</c>) first reads the
+    /// world for land: every fourth cell.</summary>
+    internal const float LandProbeSpacing = 4 * SampleSpacing;
+
+    /// <summary>The farthest from land the grouping reads the scan's cells (a bridge's span across water, the coast's raster,
+    /// <see cref="RoadCoastalLandings.RasterReach"/>), and a cell either side.</summary>
+    internal static float GroupingReach => Mathf.Max(RoadConstants.MaxBridgeSpan, RoadCoastalLandings.RasterReach) + 2f * SampleSpacing;
+
+    /// <summary>The islands of the disc of <paramref name="worldRadius"/> round the world's centre. With
+    /// <paramref name="toLand"/> (the unit suite's small worlds, <see cref="IslandDetector.BoundedScan"/>) the scan first reads
+    /// the disc for land every <see cref="LandProbeSpacing"/> and scans only out to the farthest land it read, two probes and
+    /// <see cref="GroupingReach"/> beyond. Its cells stand where the whole disc's do (the bound a whole number of cells), so it
+    /// finds the same islands; where land it did not read stands nearer the bound's edge than <see cref="GroupingReach"/>, it
+    /// scans the whole disc after all.</summary>
     internal static IEnumerable<bool> DetectSteps(WorldGenerator wg, RoadPreparation preparation, System.Action<List<Island>> complete,
-        float minArea=MinIslandArea,float worldRadius=RoadConstants.WorldRadius,RoadNetworkOptions? options=null)
+        float minArea=MinIslandArea,float worldRadius=RoadConstants.WorldRadius,RoadNetworkOptions? options=null,bool toLand=false)
     {
         if (wg == null)
         {
@@ -37,6 +51,35 @@ public static class RoadIslandDetector
         const float cellSize = SampleSpacing;
         if (float.IsNaN(worldRadius) || worldRadius <= 0 || worldRadius > RoadConstants.WorldRadius)
             throw new System.ArgumentOutOfRangeException(nameof(worldRadius));
+        float wholeRadius = worldRadius;
+        int wholeGrid = Mathf.CeilToInt(wholeRadius * 2f / cellSize);
+        preparation.BeginStage("Mapping island terrain",(long)wholeGrid*wholeGrid,"cells"); yield return true;
+        float edge2 = float.MaxValue;
+        if (toLand && wholeRadius % cellSize == 0f)
+        {
+            // The land's reach, read every LandProbeSpacing over the whole disc.
+            var probeCorners = BiomeBlendedHeight.Corners.ForColumnScan(wholeRadius);
+            int probes = Mathf.FloorToInt(wholeRadius / LandProbeSpacing);
+            float farthest2 = 0f;
+            for (int i = -probes; i <= probes; i++)
+                for (int j = -probes; j <= probes; j++)
+                {
+                    float px = i * LandProbeSpacing, pz = j * LandProbeSpacing;
+                    float r2 = px * px + pz * pz;
+                    if (r2 > wholeRadius * wholeRadius || r2 <= farthest2) continue;
+                    if (preparation.Checkpoint(0)) yield return true;
+                    if (RoadWater.OnLand(wg, new Vector2(px, pz), BiomeBlendedHeight.GetBlendedHeight(px, pz, wg, probeCorners)))
+                        farthest2 = r2;
+                }
+            float inner = Mathf.Sqrt(farthest2) + 2f * LandProbeSpacing;
+            float bound = Mathf.CeilToInt((inner + GroupingReach) / cellSize) * cellSize;
+            if (bound < wholeRadius)
+            {
+                worldRadius = bound;
+                edge2 = inner * inner;
+            }
+        }
+        bool bounded = worldRadius < wholeRadius;
         int gridSize = Mathf.CeilToInt(worldRadius * 2f / cellSize);
         float worldOffset = worldRadius;
         int n = gridSize * gridSize;
@@ -44,7 +87,6 @@ public static class RoadIslandDetector
         Log.LogDebug($"IslandDetector: walkable+crossable, scanning {gridSize}x{gridSize} " +
                      $"grid (cellSize={cellSize}m)");
 
-        preparation.BeginStage("Mapping island terrain",n,"cells"); yield return true;
         bool[] walkable = new bool[n];
         float[] height = new float[n];
         int landCells = 0;
@@ -78,6 +120,13 @@ public static class RoadIslandDetector
                 height[x * gridSize + y] = h;
                 if (RoadWater.OnLand(wg, new Vector2(wx, wy), h))
                 {
+                    if (bounded && wx * wx + wy * wy > edge2)
+                    {
+                        // Land the probes did not read, near the bound's edge: the whole disc, as without the bound.
+                        Log.LogDebug($"IslandDetector: land at ({wx:F0},{wy:F0}), near the {worldRadius:F0} m bound: the whole disc is scanned");
+                        foreach (var step in DetectSteps(wg, preparation, complete, minArea, wholeRadius, options)) yield return step;
+                        yield break;
+                    }
                     walkable[x * gridSize + y] = true;
                     landCells++;
                 }
@@ -206,7 +255,7 @@ public static class RoadIslandDetector
         // Landings filter by the options' biomes; without options (a bare grouping) there are none.
         if (options != null)
             foreach (var island in islands)
-                foreach(var step in RoadCoastalLandings.FindSteps(island,height,gridSize,(x,z)=>wg.GetBiome(x,z),options,
+                foreach(var step in RoadCoastalLandings.FindSteps(island,height,gridSize,(x,z)=>RoadBiome.At(wg,x,z),options,
                     preparation,landings=>island.CoastalLandings=landings)) yield return step;
 
         Log.LogDebug($"IslandDetector: {landCells} walkable cells, {pieces.Count} pieces, " +

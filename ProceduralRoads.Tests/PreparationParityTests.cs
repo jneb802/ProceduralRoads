@@ -91,11 +91,11 @@ public class PreparationParityTests
     [Fact]
     public void CancelledIndexBuildNeverPublishesItsPartialDictionary()
     {
-        var oldSource=RoadSiteProtection.Source;
-        RoadSiteProtection.Source=null; RoadSiteProtection.Reset(); LocationPlacementHeights.Clear();
-        var footprints=Enumerable.Range(0,1024).Select(i=>new RoadSiteProtection.Footprint(new Vector2(i*128,0),8)).ToArray();
+        var oldSource=RoadLocationProtection.Source;
+        RoadLocationProtection.Source=null; RoadLocationProtection.Reset(); LocationPlacementHeights.Clear();
+        var footprints=Enumerable.Range(0,1024).Select(i=>new RoadLocationProtection.Footprint(new Vector2(i*128,0),8)).ToArray();
         using var cancellation=new CancellationTokenSource();
-        using var preparation=new RoadPreparation(p=>RoadSiteProtection.SetSteps(footprints,p));
+        using var preparation=new RoadPreparation(p=>RoadLocationProtection.SetSteps(footprints,p));
         preparation.Cancellation=cancellation.Token;
         int oldLimit=RoadPreparation.CheckpointsPerTickForTests; RoadPreparation.CheckpointsPerTickForTests=1;
         try
@@ -103,10 +103,10 @@ public class PreparationParityTests
             Assert.False(preparation.Advance());
             cancellation.Cancel(); Assert.Throws<OperationCanceledException>(()=>preparation.Advance());
             preparation.Dispose();
-            RoadSiteProtection.Source=null;
-            Assert.False(RoadSiteProtection.Contains(new Vector2(0,0)));
+            RoadLocationProtection.Source=null;
+            Assert.False(RoadLocationProtection.Contains(new Vector2(0,0)));
         }
-        finally { RoadPreparation.CheckpointsPerTickForTests=oldLimit; RoadSiteProtection.Reset(); RoadSiteProtection.Source=oldSource; }
+        finally { RoadPreparation.CheckpointsPerTickForTests=oldLimit; RoadLocationProtection.Reset(); RoadLocationProtection.Source=oldSource; }
     }
     internal static string Fingerprint(IReadOnlyList<Island> islands)
     {

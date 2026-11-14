@@ -7,7 +7,7 @@ namespace ProceduralRoads;
 /// <summary>
 /// road_viaducts: the network's Dvergr viaducts (DvergrViaduct) with where to stand
 /// to see them. Read-only. Registered only with PROCEDURALROADS_DEV_COMMANDS on
-/// (<see cref="ConsoleCommands.DevCommands"/>, the switch the staircase and site commands read too); off by default.
+/// (<see cref="ConsoleCommands.DevCommands"/>, the switch the staircase and location commands read too); off by default.
 /// </summary>
 public static class ViaductCommands
 {
@@ -15,7 +15,7 @@ public static class ViaductCommands
     {
         new Terminal.ConsoleCommand("road_viaducts",
             "The network's Dvergr viaducts, nearest first: road_viaducts [count, default 20]. Each row: its middle and deck height " +
-            "(a place to stand on it), its banks, span, how high the deck stands, its piers and tallest pier, over a valley or a river, its pieces.",
+            "(a location to stand on it), its banks, span, how high the deck stands, its piers and tallest pier, over a valley or a river, its pieces.",
             List, isCheat: true);
     }
 

@@ -30,7 +30,7 @@ namespace ProceduralRoads;
 /// structures' facing ends with too little ground between them for each end's own are met together, on one landing
 /// between them (<see cref="Share"/>). A crossing with an end no way reaches is searched round.
 /// </summary>
-public static class StructureEnds
+public static partial class StructureEnds
 {
     /// <summary>The road's last stretch before a structure's end that is levelled to the end's height and centred on its
     /// line (extending the earthwork slightly, the last ~6-8 m).</summary>
@@ -204,24 +204,88 @@ public static class StructureEnds
     /// the road to it: the path then runs to each end's foot on its line, the crossing's <see cref="RoadCrossing.FromIndex"/>
     /// and <see cref="RoadCrossing.ToIndex"/> at the two feet. A crossing that is road has its banks for ends, the path left
     /// as it is. A crossing shared with a road laid before keeps the ends that road met. Of a structure's end the cheapest
-    /// way the road reaches is taken (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>, each way dry or else as earthwork within <paramref name="cap"/>),
+    /// way the road reaches is taken (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>, each way dry or else as earthwork within <paramref name="cap"/>),
     /// a low structure's two ends chosen as a pair (<see cref="Pair"/>: both stepped or both flush over one of each);
     /// a structure's end facing the previous structure's with too little ground between them shares one landing with it
     /// (<see cref="Share"/>), both decided together. A stair step the search bought (<paramref name="isStep"/>) is never
     /// cut. Returns the first crossing with an end none of
     /// whose ways the road reaches, the path then as it was at that crossing; null where every end is met. A raised viaduct
     /// (DvergrViaduct.RaisedSteps) with an end no way reaches is lowered a step and every end met again from the road as it
-    /// came, down to the deck at grade, so a raise never changes whether a viaduct is built.
+    /// came, down to the deck at grade, so a raise never changes whether a viaduct is built. A valley viaduct still with such an
+    /// end has its banks moved along its line (DvergrViaduct.MovedBanks) where <paramref name="mayMove"/> leaves the moved line
+    /// allowed (the search's own test of a viaduct's line, RoadPathfinder.MovedViaductAllowed; null: no move), a bank that is a
+    /// bought stair step's top never moved (<paramref name="isStep"/>), every end met again
+    /// from the road as it came, the first met kept. An end's look (flush or stepped, as
+    /// the bank takes it, <see cref="Natural"/>) is a preference, not a rule: where none of its ways fits, more steps are
+    /// tried, within its structure's most (<see cref="MostSteps"/>), before the crossing is given up (<see cref="Flex"/>); and
+    /// a stepped end is always met flush too where that fits (<see cref="Ways"/>). A way fits only where its road is within
+    /// <paramref name="cap"/> as every road's earthwork is measured, across the road's <paramref name="width"/>
+    /// (<see cref="WithinCapAcross"/>).
     /// The one owner of end steps of bridges, viaducts and stairs meeting a road (docs/OWNERS.md).
     /// </summary>
     public static RoadCrossing? MeetEnds(List<Vector2> path, List<RoadCrossing> crossings, WorldGenerator world, float cap,
-        Func<Vector2, Vector2, bool>? isStep)
+        Func<Vector2, Vector2, bool>? isStep, float width = RoadConstants.DefaultRoadWidth, Func<RoadCrossing, RoadCrossing, bool>? mayMove = null)
+    {
+        var road = new List<Vector2>(path);
+        var given = crossings.ConvertAll(CrossingFields.Of);
+        RoadCrossing? unmet = MeetEndsLowered(path, crossings, world, cap, isStep, width, out bool nearUnmet);
+        if (mayMove == null || unmet == null || !unmet.ValleyJump || Adopted(unmet) || !BridgeStructures.IsViaduct(unmet, world)) return unmet;
+        // A valley viaduct with an end no way reaches: its banks moved along its line (DvergrViaduct.MovedBanks, the one owner of
+        // where they may stand), each where the network and the locations leave its line clear (mayMove, the search's own
+        // test of a viaduct's line), and every end met again from the road as it came; the first met is kept, its banks the
+        // road's. None met: the road and its crossings as the banks the search bought left them.
+        int index = crossings.IndexOf(unmet);
+        var left = (path: path.ToArray(), crossings: crossings.ConvertAll(CrossingFields.Of));
+        var bought = new RoadCrossing();
+        given[index].Put(bought);
+        // A bank that is the top of a stair step the search bought (isStep, the road's own test of its steps: the road climbs a
+        // staircase onto the rim and jumps from it, or lands and climbs on) stays where it was bought: a move takes the other end
+        // only, so the staircase is still on the road for its steps to be laid (RoadStairRuns.Lay) and is never cut.
+        Vector2? heldFrom = bought.FromIndex > 0 && isStep != null && isStep(road[bought.FromIndex - 1], road[bought.FromIndex]) ? road[bought.FromIndex - 1] : null;
+        Vector2? heldTo = bought.ToIndex + 1 < road.Count && isStep != null && isStep(road[bought.ToIndex], road[bought.ToIndex + 1]) ? road[bought.ToIndex + 1] : null;
+        t_movingBanks = true;
+        try
+        {
+            foreach (RoadCrossing moved in DvergrViaduct.MovedBanks(bought, world, nearUnmet))
+            {
+                if (heldFrom is Vector2 below && !isStep!(below, moved.FromBank)) continue;
+                if (heldTo is Vector2 above && !isStep!(moved.ToBank, above)) continue;
+                if (!mayMove(bought, moved)) continue;
+                path.Clear();
+                path.AddRange(road);
+                for (int i = 0; i < crossings.Count; i++) given[i].Put(crossings[i]);
+                // The same crossing on the moved banks (RoadCrossing.SnapTo): its place in the road, its kit, island and the
+                // search's moves it lies on (its bans) are the bought one's.
+                unmet.SnapTo(moved);
+                unmet.Kit = bought.Kit;
+                path[unmet.FromIndex] = unmet.FromBank;
+                path[unmet.ToIndex] = unmet.ToBank;
+                RoadCrossing? again = MeetEndsLowered(path, crossings, world, cap, isStep, width, out _);
+                if (!ReferenceEquals(again, unmet)) return again;
+            }
+        }
+        finally { t_movingBanks = false; }
+        path.Clear();
+        path.AddRange(left.path);
+        for (int i = 0; i < crossings.Count; i++) left.crossings[i].Put(crossings[i]);
+        return unmet;
+    }
+
+    /// <summary>Set while <see cref="MeetEnds"/> tries a viaduct's moved banks: their unmet ends are not logged (the banks the
+    /// search bought were).</summary>
+    [ThreadStatic] private static bool t_movingBanks;
+
+    /// <summary><see cref="MeetEnds"/> on the crossings' banks as they stand: a raised viaduct with an end no way reaches lowered
+    /// a step and every end met again, down to the deck at grade. <paramref name="nearUnmet"/>: whether the end not met is the
+    /// unmet crossing's near end.</summary>
+    private static RoadCrossing? MeetEndsLowered(List<Vector2> path, List<RoadCrossing> crossings, WorldGenerator world, float cap,
+        Func<Vector2, Vector2, bool>? isStep, float width, out bool nearUnmet)
     {
         var road = new List<Vector2>(path);
         var stood = crossings.ConvertAll(c => (c, c.FromIndex, c.ToIndex, c.FromEnd, c.ToEnd));
         while (true)
         {
-            RoadCrossing? unmet = MeetEndsOnce(path, crossings, world, cap, isStep);
+            RoadCrossing? unmet = MeetEndsOnce(path, crossings, world, cap, isStep, width, out nearUnmet);
             if (unmet == null || Adopted(unmet) || !BridgeStructures.IsViaduct(unmet, world)) return unmet;
             int raised = DvergrViaduct.RaisedSteps(unmet, world);
             if (raised == 0) return unmet;
@@ -234,12 +298,18 @@ public static class StructureEnds
 
     /// <summary><see cref="MeetEnds"/> with every crossing as it stands.</summary>
     private static RoadCrossing? MeetEndsOnce(List<Vector2> path, List<RoadCrossing> crossings, WorldGenerator world, float cap,
-        Func<Vector2, Vector2, bool>? isStep)
+        Func<Vector2, Vector2, bool>? isStep, float width, out bool nearUnmet)
     {
+        nearUnmet = false;
         float G(Vector2 p) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+        // The ground a road's earthwork is measured from (RoadNetworkGenerator.EarthworkAcross, as the finished road is).
+        Func<Vector2, float> earth = RoadNetworkGenerator.GroundBeforeRoads(world);
         var order = crossings.OrderBy(c => c.FromIndex).ToList();
         // A crossing's far end met on a landing shared with the next crossing's near end, decided with it (Share).
         var sharedFar = new Dictionary<RoadCrossing, Met>();
+        // How many points before a crossing's near foot its near end's way joins the road (the way's own points, the pad
+        // turn or the apron): the previous crossing's far end is met only up to that join, never over the way.
+        var nearWay = new Dictionary<RoadCrossing, int>();
         // Last first, far end before near, so the path is changed only where no crossing still to do stands.
         for (int n = order.Count - 1; n >= 0; n--)
         {
@@ -262,29 +332,31 @@ public static class StructureEnds
             if (farShared) farWays = Options.Of(farFixed);
             else
             {
-                int after = n + 1 < order.Count ? order[n + 1].FromIndex : path.Count - 1;
+                int after = n + 1 < order.Count ? order[n + 1].FromIndex - (nearWay.TryGetValue(order[n + 1], out int way) ? way : 0) : path.Count - 1;
                 bool roadAfter = n + 1 < order.Count && !Natural(order[n + 1], world).near.IsSet;
-                farWays = AtSite(adopt ? c.ToEnd!.Value : far, adopt, new Road(path, c.ToIndex, +1, Mathf.Max(after, c.ToIndex), roadAfter, isStep), G, cap);
-                if (farWays.Best is null) return c;
+                farWays = AtSite(adopt ? c.ToEnd!.Value : far, adopt, new Road(path, c.ToIndex, +1, Mathf.Max(after, c.ToIndex), roadAfter, isStep, width, earth), G, cap, MostSteps(c, world));
+                if (farWays.Best is null) { LogUnmet(c, "far", far, cap); return c; }
             }
             // The near end's: on a landing shared with the previous crossing's far end, or its own. Neither reads the path
-            // past this crossing's far foot, which bringing the road to the far end changes.
+            // past this crossing's far foot, which bringing the road to the far end changes. A crossing's far end stops where
+            // the next crossing's near way joins the road (nearWay), so it never cuts that end's pad or apron; where no ground
+            // is left between, it comes back unmet and the road is searched again without it.
             RoadCrossing? prev = n > 0 ? order[n - 1] : null;
             End prevFar = prev != null ? Natural(prev, world).far : default;
             var shared = prev != null && !adopt && prevFar.IsSet && !Adopted(prev)
-                ? Share(path, prev.ToIndex, c.FromIndex, prevFar, near, G, cap, isStep) : null;
+                ? Share(path, prev.ToIndex, c.FromIndex, prevFar, near, G, cap, isStep, width, earth) : null;
             Options nearWays;
             if (shared is var (_, sharedNear)) nearWays = Options.Of(sharedNear);
             else
             {
                 int before = n > 0 ? order[n - 1].ToIndex : 0;
                 bool roadBefore = n > 0 && !Natural(order[n - 1], world).near.IsSet;
-                nearWays = AtSite(adopt ? c.FromEnd!.Value : near, adopt, new Road(path, c.FromIndex, -1, Mathf.Min(before, c.FromIndex), roadBefore, isStep), G, cap);
+                nearWays = AtSite(adopt ? c.FromEnd!.Value : near, adopt, new Road(path, c.FromIndex, -1, Mathf.Min(before, c.FromIndex), roadBefore, isStep, width, earth), G, cap, MostSteps(c, world));
             }
             // The two ends chosen as a pair (Pair); the far end alone where the near end is not met.
             var (nearMet, farMet) = nearWays.Best is null ? (default(Met), farWays.Best!.Value) : Pair(nearWays, farWays);
             if (!farShared) Shift(order, n + 1, Bring(path, farMet.Way, c.ToIndex, farMet.K, +1, out _));
-            if (nearWays.Best is null) return c;
+            if (nearWays.Best is null) { nearUnmet = true; LogUnmet(c, "near", near, cap); return c; }
             if (shared is var (landedFar, landedNear))
             {
                 // Both ends on one landing: the road between the two crossings is the landing, from one foot to the other.
@@ -302,13 +374,14 @@ public static class StructureEnds
             int nearDelta = Bring(path, nearMet.Way, c.FromIndex, nearMet.K, -1, out int foot);
             c.ToIndex += nearDelta;
             c.FromIndex = foot;
+            nearWay[c] = nearMet.Way.Count - 1;
             Shift(order, n + 1, nearDelta);
             SetEnds(c, nearMet, farMet);
         }
         return null;
     }
 
-    /// <summary>An end as its site alone meets it (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float)"/>): the
+    /// <summary>An end as its site alone meets it (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float, int)"/>): the
     /// way taken, its price (<see cref="Price"/>), and whether it was met from its landing pad or by earthwork over
     /// water.</summary>
     public readonly record struct SiteEnd(End End, float Price, bool Pad, bool Earthwork);
@@ -317,19 +390,19 @@ public static class StructureEnds
     /// How an end is met by its site alone, with no road searched yet: the end as the bank takes it
     /// (<paramref name="natural"/>), its crossing's <paramref name="bank"/> and the ground beyond it along the end's line,
     /// the road come straight in along that line at the search's cell spacing (RoadPathfinder.CellSize). The one owner of
-    /// the end rule (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>, which <see cref="MeetEnds"/> calls
+    /// the end rule (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>, which <see cref="MeetEnds"/> calls
     /// on a searched road), on that approach: its way and price; null where no way of meeting it reaches. A road searched later that comes in along the
     /// line meets it so; one come from the side may meet it another way (from its pad), or share a landing with the
     /// next structure (<see cref="Share"/>), which only a searched road decides.
     /// </summary>
-    public static SiteEnd? AtSite(End natural, Vector2 bank, Func<Vector2, float> ground, float cap)
+    public static SiteEnd? AtSite(End natural, Vector2 bank, Func<Vector2, float> ground, float cap, int mostSteps = BridgeLayout.MaxStairSteps)
     {
-        return SiteWays(natural, bank, ground, cap).Best is Met m ? Site(m) : null;
+        return SiteWays(natural, bank, ground, cap, mostSteps).Best is Met m ? Site(m) : null;
     }
 
-    /// <summary>The ways an end is met by its site alone (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float)"/>),
+    /// <summary>The ways an end is met by its site alone (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float, int)"/>),
     /// the cheapest of each kind (<see cref="Options"/>).</summary>
-    private static Options SiteWays(End natural, Vector2 bank, Func<Vector2, float> ground, float cap)
+    private static Options SiteWays(End natural, Vector2 bank, Func<Vector2, float> ground, float cap, int mostSteps)
     {
         if (!natural.IsStructure) return default;
         Vector2 outward = -natural.Up;
@@ -340,13 +413,25 @@ public static class StructureEnds
         var path = new List<Vector2> { bank };
         for (float d = RoadPathfinder.CellSize; d <= reach + RoadPathfinder.CellSize; d += RoadPathfinder.CellSize)
             path.Add(bank + outward * d);
-        return AtSite(natural, false, new Road(path, 0, +1, path.Count - 1, false, null), ground, cap);
+        return AtSite(natural, false, new Road(path, 0, +1, path.Count - 1, false, null, RoadNetworkGenerator.RoadWidth, ground), ground, cap, mostSteps);
     }
 
     private static SiteEnd Site(Met m) => new(m.End, m.Price, m.Pad, m.Earthwork);
 
+    /// <summary>The ways the last <see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/> on this thread offered,
+    /// reached by an approach from the road, and tried to land within the cap: what an unmet end's line reports (log only).</summary>
+    [ThreadStatic] private static int t_waysOffered, t_waysReached, t_waysLanded;
+
+    /// <summary>Why an end was not met (roads log, debug only): which end, where, and how far its ways got.</summary>
+    private static void LogUnmet(RoadCrossing c, string which, End end, float cap)
+    {
+        if (!RoadNetworkGenerator.RoadsLog || t_movingBanks) return;
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(FormattableString.Invariant(
+            $"[ENDS] {which} end of {c} not met at ({end.Edge.x:F1}, {end.Edge.y:F1}) height {end.MeetHeight:F2}: {t_waysOffered} way(s) offered, {t_waysReached} reached from the road, {t_waysLanded} tried to land, none within the {cap:F1} m cap"));
+    }
+
     /// <summary>
-    /// A crossing's two ends as its site alone meets them (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float)"/>),
+    /// A crossing's two ends as its site alone meets them (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float, int)"/>),
     /// chosen as a pair (<see cref="Pair"/>), near end first, and whether both can be met: a crossing that is road (a waded
     /// or raised ford, a span too short for a deck) is met at its banks for nothing.
     /// </summary>
@@ -355,7 +440,8 @@ public static class StructureEnds
         var (near, far) = Natural(crossing, world);
         if (!near.IsSet) return (true, null, null);
         float G(Vector2 p) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
-        Options n = SiteWays(near, crossing.FromBank, G, cap), f = SiteWays(far, crossing.ToBank, G, cap);
+        int most = MostSteps(crossing, world);
+        Options n = SiteWays(near, crossing.FromBank, G, cap, most), f = SiteWays(far, crossing.ToBank, G, cap, most);
         if (n.Best is null || f.Best is null) return (false, n.Best is Met a ? Site(a) : null, f.Best is Met b ? Site(b) : null);
         var (pn, pf) = Pair(n, f);
         return (true, Site(pn), Site(pf));
@@ -382,65 +468,79 @@ public static class StructureEnds
 
     /// <summary>
     /// The one owner of the end rule: how an end is met from <paramref name="road"/>, a searched road
-    /// (<see cref="MeetEnds"/>) or the site's own straight approach (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float)"/>).
+    /// (<see cref="MeetEnds"/>) or the site's own straight approach (<see cref="AtSite(End, Vector2, Func{Vector2, float}, float, int)"/>).
     /// The cheapest of an end's ways (<see cref="Ways"/>, or only <paramref name="natural"/> where it is
     /// <paramref name="adopt"/>ed from the road that laid the crossing) the road reaches from its point <c>At</c> outward
     /// (<c>Step</c>) no further than <c>Bound</c> (a ford's bank where <c>RoadAtBound</c>): its foot over the road's floor (<see cref="OverTheFloor"/>), the road
     /// brought in along its line (<see cref="Approach"/>) and its landing within the caps (<see cref="Lands"/>), on dry
     /// ground or else as earthwork over water; priced by <see cref="Price"/>, ties to the earlier way: the cheapest met flush
-    /// and the cheapest met by steps (<see cref="Options"/>, for <see cref="Pair"/>), each null where none is.
+    /// and the cheapest met by steps (<see cref="Options"/>, for <see cref="Pair"/>), each null where none is. The look is
+    /// a preference, not a rule: where none of those ways fits, the rows past them up to <paramref name="most"/> steps are
+    /// tried the same way (<see cref="Flex"/>) before the end is left unmet.
     /// </summary>
-    private static Options AtSite(End natural, bool adopt, Road road, Func<Vector2, float> ground, float cap)
+    private static Options AtSite(End natural, bool adopt, Road road, Func<Vector2, float> ground, float cap, int most)
     {
-        var (path, at, step, bound, roadAtBound, isStep) = road;
+        var (path, at, step, bound, roadAtBound, isStep, width, earthGround) = road;
+        t_waysOffered = t_waysReached = t_waysLanded = 0;
         float arrival = ArrivalOnPath(path, natural, at, step, bound, ground);
         float under = Mathf.Min(arrival, Mathf.Max(Arrival(natural.Edge, -natural.Up, ground), RoadConstants.DryRoadFloor));
         bool low = !adopt && Low(natural, under);
         // An end the bank takes at grade, in reach of the road: a step up onto it for looks is a way too (Ways).
         bool look = !adopt && natural.Steps == 0 && InReach(natural, under);
-        var ways = adopt ? new List<(End, bool)> { (natural, false), (natural, true) } : Ways(natural, ground, low, look).ToList();
         float before = Walked(path, at, step, bound, natural.Edge, out var walked);
-        // Each way the road is brought to, with the least it can cost (its stairs, climb, turn and detour, no earthwork):
-        // landed cheapest first, so a way whose least already costs more than one landed is never landed.
-        var reached = new List<(int order, End end, bool pad, List<Vector2> way, int k, bool stair, bool clear, float climb, float detour, float least)>();
-        for (int w = 0; w < ways.Count; w++)
+        Options Cheapest(List<(End end, bool pad)> ways)
         {
-            var (end, pad) = ways[w];
-            if (!OverTheFloor(end) || Approach(path, end, at, step, bound, roadAtBound, pad, isStep) is not var (way, k, stair, clear)) continue;
-            float climb = Mathf.Abs(end.MeetHeight - arrival);
-            float detour = Vector2.Distance(end.Edge, end.Meet) + Length(way) - walked[k] - before;
-            reached.Add((w, end, pad, way, k, stair, clear, climb, detour, Price(end.Steps, 0f, climb, pad || !clear, detour, low)));
+            // Each way the road is brought to, with the least it can cost (its stairs, climb, turn and detour, no earthwork):
+            // landed cheapest first, so a way whose least already costs more than one landed is never landed.
+            var reached = new List<(int order, End end, bool pad, List<Vector2> way, int k, bool stair, bool clear, float climb, float detour, float least)>();
+            t_waysOffered += ways.Count;
+            for (int w = 0; w < ways.Count; w++)
+            {
+                var (end, pad) = ways[w];
+                if (!OverTheFloor(end) || Approach(path, end, at, step, bound, roadAtBound, pad, isStep) is not var (way, k, stair, clear)) continue;
+                float climb = Mathf.Abs(end.MeetHeight - arrival);
+                float detour = Vector2.Distance(end.Edge, end.Meet) + Length(way) - walked[k] - before;
+                reached.Add((w, end, pad, way, k, stair, clear, climb, detour, Price(end.Steps, 0f, climb, pad || !clear, detour, low)));
+                t_waysReached++;
+            }
+            // The cheapest of each kind, flush [0] and stepped [1]: a way whose least already costs more than the one landed of
+            // its kind is never landed.
+            var best = new Met?[2];
+            var bestOrder = new[] { int.MaxValue, int.MaxValue };
+            foreach (var r in reached.OrderBy(r => r.least).ThenBy(r => r.order))
+            {
+                int kind = r.end.Steps > 0 ? 1 : 0;
+                if (best[kind] is Met b && r.least > b.Price)
+                {
+                    if (best[1 - kind] is Met o && r.least > o.Price) break;
+                    continue;
+                }
+                bool overWater = false;
+                t_waysLanded++;
+                if (Lands(path, r.way, r.stair ? -1 : r.k, step, r.end, natural, ground, cap, false, width, earthGround, out float earth) is not { } raised)
+                {
+                    overWater = true;
+                    if ((raised = Lands(path, r.way, r.stair ? -1 : r.k, step, r.end, natural, ground, cap, true, width, earthGround, out earth)) == null) continue;
+                }
+                float price = Price(r.end.Steps, earth, r.climb, r.pad || !r.clear, r.detour, low);
+                // Ties go to the earlier way.
+                if (best[kind] is not Met better || price < better.Price - 1e-4f || (price < better.Price + 1e-4f && r.order < bestOrder[kind]))
+                {
+                    best[kind] = new Met(r.end, r.way, r.k, raised, overWater, r.pad, !r.clear && !r.stair, price);
+                    bestOrder[kind] = r.order;
+                }
+            }
+            return new Options(best[0], bestOrder[0], best[1], bestOrder[1], low);
         }
-        // The cheapest of each kind, flush [0] and stepped [1]: a way whose least already costs more than the one landed of
-        // its kind is never landed.
-        var best = new Met?[2];
-        var bestOrder = new[] { int.MaxValue, int.MaxValue };
-        foreach (var r in reached.OrderBy(r => r.least).ThenBy(r => r.order))
-        {
-            int kind = r.end.Steps > 0 ? 1 : 0;
-            if (best[kind] is Met b && r.least > b.Price)
-            {
-                if (best[1 - kind] is Met o && r.least > o.Price) break;
-                continue;
-            }
-            bool overWater = false;
-            if (Lands(path, r.way, r.stair ? -1 : r.k, step, r.end, natural, ground, cap, false, out float earth) is not { } raised)
-            {
-                overWater = true;
-                if ((raised = Lands(path, r.way, r.stair ? -1 : r.k, step, r.end, natural, ground, cap, true, out earth)) == null) continue;
-            }
-            float price = Price(r.end.Steps, earth, r.climb, r.pad || !r.clear, r.detour, low);
-            // Ties go to the earlier way.
-            if (best[kind] is not Met better || price < better.Price - 1e-4f || (price < better.Price + 1e-4f && r.order < bestOrder[kind]))
-            {
-                best[kind] = new Met(r.end, r.way, r.k, raised, overWater, r.pad, !r.clear && !r.stair, price);
-                bestOrder[kind] = r.order;
-            }
-        }
-        return new Options(best[0], bestOrder[0], best[1], bestOrder[1], low);
+        if (adopt) return Cheapest(new List<(End, bool)> { (natural, false), (natural, true) });
+        Options met = Cheapest(Ways(natural, ground, low, look).ToList());
+        if (met.Best is not null) return met;
+        // None of the look's ways fits: more steps, the road cut down to their foot, within the structure's most (Flex).
+        var flex = Flex(natural, ground, low, look, most).ToList();
+        return flex.Count > 0 ? Cheapest(flex) : met;
     }
 
-    /// <summary>An end's ways as the road meets them (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>):
+    /// <summary>An end's ways as the road meets them (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>):
     /// the cheapest met flush and the cheapest met by steps, each with its way's order (ties go to the earlier way), and
     /// whether the end is low (<see cref="Low"/>).</summary>
     private readonly record struct Options(Met? Flush, int FlushOrder, Met? Stepped, int SteppedOrder, bool Low)
@@ -483,13 +583,16 @@ public static class StructureEnds
         return best;
     }
 
-    /// <summary>The road an end is met from (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>): its
+    /// <summary>The road an end is met from (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>): its
     /// points, the crossing's point on it (<c>At</c>), the way outward (<c>Step</c>), how far out it may be taken
     /// (<c>Bound</c>, a ford's bank where <c>RoadAtBound</c>), and the stair steps the search bought (<c>IsStep</c>),
-    /// never cut. A searched road (<see cref="MeetEnds"/>), or a site's own straight approach along the end's line.</summary>
-    private readonly record struct Road(List<Vector2> Path, int At, int Step, int Bound, bool RoadAtBound, Func<Vector2, Vector2, bool>? IsStep);
+    /// never cut. A searched road (<see cref="MeetEnds"/>), or a site's own straight approach along the end's line. Its
+    /// <c>Width</c> and the ground its earthwork is measured from (<c>Earth</c>) are what a way's road is judged across
+    /// (<see cref="WithinCapAcross"/>).</summary>
+    private readonly record struct Road(List<Vector2> Path, int At, int Step, int Bound, bool RoadAtBound, Func<Vector2, Vector2, bool>? IsStep,
+        float Width, Func<Vector2, float> Earth);
 
-    /// <summary>An end as the road meets it (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>, <see cref="Share"/>): the end, the road brought to it
+    /// <summary>An end as the road meets it (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>, <see cref="Share"/>): the end, the road brought to it
     /// (foot first) to the path's point <c>K</c>, the other roads its landing raises, whether it was met by earthwork over
     /// water, from its landing pad, where the road's last point stands (no point clear of it, <see cref="Approach"/>), or
     /// on a landing shared with the next structure's end, and its price.</summary>
@@ -545,7 +648,7 @@ public static class StructureEnds
         natural.Height - arrival <= LowDeckRise && natural.Height - arrival >= -StairLayout.StairFitsFrom;
 
     /// <summary>
-    /// The price of meeting an end one way, the one rule every way is chosen by (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>,
+    /// The price of meeting an end one way, the one rule every way is chosen by (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>,
     /// <see cref="Share"/>). Stairs: each step laid costs <see cref="StepPrice"/>, meeting level with the deck nothing;
     /// but at a <paramref name="low"/> end (<see cref="Low"/>) the first <see cref="LowSteps"/> steps cost nothing and
     /// meeting it with none <see cref="LowFlushPrice"/>, so a low bridge or a ford's span is met by a step or two up onto
@@ -625,7 +728,7 @@ public static class StructureEnds
     /// between them.
     /// </summary>
     private static (Met far, Met near)? Share(List<Vector2> path, int from, int to, End far, End near, Func<Vector2, float> ground, float cap,
-        Func<Vector2, Vector2, bool>? isStep)
+        Func<Vector2, Vector2, bool>? isStep, float width, Func<Vector2, float> earth)
     {
         if (!far.IsStructure || !near.IsStructure || to < from) return null;
         if (Vector2.Distance(far.Edge, near.Edge) >= OwnGround(far) + OwnGround(near)) return null;
@@ -659,13 +762,13 @@ public static class StructureEnds
                         removed.Add(StepCentre(whole.Edge, whole.Up, k));
                 var heights = points.Select(ground).ToList();
                 bool overWater = false;
-                float[]? raised = RoadStairRuns.Land(points, heights, removed, f.Meet, height, (x, z) => ground(new Vector2(x, z)), cap, out var others);
+                float[]? raised = RoadStairRuns.Land(points, heights, removed, f.Meet, height, (x, z) => ground(new Vector2(x, z)), earth, cap, out var others, landedAcross: true);
                 if (raised == null)
                 {
                     overWater = true;
-                    raised = RoadStairRuns.Land(points, heights, removed, f.Meet, height, (x, z) => ground(new Vector2(x, z)), cap, out others, overWater: true);
+                    raised = RoadStairRuns.Land(points, heights, removed, f.Meet, height, (x, z) => ground(new Vector2(x, z)), earth, cap, out others, overWater: true, landedAcross: true);
                 }
-                if (raised == null) continue;
+                if (raised == null || !WithinCapAcross(points, heights, raised, points.Count, f, m, width, earth, cap)) continue;
                 float price = stairs + Price(0, Earthwork(points, heights, raised), step, false, 0f);
                 if (price >= bestPrice) continue;
                 bestPrice = price;
@@ -688,16 +791,13 @@ public static class StructureEnds
     /// from its pad; the deck then stands a rise over the road, within a rise and a half (1.5 m, the band one step meets,
     /// <see cref="Decide"/>) of the road arriving. A road come from the side meets every one of them from its pad, so a
     /// landing lies between the end and the road (<see cref="PadTurn"/>), never the road's middle at the deck's edge or the
-    /// bottom step. Each is priced (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float)"/>); the order only breaks ties.
+    /// bottom step. Each is priced (<see cref="AtSite(End, bool, Road, Func{Vector2, float}, float, int)"/>); the order only breaks ties.
     /// </summary>
     internal static IEnumerable<(End end, bool pad)> Ways(End natural, Func<Vector2, float> ground, bool low = false, bool look = false)
     {
         yield return (natural, false);
         yield return (natural, true);
-        // Past the whole run only where its foot stands on the ground, sunk in it by less than half a rise
-        // (StairLayout.StairFitsFrom, as the run's own foot lands): the next row's ground is cut down under the road
-        // (End.UnderTheJoint), the run's own steps stand as the bank takes them.
-        bool footDown = ground(natural.Meet) <= natural.MeetHeight + StairLayout.StairFitsFrom;
+        bool footDown = FootDown(natural, ground);
         if (natural.Steps == 0)
         {
             if (!look || !footDown) yield break;
@@ -723,6 +823,45 @@ public static class StructureEnds
         yield return (edge, true);
     }
 
+    /// <summary>Whether rows past an end's whole run may be laid (<see cref="Ways"/>, <see cref="Flex"/>): only where its foot
+    /// stands on the ground, sunk in it by less than half a rise (StairLayout.StairFitsFrom, as the run's own foot lands).
+    /// The next row's ground is cut down under the road (End.UnderTheJoint), the run's own steps stand as the bank takes
+    /// them.</summary>
+    private static bool FootDown(End natural, Func<Vector2, float> ground) =>
+        ground(natural.Meet) <= natural.MeetHeight + StairLayout.StairFitsFrom;
+
+    /// <summary>
+    /// The ways an end is met by when none of its look's (<see cref="Ways"/>) fits: steps are a look, not a rule, so the
+    /// rows past those up to <paramref name="most"/> (<see cref="MostSteps"/>), each with the road cut down to its foot
+    /// where the run's foot stands on the ground (<see cref="FootDown"/>), along the line, then from its pad: the same rows a
+    /// low end or a step up for looks takes (<see cref="Ways"/>), further down. The other way round needs no flex: a stepped
+    /// end is always met flush too where that fits (its deck's edge, <see cref="Ways"/>), and a raised viaduct is lowered
+    /// where no way of an end fits (<see cref="MeetEnds"/>).
+    /// </summary>
+    internal static IEnumerable<(End end, bool pad)> Flex(End natural, Func<Vector2, float> ground, bool low, bool look, int most)
+    {
+        if (!FootDown(natural, ground)) yield break;
+        // The rows Ways already took: a step up for looks at an end at grade; at a low end, up to LowSteps.
+        int from = natural.Steps == 0 ? (look ? 2 : 1) : Mathf.Max(natural.Steps + 1, low ? LowSteps + 1 : 0);
+        for (int row = from; row <= most; row++)
+        {
+            var cut = new End(natural.Edge, natural.Up, natural.Height, row);
+            yield return (cut, false);
+            yield return (cut, true);
+        }
+    }
+
+    /// <summary>The most steps an end of <paramref name="crossing"/> may be met by: a viaduct's within its end stairs' most
+    /// (DvergrViaduct.EndStairsPastMost, the viaduct's own limit), every other kit's the most a run marches
+    /// (BridgeLayout.MaxStairSteps).</summary>
+    internal static int MostSteps(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (!BridgeStructures.IsViaduct(crossing, world)) return BridgeLayout.MaxStairSteps;
+        int most = 0;
+        while (most < BridgeLayout.MaxStairSteps && !DvergrViaduct.EndStairsPastMost((most + 1) * StairLayout.PieceRise)) most++;
+        return most;
+    }
+
     /// <summary>How far the landing an end opens onto runs out from its foot, on its line: about a road's width, the
     /// road's own clearance. Past it, the road brought to the end from its pad (<see cref="Approach"/>) may leave at any
     /// heading, square to the line or at an angle.</summary>
@@ -741,8 +880,8 @@ public static class StructureEnds
     /// <summary>
     /// The road from <paramref name="end"/>'s foot outward as it is brought to it, or null where it cannot be: from
     /// <paramref name="path"/>'s point <paramref name="at"/> outward (<paramref name="step"/>, no further than
-    /// <paramref name="bound"/>, the next crossing's foot or bank, or the road's end) every point up to the first one
-    /// clear of the end is dropped, and the road runs from there to the foot. Along the line (<paramref name="pad"/>
+    /// <paramref name="bound"/>: where the next crossing's near way joins the road, its bank, or the road's end) every point
+    /// up to the first one clear of the end is dropped, and the road runs from there to the foot. Along the line (<paramref name="pad"/>
     /// false), clear is half an apron past the apron: the road turns onto the line there, then runs down it over the apron;
     /// the points, foot first, are the foot, the apron's middle and far end, the turn where the clear point is off the
     /// line, and that point (<c>k</c>, its index). From the end's landing pad (<paramref name="pad"/>), clear is a pad's
@@ -804,14 +943,16 @@ public static class StructureEnds
     /// <paramref name="k"/>, -1 where a staircase starts there) lands on it: the road, every metre as far as its ease can
     /// reach, levelled at the foot over its last <see cref="ApronLength"/> as it comes and the ground the stairs not laid
     /// would stand on (those of <paramref name="natural"/> below the end's), and
-    /// eased to the ground at the road grade, every height it changes within <paramref name="cap"/> of the ground, dry
-    /// (over water, <paramref name="overWater"/>: filled over ground under the road's floor), outside every place, and
+    /// eased to the ground at the road grade, every height it changes dry
+    /// (over water, <paramref name="overWater"/>: filled over ground under the road's floor), outside every location, and
     /// every other road on that ground raised to it (RoadStairRuns.Land). The other roads raised, and the earthwork the road
     /// takes (<paramref name="earthwork"/>: its height off the ground, every metre, in square metres of its profile); null
-    /// where it does not.
+    /// where it does not, or where the road it lands, run on under the joining piece, is past <paramref name="cap"/> as every
+    /// road's earthwork is measured, at its centre and both edges, <paramref name="width"/> wide over
+    /// <paramref name="earth"/> (<see cref="WithinCapAcross"/>).
     /// </summary>
     private static List<(RoadSpatialGrid.RoadPoint at, float to)>? Lands(List<Vector2> path, List<Vector2> way, int k, int step, End end, End natural,
-        Func<Vector2, float> ground, float cap, bool overWater, out float earthwork)
+        Func<Vector2, float> ground, float cap, bool overWater, float width, Func<Vector2, float> earth, out float earthwork)
     {
         earthwork = 0f;
         // The ease inline, not RoadGrade.EaseLength: one rounding of the whole sum, as on the game's Mono.
@@ -833,15 +974,57 @@ public static class StructureEnds
         // the foot's height (RoadSpatialGrid.LevelledEnds).
         removed.Add(end.Joint);
         float along = 0f;
+        int apron = 0;
         for (int i = 0; i < points.Count && along <= ApronLength + 1e-3f; i++)
         {
             if (i > 0) along += Vector2.Distance(points[i - 1], points[i]);
-            if (along <= ApronLength + 1e-3f) removed.Add(points[i]);
+            if (along <= ApronLength + 1e-3f) { removed.Add(points[i]); apron = i + 1; }
         }
         var heights = points.Select(ground).ToList();
-        if (RoadStairRuns.Land(points, heights, removed, end.Meet, end.MeetHeight, (x, z) => ground(new Vector2(x, z)), cap, out var others, overWater) is not float[] raised) return null;
+        if (RoadStairRuns.Land(points, heights, removed, end.Meet, end.MeetHeight, (x, z) => ground(new Vector2(x, z)), earth, cap, out var others, overWater, landedAcross: true) is not float[] raised) return null;
+        if (!WithinCapAcross(points, heights, raised, apron, end, null, width, earth, cap)) return null;
         earthwork = Earthwork(points, heights, raised);
         return others!;
+    }
+
+    /// <summary>
+    /// Whether the road a way lands (<paramref name="points"/>, from the ground at <paramref name="heights"/> to
+    /// <paramref name="raised"/>, foot first) is within <paramref name="cap"/> as every road's earthwork is measured
+    /// (RoadNetworkGenerator.EarthworkAcross, the one measurement: at its centre and both edges, half its
+    /// <paramref name="width"/> to each side, over <paramref name="earth"/>, the ground before roads): the stretch run on
+    /// under the joining piece at the meeting height (<see cref="End.Joint"/>, of <paramref name="first"/>, and of
+    /// <paramref name="last"/> at the far end of a shared landing), the first <paramref name="levelled"/> points (the apron
+    /// levelled at the meeting height, every one stored so), and every other point the landing changes. The landing leaves
+    /// its own road's earthwork to this (RoadStairRuns.Land, landedAcross) and measures the roads it raises the same way; the
+    /// road is stored so and refused as finished past the cap (RoadNetworkGenerator.EarthworkRefusal), so a way past it does
+    /// not fit and another is tried.
+    /// </summary>
+    private static bool WithinCapAcross(IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, IReadOnlyList<float> raised, int levelled,
+        End first, End? last, float width, Func<Vector2, float> earth, float cap)
+    {
+        var road = new List<Vector2>();
+        var at = new List<float>();
+        var measured = new HashSet<Vector2>();
+        void Joint(End e, bool into)
+        {
+            // The joint to the meeting point (into: the other way), every metre, the meeting point itself apart.
+            var stretch = new List<Vector2>();
+            for (float d = JoinOverlap; d > 0.5f; d -= 1f) stretch.Add(e.Meet + e.Up * d);
+            if (into) stretch.Reverse();
+            foreach (Vector2 p in stretch) { road.Add(p); at.Add(e.MeetHeight); measured.Add(p); }
+        }
+        Joint(first, false);
+        for (int i = 0; i < points.Count; i++)
+        {
+            road.Add(points[i]);
+            at.Add(raised[i]);
+            if (i < levelled || Mathf.Abs(raised[i] - heights[i]) >= 0.001f) measured.Add(points[i]);
+        }
+        if (last is End l) Joint(l, true);
+        var plan = new RoadSpatialGrid.PlannedPath(road, at, new List<RoadPointDebugInfo>(), width, Length(road), false);
+        bool within = true;
+        RoadNetworkGenerator.EarthworkAcross(plan, earth, cap, p => { if (measured.Contains(p)) within = false; });
+        return within;
     }
 
     /// <summary>The earthwork a road at <paramref name="raised"/> over ground at <paramref name="heights"/> takes along
@@ -915,13 +1098,15 @@ public static class StructureEnds
 
     /// <summary>
     /// The road as built near <paramref name="at"/>, within <paramref name="reach"/>: every road point laid before
-    /// (RoadSpatialGrid, the network so far) and this road's own planned pieces, walked every metre. The built-result
+    /// (RoadSpatialGrid, the network so far; within RoadTerrainModifier.AsStored, with the road not stored yet as it would
+    /// store it, <see cref="RoadTerrainModifier.PointsNear"/>) and this road's own planned pieces, walked every metre: road
+    /// only (RoadSpatialGrid.RoadPoint.IsRoad), never a mound under a structure's pier, which is ground and not road. The built-result
     /// checks judge a structure on this, not on the road as one search planned it (a check that looked only at
     /// the ends of this road's own pieces never saw another road under a deck, or a fill under a pier).
     /// </summary>
     internal static IEnumerable<(Vector2 p, float h, float w)> BuiltRoadNear(Vector2 at, float reach, IReadOnlyList<RoadSpatialGrid.PlannedPath>? plans)
     {
-        foreach (RoadSpatialGrid.RoadPoint rp in RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(at.x, 0f, at.y), reach))
+        foreach (RoadSpatialGrid.RoadPoint rp in RoadTerrainModifier.PointsNear(new Vector3(at.x, 0f, at.y), reach))
             if (rp.IsRoad) yield return (rp.p, rp.h, rp.w);
         if (plans == null) yield break;
         float reach2 = reach * reach;

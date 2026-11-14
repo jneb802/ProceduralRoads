@@ -149,13 +149,37 @@ public static partial class StairLayout
             StairPiece piece = plan.Pieces[i];
             bool stair = piece.Kind == StairPieceKind.Stair;
             if (!stair && piece.Kind != StairPieceKind.Landing) continue;
-            var centre = new Vector2(piece.Position.x, piece.Position.z);
-            if (Vector2.Distance(centre, foot) > EndGuardReach && Vector2.Distance(centre, top) > EndGuardReach) continue;
             float heading = stair ? Wrap(piece.YawDegrees + 180f) : piece.YawDegrees;
             float baseHeight = stair ? piece.Position.y : piece.Position.y + kit.FloorTop;
-            Vector2 dir = Forward(heading);
-            AddCuts(plan, stair, centre - dir * (PieceRun / 2f), dir, Right(heading), baseHeight, PieceRun, PieceRun, ground, guard: true);
+            GuardPiece(plan.Cuts, ref plan.MaxCut, stair, new Vector2(piece.Position.x, piece.Position.z), heading, baseHeight, foot, top, ground);
         }
+    }
+
+    /// <summary>One 2 m piece's guard cuts (<see cref="GuardEnds"/>): every row of it, centred on <paramref name="centre"/>,
+    /// walked on <paramref name="heading"/>, when it lies within <see cref="EndGuardReach"/> of <paramref name="foot"/> or
+    /// <paramref name="top"/>.</summary>
+    private static void GuardPiece(List<Vector3> cuts, ref float maxCut, bool stair, Vector2 centre, float heading, float baseHeight,
+        Vector2 foot, Vector2 top, Func<float, float, float> ground)
+    {
+        if (Vector2.Distance(centre, foot) > EndGuardReach && Vector2.Distance(centre, top) > EndGuardReach) return;
+        Vector2 dir = Forward(heading);
+        AddCuts(cuts, ref maxCut, stair, centre - dir * (PieceRun / 2f), dir, Right(heading), baseHeight, PieceRun, PieceRun, ground, guard: true);
+    }
+
+    /// <summary>
+    /// The cuts that expose a structure's end step (a Dvergr viaduct's, <see cref="RoadNetworkGenerator.GroundOf"/>), the one
+    /// stair excavation a staircase's stairs are cut by: the stair laid at <paramref name="at"/> (its origin, at its foot),
+    /// turned <paramref name="yaw"/> (it climbs toward its local -z), 2 m by 2 m. Its walking surface is cut where the ground
+    /// covers it (<see cref="AddCuts"/>), and every row of it within <see cref="EndGuardReach"/> of the stairs'
+    /// <paramref name="foot"/> or <paramref name="top"/> whatever covers it (<see cref="GuardEnds"/>' rule), each to
+    /// <see cref="CutBelowSurface"/> under the walk over it, committed <see cref="CutWidth"/> wide. Into <paramref name="cuts"/>.
+    /// </summary>
+    internal static void AddStepCuts(List<Vector3> cuts, Vector3 at, float yaw, Vector2 foot, Vector2 top, Func<float, float, float> ground)
+    {
+        float heading = Wrap(yaw + 180f), maxCut = 0f;
+        Vector2 dir = Forward(heading), centre = new(at.x, at.z);
+        AddCuts(cuts, ref maxCut, true, centre - dir * (PieceRun / 2f), dir, Right(heading), at.y, PieceRun, PieceRun, ground);
+        if (EndGuardReach > 0f) GuardPiece(cuts, ref maxCut, true, centre, heading, at.y, foot, top, ground);
     }
 
     /// <summary>
@@ -165,10 +189,12 @@ public static partial class StairLayout
     /// when the ground covers more than half of it, or buries any part of it
     /// deeper than <see cref="StairCover.TreadEdge"/>. An edge only grazed by the
     /// slope is left alone (it is fine if some of the stairs are covered, just not all of them; a stair 0.5 m into a bank
-    /// has too much terrain overlap).
+    /// has too much terrain overlap). The one owner of stair excavation (docs/OWNERS.md): a staircase's pieces
+    /// (<see cref="AddPiece"/>, <see cref="GuardEnds"/>) and a structure's end steps (<see cref="AddStepCuts"/>). Into
+    /// <paramref name="cuts"/>, the deepest cut kept in <paramref name="maxCut"/>.
     /// </summary>
-    private static void AddCuts(StairPlan plan, bool stair, Vector2 laneStart, Vector2 dir, Vector2 right, float baseHeight, float across, float depth,
-        Func<float, float, float> ground, bool guard = false)
+    private static void AddCuts(List<Vector3> cuts, ref float maxCut, bool stair, Vector2 laneStart, Vector2 dir, Vector2 right, float baseHeight,
+        float across, float depth, Func<float, float, float> ground, bool guard = false)
     {
         var row = new List<(Vector2 p, float g)>();
         for (float along = CutSpacing / 2f; along < depth; along += CutSpacing)
@@ -192,8 +218,8 @@ public static partial class StairLayout
             {
                 // A guard row (GuardEnds) is cut whatever the natural ground: what covers it is another road's earthwork.
                 if (g <= target && !guard) continue;
-                plan.Cuts.Add(new Vector3(p.x, target, p.y));
-                if (g > target) plan.MaxCut = Mathf.Max(plan.MaxCut, g - target);
+                cuts.Add(new Vector3(p.x, target, p.y));
+                if (g > target) maxCut = Mathf.Max(maxCut, g - target);
             }
         }
     }

@@ -29,7 +29,7 @@ public static class RoadEndpointRamp
     /// terrain under the point, which is what a road meeting open ground or a
     /// river bank should arrive at. With one - the ground a location stands
     /// on - the ramp leaves the terrain as well, so the road arrives at the
-    /// height of the place it is going to rather than at whatever the last
+    /// height of the location it is going to rather than at whatever the last
     /// metre of hillside happens to be. On a cliff-mouth cave those are not
     /// the same number, and the road was following the hillside.
     ///

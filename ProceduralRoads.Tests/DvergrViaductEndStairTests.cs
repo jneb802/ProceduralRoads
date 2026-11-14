@@ -351,7 +351,7 @@ public sealed class DvergrViaductEndStairTests : IDisposable
     }
 
     /// <summary>The viaduct of <see cref="ALowStructureWhoseBanksBothTakeStepsIsSteppedAtBoth"/> with its far flat a
-    /// metre lower and a place on the near bank's apron, where a step up for looks would cut the road down into it: the
+    /// metre lower and a location on the near bank's apron, where a step up for looks would cut the road down into it: the
     /// near end cannot take a step, so the far end is met flush too, the road filled a metre up to the deck, rather than
     /// one end stepped and the other flush (StructureEnds.OneSidedPrice).</summary>
     [Fact]
@@ -363,12 +363,12 @@ public sealed class DvergrViaductEndStairTests : IDisposable
         Assert.Equal((0, 1), (near.Steps, far.Steps));
         try
         {
-            RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(near.Edge - near.Up * 5f, 4f) });
+            RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(near.Edge - near.Up * 5f, 4f) });
             RoadCrossing c = MetAlongTheLine(world);
             Assert.Equal((0, 0), (c.FromEnd!.Value.Steps, c.ToEnd!.Value.Steps));
             Assert.Equal(far.Height, c.ToEnd!.Value.MeetHeight, 3);
         }
-        finally { RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>()); }
+        finally { RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>()); }
     }
 
     [Fact]

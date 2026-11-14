@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -85,23 +86,30 @@ public class BridgeTests
         }
     }
 
+    /// <summary>The synthetic island's river (<see cref="SyntheticWorld"/>) with the land no higher than <see cref="Top"/>, so
+    /// the generated railed bridge over it stands on columns the support rule holds: the tests on it are about what a bridge
+    /// does once built (its plans, zones, walk, rocks). On the island's plateau (48 m) its tallest columns stand about 22 m
+    /// over the bed, and the rule breaks the bridge in both railed kits, so it is not built (BridgeStructures.KitAmong).</summary>
+    internal sealed class HeldRiver : SyntheticWorld
+    {
+        public const float Top = 38f;
+        public HeldRiver() { HasRiver = true; HasMountain = false; }
+        public override float GetHeight(float x, float z) => Mathf.Min(base.GetHeight(x, z), Top);
+    }
+
+    internal static SyntheticWorld HeldRiverWorld() => new HeldRiver();
+
     /// <summary>A lake: 40 m of water with no river under it, across the whole world.</summary>
     private sealed class LakeWorld : WorldGenerator
     {
         public override float GetHeight(float wx, float wy) => Mathf.Abs(wx) < 20f ? 27f : 33f;
     }
 
-    /// <summary>
-    /// A pathfinder with the road grade cap held out. These fixtures are about
-    /// where a road meets water and what it builds there, and they were
-    /// written against the routes an uncapped search takes; with the cap on
-    /// the search crosses the slope instead and meets the river somewhere
-    /// else, which is a true thing about the cap and nothing to do with
-    /// crossings. CrossingsMoveWhenTheGradeIsCapped records that interaction
-    /// on purpose, and the cap's own behaviour is tested in RoadGradeRoadTests.
-    /// </summary>
+    /// <summary>A pathfinder with bridges and fords on or off, at the configured grade cap: the search the generator
+    /// runs. CrossingsMoveWhenTheGradeIsCapped records how the cap moves a crossing, and the cap's own behaviour is
+    /// tested in RoadGradeRoadTests.</summary>
     private static RoadPathfinder Pathfinder(WorldGenerator world, bool bridges) =>
-        new RoadPathfinder(world) { Fords = bridges, Bridges = bridges, MaxGrade = 0f };
+        new RoadPathfinder(world) { Fords = bridges, Bridges = bridges };
 
     /// <summary>The one long segment of a path whose middle lies over river core.</summary>
     private static (Vector2 a, Vector2 b)? FindJump(List<Vector2> path, WorldGenerator world)
@@ -673,17 +681,17 @@ public class BridgeTests
     }
 
     /// <summary>
-    /// Paints a hand-made route the way the generator does, with the grade cap
-    /// held out: these routes are drawn to put a bridge somewhere particular,
-    /// over cliffs and bank tops no capped road would be routed across, and
-    /// the subject is what gets built at the water, not how the road got there.
+    /// Plans a hand-made route around its crossings the way the generator does
+    /// (RoadNetworkGenerator.PlanRoadPathWithCrossings, which cuts the route at
+    /// each crossing's interval in RoadNetworkGenerator.PlanPieces), at the
+    /// configured grade cap, and stores what it planned (RoadSpatialGrid.CommitRoad).
+    /// The plan, or null where a piece was refused (RoadSpatialGrid.LastRefusal says why).
     /// </summary>
-    private static void PaintWithCrossings(List<Vector2> path, List<RoadCrossing> crossings)
+    internal static List<RoadSpatialGrid.PlannedPath>? PaintWithCrossings(List<Vector2> path, List<RoadCrossing> crossings)
     {
-        using (GradeCap.Off())
-            typeof(RoadNetworkGenerator)
-                .GetMethod("AddRoadPathWithCrossings", BindingFlags.NonPublic | BindingFlags.Static)!
-                .Invoke(null, new object?[] { path, crossings, 4f, null, null });
+        var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, crossings, 4f, null, null);
+        if (plans != null) RoadSpatialGrid.CommitRoad(plans);
+        return plans;
     }
 
     private static RoadCrossing BridgeSpanning(float fromBank, float toBank, int fromIndex, int toIndex)
@@ -710,14 +718,18 @@ public class BridgeTests
         try
         {
             List<Vector2> path = StraightPath(-160f, 160f, 8f);
-            PaintWithCrossings(path, new List<RoadCrossing>
+            var plans = PaintWithCrossings(path, new List<RoadCrossing>
             {
                 BridgeSpanning(-72f, 8f, 11, 21),
                 BridgeSpanning(-8f, 72f, 19, 29),
             });
-
-            // Two structures standing on each other's ends: the road through them may be refused (their ends are met
-            // through StructureEnds), but planning never throws and never paints under a deck.
+            // Two structures standing on each other's ends: planning reaches the cut at the overlapping intervals
+            // (RoadNetworkGenerator.PlanPieces), never throws there, lays the road outside both and never paints
+            // under a deck.
+            Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+            foreach (float x in new[] { -140f, 140f })
+                Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 8f).Count > 0,
+                    $"no road painted at x={x}");
             foreach (float x in new[] { -40f, 40f })
             {
                 RoadSpatialGrid.GetRoadWeight(x, 0f, out float weight, out _);
@@ -736,11 +748,12 @@ public class BridgeTests
         try
         {
             List<Vector2> path = StraightPath(-160f, 160f, 8f);
-            PaintWithCrossings(path, new List<RoadCrossing>
+            var plans = PaintWithCrossings(path, new List<RoadCrossing>
             {
                 BridgeSpanning(-72f, 72f, 11, 29),
                 BridgeSpanning(-8f, 8f, 19, 21),
             });
+            Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
 
             foreach (float x in new[] { -140f, 140f })
                 Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 8f).Count > 0,
@@ -836,10 +849,168 @@ public class BridgeTests
 
     // ---- plans and spawned zones ----
 
+    /// <summary>
+    /// A generated wooden bridge the support rule breaks is not built, and no road is stored over it (docs/OWNERS.md, a
+    /// structure's final support): over the synthetic island's river, its tallest columns about 22 m over the bed (under the
+    /// 18 m measured ceiling a station has a column, over it none), the rule breaks pieces of both railed kits, and in the
+    /// Meadows no other kit fits, so the crossing would have no kit (RoadNetworkGenerator.WithNoKit). The road is searched
+    /// again without it (the crossing bans) and crosses elsewhere in a kit that stands, or is refused past the bans: never
+    /// stored over a deck with no structure. The same river with its land no higher than <see cref="HeldRiver.Top"/> is built
+    /// where it was. On the parent the road was stored across with no kit: its solve laid nothing, a road over the river
+    /// with no bridge.
+    /// </summary>
+    [Fact]
+    public void AGeneratedWoodenBridgeTheRuleBreaksIsNotBuilt()
+    {
+        var lines = new List<string>();
+        BepInEx.Logging.ManualLogSource.Captured = lines;
+        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        using (new ValheimWorldScope().WithWorld(world))
+        {
+            RoadNetworkGenerator.Reset();
+            SetPathfinder(Pathfinder(world, true));
+            try
+            {
+                bool built = RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river");
+                Assert.Equal((1, 0), RoadNetworkGenerator.DecksWithNoKit);
+                // Searched again without it, the road crosses near the island's edge, where the banks are low, in a railed
+                // kit the rule holds: a road with a bridge, never one over a deck with no kit.
+                Assert.True(built, RoadSpatialGrid.LastRefusal);
+                RoadCrossing crossing = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), BridgeStructures.HasDeck);
+                Assert.True(Mathf.Abs(crossing.Center.y) > 100f, $"crossed at {crossing.Center}, where the rule breaks every kit");
+                Assert.NotNull(BridgeStructures.RailedKitOf(BridgeStructures.KitFor(crossing, world)));
+                Assert.False(BridgeStructures.BuiltInNoKit(crossing, world));
+                Assert.NotEmpty(BridgeStructures.Solve(crossing, world, world.GetSeed()));
+                // The deck searched round was read before the road was stored, its record not said: the one record is the
+                // built bridge's.
+                string record = Assert.Single(lines, l => l.Contains("[SUPPORT]"));
+                Assert.DoesNotContain("response refused, no kit", record);
+            }
+            finally { BepInEx.Logging.ManualLogSource.Captured = null; TearDownGeneration(); }
+        }
+
+        var held = HeldRiverWorld();
+        using var heldScope = new ValheimWorldScope().WithWorld(held);
+        RoadNetworkGenerator.Reset();
+        SetPathfinder(Pathfinder(held, true));
+        try
+        {
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
+            var crossing = Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
+            Assert.NotNull(BridgeStructures.RailedKitOf(BridgeStructures.KitFor(crossing, held)));
+            Assert.True(StructurePlans.TotalPlannedPieces > 0);
+        }
+        finally { TearDownGeneration(); }
+    }
+
+    /// <summary>
+    /// Generation's crossing ban and the final check read a deck's no-kit verdict on one ground (docs/OWNERS.md, the refusals
+    /// of a road as planned; parity): the ground as the road would be stored, its own earthwork at the deck's ends in it
+    /// (RoadTerrainModifier.AsStored over the one assembly of what it writes, RoadNetworkGenerator.Written). Over the
+    /// synthetic island's river the straight crossing's deck has no kit: the ban that searches the road again round it reads
+    /// it so, and so does every no-kit verdict asked, the ban's and the final check's alike. On the parent the ban read the
+    /// network as it stood, without the road's own earthwork, while the final check read it with.
+    /// </summary>
+    [Fact]
+    public void TheCrossingBanReadsTheNoKitVerdictOnTheGroundTheFinalCheckReads()
+    {
+        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        using (new ValheimWorldScope().WithWorld(world))
+        {
+            RoadNetworkGenerator.Reset();
+            SetPathfinder(Pathfinder(world, true));
+            try
+            {
+                RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river");
+                Assert.Equal(1, RoadNetworkGenerator.DecksWithNoKit.searchedRound);
+                Assert.True(RoadNetworkGenerator.CrossingReads.BanAssemblies >= 1, "the ban read no assembly of what the road writes");
+                var (asked, asStored) = RoadNetworkGenerator.CrossingReads.NoKit;
+                Assert.True(asked > RoadNetworkGenerator.CrossingReads.BanAssemblies, $"{asked} verdict(s) asked: the final check asked none");
+                Assert.Equal(asked, asStored);
+            }
+            finally { TearDownGeneration(); }
+        }
+    }
+
+    /// <summary>
+    /// Every crossing check reads one ground (docs/OWNERS.md, the refusals of a road as planned): the built-road verdict
+    /// (RoadNetworkGenerator.BuiltRefusal) and the another-location verdict (RoadNetworkGenerator.InAnotherLocation) are read, as the
+    /// no-kit verdict is, on the road as it would be stored (RoadTerrainModifier.AsStored over what it writes), by generation's
+    /// crossing bans (the one assembly they make, BanWritten) and by its final check (RoadRefusal, its Written) alike.
+    /// </summary>
+    [Fact]
+    public void EveryCrossingCheckReadsTheRoadsWrittenGroundOnTheBanAndTheFinalCheck()
+    {
+        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        using (new ValheimWorldScope().WithWorld(world))
+        {
+            RoadNetworkGenerator.Reset();
+            SetPathfinder(Pathfinder(world, true));
+            try
+            {
+                RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river");
+                int bans = RoadNetworkGenerator.CrossingReads.BanAssemblies;
+                Assert.True(bans >= 1, "the ban read no assembly of what the road writes");
+                foreach (var (name, (asked, asStored)) in new[] { ("built-road", RoadNetworkGenerator.CrossingReads.Built), ("another-location", RoadNetworkGenerator.CrossingReads.InLocation) })
+                {
+                    Assert.True(asked > bans, $"{name}: {asked} verdict(s) asked over {bans} ban assemblies: the final check asked none");
+                    Assert.Equal(asked, asStored);
+                }
+            }
+            finally { TearDownGeneration(); }
+        }
+    }
+
+    /// <summary>
+    /// A deck no kit stands in is refused alike on the paths that store a road (docs/OWNERS.md, a structure's final support;
+    /// parity): over the synthetic island's river, where the rule breaks both railed kits of the straight crossing and no
+    /// other kit fits, a marked manual road, which has no other route, is refused for it by the one list of a road's
+    /// refusals as planned (RoadNetworkGenerator.BuiltRoadRefusal, naming WithNoKit), and generation between the same points
+    /// searches the road again without it and never stores a road over it nor over any other deck with no kit. Both ask
+    /// BridgeStructures.BuiltInNoKit. On the parent both stored the road over the deck with no kit.
+    /// </summary>
+    [Fact]
+    public void AGeneratedAndAMarkedRoadAreRefusedTheSameDeckWithNoKit()
+    {
+        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        scope.WithZoneSystem();
+        scope.WithZdos().WithNetwork(server: true);
+        Vector2[] marks = { new(-300f, 0f), new(400f, 0f) };
+        RoadNetworkGenerator.Reset();
+        try
+        {
+            var island = new Island { Id = 1, CellSize = 8, WorldOffset = 0, Min = new Vector2(-400f, -200f), Max = new Vector2(480f, 200f) };
+            for (int x = -50; x <= 60; x++) for (int z = -25; z <= 25; z++) island.Cells.Add(new Vector2Int(x, z));
+            RoadTerrainModifier.ResetForWorld();
+            RoadNetworkGenerator.MarkLocationsReady();
+            var refused = Assert.Throws<InvalidOperationException>(() => ManualRoads.Prepare(marks, false, new[] { island }));
+            Assert.Contains(RoadNetworkGenerator.DeckWithNoKit, refused.Message);
+            var banks = System.Text.RegularExpressions.Regex.Match(refused.Message,
+                @"\((-?[0-9.]+), (-?[0-9.]+)\) -> \((-?[0-9.]+), (-?[0-9.]+)\)");
+            Assert.True(banks.Success, refused.Message);
+            float F(int g) => float.Parse(banks.Groups[g].Value, System.Globalization.CultureInfo.InvariantCulture);
+            Vector2 from = new(F(1), F(2)), to = new(F(3), F(4));
+
+            RoadNetworkGenerator.Reset();
+            SetPathfinder(Pathfinder(world, true));
+            RoadNetworkGenerator.GenerateRoad(marks[0], 0f, marks[1], 0f, 4f, "Cross river");
+            Assert.True(RoadNetworkGenerator.DecksWithNoKit.searchedRound > 0, "generation did not search round the deck with no kit");
+            foreach (RoadCrossing c in RoadNetworkGenerator.GetRoadCrossings().Where(BridgeStructures.HasDeck))
+            {
+                Assert.False(BridgeStructures.BuiltInNoKit(c, world), $"stored over a deck with no kit {c.FromBank} -> {c.ToBank}");
+                bool same = (Vector2.Distance(c.FromBank, from) < 1f && Vector2.Distance(c.ToBank, to) < 1f)
+                    || (Vector2.Distance(c.FromBank, to) < 1f && Vector2.Distance(c.ToBank, from) < 1f);
+                Assert.False(same, $"generation stored the deck the marked road was refused for, {from} -> {to}");
+            }
+        }
+        finally { TearDownGeneration(); }
+    }
+
     [Fact]
     public void PlansAreBucketedByZoneAndSpawnedZonesAreRemembered()
     {
-        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        var world = HeldRiverWorld();
         using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
@@ -875,13 +1046,12 @@ public class BridgeTests
     }
 
     /// <summary>Bridges reach the zone pipeline as a structure source: the
-    /// structure plans hand out their vegetation clear areas and the rock
-    /// clearance along their decks, as the bridge code did before it had a
-    /// source.</summary>
+    /// structure plans hand out no clear areas for them, and the rock
+    /// clearance over their walks.</summary>
     [Fact]
     public void BridgesGiveTheirClearAreasAndDeckClearancesThroughTheStructurePlans()
     {
-        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        var world = HeldRiverWorld();
         using var worldScope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
@@ -891,33 +1061,250 @@ public class BridgeTests
             var crossing = Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
             Assert.Contains(StructurePlans.Sources, s => s is BridgeStructures);
 
-            // Clear areas: every planned piece lies inside one, each two lanes plus a margin wide.
+            // No clear areas: a bridge keeps vegetation off its walk (BridgeWalkClearingTests).
             foreach (Vector2s zone in StructurePlans.PlannedZones)
-            {
-                var areas = StructurePlans.ClearAreas(zone);
-                Assert.NotEmpty(areas);
-                Assert.All(areas, a => Assert.Equal(BridgeLayout.DeckHalfWidth + 1.5f, a.radius));
-                Assert.All(StructurePlans.PlanFor(zone)!, piece =>
-                    Assert.Contains(areas, a => Vector3.Distance(a.centre, piece.Position) <= a.radius));
-            }
-            Assert.Empty(StructurePlans.ClearAreas(new Vector2s(500, 500)));
+                Assert.Empty(StructurePlans.ClearAreas(zone));
 
-            // Deck clearance: every metre of the span, from a metre under the deck, rock removed whole.
+            // Deck clearance near the middle, rock removed whole; none far away (BridgeRockClearanceIsItsWalk).
             Assert.Equal(CrossingKind.Bridge, crossing.Kind);
             {
                 Vector2 mid = (crossing.FromBank + crossing.ToBank) * 0.5f;
                 var deck = StructurePlans.ClearancesNear(new Vector3(mid.x, 0f, mid.y), 10f);
-                Assert.Equal(Mathf.CeilToInt(Vector2.Distance(crossing.FromBank, crossing.ToBank)) + 1, deck.Count);
-                Assert.All(deck, c =>
-                {
-                    Assert.True(c.WholeOnly);
-                    Assert.Equal(c.Point.h - BridgeStructures.DeckBelow, c.Surface, 3);
-                    Assert.Equal(RockClearances.Top(c.Point.h), c.Surface + c.Height, 3); // a road's box over the deck: 2.1 m
-                });
+                Assert.NotEmpty(deck);
+                Assert.All(deck, c => Assert.True(c.WholeOnly));
                 Assert.Empty(StructurePlans.ClearancesNear(new Vector3(mid.x + 2000f, 0f, mid.y), 10f));
             }
         }
         finally { TearDownGeneration(); }
+    }
+
+    // ---- vegetation on a bridge's walk (decisions 6q, 6ab) ----
+
+    /// <summary>A generated bridge's zone as both clearings read it (RoadClearAreaManager.AddRoadAreas, GetOrCreateRoadCentres),
+    /// and the verdicts of generation (RoadClearAreaManager.OnRoad) and the server bake (VegetationClearing.ShouldRemove) for
+    /// one piece of vegetation, which must agree.</summary>
+    private static bool Removed(Vector2s zone, string prefab, Vector2 at, VegetationClearing.Body? body)
+    {
+        var areas = RoadClearAreaManager.AddRoadAreas(zone, new List<ZoneSystem.ClearArea>());
+        var road = RoadClearAreaManager.GetOrCreateRoadCentres(zone);
+        System.Func<Vector3, Heightmap.Biome> meadows = _ => Heightmap.Biome.Meadows;
+        float yaw = 0f;
+        bool generation = RoadClearAreaManager.OnRoad(areas, road, new Vector3(at.x, 0f, at.y), prefab, 1f, meadows, ref yaw, body: body);
+        bool bake = VegetationClearing.ShouldRemove(prefab.GetStableHashCode(), at, false, new HashSet<int> { prefab.GetStableHashCode() },
+            areas, new List<VegetationClearing.Footprint>(), new List<VegetationClearing.Footprint>(), road, 1f, meadows, body: body);
+        Assert.Equal(generation, bake);
+        return generation;
+    }
+
+    /// <summary>
+    /// A bridge clears the vegetation that stands on its walk (its deck and end steps, as laid: BridgeStructures.WalkOf) and
+    /// reaches the walk or its headroom, by how high the vegetation stands (its colliders, VegetationClearing.Body): a bush
+    /// or a grown tree under the deck that reaches neither is kept, one reaching up into it goes, one whose height is not
+    /// known (no collider) goes where it stands on the walk. A tree in the way of a support only, under the walk, is kept;
+    /// a rock on the walk is the rock clearing's. Generation and the server bake judge alike. Before, a 3.5 m square round
+    /// every piece (supports too) took everything inside it at any height.
+    /// </summary>
+    [Fact]
+    public void ABridgeClearsVegetationOnItsWalkAndItsHeadroomOnly()
+    {
+        var world = HeldRiverWorld();
+        using var worldScope = new ValheimWorldScope().WithWorld(world);
+        RoadNetworkGenerator.Reset();
+        SetPathfinder(Pathfinder(world, true));
+        try
+        {
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
+            Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
+            int bush = "Bush01_0".GetStableHashCode();
+            bool decks = false, supports = false;
+            foreach (Vector2s zone in StructurePlans.PlannedZones)
+            {
+                var areas = RoadClearAreaManager.AddRoadAreas(zone, new List<ZoneSystem.ClearArea>());
+                List<StructurePiece> plan = StructurePlans.PlanFor(zone)!;
+                foreach (StructurePiece deck in plan.Where(p => p.Kind == StructurePieceKind.Deck))
+                {
+                    StairSupport.Walk walk = BridgeStructures.WalkOf(deck, float.NaN)!.Value;
+                    Vector2 middle = walk.At(walk.Depth / 2f, 0f);
+                    // Off the road's own clear areas: the walk alone decides.
+                    if (VegetationClearing.InsideClearArea(areas, new Vector3(middle.x, 0f, middle.y), bush, null)) continue;
+                    decks = true;
+                    float under = walk.Underside;
+                    var below = new VegetationClearing.Body(under - 3f, under - 0.5f);
+                    var into = new VegetationClearing.Body(under - 3f, under + 0.5f);
+                    Assert.False(Removed(zone, "Bush01_0", middle, below), $"bush under the deck at {middle}");
+                    Assert.True(Removed(zone, "Bush01_0", middle, into), $"bush up into the deck at {middle}");
+                    Assert.True(Removed(zone, "Bush01_0", middle, null), $"bush of no known height on the deck at {middle}");
+                    Assert.False(Removed(zone, "Beech1", middle, below), $"tree under the deck at {middle}");
+                    Assert.True(Removed(zone, "Beech1", middle, into), $"tree through the deck at {middle}");
+                    Assert.False(Removed(zone, "rock4_coast", middle, into), $"rock on the deck at {middle}");
+                }
+                // A support under the walk: a tree in its way that reaches no walk stays.
+                foreach (StructurePiece post in plan.Where(p => p.Kind == StructurePieceKind.Post))
+                {
+                    Vector2 at = new(post.Position.x, post.Position.z);
+                    if (VegetationClearing.InsideClearArea(areas, new Vector3(at.x, 0f, at.y), bush, null)) continue;
+                    // Off the road's own reach (its road centres have no band): the walk alone decides.
+                    VegetationClearing.IsGrownTree("Beech1", out float trunk);
+                    if (VegetationClearing.TrunkReachesRoad(RoadClearAreaManager.GetOrCreateRoadCentres(zone).Where(c => float.IsNaN(c.Bottom)).ToList(), at, trunk, 1f))
+                        continue;
+                    // The tree stands through the post (a 2 m pole, its origin at its middle) and under every walk near.
+                    float lowest = StructurePlans.WalksNear(zone).Min(w => w.Underside), top = Mathf.Min(post.Position.y, lowest - 0.5f);
+                    if (top <= post.Position.y - 1f) continue;
+                    supports = true;
+                    Assert.False(Removed(zone, "Beech1", at, new VegetationClearing.Body(post.Position.y - 4f, top)),
+                        $"tree at the support at {post.Position}");
+                }
+            }
+            Assert.True(decks, "no deck piece off the road");
+            Assert.True(supports, "no support under the walk");
+        }
+        finally { TearDownGeneration(); }
+    }
+
+    /// <summary>A bridge's walk is each laid piece's own (BridgeStructures.AddWalks): the order the pieces come in changes
+    /// nothing. Before, a piece within 2 m of the last one taken gave no clear area, so the order decided which did.</summary>
+    [Fact]
+    public void ABridgesWalkDoesNotHangOnItsPiecesOrder()
+    {
+        var world = HeldRiverWorld();
+        using var worldScope = new ValheimWorldScope().WithWorld(world);
+        RoadNetworkGenerator.Reset();
+        SetPathfinder(Pathfinder(world, true));
+        try
+        {
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
+            var source = new BridgeStructures();
+            static List<string> Key(List<StairSupport.Walk> walks) => walks.Select(w =>
+                FormattableString.Invariant($"{w.Back.x:R} {w.Back.y:R} {w.Heading:R} {w.Depth:R} {w.Across:R} {w.Underside:R} {w.Walking(w.Depth):R}")).OrderBy(k => k).ToList();
+            foreach (Vector2s zone in StructurePlans.PlannedZones)
+            {
+                var pieces = new List<StructurePiece>(StructurePlans.PlanFor(zone)!);
+                var forward = new List<StairSupport.Walk>();
+                var backward = new List<StairSupport.Walk>();
+                source.AddWalks(pieces, forward);
+                pieces.Reverse();
+                source.AddWalks(pieces, backward);
+                Assert.Equal(Key(forward), Key(backward));
+            }
+        }
+        finally { TearDownGeneration(); }
+    }
+
+    /// <summary>What of a bridge is walked (BridgeStructures.WalkOf): every kit's deck pieces and end steps, at their own
+    /// footprint and top; the viaduct's course and its iron walk, not its floors under the course nor the iron plate; never a
+    /// post, beam, pier, parapet, debris or flair.</summary>
+    [Fact]
+    public void ABridgesWalkIsItsDeckAndItsEndStepsAsLaid()
+    {
+        const float deck = 20f;
+        StructurePiece P(StructurePieceKind kind, string prefab, float y, float yaw = 0f) =>
+            new() { Kind = kind, Prefab = prefab, Position = new Vector3(10f, y, 5f), YawDegrees = yaw };
+        // A railed kit's floor: its measured bounds, its top the walk.
+        var floor = BridgeStructures.WalkOf(P(StructurePieceKind.Deck, BridgeLayout.DeckPrefab, deck, 90f), float.NaN)!.Value;
+        BuriedPieces.BoundsOf(BridgeLayout.DeckPrefab, out Vector3 min, out Vector3 max);
+        Assert.Equal(deck + max.y, floor.Walking(floor.Depth), 4);
+        Assert.Equal(deck + min.y, floor.Underside, 4);
+        Assert.Equal(max.x - min.x, floor.Across, 4);
+        // The Dvergr wood kit's plank, 6 m across the deck, its top the walk.
+        var plank = BridgeStructures.WalkOf(P(StructurePieceKind.Deck, DvergrWoodBridge.Plank, deck - DvergrWoodBridge.BeamDepth * 0.5f), float.NaN)!.Value;
+        Assert.Equal(DvergrWoodBridge.BeamLength, plank.Across, 4);
+        Assert.Equal(DvergrWoodBridge.BeamWidth, plank.Depth, 4);
+        Assert.Equal(deck, plank.Walking(plank.Depth), 4);
+        // An end step: the staircases' stair, rising a step's rise over its run.
+        var step = BridgeStructures.WalkOf(P(StructurePieceKind.Stair, BridgeLayout.StairPrefab, deck - StairLayout.PieceRise), float.NaN)!.Value;
+        Assert.True(step.Stair);
+        Assert.Equal(deck, step.Walking(step.Depth), 4);
+        // The viaduct: its course and its iron walk; not its own floors under the course, nor the plate.
+        Assert.NotNull(BridgeStructures.WalkOf(P(StructurePieceKind.ViaductDeck, DvergrViaduct.Block, deck - DvergrViaduct.CourseDrop, 90f), deck));
+        Assert.NotNull(BridgeStructures.WalkOf(P(StructurePieceKind.ViaductDeck, DvergrViaduct.Floor, deck - DvergrViaduct.IronDeckDrop), deck));
+        Assert.Null(BridgeStructures.WalkOf(P(StructurePieceKind.ViaductDeck, DvergrViaduct.Floor, deck - DvergrViaduct.FloorDrop), deck));
+        Assert.Null(BridgeStructures.WalkOf(P(StructurePieceKind.ViaductDeck, DvergrViaduct.Screen, deck - DvergrViaduct.CourseDrop), deck));
+        foreach (StructurePieceKind other in new[] { StructurePieceKind.Post, StructurePieceKind.Beam, StructurePieceKind.Debris, StructurePieceKind.ViaductPier,
+                     StructurePieceKind.ViaductParapet, StructurePieceKind.Flair })
+            Assert.Null(BridgeStructures.WalkOf(P(other, DvergrViaduct.Block, deck), deck));
+    }
+
+    // ---- rock on a bridge's walk (decision 6r) ----
+
+    private static bool Inside(RockClearance box, Vector3 p)
+    {
+        Vector3 d = Quaternion.Inverse(box.Turn) * (p - box.Centre);
+        return Mathf.Abs(d.x) <= box.Half.x + 1e-4f && Mathf.Abs(d.y) <= box.Half.y + 1e-4f && Mathf.Abs(d.z) <= box.Half.z + 1e-4f;
+    }
+
+    /// <summary>
+    /// A bridge's rock clearance is its walk as laid (BridgeStructures.AddClearances over BridgeStructures.WalkOf), given to
+    /// the rock pass as it is (RockClearances.Near), rock removed whole: over each deck piece its own footprint, from the
+    /// deck's bottom in its kit (BridgeStructures.DeckDepth) to a walker's headroom over its top (RockClearances.Top); over
+    /// each end step its footprint from its foot. A rock touching a rail or a post beside the walk only is in none. Before,
+    /// the deck was sampled bank to bank as road points 4 m wide, read by the road's box at the paint ratio (3.4 m) and lifted
+    /// 0.1 m, from a metre under the deck, and the end stairs had none.
+    /// </summary>
+    [Fact]
+    public void BridgeRockClearanceIsItsWalk()
+    {
+        int decks = 0, steps = 0, rails = 0;
+        // A river's bridge (its ends met level), and a ford's footbridge (a step at each end).
+        foreach (bool ford in new[] { false, true })
+        {
+            WorldGenerator world = ford ? new GullyWorld() : HeldRiverWorld();
+            using var worldScope = new ValheimWorldScope().WithWorld(world);
+            RoadNetworkGenerator.Reset();
+            SetPathfinder(Pathfinder(world, true));
+            if (ford) RoadCrossingDetector.SetFordStyleWeights(0f, 0f, 1f);
+            try
+            {
+                Assert.True(ford ? RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, 0f), 0f, new Vector2(80f, 0f), 0f, 4f, "ford")
+                    : RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
+                CheckRockClearance(ref decks, ref steps, ref rails);
+            }
+            finally { TearDownGeneration(); }
+        }
+        Assert.True(decks > 0 && steps > 0 && rails > 0, $"decks {decks}, steps {steps}, rails {rails}");
+    }
+
+    private static void CheckRockClearance(ref int decks, ref int steps, ref int rails)
+    {
+        RockClearances.GroundAt none = (Vector3 _, out float h) => { h = float.NaN; return false; };
+        foreach (Vector2s zone in StructurePlans.PlannedZones)
+            foreach (StructurePiece piece in StructurePlans.PlanFor(zone)!)
+            {
+                StairSupport.Walk? walked = BridgeStructures.WalkOf(piece, float.NaN);
+                Vector3 at = piece.Position;
+                var boxes = RockClearances.Near(at, 1f, none, out _).FindAll(b => b.WholeOnly);
+                if (walked is StairSupport.Walk walk && piece.Kind == StructurePieceKind.Deck)
+                {
+                    decks++;
+                    float top = walk.Walking(walk.Depth);
+                    Vector2 middle = walk.At(walk.Depth / 2f, 0f);
+                    Assert.Contains(boxes, b =>
+                        Mathf.Abs(b.Centre.x - middle.x) < 1e-3f && Mathf.Abs(b.Centre.z - middle.y) < 1e-3f
+                        && Mathf.Abs(b.Half.x - walk.Across / 2f) < 1e-4f && Mathf.Abs(b.Half.z - walk.Depth / 2f) < 1e-4f
+                        && Mathf.Abs(b.Centre.y - b.Half.y - (top - BridgeStructures.DeckDepth(piece.Kit!.Value))) < 1e-3f
+                        && Mathf.Abs(b.Top - RockClearances.Top(top)) < 1e-3f
+                        && Vector2.Distance(new Vector2((b.Turn * new Vector3(0f, 0f, 1f)).x, (b.Turn * new Vector3(0f, 0f, 1f)).z), StairLayout.Forward(walk.Heading)) < 1e-3f);
+                }
+                else if (walked is StairSupport.Walk step && piece.Kind == StructurePieceKind.Stair)
+                {
+                    // A rock in the middle of the step, a metre over its tread.
+                    steps++;
+                    Vector2 middle = step.At(step.Depth / 2f, 0f);
+                    Assert.Contains(boxes, b => Inside(b, new Vector3(middle.x, step.Walking(step.Depth / 2f) + 1f, middle.y)));
+                }
+                else if (piece.Kind == StructurePieceKind.Post && piece.Position.y > StructurePlans.WalksNear(zone).Min(w => w.Walking(w.Depth)))
+                {
+                    // A railing post standing over the walk: a rock touching it at its far side, off the walk, is in no box.
+                    var walks = StructurePlans.WalksNear(zone);
+                    if (VegetationClearing.OnWalk(walks, new Vector2(at.x, at.z), null)) continue;
+                    Vector2 off = new Vector2(at.x, at.z);
+                    StairSupport.Walk nearest = walks.OrderBy(w => Vector2.Distance(w.At(w.Depth / 2f, 0f), off)).First();
+                    Vector2 away = (off - nearest.At(nearest.Depth / 2f, 0f)).normalized * 0.5f;
+                    var rock = new Vector3(off.x + away.x, at.y, off.y + away.y);
+                    if (VegetationClearing.OnWalk(walks, new Vector2(rock.x, rock.z), null)) continue;
+                    rails++;
+                    Assert.DoesNotContain(RockClearances.Near(rock, 1f, none, out _), b => b.WholeOnly && Inside(b, rock));
+                }
+            }
     }
 
     /// <summary>The rock pass's zone gate asks the structure plans, not the zone's road points or its neighbours: a
@@ -926,7 +1313,7 @@ public class BridgeTests
     [Fact]
     public void TheRockPassLooksAtEveryZoneAStructureIsIn_ExceptCutoffZones()
     {
-        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        var world = HeldRiverWorld();
         using var worldScope = new ValheimWorldScope().WithWorld(world).WithZoneSystem();
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
@@ -949,15 +1336,149 @@ public class BridgeTests
             // A bridge's deck points are published through the plans for the zone's own reach, with no road point.
             var deck = StructurePlans.ClearancesNear(midCentre, RoadRockPolicy.ZoneCornerReach);
             Assert.NotEmpty(deck);
+            // Keep the planned bridge while isolating the roadless middle-zone case from its approaches' terrain points.
+            RoadSpatialGrid.Clear();
+            Assert.True(RoadRockPolicy.ZoneNeedsLook(midZone, midCentre));
+            Assert.Empty(RoadSpatialGrid.GetRoadPointsNearPosition(midCentre, RoadRockPolicy.ZoneCornerReach));
+            int probes = 0;
+            Assert.Equal(1, ServerBakePlanner.ProbeGhostRocks(midCentre, RoadRockPolicy.ZoneCornerReach, settle: false,
+                () => { probes++; return 1; }));
+            Assert.Equal(1, probes);
+            Assert.Equal(0, ServerBakePlanner.ProbeGhostRocks(ZoneSystem.GetZonePos(far), RoadRockPolicy.ZoneCornerReach,
+                settle: false, () => { probes++; return 1; }));
+            Assert.Equal(1, probes);
+            Assert.Equal(1, ServerBakePlanner.ProbeGhostRocks(ZoneSystem.GetZonePos(far), RoadRockPolicy.ZoneCornerReach,
+                settle: true, () => { probes++; return 1; }));
+            Assert.Equal(2, probes);
 
             // The same zone, left as the players found it: its rocks stay.
             NetworkCutoff.SnapshotWorld(new[] { midZone });
-            NetworkCutoff.UseNewNetwork();
+            NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
             try { Assert.False(RoadRockPolicy.ZoneNeedsLook(midZone, midCentre)); }
             finally { NetworkCutoff.Forget(); }
             Assert.True(RoadRockPolicy.ZoneNeedsLook(midZone, midCentre));
         }
         finally { TearDownGeneration(); }
+    }
+
+    /// <summary>A structure's middle with no road points still makes neighbouring vegetation generation read its walk.
+    /// The saved-world queue and road_bake must visit those same zones, so their saved trees get that judgment too.</summary>
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(1)]
+    public void TheBakeQueuesAStructureWalksNeighbourAsGenerationReadsIt(int side)
+    {
+        var world = HeldRiverWorld();
+        using var worldScope = new ValheimWorldScope().WithWorld(world).WithZoneSystem();
+        RoadNetworkGenerator.Reset();
+        SetPathfinder(Pathfinder(world, true));
+        try
+        {
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-300f, 0f), 0f, new Vector2(400f, 0f), 0f, 4f, "Cross river"));
+            var crossing = Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
+            Vector2 mid = (crossing.FromBank + crossing.ToBank) * 0.5f;
+            var midZone = ZoneSystem.GetZone(new Vector3(mid.x, 0f, mid.y));
+            var neighbour = new Vector2s(midZone.x, midZone.y + side);
+            var deck = StructurePlans.PlanFor(midZone)!.First(p => p.Kind == StructurePieceKind.Deck);
+            // Place one planned deck's origin just inside the border, keeping it in its existing zone bucket.
+            deck.Position.z = ZoneSystem.GetZonePos(midZone).z + side * (RoadConstants.HalfZoneSize - 1f);
+            Assert.DoesNotContain(neighbour, StructurePlans.PlannedZones);
+            Assert.NotEmpty(StructurePlans.WalksNear(neighbour));
+            // Isolate the walk's reach from the approaches' road and terrain points.
+            RoadSpatialGrid.Clear();
+            RoadClearAreaManager.ClearCache();
+            Assert.Empty(RoadClearAreaManager.ZonesReached());
+
+            var generation = RoadClearAreaManager.ForGeneration(neighbour, new List<ZoneSystem.ClearArea>(), judged: true,
+                out var generationRoad, out _);
+            var bake = RoadClearAreaManager.ForBake(neighbour, -1, out var bakeRoad);
+            Assert.NotEmpty(generation.Walks);
+            Assert.Equal(generation.Walks.ToArray(), bake.Walks.ToArray());
+            Assert.Equal(generationRoad.Select(c => (c.Centre, c.HalfWidth, c.Height)),
+                bakeRoad.Select(c => (c.Centre, c.HalfWidth, c.Height)));
+            var queued = ServerBakePlanner.NetworkZones(out int roadZones);
+            Assert.Equal(0, roadZones);
+            Assert.Contains(neighbour, queued);
+            var far = new Vector2s(midZone.x + 40, midZone.y + 40);
+            Assert.Empty(StructurePlans.WalksNear(far));
+            Assert.DoesNotContain(far, queued);
+        }
+        finally { RoadClearAreaManager.ClearCache(); TearDownGeneration(); }
+    }
+
+    /// <summary>Burial can leave a stored walking box with no emitted piece. Generation still reads that box, so its
+    /// own zone and neighbour must also reach the saved-world queue.</summary>
+    [Fact]
+    public void AStoredStairWalkWhoseStaircaseLaysNothingIsNeitherClearedNorQueued()
+    {
+        using var worldScope = new ValheimWorldScope().WithWorld(HeldRiverWorld()).WithZoneSystem();
+        RoadNetworkGenerator.Reset();
+        try
+        {
+            var run = new StairRun();
+            var box = new StairClearance(new Vector3(0f, 10f, RoadConstants.HalfZoneSize - 1f), new Vector3(1f, 1f, 1f), 0f, 10f);
+            run.Clearances.Add(box);
+            StairStructures.Add(run);
+            Assert.Empty(StructurePlans.PlannedZones);
+            var own = ZoneSystem.GetZone(box.Centre);
+            var neighbour = new Vector2s(own.x, own.y + 1);
+            var queued = ServerBakePlanner.NetworkZones(out int roadZones);
+            Assert.Equal(0, roadZones);
+            foreach (var zone in new[] { own, neighbour })
+            {
+                var generation = RoadClearAreaManager.ForGeneration(zone, new List<ZoneSystem.ClearArea>(), judged: true, out _, out _);
+                // A staircase that lays no piece clears nothing (the owner's X16 decision): generation reads no walk for it,
+                // and the bake queues no zone for it, as both read the one inventory (StairStructures.WalkBoxes).
+                Assert.Empty(generation.Walks);
+                Assert.DoesNotContain(zone, queued);
+            }
+        }
+        finally { RoadClearAreaManager.ClearCache(); TearDownGeneration(); }
+    }
+
+    /// <summary>A river jump asks the cutoff as every other step of the search does (NetworkCutoff.AvoidsSegment, bank to
+    /// bank as built): over the wide river (core |x| &lt; 40, banks at |x| = 48) the zone under the middle of the search's
+    /// bridge holds water only. Left alone by the network being planned, the search buys no jump over it, both banks
+    /// outside it, and the road crosses elsewhere. Before, the jump never asked: the search crossed there, and only the
+    /// bridge's refusal when built (its pieces in that zone) could send the generator round again.</summary>
+    [Fact]
+    public void ABridgeDoesNotFlyOverAZoneTheNetworkLeavesAlone()
+    {
+        var world = new WideRiverWorld();
+        using var worldScope = new ValheimWorldScope().WithWorld(world).WithZoneSystem();
+        var from = new Vector2(-150f, 0f);
+        var to = new Vector2(150f, 0f);
+        static Vector2s Zone(Vector2 p) => ZoneSystem.GetZone(new Vector3(p.x, 0f, p.y));
+        static bool Over(Vector2 a, Vector2 b, Vector2s zone)
+        {
+            float length = Vector2.Distance(a, b);
+            for (float s = 0f; s <= length; s += 1f)
+                if (Zone(Vector2.Lerp(a, b, s / length)) == zone) return true;
+            return false;
+        }
+        RoadNetworkGenerator.Reset();
+        NetworkCutoff.Forget();
+        try
+        {
+            // The fixture: unprotected, the search's jump has a zone under its middle that holds neither bank.
+            var (a, b) = FindJump(Pathfinder(world, true).FindPath(from, to)!, world)!.Value;
+            Vector2s middle = Zone((a + b) * 0.5f);
+            Assert.NotEqual(middle, Zone(a));
+            Assert.NotEqual(middle, Zone(b));
+
+            NetworkCutoff.SnapshotWorld(new[] { middle });
+            NetworkCutoff.IncludeExplored(new[] { middle });
+            NetworkCutoff.BeginNewNetwork();
+            List<Vector2>? path = Pathfinder(world, true).FindPath(from, to);
+            Assert.NotNull(path);
+            for (int i = 1; i < path!.Count; i++)
+                Assert.False(Over(path[i - 1], path[i], middle), $"the search's step {path[i - 1]} -> {path[i]} goes over the zone left alone");
+            SetPathfinder(Pathfinder(world, true));
+            Assert.True(RoadNetworkGenerator.GenerateRoad(from, 0f, to, 0f, 4f, "Cross river"));
+            Assert.NotEmpty(RoadNetworkGenerator.GetRoadCrossings());
+            Assert.DoesNotContain(RoadNetworkGenerator.GetRoadCrossings(), c => Over(c.FromBank, c.ToBank, middle));
+        }
+        finally { NetworkCutoff.Forget(); TearDownGeneration(); }
     }
 
     /// <summary>A ford built as a footbridge has a deck too: its clearances come through the plans like a bridge's.</summary>
@@ -990,7 +1511,7 @@ public class BridgeTests
         // WORLD has generated, because on a dedicated server the engine's
         // loaded zones are the block around a sentinel reference position and
         // the players' surroundings are ghost zones with no Heightmap at all.
-        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        var world = HeldRiverWorld();
         using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
@@ -1027,7 +1548,7 @@ public class BridgeTests
     public void SpawnedZonesSurviveASaveAndLoadEvenOnALoadedNetwork()
     {
         var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
-        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos().WithNetwork(server: true);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try
@@ -1067,7 +1588,7 @@ public class BridgeTests
     [Fact]
     public void ARejectedIslandRegenerationKeepsTheBridges()
     {
-        var world = new SyntheticWorld { HasRiver = true, HasMountain = false };
+        var world = HeldRiverWorld();
         using var scope = new ValheimWorldScope().WithWorld(world);
         scope.WithZoneSystem();
         var zones = ZoneSystem.instance!;
@@ -1593,9 +2114,9 @@ public class BridgeTests
         var world = new SwampShelfWorld { ShelfLength = 10000f };   // never dry within reach
         var from = new Vector2(-25f, 0f);
         var to = new Vector2(25f, 0f);
-        var (f2, t2) = RoadCrossingDetector.ExtendOverSwampShelf(from, to, world);
+        var (f2, t2) = RoadCrossingDetector.ExtendOverShelf(from, to, RoadRules.SwampShelfReach, world);
         Assert.Equal(from.x, f2.x, 3);
-        Assert.True(Vector2.Distance(f2, t2) <= RoadConstants.SwampBridgeDryReach + Vector2.Distance(from, to) + 0.5f);
+        Assert.True(Vector2.Distance(f2, t2) <= RoadRules.SwampShelfReach + Vector2.Distance(from, to) + 0.5f);
     }
 
     // ---- high banks that stand back from the water ----

@@ -20,44 +20,37 @@ public interface IStructureSource
     /// Deterministic from the network and the seed: never stored.</summary>
     IEnumerable<StructurePiece> Plan(WorldGenerator world, int seed);
 
-    /// <summary>Circles to keep vegetation out of round one zone's pieces of this source.</summary>
+    /// <summary>Squares (the game's clear areas, centre and half-size) to keep vegetation out of round one zone's pieces of
+    /// this source.</summary>
     void AddClearAreas(List<StructurePiece> zonePieces, List<(Vector3 centre, float radius)> areas);
+
+    /// <summary>The walking surfaces of this source's structures standing in the zones <paramref name="near"/> (StairSupport.Walk:
+    /// footprint, underside and walking surface), <paramref name="buildable"/> giving a zone's buildable planned pieces of this
+    /// source (null where none): what vegetation obstructs when it reaches into one or its headroom (VegetationClearing.Judge).</summary>
+    void AddWalksNear(IReadOnlyList<Vector2s> near, System.Func<Vector2s, List<StructurePiece>?> buildable, List<StairSupport.Walk> walks);
 
     /// <summary>Where a walker on this source's structures needs rock cleared, within reach of a point.</summary>
     void AddClearances(Vector3 centre, float radius, List<StructureClearance> clearances);
 }
 
 /// <summary>
-/// Space on a structure that must be clear of rock, in one of two forms. A
-/// walking-line point is cleared like a road at <see cref="Point"/> (heading
-/// from its neighbours on <see cref="Line"/>), standing on <see cref="Surface"/>,
-/// <see cref="Height"/> tall: a bridge deck. A box (<see cref="IsBox"/>) is
-/// given whole, turned by <see cref="YawDegrees"/>: a stretch of a staircase.
-/// <see cref="WholeOnly"/>: a rock here is removed whole, never carved.
-/// <see cref="KeepsSiteRocks"/>: a rock standing in a place's footprint is kept.
+/// A box of space on a structure that must be clear of rock, turned by <see cref="YawDegrees"/> (its local z along the
+/// walk), over a walking surface at <see cref="Surface"/>: a staircase's stored walking box (StairLayout.AddClearance), or
+/// a bridge's deck or end step (BridgeStructures.AddClearances). <see cref="WholeOnly"/>: a rock here is removed whole,
+/// never carved, and the box is the structure's own, given as it is (RockClearances.Near): a deck's.
+/// <see cref="KeepsLocationRocks"/>: a rock standing in a location's footprint is kept.
 /// </summary>
 public readonly struct StructureClearance
 {
-    public readonly RoadSpatialGrid.RoadPoint Point;
-    public readonly List<RoadSpatialGrid.RoadPoint>? Line;
-    public readonly float Surface;
-    public readonly float Height;
-    public readonly bool WholeOnly;
-    public readonly bool IsBox;
     public readonly Vector3 Centre;
     public readonly Vector3 Half;
     public readonly float YawDegrees;
-    public readonly bool KeepsSiteRocks;
+    public readonly float Surface;
+    public readonly bool WholeOnly;
+    public readonly bool KeepsLocationRocks;
 
-    public StructureClearance(RoadSpatialGrid.RoadPoint point, List<RoadSpatialGrid.RoadPoint> line, float surface, float height, bool wholeOnly)
+    public StructureClearance(Vector3 centre, Vector3 half, float yawDegrees, float surface, bool wholeOnly, bool keepsLocationRocks)
     {
-        Point = point; Line = line; Surface = surface; Height = height; WholeOnly = wholeOnly;
-        IsBox = false; Centre = default; Half = default; YawDegrees = 0f; KeepsSiteRocks = false;
-    }
-
-    public StructureClearance(Vector3 centre, Vector3 half, float yawDegrees, float surface, bool keepsSiteRocks = false)
-    {
-        Point = default; Line = null; Surface = surface; Height = half.y * 2f; WholeOnly = false;
-        IsBox = true; Centre = centre; Half = half; YawDegrees = yawDegrees; KeepsSiteRocks = keepsSiteRocks;
+        Centre = centre; Half = half; YawDegrees = yawDegrees; Surface = surface; WholeOnly = wholeOnly; KeepsLocationRocks = keepsLocationRocks;
     }
 }

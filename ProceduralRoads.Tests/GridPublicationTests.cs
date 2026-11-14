@@ -19,12 +19,12 @@ public sealed class GridPublicationTests : IDisposable
     public GridPublicationTests()
     {
         _scope.WithWorld(new FlatWorld());
-        RoadNetworkGenerator.Reset(); RoadSiteProtection.Reset(); RoadSpatialGrid.Clear();
+        RoadNetworkGenerator.Reset(); RoadLocationProtection.Reset(); RoadSpatialGrid.Clear();
     }
 
     public void Dispose()
     {
-        RoadNetworkGenerator.Reset(); RoadSiteProtection.Reset(); _scope.Dispose();
+        RoadNetworkGenerator.Reset(); RoadLocationProtection.Reset(); _scope.Dispose();
     }
 
     [Theory]

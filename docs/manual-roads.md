@@ -12,8 +12,8 @@ road_connect force
 road_path 120,-450 180,-470 240,-420
 ```
 
-- `road_connect` joins the network on your island from where you stand, a point or a connected player, as the generator joins a place: where the road to the nearest junction is refused, it tries the next. The search may take a while, and the game may pause while it runs. When nothing can be built, it says why and where, and how many roads it tried.
-- Inside a place or its road clearance, `road_connect` builds nothing the first time and names the place. Run the same command again within two minutes to join that place to the network from its landing or approach, as the generator would.
+- `road_connect` joins the network on your island from where you stand, a point or a connected player, as the generator joins a location: where the road to the nearest junction is refused, it tries the next. The search may take a while, and the game may pause while it runs. When nothing can be built, it says why and where, and how many roads it tried.
+- Inside a location or its road clearance, `road_connect` builds nothing the first time and names the location. Run the same command again within two minutes to join that location to the network from its landing or approach, as the generator would.
 - `road_path` routes through 2 to 32 points in order, all on one island; it can make an island's first road.
 
 A manual road goes round every zone players changed (something a player built, or a terrain edit in land explored before the roads), and its levelling stays out of them. To build into one on purpose, stand in it for `road_connect` or put a mark in it: the first run builds nothing and names the zones; run the same command again within two minutes to build it there, over whatever stands on its line. `force` at the end (`road_connect force`, `road_path ... force`, `road_mark build force`) builds through any zone at once and says which zones players had changed.
@@ -30,7 +30,7 @@ road_mark build
 
 ## Saving
 
-A manual road is saved with the network and kept across save and reload. Regenerating the network (`road_generate`, `road_regen_island`) replaces it. Terrain changes only inside the new road's footprint; zones that are not loaded get the road when they load. There is no undo.
+A manual road is saved with the network and kept across save and reload. Regenerating the network (`road_generate`, `road_regen_island`) replaces it: where the new network does not run, its ground stays levelled and painted, but it is no longer part of the network. Terrain changes only inside the new road's footprint; zones that are not loaded get the road when they load. There is no undo.
 
 Manual roads are refused on a world whose saved network could not be read. Older builds of the mod cannot read a network with manual roads, so back up the world before downgrading.
 

@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Xunit;
 
@@ -106,7 +108,7 @@ public class RoadIslandDetectorTests
     /// <summary>A point at an island's tip is on it: the membership test takes a point into the cell nearest it, half a cell
     /// either side of the cell's centre, and its bounding box reaches as far. The box was the outermost cells' centres, so a
     /// point in the last half cell at each of the island's four extreme extents was refused though its cell is the island's
-    /// (a place centred there was no destination).</summary>
+    /// (a location centred there was no destination).</summary>
     [Fact]
     public void APointInTheHalfCellPastTheOutermostCellCentreIsOnTheIsland()
     {
@@ -148,4 +150,74 @@ public class RoadIslandDetectorTests
     [Fact]
     public void MinimumAreaFiltersSmallGroups() =>
         Assert.Empty(RoadIslandDetector.Detect(new ChannelWorld(),worldRadius:128,minArea:1000000));
+
+    /// <summary>Round islands of low land (<see cref="Land"/> m, a shore landings can be read on), and strips, in deep
+    /// water.</summary>
+    private sealed class Archipelago : WorldGenerator
+    {
+        public readonly List<(Vector2 centre, float radius)> Islands = new();
+        public readonly List<(float x0, float z0, float x1, float z1)> Strips = new();
+        /// <summary>Shallow water (wet, not deep, <see cref="Shelf"/> m) this far out round every island: a shore's water
+        /// approach reads that far and more before it reaches deep water.</summary>
+        public float ShelfWidth;
+        public const float Land = 33f, Shelf = 29f;
+        public override float GetHeight(float x, float z)
+        {
+            if (Strips.Any(r => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1)) return Land;
+            float edge = Islands.Min(i => (new Vector2(x, z) - i.centre).magnitude - i.radius);
+            return edge < 0f ? Land : edge < ShelfWidth ? Shelf : -50f;
+        }
+    }
+
+    private static List<Island> Generations(WorldGenerator world)
+    {
+        List<Island>? islands = null;
+        using var preparation = new RoadPreparation(p => IslandDetector.DetectRoadIslandsSteps(world, new RoadNetworkOptions(), p, value => islands = value));
+        preparation.Drain();
+        return islands!;
+    }
+
+    private static List<Island> WholeWorlds(WorldGenerator world)
+    {
+        List<Island>? islands = null;
+        using var preparation = new RoadPreparation(p => RoadIslandDetector.DetectSteps(world, p, value => islands = value, options: new RoadNetworkOptions()));
+        preparation.Drain();
+        return islands!;
+    }
+
+    /// <summary>Everything an island tells its readers, its cells by where they stand in the world.</summary>
+    private static string Read(List<Island> islands) => string.Join("\n", islands.Select(i => FormattableString.Invariant(
+        $"{i.Id} {i.CellCount} {i.Center.x:R},{i.Center.y:R} {i.Min.x:R},{i.Min.y:R} {i.Max.x:R},{i.Max.y:R} {i.ApproxArea:R} {i.CellSize:R} | ")
+        + string.Join(" ", i.Cells.Select(c => { Vector2 w = i.CellToWorld(c); return FormattableString.Invariant($"{w.x:R},{w.y:R}"); }))
+        + " | " + string.Join(" ", i.CoastalLandings.Select(l => FormattableString.Invariant($"{l.x:R},{l.y:R},{l.z:R}")))));
+
+    /// <summary>
+    /// Generation's island scan bounded to the world's land (the suite's, IslandDetector.BoundedScan) finds exactly the whole
+    /// world's islands, cells, ids, centres and shore landings. It reads the world for land every fourth cell and scans out to
+    /// the farthest land read, with room for all the grouping reads from it (a bridge's span, the coast's raster): with
+    /// another island beside the first or far off, it scans less than the world; with a strip of land narrower than the
+    /// probes' spacing between them, near the bound's edge, it scans the whole world. The game scans the whole world.
+    /// </summary>
+    [Theory]
+    [InlineData("beside", false)]
+    [InlineData("far", false)]
+    [InlineData("strip between the probes", true)]
+    public void ABoundedIslandScanFindsTheWholeWorldsIslands(string second, bool wholeWorld)
+    {
+        Assert.False((bool)PlainRoads.ModDefaults["bounded island scan"]);
+        Assert.True(IslandDetector.BoundedScan);
+        // The far island's shores read 120 m of shallows before deep water, past the land as far as the bound must reach: its
+        // landing is drawn on its western shore, the far side from the centre.
+        var world = new Archipelago { ShelfWidth = second == "far" ? 120f : 0f };
+        world.Islands.Add((new Vector2(-150f, 40f), 300f));
+        world.Islands.Add(second == "far" ? (new Vector2(-6000f, 0f), 240f) : (new Vector2(420f, -60f), 240f));
+        // 8 m wide, between the probe columns at x = 768 and 800 and off their rows but z = 0: past the land the probes read
+        // (out to about 650 m), inside the bound (888 m).
+        if (second == "strip between the probes") world.Strips.Add((772f, -12f, 780f, 12f));
+        List<Island> bounded = Generations(world), whole = WholeWorlds(world);
+        Assert.Equal(2, whole.Count);
+        Assert.NotEmpty(whole.SelectMany(i => i.CoastalLandings));
+        Assert.Equal(Read(whole), Read(bounded));
+        Assert.All(bounded, i => Assert.True(wholeWorld == (i.WorldOffset == RoadConstants.WorldRadius), FormattableString.Invariant($"scanned to {i.WorldOffset} m")));
+    }
 }

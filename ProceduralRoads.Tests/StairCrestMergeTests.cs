@@ -15,7 +15,7 @@ namespace ProceduralRoads.Tests;
 /// road's point at the crest with no meet, it set off from the ground there: on RoadSeedD the merged one's top floors
 /// stood a rise over the first's crest floor, nothing joining the two, and once the ground was cut the first's top was
 /// left 0.94 m under them. Fixtures/ridge-merge-crest.txt is a crest at (9104, 72) in a test world generated offline
-/// with its places placed first: the road, its stair steps and its ground as laid there, where the second, laid over
+/// with its locations placed first: the road, its stair steps and its ground as laid there, where the second, laid over
 /// both stretches, is snapped off the first's crest floor (SnapOffCrest). Laid there with no meet, its top cannot be
 /// joined to the first's (no clip within a walker's step) and the road's stairs are refused. Earlier fixtures,
 /// RoadSeedD's crest at (-9776, -528) and a crest at (-1544, 7640), no longer lay: the first once the ground was read

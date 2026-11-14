@@ -51,7 +51,8 @@ public static partial class RoadStairRuns
     /// carried (<see cref="SetsOffFrom"/>, the test LayOnce decides that by): that end is shared.
     /// </summary>
     internal static StairPlan CarryRoadOntoStairs(StairPlan plan, List<Vector2> path, int start, int to, bool foot, bool top,
-        List<RoadStairSpan> spans, IReadOnlyList<RoadCrossing> crossings, (int from, int to)? next, WorldGenerator world, Func<float, float, float> ground)
+        List<RoadStairSpan> spans, IReadOnlyList<RoadCrossing> crossings, (int from, int to)? next, WorldGenerator world, Func<float, float, float> ground,
+        RoadLocationProtection.Targets locations)
     {
         var stops = new HashSet<int>();
         if (next is (int nextFrom, _)) stops.Add(nextFrom);
@@ -78,7 +79,7 @@ public static partial class RoadStairRuns
                     trimmed.RingStart = back;
                     return (end, f.y, end);
                 },
-                beyond, beyond - footAt, path, stops, reversed ? Onward : null, runs, world, ground);
+                beyond, beyond - footAt, path, stops, reversed ? Onward : null, runs, crossings, world, ground, locations);
         }
         int topAt = reversed ? start : to, past = reversed ? start - 1 : to + 1;
         if (top && past >= 0 && past < path.Count && !plan.CrestFloored && plan.TopCrested == null && !plan.BuiltDown)
@@ -91,7 +92,7 @@ public static partial class RoadStairRuns
                     Vector2 last = new(trimmed.End.x, trimmed.End.z);
                     return (RoadEndPast(trimmed, last, trimmed.EndHeading, road, trimmed.End.y, top: true), trimmed.End.y, last);
                 },
-                past, past - topAt, path, stops, reversed ? null : Onward, runs, world, ground);
+                past, past - topAt, path, stops, reversed ? null : Onward, runs, crossings, world, ground, locations);
         }
         return plan;
     }
@@ -113,9 +114,13 @@ public static partial class RoadStairRuns
     /// </summary>
     private static StairPlan CarryEnd(StairPlan plan, bool atTop, CarryPrint road, Func<bool> sharedAsLaid, Func<StairPlan, (Vector2 end, float height, Vector2 onwardAt)> newEnd,
         int from, int step, List<Vector2> path, HashSet<int> stops, Func<Vector2, float, bool>? onward,
-        Lazy<List<StairRun>> runs, WorldGenerator world, Func<float, float, float> ground)
+        Lazy<List<StairRun>> runs, IReadOnlyList<RoadCrossing> crossings, WorldGenerator world, Func<float, float, float> ground, RoadLocationProtection.Targets locations)
     {
         string which = atTop ? "top" : "foot";
+        // The carry's road runs from the new end out along the path (Line), toward the road's end that way: the location that end
+        // arrives at, if any, is the one it is planned into (a trimmed arrival grazing its own location's clearance, as the
+        // road's last piece does, RoadNetworkGenerator.PlanRoadPathWithCrossings); it sets off from no location.
+        locations = new RoadLocationProtection.Targets(null, step > 0 ? locations.End : locations.Start);
         int rows = StairLayout.EndFloorRows(plan, atTop, Width);
         if (rows == 0) return plan;
         System.Threading.Interlocked.Increment(ref EndsByFloorRows[Mathf.Min(rows, EndsByFloorRows.Length) - 1]);
@@ -124,7 +129,12 @@ public static partial class RoadStairRuns
         if (StairLayout.TrimEndFloors(plan, atTop, TopLandings, Width) is not StairPlan trimmed) return plan;
         System.Threading.Interlocked.Increment(ref EndsTried);
         road.Add(plan);
-        var key = new CarryKey(plan.Kit, atTop, road.A, road.B, world, RoadNetworkGenerator.IslandNetworkVersion);
+        // The road's own viaducts its carry's ridges are judged from (RoadOnto, RoadNetworkGenerator.Ridges): a road with
+        // other viaducts is not the same carry.
+        foreach (RoadCrossing c in crossings)
+            if (BridgeStructures.IsViaduct(c, world)) { road.Add(c.FromBank); road.Add(c.ToBank); }
+        var key = new CarryKey(plan.Kit, atTop, road.A, road.B, world, RoadNetworkGenerator.IslandNetworkVersion, locations,
+            RoadSpatialGrid.PlanningState.Now());
         if (s_plans.TryGetCarry(key, out CarryDecision known))
         {
             System.Threading.Interlocked.Increment(ref CarriesReused);
@@ -138,7 +148,7 @@ public static partial class RoadStairRuns
         var (end, height, onwardAt) = newEnd(trimmed);
         int floors = atTop ? trimmed.TopFloorsTrimmed : trimmed.FootFloorsTrimmed;
         string? why = sharedAsLaid() || onward?.Invoke(onwardAt, height) == true ? SharedOnward
-            : RoadOnto(trimmed, end, height, Line(end, path, from, step, stops), atTop, runs, world, ground);
+            : RoadOnto(trimmed, end, height, Line(end, path, from, step, stops), atTop, runs, crossings, world, ground, locations);
         s_plans.Carried(key, new CarryDecision(trimmed.Ring, why, end, floors));
         Decided(why, which, end, floors);
         if (why != null) return plan;
@@ -151,8 +161,10 @@ public static partial class RoadStairRuns
     /// as it reaches the carry (its kit, ends, ring and every piece, in <see cref="A"/> and <see cref="B"/>: a layout from the
     /// cache has been edited by its road since, a span cut or a foot dropped), which end, what the road there reads of the path
     /// (<see cref="CarryRoad"/>), the world, and the island's network version (RoadNetworkGenerator.IslandNetworkVersion: the
-    /// network RoadOnto's owners judge the road against, the same until a road or staircase is laid). Two retries of one road
-    /// reach the same end on the same line; a replan whose line there differs is another key, not a stale decision.
+    /// network RoadOnto's owners judge the road against, the same until a road or staircase is laid), and what the road being
+    /// planned has set on this thread that its road's piece reads (<see cref="State"/>, the piece memo's own). Two retries of one
+    /// road reach the same end on the same line; a replan whose line there differs is another key, not a stale decision, and so
+    /// is a second plan of the same road as the last resort or as a trial, or with other points held.
     /// </summary>
     internal readonly struct CarryKey : IEquatable<CarryKey>
     {
@@ -161,14 +173,25 @@ public static partial class RoadStairRuns
         public readonly ulong A, B;
         public readonly WorldGenerator World;
         public readonly int Network;
+        /// <summary>The locations the road is planned between (RoadOnto plans the carry's road with them).</summary>
+        public readonly RoadLocationProtection.Targets Locations;
+        /// <summary>What the road being planned has set on this thread that the carry's road reads as RoadSpatialGrid.PlanRoadPath
+        /// plans it, taken and compared as a remembered piece's is (RoadSpatialGrid.PlanningState: its held points, levelled ends,
+        /// the sway's held points, the network as a road not stored yet would leave it, and its switches, the last resort and a
+        /// trial among them).</summary>
+        public readonly RoadSpatialGrid.PlanningState State;
 
-        public CarryKey(string kit, bool atTop, ulong a, ulong b, WorldGenerator world, int network) =>
-            (Kit, AtTop, A, B, World, Network) = (kit, atTop, a, b, world, network);
+        public CarryKey(string kit, bool atTop, ulong a, ulong b, WorldGenerator world, int network, RoadLocationProtection.Targets locations, RoadSpatialGrid.PlanningState state) =>
+            (Kit, AtTop, A, B, World, Network, Locations, State) = (kit, atTop, a, b, world, network, locations, state);
+
+        private static bool Same(Vector2? p, Vector2? q) => p.HasValue == q.HasValue
+            && (p is not Vector2 u || q is Vector2 v && TerrainFingerprint.Bits(u.x) == TerrainFingerprint.Bits(v.x) && TerrainFingerprint.Bits(u.y) == TerrainFingerprint.Bits(v.y));
 
         public bool Equals(CarryKey o) => A == o.A && B == o.B && AtTop == o.AtTop && Network == o.Network && ReferenceEquals(World, o.World)
-            && string.Equals(Kit, o.Kit, StringComparison.Ordinal);
+            && string.Equals(Kit, o.Kit, StringComparison.Ordinal) && Same(Locations.Start, o.Locations.Start) && Same(Locations.End, o.Locations.End)
+            && (ReferenceEquals(State, o.State) || State != null && o.State != null && State.Same(o.State));
         public override bool Equals(object? obj) => obj is CarryKey k && Equals(k);
-        public override int GetHashCode() => unchecked((int)A ^ (int)(A >> 32) ^ Network * 397 ^ (AtTop ? 1 : 0));
+        public override int GetHashCode() => unchecked((int)A ^ (int)(A >> 32) ^ Network * 397 ^ (State?.Flags ?? 0) * 7919 ^ (AtTop ? 1 : 0));
     }
 
     /// <summary>An end's carry as <see cref="CarryEnd"/> decided it: why it was not carried (null: carried, the staircase
@@ -324,11 +347,13 @@ public static partial class RoadStairRuns
     /// Why the road cannot be carried on to a staircase's end at <paramref name="end"/> (at <paramref name="height"/>) over the
     /// floors <paramref name="plan"/> no longer lays, or null where it can. The road there is the road's own: planned along
     /// <paramref name="line"/> (its first point the end) from the end's height as any road piece is
-    /// (RoadSpatialGrid.PlanRoadPath: its grade cap, its curves and turns, its clearance of places), and judged as any road is
-    /// at its commit, by generation's own list of what refuses a road as planned (RoadNetworkGenerator.BuiltRoadRefusal: its
+    /// (RoadSpatialGrid.PlanRoadPath: its grade cap, its curves and turns, its clearance of locations), and judged as any road is
+    /// at its commit, by the one list of what refuses a road as planned (RoadNetworkGenerator.RoadRefusal, as BuiltRoadRefusal: its
     /// earthwork cap, a junction held on a ridge of fill, the network it meets: another road crossed or run beside, a laid
     /// staircase's flight) and what generation searches a road round (RoadNetworkGenerator.SearchedRound: a stretch held far
-    /// off its profile, a trench or ridge), which with its one try it cannot, so is refused for; water as the search read it
+    /// off its profile, a trench or ridge), which with its one try it cannot, so is refused for, its trenches and ridges judged
+    /// from the road's own <paramref name="crossings"/> (its viaducts, RoadNetworkGenerator.Ridges, as its commit judges them),
+    /// none of which the piece is judged with otherwise; water as the search read it
     /// for this road (<see cref="CarryWater"/>: RoadWater.Walked, a swamp's shallows waded); and this road's own staircases
     /// (<see cref="OnAFlight(IReadOnlyList{StairRun}, IReadOnlyList{Vector2}, IReadOnlyList{float})"/>). The staircase meets
     /// it by the ring's rules: at a foot its kept floor row sets off from the new end's ring as the ring allows a start
@@ -339,7 +364,7 @@ public static partial class RoadStairRuns
     /// owners above, not here.
     /// </summary>
     internal static string? RoadOnto(StairPlan plan, Vector2 end, float height, List<Vector2> line, bool atTop,
-        Lazy<List<StairRun>> runs, WorldGenerator world, Func<float, float, float> ground)
+        Lazy<List<StairRun>> runs, IReadOnlyList<RoadCrossing> crossings, WorldGenerator world, Func<float, float, float> ground, RoadLocationProtection.Targets locations)
     {
         Vector2 away = Back(line, 0, 1, TravelReach);
         if (line.Count < 2 || (away - end).sqrMagnitude < 0.01f) return "no road beyond it";
@@ -350,10 +375,12 @@ public static partial class RoadStairRuns
             return early;
         }
         // The road: a piece from the end, held to its height there, its far end on its ground.
-        RoadSpatialGrid.PlannedPath? road = RoadSpatialGrid.PlanRoadPath(line, RoadNetworkGenerator.RoadWidth, world, startGround: height);
+        // Planned with the locations the road is planned between (decision 6d, locations carried by identity): its own target's
+        // footprint lets it in as it lets the road in; any other location's keeps its clearance.
+        RoadSpatialGrid.PlannedPath? road = RoadSpatialGrid.PlanRoadPath(line, RoadNetworkGenerator.RoadWidth, world, startGround: height, locations: locations);
         if (road == null) return "the road: " + (RoadSpatialGrid.LastRefusal ?? "not planned");
         var plans = new List<RoadSpatialGrid.PlannedPath> { road };
-        if ((RoadNetworkGenerator.BuiltRoadRefusal(plans, NoCrossings, out Vector2 at) ?? RoadNetworkGenerator.SearchedRound(plans, out at)) is string refused)
+        if ((RoadNetworkGenerator.BuiltRoadRefusal(plans, NoCrossings, out Vector2 at, ridgeCrossings: crossings) ?? RoadNetworkGenerator.SearchedRound(plans, out at, crossings)) is string refused)
             return FormattableString.Invariant($"{refused}: at ({at.x:F1}, {at.y:F1})");
         if (CarryWater(world, road.Points) is string wet) return wet;
         if (OnAFlight(runs.Value, road.Points, road.Heights)) return "on this road's staircase";
@@ -366,7 +393,7 @@ public static partial class RoadStairRuns
             plan.Ring = ring;
         }
         if (ring.Intrudes(plan, out string piece, atTop)) return "the staircase in its ring: " + piece;
-        if (RoadEndRing.PadUnder(plan, ring, atTop, ground, RoadNetworkGenerator.ShapedLimit, out string padWhy) == null) return "no start pad: " + padWhy;
+        if (RoadEndRing.PadUnder(plan, ring, atTop, ground, RoadNetworkGenerator.EarthworkLimit, out string padWhy) == null) return "no start pad: " + padWhy;
         return null;
     }
 

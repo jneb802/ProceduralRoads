@@ -15,7 +15,7 @@ namespace ProceduralRoads;
 ///
 /// From each waypoint this keeps the furthest later waypoint a straight line
 /// can reach, within <see cref="MaxPull"/> metres, when that line is:
-///  - dry, off every protected site, and within the search's own grade limit
+///  - dry, off every protected location, and within the search's own grade limit
 ///    between 2 m samples, and
 ///  - NO STEEPER than the path it replaces: its total rise and fall per metre
 ///    is at most <see cref="Steepen"/> times the replaced path's, or under
@@ -41,7 +41,8 @@ public static class RoadPathPull
     private const float Sample = 2f;
 
     public static List<Vector2> Pull(List<Vector2> path, float width, Func<Vector2, float> ground,
-        Func<Vector2, bool> wet, float gradeLimit, float? maxPull = null, Func<Vector2, bool>? anchor = null)
+        Func<Vector2, bool> wet, float gradeLimit, float? maxPull = null, Func<Vector2, bool>? anchor = null,
+        RoadLocationProtection.Targets locations = default)
     {
         if (path.Count < 3) return path;
         float reach = maxPull ?? MaxPull;
@@ -57,7 +58,7 @@ public static class RoadPathPull
                 // never skipped: pulling past it would leave the road beside
                 // the one it was put on.
                 if (anchor != null && anchor(path[j - 1])) break;
-                if (Admissible(path, i, j, width, ground, wet, gradeLimit)) best = j;
+                if (Admissible(path, i, j, width, ground, wet, gradeLimit, locations)) best = j;
             }
             result.Add(path[best]);
             i = best;
@@ -104,11 +105,10 @@ public static class RoadPathPull
     }
 
     private static bool Admissible(List<Vector2> path, int i, int j, float width,
-        Func<Vector2, float> ground, Func<Vector2, bool> wet, float gradeLimit)
+        Func<Vector2, float> ground, Func<Vector2, bool> wet, float gradeLimit, RoadLocationProtection.Targets locations)
     {
-        // The one site clearance of the road as it will be built: what the final check would refuse is not pulled.
-        if (RoadSiteProtection.BlocksRoad(path[i], path[j], width, path[0], path[path.Count - 1])) return false;
-        if (NetworkCutoff.AvoidsSegment(path[i], path[j], path[0], path[path.Count - 1])) return false;
+        // The one location clearance of the road as it will be built: what the final check would refuse is not pulled.
+        if (NetworkGround.BlocksRoad(path[i], path[j], width, path[0], path[path.Count - 1], locations)) return false;
         if (Tolerance > 0f && !WithinTolerance(path, i, j, Tolerance)) return false;
         var line = Profile(new[] { path[i], path[j] }, ground, wet);
         if (line == null || line.Value.steepest > gradeLimit) return false;

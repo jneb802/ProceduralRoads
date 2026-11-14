@@ -22,6 +22,16 @@ public class StairLayoutTests
         public void Dispose() => StairLayout.EndGuardReach = StairLayout.DefaultEndGuardReach;
     }
 
+    /// <summary>The climb up the real Mountain face (<see cref="LongClimbUpARealMountainFaceIsReached"/>), laid once for the
+    /// tests that read it here, in StairSupportTests and in StairSupportAnswersTests, each of which took 2 s (10 s under Mono)
+    /// to lay it again: StairLayout.Build reads its arguments and the layout's settings, which every test puts back, and the
+    /// tests only read the plan.</summary>
+    internal static readonly Lazy<(StairPlan plan, Func<float, float, float> ground)> Face = new(() =>
+    {
+        Func<float, float, float> ground = FixtureGround("mountain-face-2m.txt");
+        return (StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), ground), ground);
+    });
+
     private static StairPiece[] Walked(StairPlan plan) =>
         plan.Pieces.Where(p => p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing).ToArray();
 
@@ -264,8 +274,7 @@ public class StairLayoutTests
     [Fact]
     public void LongClimbUpARealMountainFaceIsReached()
     {
-        Func<float, float, float> face = FixtureGround("mountain-face-2m.txt");
-        StairPlan plan = StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), face);
+        StairPlan plan = Face.Value.plan;
 
         Assert.True(plan.Reached, plan.Reason);
         Assert.InRange(plan.Rise, 80f, 84f);
@@ -292,7 +301,7 @@ public class StairLayoutTests
     {
         StairPlan plan = ground switch
         {
-            "face" => StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), FixtureGround("mountain-face-2m.txt")),
+            "face" => Face.Value.plan,
             "gentle" => StairLayout.Build(new Vector2(0, 0), new Vector2(0, 24), PlaneAlongZ(0.25f)),
             _ => StairLayout.Build(new Vector2(-3, 0), new Vector2(14, 22), (x, z) => 0.4f * z + 2f * Mathf.Sin(x * 0.2f)),
         };
@@ -329,10 +338,10 @@ public class StairLayoutTests
     }
 
     /// <summary>Ground from an x z height grid file, bilinear between samples, clamped at its edges.</summary>
-    internal static Func<float, float, float> FixtureGround(string name)
+    internal static Func<float, float, float> FixtureGround(string name, int step = 2)
     {
         var heights = new System.Collections.Generic.Dictionary<(int, int), float>();
-        int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue, step = 2;
+        int minX = int.MaxValue, maxX = int.MinValue, minZ = int.MaxValue, maxZ = int.MinValue;
         foreach (string line in System.IO.File.ReadLines(System.IO.Path.Combine(AppContext.BaseDirectory, "Fixtures", name)))
         {
             if (line.StartsWith("#") || line.Trim().Length == 0) continue;
@@ -396,10 +405,14 @@ public class StairLayoutTests
     private static float ValleyThenFace(float x, float z) =>
         z < 100f ? 0.15f * z : 15f + (z - 100f) * 1.05f + 6f * Mathf.Sin(z * 0.05f) + 4f * Mathf.Sin(x * 0.07f);
 
+    /// <summary>The climb from the valley bottom to the mountain top (<see cref="ValleyBottomToMountainTopIsReachedAlongACoarseRoute"/>),
+    /// laid once for the three tests that read it, as <see cref="Face"/> is.</summary>
+    private static readonly Lazy<StairPlan> Valley = new(() => StairLayout.Build(new Vector2(0, 0), new Vector2(40, 300), ValleyThenFace));
+
     [Fact]
     public void ValleyBottomToMountainTopIsReachedAlongACoarseRoute()
     {
-        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(40, 300), ValleyThenFace);
+        StairPlan plan = Valley.Value;
 
         Assert.True(plan.Reached, plan.Reason);
         Assert.True(plan.Waypoints > 1, "a run this long follows a route");
@@ -463,8 +476,8 @@ public class StairLayoutTests
         StairPlan plan = ground switch
         {
             "gully" => StairLayout.Build(new Vector2(0, 0), new Vector2(0, 16), Gully),
-            "face" => StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), FixtureGround("mountain-face-2m.txt")),
-            _ => StairLayout.Build(new Vector2(0, 0), new Vector2(40, 300), ValleyThenFace),
+            "face" => Face.Value.plan,
+            _ => Valley.Value,
         };
         Assert.True(plan.Reached, plan.Reason);
         StairPiece[] walked = Walked(plan);
@@ -499,8 +512,8 @@ public class StairLayoutTests
     public void NoFlightLiesOverAnother(string ground)
     {
         StairPlan plan = ground == "face"
-            ? StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), FixtureGround("mountain-face-2m.txt"))
-            : StairLayout.Build(new Vector2(0, 0), new Vector2(40, 300), ValleyThenFace);
+            ? Face.Value.plan
+            : Valley.Value;
         Assert.True(plan.Reached, plan.Reason);
         StairPiece[] walked = Walked(plan);
 
@@ -527,8 +540,7 @@ public class StairLayoutTests
     [Fact]
     public void ItEndsLevelWithTheGroundAtItsEnd()
     {
-        Func<float, float, float> ground = FixtureGround("mountain-face-2m.txt");
-        StairPlan plan = StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), ground);
+        var (plan, ground) = Face.Value;
 
         Assert.True(plan.Reached, plan.Reason);
         Assert.InRange(plan.End.y - ground(plan.End.x, plan.End.z), -StairLayout.ReachHeight - 1e-3f, StairLayout.ReachHeight + 1e-3f);

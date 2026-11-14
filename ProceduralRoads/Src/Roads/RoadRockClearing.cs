@@ -60,10 +60,14 @@ public static class RoadRockClearing
 
     public static void Reset() { s_next = 0f; s_cursor = 0; s_done.Clear(); s_retryAt.Clear(); s_waiting.Clear(); s_carves.Clear(); s_carveNext = 0; s_pass = null; }
 
+    /// <summary>A structure was laid with no change to the network (VegetationClearing.Reached): every loaded zone is looked at
+    /// again, as after an append, its new clearances with the rest.</summary>
+    internal static void LookAgain() => s_done.Clear();
+
     public static void Tick()
     {
         RoadRockStats.MaybeLog();
-        if (!RoadNetworkGenerator.RoadsAvailable || ZoneSystem.instance == null || ZNetScene.instance == null) return;
+        if (!RoadLifecycleManager.WritesTheNetwork || ZoneSystem.instance == null || ZNetScene.instance == null) return;
         if (s_pass != null) { CarveSome(s_pass); return; }
         if (Time.unscaledTime < s_next) return;
         s_next = Time.unscaledTime + 0.5f;
@@ -93,7 +97,7 @@ public static class RoadRockClearing
             // collider, and its road terrain must be written, or the road is
             // judged on the ungraded ground. Looked at again when it is ready.
             if (s_retryAt.TryGetValue(candidate.GetInstanceID(), out float retry) && Time.unscaledTime < retry) { RoadRockStats.NotReady++; continue; }
-            if (!TerrainWritten(candidate, candidate.transform.position, zone, orRoadless: false) ||
+            if (!TerrainWritten(candidate, candidate.transform.position) ||
                 !ZNetScene.instance.IsAreaReady(candidate.transform.position)) { RoadRockStats.NotReady++; continue; }
             map = candidate;
         }
@@ -118,13 +122,12 @@ public static class RoadRockClearing
     }
 
     /// <summary>Whether a zone's road terrain is written, the one owner of the test: its heightmap <paramref name="map"/> has
-    /// no rebuild queued, and the road's terrain at <paramref name="zonePos"/> is written
-    /// (<see cref="RoadTerrainModifier.TerrainSettled"/>) or, <paramref name="orRoadless"/>, <paramref name="zone"/> has no
-    /// road point for it to write. The pass asks it without (and waits for the zone's objects too); the carve's fragment
-    /// ground with it. The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).</summary>
-    internal static bool TerrainWritten(Heightmap map, Vector3 zonePos, Vector2s zone, bool orRoadless) =>
-        !map.HaveQueuedRebuild() &&
-        (RoadTerrainModifier.TerrainSettled(zonePos) || orRoadless && RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
+    /// no rebuild queued, and the zone at <paramref name="zonePos"/> owes no road write
+    /// (<see cref="RoadTerrainModifier.TerrainSettled"/>: none reaches it, or its compiler has it). The pass and the carve's
+    /// fragment ground ask it alike; the pass waits for the zone's objects too. The one owner of terrain settled, and
+    /// whether the world is held (docs/OWNERS.md).</summary>
+    internal static bool TerrainWritten(Heightmap map, Vector3 zonePos) =>
+        !map.HaveQueuedRebuild() && RoadTerrainModifier.TerrainSettled(zonePos);
 
     /// <summary>This frame's share of the pending carves, then the zone judged once the last is done. A zone unloaded
     /// meanwhile (its heightmap gone) drops what is left: its next heightmap is a new zone to the pass.</summary>
@@ -307,7 +310,7 @@ public static class RoadRockClearing
         var zone = ZoneSystem.GetZone(point);
         var map = Heightmap.FindHeightmap(point);
         int version = RoadSpatialGrid.RoadNetworkVersion;
-        lines.Add($"zone {zone}: roads available {RoadNetworkGenerator.RoadsAvailable}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
+        lines.Add($"zone {zone}: roads available {RoadLifecycleManager.HasNetwork}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
         if (map == null) { lines.Add("no heightmap here"); return lines; }
         bool listed = Heightmap.GetAllHeightmaps().Contains(map);
         bool done = s_done.TryGetValue(map.GetInstanceID(), out int doneFor);

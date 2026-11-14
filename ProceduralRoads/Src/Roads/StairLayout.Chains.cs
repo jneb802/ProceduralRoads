@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -25,23 +26,24 @@ public static partial class StairLayout
         int maxExpansions = MaxExpansions, int totalExpansions = int.MaxValue, int stallExpansions = int.MaxValue,
         float maxBuried = StairCover.RoadStaircase, bool sunkFoot = true, IReadOnlyList<Vector2>? corridor = null)
     {
+        // The search's pieces go back to this thread's pool as the layout ends (NodePool), as a climb's do (BuildOnce).
+        int pooled = NodePool.Mark();
+        try { return BuildDownBody(top, foot, ground, width, kit, maxExpansions, totalExpansions, stallExpansions, maxBuried, sunkFoot, corridor); }
+        finally { NodePool.Release(pooled); }
+    }
+
+    private static StairPlan BuildDownBody(StairContinuation top, Vector2 foot, Func<float, float, float> ground, float width, StairKit? kit,
+        int maxExpansions, int totalExpansions, int stallExpansions, float maxBuried, bool sunkFoot, IReadOnlyList<Vector2>? corridor)
+    {
         kit ??= StairKit.Stone;
         var plan = new StairPlan { Kit = kit.Name, Reversed = true, BuiltDown = true };
         // Down the road's own cells where it has them, as a road's staircase climbs them: left to find its own way down, it
         // came down beside the road's continuation and lay over it.
-        var goals = new List<Vector2>();
-        if (corridor != null)
-        {
-            Vector2 lastGoal = top.Edge;
-            foreach (Vector2 p in corridor)
-            {
-                if (Vector2.Distance(p, lastGoal) < FollowSpacing || Vector2.Distance(p, foot) < FollowSpacing) continue;
-                goals.Add(p);
-                lastGoal = p;
-            }
-        }
-        goals.Add(foot);
-        var route = new Route(goals, ground(foot.x, foot.y)) { MaxBuried = maxBuried, Kit = kit, Down = true, Corridor = corridor };
+        // Straight on where the climb does not need them, as a climb's route (FollowedRoute).
+        var goals = new List<Vector2> { foot };
+        List<(Vector2 from, Vector2 to)>? chords = null;
+        if (corridor != null) (goals, chords) = FollowedRoute(top.Edge, foot, corridor, ground);
+        var route = new Route(goals, ground(foot.x, foot.y)) { MaxBuried = maxBuried, Kit = kit, Down = true, Corridor = corridor, Chords = chords };
         var root = new Node
         {
             Kind = top.Kind,
@@ -58,12 +60,12 @@ public static partial class StairLayout
         for (int g = 0; g < route.Goals.Count; g++)
         {
             bool final = g == route.Goals.Count - 1;
-            var leg = new Route(route.Goals.GetRange(g, route.Goals.Count - g), route.GoalHeight) { MaxBuried = maxBuried, Kit = kit, Down = true, Corridor = corridor };
+            var leg = new Route(route.Goals.GetRange(g, route.Goals.Count - g), route.GoalHeight) { MaxBuried = maxBuried, Kit = kit, Down = true, Corridor = corridor, Chords = chords };
             current.Goal = 0;
-            Node? at = Search(current, leg, final, ground, width, Math.Min(maxExpansions, totalExpansions), stallExpansions, out Node closest, out string reason, out int used);
+            Node? at = Search(current, leg, final, ground, width, Math.Min(maxExpansions, totalExpansions), stallExpansions, out Node closest, out string reason, out int used, out bool spent);
             plan.Expansions += used;
             totalExpansions -= used;
-            if (at == null) { plan.Reason = route.Goals.Count > 1 ? $"{reason} (waypoint {g + 1} of {route.Goals.Count})" : reason; return plan; }
+            if (at == null) { plan.Reason = route.Goals.Count > 1 ? $"{reason} (waypoint {g + 1} of {route.Goals.Count})" : reason; plan.OutOfBudget = spent; return plan; }
             current = at;
             if (final) reached = at;
         }
@@ -436,8 +438,9 @@ public static partial class StairLayout
     /// stairs: snapped on from <paramref name="from"/> as a snapped run sets off (its turns), stairs then a floor clipping
     /// <paramref name="to"/>; or in line with <paramref name="to"/>, finishing head-on on its edge, from a floor clipping
     /// <paramref name="from"/>. Only up, as <see cref="JoinTops"/> (the caller asks from either top, so a top lower than the
-    /// other is reached from it); of those that fit, the one turning least, then the shortest, within <paramref name="reach"/>,
-    /// the walkway cap and dry ground. Two top floors that already overlap within a step are joined as they stand; more than
+    /// other is reached from it); of those that fit within <paramref name="reach"/>, ranked turning least, then shortest (a tie
+    /// in the order found), the first whose floors stand within the walkway cap and on dry ground (<see cref="LayJoin"/>): one
+    /// refused there gives way to the next (a tie refused over the cap lost the pair). Two top floors that already overlap within a step are joined as they stand; more than
     /// a step apart they are not (a stair sunk into the lower would lie under the higher).
     /// </summary>
     private static TopJoin ClipTops(StairPlan plan, StairContinuation from, StairContinuation to, Func<float, float, float> ground, float width, StairKit kit, float reach)
@@ -472,10 +475,10 @@ public static partial class StairLayout
             return min > max + 0.001f ? null : Mathf.Clamp((aim - a0) / cos, min, max);
         }
         int Turn(float a, float b) => Mathf.RoundToInt((Wrap(b - a + 180f) - 180f) / HeadingStep);
-        Node? best = null;
-        float bestScore = float.MaxValue, laidLength = 0f;
-        // The stair sunk into the clipped top's floor under the run (its top edge, heading and height), where one is.
-        (Vector2 edge, float heading, float height)? sink = null;
+        // Every run that fits, with its score (turning least, then shortest), its length and the stair sunk into the clipped
+        // top's floor under it (its top edge, heading and height), where one is: laid in that order (a tie in the order
+        // found), the first the walkway cap and dry ground pass (LayJoin, which leaves the plan as it was for one refused).
+        var runs = new List<(float score, Node node, float length, (Vector2 edge, float heading, float height)? sink)>();
         var why = new List<string>();
 
         // Snapped on from `from`: a whole number of rises up, the end floor over `to` (or on its stair's edge) within a step,
@@ -514,7 +517,6 @@ public static partial class StairLayout
                 }
                 if (length is not { } L || !Clips(to, inward, s1 + mf * L, m, sinkTo)) continue;
                 float score = L + (Math.Abs(t1) + Math.Abs(t2)) * 1000f;
-                if (score >= bestScore) continue;
                 Node node = Root(from.Kind, from.Edge, from.Heading, from.Height);
                 if (up == 0) node = JoinStretch(node, m, t1, s1, p1, L, offFloor, setBack: offFloor && t1 == 0 && L < PieceRun);
                 else
@@ -524,12 +526,9 @@ public static partial class StairLayout
                         : JoinStairs(JoinStretch(node, m, t1, s1, p1, flat, offFloor), up, m, 0, s1 + mf * flat, s1 + mf * flat);
                     node = JoinStretch(node, m, 0, node.Edge, node.Edge, PieceRun, false);
                 }
-                bestScore = score;
-                best = node;
-                laidLength = L;
-                sink = sinkTo ? (to.Edge, to.Heading, high) : null;
+                runs.Add((score, node, L, sinkTo ? (to.Edge, to.Heading, high) : null));
             }
-            if (best == null) why.Add(FormattableString.Invariant($"no run on from it clips the other ({up} rise(s) up)"));
+            if (runs.Count == 0) why.Add(FormattableString.Invariant($"no run on from it clips the other ({up} rise(s) up)"));
         }
 
         // In line with `to`, finishing head-on on its edge, from a floor clipping `from` within a step, or on the far edge of
@@ -547,20 +546,26 @@ public static partial class StairLayout
             Vector2 of = Forward(onto), inward = -Forward(from.Heading);
             // The run's start, its length back from `to`'s edge, lies a0 + length * cos into `from`'s row.
             float a0 = Vector2.Dot(to.Edge - from.Edge, inward), cos = Vector2.Dot(-of, inward);
-            if (Length(from, (below + 1) * PieceRun - 0.01f, reach, a0, cos, sinkFrom) is { } L && Clips(from, inward, to.Edge - of * L, onto, sinkFrom)
-                && L + Math.Abs(turned) * 1000f < bestScore)
+            if (Length(from, (below + 1) * PieceRun - 0.01f, reach, a0, cos, sinkFrom) is { } L && Clips(from, inward, to.Edge - of * L, onto, sinkFrom))
             {
                 Vector2 start = to.Edge - of * L;
                 Node node = JoinStretch(Root(StairPieceKind.Landing, start, onto, from.Height + lift), onto, 0, start, start, L - below * PieceRun, false);
                 if (below > 0) node = JoinStairs(node, below, onto, 0, node.Edge, node.Edge);
-                best = node;
-                laidLength = L;
-                sink = sinkFrom ? (from.Edge, from.Heading, from.Height + lift) : null;
+                runs.Add((L + Math.Abs(turned) * 1000f, node, L, sinkFrom ? (from.Edge, from.Heading, from.Height + lift) : null));
             }
-            else if (best == null) why.Add("no run in line with the other clips its own");
+            else if (runs.Count == 0) why.Add("no run in line with the other clips its own");
         }
-        if (best == null) return new TopJoin(false, apart, float.NaN, string.Join(", ", why));
-        return LayJoin(plan, best, laidLength, ground, width, kit, sink);
+        if (runs.Count == 0) return new TopJoin(false, apart, float.NaN, string.Join(", ", why));
+        // A stable sort: of runs scoring the same, the one found first is tried first. All refused: the first one's refusal.
+        var ranked = runs.OrderBy(r => r.score).ToList();
+        TopJoin refused = default;
+        for (int i = 0; i < ranked.Count; i++)
+        {
+            TopJoin join = LayJoin(plan, ranked[i].node, ranked[i].length, ground, width, kit, ranked[i].sink);
+            if (join.Laid) return join;
+            if (i == 0) refused = join;
+        }
+        return refused;
     }
 
     /// <summary>A join's root: the row it carries on from (never emitted), its far edge at <paramref name="edge"/>.</summary>

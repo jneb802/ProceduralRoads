@@ -29,7 +29,7 @@ public sealed class ManualRoadCommandsTests : IDisposable
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         RoadNetworkGenerator.MarkLocationsReady(); RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
-        RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         ManualRoadCommands.Register();
     }
     public void Dispose() { RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); _world.Dispose(); }

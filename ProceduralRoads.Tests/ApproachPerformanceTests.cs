@@ -22,7 +22,7 @@ public class ApproachPerformanceTests
     [Fact]
     public void BadArrivalHeightIsRejectedBeforeProfiling()
     {
-        RoadSpatialGrid.Clear(); RoadSiteProtection.Reset();
+        RoadSpatialGrid.Clear(); RoadLocationProtection.Reset();
         using var grade=GradeCap.At(0.35f);
         var world=new Ground(); var path=Route();
         int unusableTargets=0;
@@ -33,7 +33,7 @@ public class ApproachPerformanceTests
             if (!p.Equals(path[path.Count-1]) && Mathf.Abs(GroundAt(p)-60f)>1.5f) unusableTargets++;
             return Mathf.Abs(GroundAt(p)-60f)<=1.5f ? 60f : null;
         }
-        var better=RoadSiteApproach.Improve(path,new Vector2(),16,4,world,false,Target,GroundAt,60f);
+        var better=RoadLocationApproach.Improve(path,new Vector2(),16,4,world,false,Target,GroundAt,60f);
         Assert.NotSame(path,better);
         Assert.InRange(GroundAt(better[better.Count-1]),58.5f,61.5f);
         Assert.Equal(0,unusableTargets);
@@ -42,7 +42,7 @@ public class ApproachPerformanceTests
     [Fact]
     public void SharedSamplesKeepExactProfilesAndAvoidRepeatedTerrainQueries()
     {
-        RoadSpatialGrid.Clear(); RoadSiteProtection.Reset();
+        RoadSpatialGrid.Clear(); RoadLocationProtection.Reset();
         using var grade=GradeCap.At(0.35f);
         var world=new Ground(); var path=Route();
         var expected=RoadSpatialGrid.PlanRoadPath(path,4,world);
@@ -73,13 +73,13 @@ public class ApproachPerformanceTests
     [Fact]
     public void ApproachTrialsReuseProceduralSamplesButKeepAuthoredGroundSeparate()
     {
-        RoadSpatialGrid.Clear(); RoadSiteProtection.Reset();
+        RoadSpatialGrid.Clear(); RoadLocationProtection.Reset();
         using var grade=GradeCap.At(0.35f);
         var world=new FlatCountingWorld(); var path=Route();
         // Different authored ground forces trial profiles. Using that ground
         // for raw heights would never read the world; bypassing the shared
         // sampler would read the same procedural point for multiple trials.
-        RoadSiteApproach.Improve(path,new Vector2(),16,4,world,false,_=>70f,_=>70f,70f);
+        RoadLocationApproach.Improve(path,new Vector2(),16,4,world,false,_=>70f,_=>70f,70f);
         Assert.NotEmpty(world.Reads);
         Assert.All(world.Reads.Values,count=>Assert.Equal(1,count));
     }

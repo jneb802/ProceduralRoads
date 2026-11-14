@@ -69,12 +69,13 @@ public class RoadGradeRoadTests
     }
 
     [Fact]
-    public void UncappedTheSearchClimbsStraightUpTheSlope()
+    public void UnderACapAboveTheSlopeTheSearchClimbsStraightUpIt()
     {
-        // The baseline this whole change exists to move. Without a cap the
-        // direct climb is expensive but cheapest, so that is what is built.
+        // The baseline the cap exists to move. With a cap no step of the
+        // plane exceeds (the plane's own grade) the direct climb is expensive
+        // but cheapest, so that is what is built.
         var world = new Ramp();
-        var path = Finder(world, 0f).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f));
+        var path = Finder(world, world.Grade).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f));
 
         Assert.NotNull(path);
         Assert.True(Length(path!) < 175f, $"expected a straight climb, got {Length(path!):F0} m");
@@ -115,10 +116,11 @@ public class RoadGradeRoadTests
         // At 1:1 not even the shallowest of the sixteen directions is inside a
         // 20% cap, so there is no road and the destination goes unconnected.
         // This is the case the cap is meant to reach: an honest refusal in
-        // place of a road glued to a wall.
+        // place of a road glued to a wall. The same search under a cap at the
+        // slope's own grade reaches it, so it is the cap that refuses.
         var world = new Ramp(1.0f);
         Assert.Null(Finder(world, 0.2f).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f)));
-        Assert.NotNull(Finder(world, 0f).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f)));
+        Assert.NotNull(Finder(world, world.Grade).FindPath(new Vector2(0f, 0f), new Vector2(160f, 0f)));
     }
 
     [Fact]
@@ -238,34 +240,41 @@ public class RoadGradeRoadTests
     public void OnGroundInsideTheCapNothingChanges()
     {
         // The other half of the same claim: where the cap does not bite, every
-        // stored height is what it was before there was a cap. Without this the
-        // tests above would be satisfied by a limiter that quietly regraded
-        // every road in the world.
+        // stored height is the natural ground it was planned over, at the
+        // default cap and at a tighter one still above the slope. Without this
+        // the tests above would be satisfied by a limiter that quietly regraded
+        // every road in the world. Each run is held to the ground itself, not
+        // to the other run, so a limiter that moved both alike still fails.
         var world = new Ramp(0.1f);
         using var scope = new ValheimWorldScope().WithWorld(world);
         try
         {
+            // A waypoint every dense point (PlanRoadPathCore's quarter-width spacing), so the planner's own points are
+            // evenly spaced to the ends and its smoothing is exact on the plane: the natural ground is then the
+            // profile before any cap, independently of either run.
             var path = new List<Vector2>();
-            for (float x = 0f; x <= 320f; x += 8f) path.Add(new Vector2(x, 0f));
+            for (float x = 0f; x <= 320f; x += 1f) path.Add(new Vector2(x, 0f));
 
-            List<float> Heights(float cap)
+            int Check(string cap)
             {
                 RoadSpatialGrid.Clear();
-                using (GradeCap.At(cap))
-                    Assert.True(RoadSpatialGrid.AddRoadPath(path, 4f, world));
+                Assert.True(RoadSpatialGrid.AddRoadPath(path, 4f, world));
                 var stored = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(160f, 0f, 0f), 400f);
-                stored.Sort((a, b) => a.p.x.CompareTo(b.p.x));
-                var hs = new List<float>();
-                foreach (var rp in stored) hs.Add(rp.h);
-                return hs;
+                Assert.True(stored.Count > 50, $"{cap}: only {stored.Count} road points stored");
+                foreach (var rp in stored)
+                {
+                    float natural = BiomeBlendedHeight.GetBlendedHeight(rp.p.x, rp.p.y, world);
+                    Assert.True(Mathf.Abs(rp.h - natural) < 0.001f,
+                        $"{cap}: point at x={rp.p.x:F1} moved {rp.h - natural:F4} m on ground well inside the cap");
+                }
+                return stored.Count;
             }
 
-            var capped = Heights(0.2f);
-            var uncapped = Heights(0f);
-            Assert.Equal(uncapped.Count, capped.Count);
-            for (int i = 0; i < capped.Count; i++)
-                Assert.True(Mathf.Abs(capped[i] - uncapped[i]) < 0.001f,
-                    $"point {i} moved {capped[i] - uncapped[i]:F4} m on ground well inside the cap");
+            int atDefault = Check($"default {RoadGrade.Configured:P0} cap");
+            int atTighter;
+            using (GradeCap.At(0.2f))
+                atTighter = Check("20 % cap");
+            Assert.Equal(atDefault, atTighter);
         }
         finally { RoadSpatialGrid.Clear(); }
     }

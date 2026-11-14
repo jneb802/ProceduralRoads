@@ -19,7 +19,7 @@ public sealed class SavedGroundTests : IDisposable
     public SavedGroundTests()
     {
         RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear();
-        RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
     }
 
     public void Dispose()
@@ -78,5 +78,35 @@ public sealed class SavedGroundTests : IDisposable
         StairStructures.Reset();
         finished = StructureGround.Vertices(WorldGenerator.instance!);
         Assert.Contains(run.Ground, pin => Mathf.Abs(pin.Height - finished(pin.X, pin.Z)) > 0.1f);
+    }
+    /// <summary>
+    /// A verdict made before its road is stored reads the ground its first build will read (RoadNetworkGenerator.WithNoKit,
+    /// through RoadTerrainModifier.AsStored): with a road cut 3 m into the flat ground not stored yet, every finished-ground
+    /// reader made meanwhile (StructureGround.Vertices) reads, vertex for vertex, the ground the same road leaves once it is
+    /// stored; outside it, the network as it stands. Before, a deck's no-kit verdict read the ground without its road's own
+    /// earthwork.
+    /// </summary>
+    [Fact]
+    public void AVerdictBeforeItsRoadIsStoredReadsTheGroundTheStoredRoadLeaves()
+    {
+        var points = new List<Vector2>();
+        var heights = new List<float>();
+        for (float x = -20f; x <= 20f; x += 1f) { points.Add(new Vector2(x, 0f)); heights.Add(27f); }
+        var plan = new RoadSpatialGrid.PlannedPath(points, heights, new List<RoadPointDebugInfo>(), 4f, 40f, false);
+        WorldGenerator world = WorldGenerator.instance!;
+        var predicted = new Dictionary<(int x, int z), float>();
+        using (RoadTerrainModifier.AsStored(RoadSpatialGrid.PointsOf(plan, intoLocation: false), new List<(RoadSpatialGrid.RoadPoint, float)>()))
+        {
+            Func<int, int, float> asStored = StructureGround.Vertices(world);
+            for (int x = -26; x <= 26; x++)
+                for (int z = -10; z <= 10; z++) predicted[(x, z)] = asStored(x, z);
+        }
+        Assert.Equal(30f, StructureGround.Vertices(world)(0, 0));
+        Assert.Contains(predicted, kv => kv.Value < 28f);
+
+        RoadSpatialGrid.Commit(plan);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        Func<int, int, float> stored = StructureGround.Vertices(world);
+        Assert.All(predicted, kv => Assert.Equal(stored(kv.Key.x, kv.Key.z), kv.Value));
     }
 }

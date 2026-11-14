@@ -75,8 +75,9 @@ public static class StairCommands
     /// <summary>
     /// Every end of the built network's staircases (StairStructures.Runs) read by the one end reader (StairEnds), as one
     /// string, for road_stairs_ends and a cli_call: a line per end not walkable (with <paramref name="all"/>, every end), then
-    /// "OK: STAIR_ENDS n ok, m miss, k gap, t twin(s) (live a, finished b)", the twins the network's places with two ways in
-    /// arriving the same way (PlaceWaysIn.Twins), each listed. Read on the terrain where the end's zone is loaded
+    /// "OK: STAIR_ENDS n ok, m miss, k gap, u not verified, t twin(s) (live a, finished b)" (not verified: a foot onto a road
+    /// whose slope into it is not known, as after a reload: StairEnds.OntoItsRoad), the twins the network's locations with two ways in
+    /// arriving the same way (LocationWaysIn.Twins), each listed. Read on the terrain where the end's zone is loaded
     /// (ZoneSystem.GetGroundHeight, live), else on the finished ground its walls stand down to (StairEnds.GroundOf), and
     /// marked which. Read-only; no zone is loaded for it.
     /// </summary>
@@ -85,7 +86,7 @@ public static class StairCommands
         WorldGenerator? world = WorldGenerator.instance;
         if (world == null) return "ERROR: The world is not ready.";
         var sb = new System.Text.StringBuilder();
-        int ok = 0, miss = 0, gap = 0, live = 0, finished = 0;
+        int ok = 0, miss = 0, gap = 0, unverified = 0, live = 0, finished = 0;
         foreach (StairRun run in StairStructures.Runs)
         {
             Func<float, float, float> predicted = StairEnds.GroundOf(run, world);
@@ -100,16 +101,17 @@ public static class StairCommands
             Func<float, float, float> ground = StairEnds.WithRoads(Terrain);
             foreach (StairEnds.End end in StairEnds.Read(run, ground, StairStructures.MetAtEnds(run)))
             {
-                if (end.Verdict == StairEnds.Verdict.Ok) ok++; else if (end.Verdict == StairEnds.Verdict.Miss) miss++; else gap++;
+                if (end.Verdict == StairEnds.Verdict.Ok) ok++; else if (end.Verdict == StairEnds.Verdict.Miss) miss++;
+                else if (end.Verdict == StairEnds.Verdict.Gap) gap++; else unverified++;
                 if (all || end.Verdict != StairEnds.Verdict.Ok)
                     sb.Append(StairEnds.Line(end)).Append(anyPredicted ? (anyLive ? " [live+finished]" : " [finished]") : " [live]").Append('\n');
             }
             if (anyLive) live++; else finished++;
         }
-        // Beside the ends, the network's twin ways into places (PlaceWaysIn.Twins): a line for each.
-        var twins = PlaceWaysIn.Twins();
+        // Beside the ends, the network's twin ways into locations (LocationWaysIn.Twins): a line for each.
+        var twins = LocationWaysIn.Twins();
         foreach (var twin in twins) sb.Append(twin.line).Append('\n');
-        sb.Append(FormattableString.Invariant($"OK: STAIR_ENDS {ok} ok, {miss} miss, {gap} gap, {twins.Count} twin(s) (staircases read live {live}, finished {finished})"));
+        sb.Append(FormattableString.Invariant($"OK: STAIR_ENDS {ok} ok, {miss} miss, {gap} gap, {unverified} not verified, {twins.Count} twin(s) (staircases read live {live}, finished {finished})"));
         return sb.ToString();
     }
 

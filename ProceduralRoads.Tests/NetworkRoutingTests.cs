@@ -9,7 +9,7 @@ namespace ProceduralRoads.Tests;
 
 public class NetworkRoutingTests
 {
-    private static RoadConnectionPlanner.Place P(string name,float x) => new(name,new Vector3(x,0,0),0);
+    private static RoadConnectionPlanner.Location P(string name,float x) => new(name,new Vector3(x,0,0),0);
 
     [Fact]
     public void FailedProbeStillAttemptsAndReportsTheOrphan()
@@ -26,7 +26,7 @@ public class NetworkRoutingTests
     public void UnpricedCandidateEdgeIsStillBuiltAtTheBuildBudget()
     {
         // A pricing probe runs at a reduced budget and the open-sea test is a
-        // straight line. A place whose only candidate edge lost its price that
+        // straight line. A location whose only candidate edge lost its price that
         // way must still be offered to the builder, which searches in full.
         var built = new List<string>(); var reports = new List<string>();
         RoadConnectionPlanner.Connect(new[] { P("start",0),P("boss",100) },
@@ -39,7 +39,7 @@ public class NetworkRoutingTests
     }
 
     [Fact]
-    public void UnpricedRetryPrefersTheNearestTreePlaceAndStopsWhenOneSucceeds()
+    public void UnpricedRetryPrefersTheNearestTreeLocationAndStopsWhenOneSucceeds()
     {
         var built = new List<string>();
         // "near" prices normally and joins the tree; "boss" has no price at all,
@@ -116,26 +116,27 @@ public class NetworkRoutingTests
     }
 
     /// <summary>FindPathToNetwork returns null both when it fails and when the
-    /// start was already within reach. The caller checks the exact point but
-    /// the search checks the cell centre, up to 5.66 m away, so a destination
-    /// the network already passes could be read as unreachable and given a
-    /// road of its own.</summary>
+    /// start is served already, by the caller's own test of the exact point (a plain point's,
+    /// RoadNetworkGenerator.Reached, as RoadNetworkGenerator.JoinTo asks it), so a destination
+    /// the network already serves is not read as unreachable and given a road of its own.</summary>
     [Fact]
     public void AlreadyOnTheNetworkIsNotReportedAsAFailedSearch()
     {
+        using var scope = new ValheimWorldScope();
         RoadSpatialGrid.Clear();
         try
         {
             var world = new FlatGround();
+            scope.WithWorld(world);
             var finder = new RoadPathfinder(world);
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(0, 0), new(8, 0), new(16, 0) }, 4, world);
             RoadSpatialGrid.FinalizeRoadNetwork();
 
-            var path = finder.FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize);
+            var path = finder.FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize, () => RoadNetworkGenerator.Reached(new Vector2(0, 0), null));
             Assert.Null(path);
-            Assert.True(finder.AlreadyOnNetwork, "a start already within reach is not a failure");
+            Assert.True(finder.AlreadyOnNetwork, "a start already served is not a failure");
 
-            var away = finder.FindPathToNetwork(new Vector2(4000, 4000), RoadPathfinder.CellSize);
+            var away = finder.FindPathToNetwork(new Vector2(4000, 4000), RoadPathfinder.CellSize, () => RoadNetworkGenerator.Reached(new Vector2(4000, 4000), null));
             Assert.False(finder.AlreadyOnNetwork, "a real search must not claim it was already connected");
             Assert.Null(away);
         }
@@ -176,7 +177,7 @@ public class NetworkRoutingTests
         {
             var world=new Flat();
             RoadSpatialGrid.AddRoadPath(new() {new Vector2(-80,0),new Vector2(80,0)},4,world);
-            var path=new RoadPathfinder(world).FindPathToNetwork(new Vector2(0,100), RoadPathfinder.CellSize,
+            var path=new RoadPathfinder(world).FindPathToNetwork(new Vector2(0,100), RoadPathfinder.CellSize,()=>false, // no road within reach of the start
                 new[] {new Vector2(-80,0),new Vector2(80,0)});
             Assert.NotNull(path);
             var end=path![path.Count-1];
@@ -222,18 +223,18 @@ public class NetworkRoutingTests
     {
         int runs = 0;
         var joins = new RoadNetworkGenerator.FailedJoins(_ => { runs++; return false; });
-        var place = P("cave", 100);
-        Assert.False(joins.Join(place));
-        Assert.False(joins.Join(place));
+        var location = P("cave", 100);
+        Assert.False(joins.Join(location));
+        Assert.False(joins.Join(location));
         Assert.Equal(1, runs);
-        // Another place is asked on its own.
+        // Another location is asked on its own.
         Assert.False(joins.Join(P("tower", 200)));
         Assert.Equal(2, runs);
         // A write to the island's network forgets every failed join.
         RoadNetworkGenerator.IslandNetworkChanged();
-        Assert.False(joins.Join(place));
+        Assert.False(joins.Join(location));
         Assert.Equal(3, runs);
-        Assert.False(joins.Join(place));
+        Assert.False(joins.Join(location));
         Assert.Equal(3, runs);
     }
 
@@ -257,7 +258,7 @@ public class NetworkRoutingTests
     {
         int before = RoadNetworkGenerator.IslandNetworkVersion;
         var centre = new Vector2(91234f, -91234f);
-        PlacedSites.MarkLanded(centre);
+        PlacedLocations.MarkLanded(centre);
         Assert.NotEqual(before, RoadNetworkGenerator.IslandNetworkVersion);
         before = RoadNetworkGenerator.IslandNetworkVersion;
         StairStructures.MarkLaid(new[] { centre });

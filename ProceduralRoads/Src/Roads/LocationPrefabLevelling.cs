@@ -19,7 +19,7 @@ namespace ProceduralRoads;
 /// recorded as "this prefab levels nothing", which puts the road back on the
 /// natural terrain under its own end - the behaviour before any of this.
 /// </summary>
-public static class LocationPrefabLevelling
+public static partial class LocationPrefabLevelling
 {
     private static readonly Dictionary<string, IReadOnlyList<LevelOp>> m_byPrefab = new();
 
@@ -58,17 +58,17 @@ public static class LocationPrefabLevelling
         LocationLevelling.ResetPlacements = LocationPlacementHeights.Clear;
         LocationPlacementHeights.Source = SavedPlacements;
         LocationLevelling.Prime = PrimeSynchronously;
-        RoadSiteProtection.Source = Footprints;
+        RoadLocationProtection.Source = Footprints;
         LocationLevelling.PrimeIncremental=PrimeSteps;
         LocationLevelling.CanPrimeIncrementally=()=>LocationLevelling.Prime==PrimeSynchronously && BuiltInSources();
     }
 
-    private static bool BuiltInSources()=>RoadSiteProtection.Source==Footprints && LocationPlacementHeights.Source==SavedPlacements;
+    private static bool BuiltInSources()=>RoadLocationProtection.Source==Footprints && LocationPlacementHeights.Source==SavedPlacements;
     private static void PrimeSynchronously()
     {
         if(!BuiltInSources())
         {
-            LocationPlacementHeights.Read(); RoadSiteProtection.Prime();
+            LocationPlacementHeights.Read(); RoadLocationProtection.Prime();
             return;
         }
         using var preparation=new RoadPreparation(PrimeSteps);
@@ -94,9 +94,9 @@ public static class LocationPrefabLevelling
     }
 
     /// <summary>
-    /// The site footprint index built over frames, as the first part of <see cref="PrimeSteps"/>, where it is not built
+    /// The location footprint index built over frames, as the first part of <see cref="PrimeSteps"/>, where it is not built
     /// yet and the built-in sources are installed (<see cref="LocationLevelling.CanPrimeIncrementally"/>); nothing
-    /// otherwise. The places placed before their roads (SitesFirstLoad) build it before they are read: reading the first
+    /// otherwise. The locations placed before their roads (LocationsFirstLoad) build it before they are read: reading the first
     /// asked the index (its keep-out edge), which then read every location prefab of the world in that one frame, 54 s
     /// with a mod's 181 prefabs.
     /// </summary>
@@ -109,7 +109,7 @@ public static class LocationPrefabLevelling
     private static IEnumerable<bool> FootprintSteps(RoadPreparation preparation)
     {
         // Copy live collections before retaining an iterator across Unity frames.
-        var locations=RoadSiteProtection.InstalledButUnprepared ? ZoneSystem.instance?.GetLocationList()?.ToArray() : null;
+        var locations=RoadLocationProtection.InstalledButUnprepared ? ZoneSystem.instance?.GetLocationList()?.ToArray() : null;
         if(locations!=null && locations.Length>0)
         {
             preparation.BeginStage("Finding location prefabs",locations.Length,"locations"); yield return true;
@@ -128,23 +128,23 @@ public static class LocationPrefabLevelling
                 preparation.Checkpoint(); yield return true;
             }
             preparation.BeginStage("Preparing location footprints",locations.Length,"locations"); yield return true;
-            var footprints=new List<RoadSiteProtection.Footprint>(locations.Length);
+            var footprints=new List<RoadLocationProtection.Footprint>(locations.Length);
             foreach(var location in locations)
             {
                 footprints.Add(FootprintAt(location));
                 if(preparation.Checkpoint()) yield return true;
             }
             preparation.BeginStage("Indexing location footprints",footprints.Count,"footprints"); yield return true;
-            foreach(var step in RoadSiteProtection.SetSteps(footprints,preparation)) yield return step;
+            foreach(var step in RoadLocationProtection.SetSteps(footprints,preparation)) yield return step;
         }
     }
 
-    private static IEnumerable<RoadSiteProtection.Footprint>? Footprints()
+    private static IEnumerable<RoadLocationProtection.Footprint>? Footprints()
     {
         if (ZoneSystem.instance == null) return null;
         var locations = ZoneSystem.instance.GetLocationList();
         if (locations == null || locations.Count == 0) return null;
-        var result = new List<RoadSiteProtection.Footprint>();
+        var result = new List<RoadLocationProtection.Footprint>();
         foreach (var inst in locations)
         {
             ForPrefab(inst.m_location);
@@ -192,7 +192,7 @@ public static class LocationPrefabLevelling
         }
         m_byPrefab.Clear(); m_terrainRadius.Clear();
         LocationPlacementHeights.Clear();
-        RoadSiteProtection.Reset();
+        RoadLocationProtection.Reset();
     }
 
     /// <summary>Every LocationProxy in the saved world, as a centre and the
@@ -207,13 +207,13 @@ public static class LocationPrefabLevelling
         return found;
     }
 
-    private static RoadSiteProtection.Footprint FootprintAt(ZoneSystem.LocationInstance location)
+    private static RoadLocationProtection.Footprint FootprintAt(ZoneSystem.LocationInstance location)
     {
         string name=location.m_location.m_prefab.Name;
         m_terrainRadius.TryGetValue(name,out float terrainRadius);
         m_byPrefab.TryGetValue(name,out IReadOnlyList<LevelOp>? ops);
         float exterior=location.m_location.m_exteriorRadius, whole=Mathf.Max(exterior,terrainRadius);
-        return new RoadSiteProtection.Footprint(new Vector2(location.m_position.x,location.m_position.z),
+        return new RoadLocationProtection.Footprint(Centre(location),
             whole,LocationLevelling.ArrivalReach(ops,exterior,whole));
     }
     private static readonly int LocationProxyHash="LocationProxy".GetStableHashCode();
@@ -229,36 +229,7 @@ public static class LocationPrefabLevelling
     private static float? PlacementHeightAt(Vector2 centre) => LocationPlacementHeights.At(centre);
 
     private static IReadOnlyList<LevelOp>? OpsAt(Vector2 centre) =>
-        LocationAt(centre, out ZoneSystem.LocationInstance inst) ? ForPrefab(inst.m_location) : null;
-
-    /// <summary>
-    /// The location standing within half a metre of <paramref name="centre"/> each way, the one reader of the world's
-    /// locations by centre (its levelling, <see cref="OpsAt"/>; its turn, <see cref="FacesDownhillAt"/>; its placed parts,
-    /// <see cref="PlacedOps"/>): a zone holds at most one location, so it is the one in the zone under that square's corners
-    /// (one zone but where the square straddles a zone's edge). A lookup in the zone table, as PlacedSites.FindNotPlaced and
-    /// RoadNetworkGenerator.PrefabAt read it; never a walk of the whole list, which island workers ask of every road
-    /// point in a place's reach (the reached test, through RoadNetworkGenerator.ArrivalHeight).
-    /// </summary>
-    private static bool LocationAt(Vector2 centre, out ZoneSystem.LocationInstance location)
-    {
-        location = default;
-        if (ZoneSystem.instance == null || ZoneSystem.instance.m_locationInstances == null) return false;
-        Vector2s first = default;
-        for (int corner = 0; corner < 4; corner++)
-        {
-            Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x + ((corner & 1) == 0 ? -0.5f : 0.5f), 0f,
-                centre.y + ((corner & 2) == 0 ? -0.5f : 0.5f)));
-            if (corner > 0 && zone.Equals(first)) continue;
-            if (corner == 0) first = zone;
-            if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance inst)
-                && Mathf.Abs(inst.m_position.x - centre.x) <= 0.5f && Mathf.Abs(inst.m_position.z - centre.y) <= 0.5f)
-            {
-                location = inst;
-                return true;
-            }
-        }
-        return false;
-    }
+        LocationAt(centre, out ZoneSystem.LocationInstance inst, out _) ? ForPrefab(inst.m_location) : null;
 
     /// <summary>
     /// The terrain modifiers a placed location really has. A location's parts are
@@ -270,13 +241,14 @@ public static class LocationPrefabLevelling
     /// each enabled RandomSpawn and then each RandomObject at its placed position, in that
     /// order; the location then appears with the modifiers left active. Main thread only;
     /// the prefab (its transform and every object's active flag), Random's state and the
-    /// location's cached biome are all put back.
+    /// location's cached biome are all put back. The location is the one whose identity is
+    /// <paramref name="centre"/> (<see cref="LocationOf"/>): a placed location is held by it.
     /// Null when the prefab cannot be read.
     /// </summary>
     public static IReadOnlyList<LevelOp>? PlacedOps(Vector2 centre, int seed, Vector3 pos, Quaternion rot)
     {
         if (ZoneSystem.instance == null) return null;
-        if (!LocationAt(centre, out ZoneSystem.LocationInstance placedAt)) return null;
+        if (!LocationOf(centre, out ZoneSystem.LocationInstance placedAt)) return null;
         ZoneSystem.ZoneLocation location = placedAt.m_location;
         var ops = new List<LevelOp>();
         try
@@ -354,7 +326,7 @@ public static class LocationPrefabLevelling
 
     private static bool FacesDownhillAt(Vector2 centre)
     {
-        return LocationAt(centre, out ZoneSystem.LocationInstance inst) && inst.m_location.m_slopeRotation;
+        return LocationAt(centre, out ZoneSystem.LocationInstance inst, out _) && inst.m_location.m_slopeRotation;
     }
 
     private static IReadOnlyList<LevelOp> ForPrefab(ZoneSystem.ZoneLocation location)

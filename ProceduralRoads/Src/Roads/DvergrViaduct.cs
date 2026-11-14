@@ -22,9 +22,9 @@ namespace ProceduralRoads;
 ///
 /// <para><b>Piers</b>: 16 m centre to centre as in vanilla, or 14 m or 12 m where 16 m bays leave the deck out of the
 /// game's support (<see cref="Spacing"/>, <see cref="BaySpacings"/>), never so close that two piers' tops overlap.
-/// Off a known river, one at the crossing's midpoint and then every bay
+/// Over no water a ship sails, one at the crossing's midpoint and then every bay
 /// outward while inside the gap; a short crossing still gets the middle one.
-/// Over a river whose longship does not pass under the deck
+/// Over a river or deep water whose longship does not pass under the deck
 /// (<see cref="BridgeLayout.NavigationChannel"/>, every kit's one test of where
 /// boats pass), the navigation bay first: two vanilla
 /// bays wide, piers at the navigation channel +-16 m with <see cref="NavigationGap"/>
@@ -194,11 +194,6 @@ public static class DvergrViaduct
         };
     }
 
-    /// <summary>The biomes vanilla's vines grow in: every location that hangs <see cref="Vine"/> stands in the Meadows
-    /// (WoodHouse1 to 13 and CombatRuin01, m_biome 1 in the game's location list) or the Mistlands (its Dvergr places
-    /// and viaducts, the Mistlands location list); none in the Mountains or any other biome.</summary>
-    public const Heightmap.Biome VineBiomes = Heightmap.Biome.Meadows | Heightmap.Biome.Mistlands;
-
     /// <summary>Vanilla's corbel vine (<see cref="CorbelVine"/>): out from the corbel's middle, up, and pitched; the one owner
     /// of those offsets, which the pier pattern's matching slope vines are written from (<see cref="PierVines"/>).</summary>
     private const float CorbelVineOut = 0.55f, CorbelVineUp = 0.04f, CorbelVinePitch = -26f;
@@ -338,6 +333,9 @@ public static class DvergrViaduct
         }
     }
 
+    /// <summary>Where a pier's two iron screens stand along the deck from its centre, on its line.</summary>
+    private static readonly float[] ScreenAlongs = { -1f, 1f };
+
     /// <summary>The four shafts of a pier, (du, v), and the turn of each one's footing (vanilla's).</summary>
     private static readonly (float du, float v, float footingTurn)[] Shafts =
     {
@@ -372,33 +370,17 @@ public static class DvergrViaduct
         new(CorbelCorner, 3f, -2f, -3f, 0f), new(CorbelCorner, 3f, 2f, -3f, 270f),
     };
 
-    /// <summary>Half-extents of a piece's bounds along the deck, across it and up, at the turns
-    /// this layout gives it.</summary>
-    public static (float u, float v, float y) Extents(string prefab) => prefab switch
+    /// <summary>Half-extents of a piece's bounds along the deck, across it and up, at the turns this layout gives it: layout
+    /// geometry only (where a piece stands, what it overlaps, a vine's face, a road under a parapet), read off the prefab's
+    /// measured bounds (<see cref="BuriedPieces.DataOf"/>, the one owner); the support and burial rules read those bounds
+    /// themselves, at each piece's own turn. Every piece is laid with its local x along the deck (turned 90 or 270) but a
+    /// floor (square) and a screen, turned 0 or 180, its 0.1 m across its local z along the deck. An unknown piece is a
+    /// metre cube.</summary>
+    public static (float u, float v, float y) Extents(string prefab)
     {
-        Footing => (1f, 1f, 4f),
-        Band or Block => (1f, 1f, 1f),
-        Filler => (1f, 0.5f, 1f),
-        // The collider tables are one: these are BuriedPieces' bounds (Rip: blackmarble_outcorner's is 2 x 2 x 2).
-        Corbel or CorbelCorner or Arch => HalfOf(prefab),
-        // Rip: iron_floor_2x2 is 0.1 m thick and iron_wall_2x2 0.1 m (was taken as 0.2).
-        Floor => (1f, 1f, 0.05f),
-        Screen => (0.05f, 1f, 1f),
-        // Rip: blackmarble_head_big01 / big02 are 2 x 2 x 2 (were taken as 1 x 2 x 2).
-        HeadLeft or HeadRight => (1f, 1f, 1f),
-        // Origin at the foot (Rip: y 0..1): only the stairs' own run (BridgeLayout.LayEndStairs) lays it, never Add.
-        StepPrefab => (1f, 1f, 0.5f),
-        // The end stairs' parapet (StairRailing.LayParapet), laid along the deck: base_1 and its half course.
-        StairRailing.ParapetPrefab or StairRailing.ParapetHalfCoursePrefab => HalfOf(prefab),
-        _ => (0.5f, 0.5f, 0.5f),
-    };
-
-    /// <summary>Half-extents on the deck's frame (along the deck is the prefab's x, across it z) of a piece whose collider
-    /// <see cref="BuriedPieces"/> knows.</summary>
-    private static (float u, float v, float y) HalfOf(string prefab)
-    {
-        BuriedPieces.BoundsOf(prefab, out Vector3 min, out Vector3 max);
-        return ((max.x - min.x) / 2f, (max.z - min.z) / 2f, (max.y - min.y) / 2f);
+        if (!BuriedPieces.BoundsOf(prefab, out Vector3 min, out Vector3 max)) return (0.5f, 0.5f, 0.5f);
+        float x = (max.x - min.x) / 2f, y = (max.y - min.y) / 2f, z = (max.z - min.z) / 2f;
+        return prefab == Screen ? (z, x, y) : (x, z, y);
     }
 
     // --------------------------------------------------------------- choice
@@ -425,28 +407,37 @@ public static class DvergrViaduct
 
     /// <summary>Why <see cref="Applies"/> says no, or null. Asked of the deck at grade (<see cref="AtGrade"/>): the
     /// raise (<see cref="RaisedSteps"/>) is decided after it and keeps within it, so it never changes the answer.</summary>
-    public static string? Refusal(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world, PierCeiling);
+    public static string? Refusal(RoadCrossing crossing, WorldGenerator world) => Refusal(crossing, world, PierCeiling, null);
 
-    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling)
+    /// <summary><see cref="Refusal(RoadCrossing, WorldGenerator)"/> under <paramref name="ceiling"/>, its deck at grade read
+    /// once (<see cref="GradeDeck"/>): <paramref name="grade"/> where the caller has read it already (a valley probe,
+    /// <see cref="ValleyCrossing(Vector2, Vector2, WorldGenerator, out string, out GradeDeck?)"/>), else read here.</summary>
+    private static string? Refusal(RoadCrossing crossing, WorldGenerator world, float ceiling, GradeDeck? grade)
     {
         if (crossing == null || world == null) return "no crossing";
         if (crossing.Kind != CrossingKind.Bridge) return "a ford";
         if (!BridgeStructures.InMistlands(crossing, world)) return "not in the Mistlands";
-        return DeckRefusal(crossing, world, ceiling, AtGrade(crossing, world));
+        grade ??= new GradeDeck(crossing, world);
+        return DeckRefusal(crossing, world, ceiling, grade.Height, mounds: true, grade);
     }
 
     /// <summary>The tests of <see cref="Refusal"/> that hang on the deck's height, with the deck at <paramref name="deck"/>:
-    /// the clearance, the pier ceiling and floor, and each end's stairs.</summary>
-    private static string? DeckRefusal(RoadCrossing crossing, WorldGenerator world, float ceiling, float deck)
+    /// the clearance, the pier ceiling and floor, and each end's stairs. A pier over the ceiling passes where
+    /// <paramref name="mounds"/> lets a mound under it make up the difference (<see cref="Mounds(RoadCrossing, WorldGenerator, float)"/>):
+    /// at grade, never for a raise (<see cref="RaisedSteps"/>), so a look's step drops before a mound is made.
+    /// <paramref name="grade"/>: the deck at grade <paramref name="deck"/> is (<see cref="GradeDeck.Height"/>), its piers,
+    /// tallest pier and ends read once there; null for any other deck, read here.</summary>
+    private static string? DeckRefusal(RoadCrossing crossing, WorldGenerator world, float ceiling, float deck, bool mounds, GradeDeck? grade = null)
     {
         float clearance = deck - Mathf.Max(crossing.RiverbedHeight, crossing.WaterLevel);
         if (clearance < MinClearance) return FormattableString.Invariant($"deck {clearance:F1} m over the ground or water, under {MinClearance:F0} m");
-        float tallest = TallestPier(crossing, world, deck);
-        if (tallest > ceiling) return FormattableString.Invariant($"a pier {tallest:F1} m tall, over the {ceiling:F0} m ceiling");
+        float tallest = grade != null ? grade.Tallest : TallestPier(crossing, world, deck);
+        if (tallest > ceiling && !(mounds && Mounds(crossing, world, deck, grade?.Piers) != null))
+            return FormattableString.Invariant($"a pier {tallest:F1} m tall, over the {ceiling:F0} m ceiling{(mounds ? " by more than a mound makes up" : "")}");
         if (tallest < MinViaductPier - 1e-3f) return FormattableString.Invariant($"tallest pier {tallest:F1} m, under the {MinViaductPier:F0} m floor");
-        var (near, far) = NaturalEnds(crossing, world, deck);
+        var (near, far) = grade != null ? grade.Ends : NaturalEnds(crossing, world, deck);
         foreach (StructureEnds.End end in new[] { near, far })
-            if (end.Rise > MaxEndStairRise + 1e-3f)
+            if (EndStairsPastMost(end.Rise))
                 return FormattableString.Invariant($"end stairs {end.Rise:F0} m, over the {MaxEndStairRise:F0} m most");
         return null;
     }
@@ -479,6 +470,42 @@ public static class DvergrViaduct
     /// higher bank. What the search prices and <see cref="Refusal"/> judges.</summary>
     internal static float AtGrade(RoadCrossing crossing, WorldGenerator world) => AtGrade(crossing, world, EdgesOf(crossing, world));
 
+    /// <summary>
+    /// A crossing's deck at grade, read once: the ship's way under it (<see cref="ShipWayUnder"/>), its end edges
+    /// (<see cref="EdgesOf(RoadCrossing, WorldGenerator)"/>), its height (<see cref="AtGrade(RoadCrossing, WorldGenerator)"/>),
+    /// its piers (<see cref="PierAlongs(RoadCrossing, WorldGenerator)"/>) and, at that height, its tallest pier
+    /// (<see cref="TallestPier(RoadCrossing, WorldGenerator, float)"/>) and its ends as the banks take them
+    /// (<see cref="NaturalEnds(RoadCrossing, WorldGenerator, float)"/>): each those functions' own answer, each read the
+    /// first time it is asked. What one valley probe reads (<see cref="ValleyCrossing(Vector2, Vector2, WorldGenerator, out string, out GradeDeck?)"/>)
+    /// and hands to <see cref="Refusal(RoadCrossing, WorldGenerator)"/> and <see cref="Price(GradeDeck, float, float, float)"/>,
+    /// which read every one of them again each before. Held by its caller alone, for the one crossing as it is: none of it reads
+    /// the riverbed, which a valley probe sets once its line is sampled.
+    /// </summary>
+    internal sealed class GradeDeck
+    {
+        internal readonly RoadCrossing Crossing;
+        private readonly WorldGenerator m_world;
+        internal readonly BridgeLayout.ShipWay? Way;
+        internal readonly (Vector2 near, Vector2 far) Edges;
+        internal readonly float Height;
+        private List<float>? m_piers;
+        private float? m_tallest;
+        private (StructureEnds.End near, StructureEnds.End far)? m_ends;
+
+        internal GradeDeck(RoadCrossing crossing, WorldGenerator world)
+        {
+            Crossing = crossing;
+            m_world = world;
+            Way = ShipWayUnder(crossing, world);
+            Edges = RecordedEdges(crossing) ?? EdgesOf(crossing, world, Way);
+            Height = AtGrade(crossing, world, Edges);
+        }
+
+        internal List<float> Piers => m_piers ??= PierAlongs(Crossing.Width, Way, Spacing(Crossing, m_world, ReachDeck(Crossing, m_world, Height), Way));
+        internal float Tallest => m_tallest ??= TallestPier(Crossing, m_world, Height, Piers);
+        internal (StructureEnds.End near, StructureEnds.End far) Ends => m_ends ??= NaturalEnds(Crossing, m_world, Height, Edges);
+    }
+
     /// <summary><see cref="AtGrade(RoadCrossing, WorldGenerator)"/> for a deck whose end edges are <paramref name="edges"/>.</summary>
     private static float AtGrade(RoadCrossing crossing, WorldGenerator world, (Vector2 near, Vector2 far) edges)
     {
@@ -492,7 +519,11 @@ public static class DvergrViaduct
     /// <summary>The middles of the deck's two end edges, near then far: where its walking surface stops. Those its ends
     /// were recorded at (<see cref="Recorded"/>), else its module grid's.</summary>
     internal static (Vector2 near, Vector2 far) EdgesOf(RoadCrossing crossing, WorldGenerator world) =>
-        Recorded(crossing) is { } ends ? (ends.near.Edge, ends.far.Edge) : EdgesOf(crossing, world, ShipWayUnder(crossing, world));
+        RecordedEdges(crossing) ?? EdgesOf(crossing, world, ShipWayUnder(crossing, world));
+
+    /// <summary>The edges the crossing's ends were recorded at (<see cref="Recorded"/>), else null.</summary>
+    private static (Vector2 near, Vector2 far)? RecordedEdges(RoadCrossing crossing) =>
+        Recorded(crossing) is { } ends ? (ends.near.Edge, ends.far.Edge) : null;
 
     /// <summary>The deck's end edges on the module grid hung on <paramref name="way"/> (null: the grid off a river).</summary>
     private static (Vector2 near, Vector2 far) EdgesOf(RoadCrossing crossing, WorldGenerator world, BridgeLayout.ShipWay? way)
@@ -590,9 +621,12 @@ public static class DvergrViaduct
     /// height (<see cref="Recorded"/>), else at grade raised by its draw (<see cref="DrawnSteps"/>, at most
     /// <see cref="RoadCrossing.RaiseAtMost"/>): the raise taken is the draw or lower (<see cref="RaisedSteps"/>), and never
     /// moves a pier, so the bays carry whichever it takes. (The draw, not the raise: the raise asks the piers' height.)</summary>
-    private static float ReachDeck(RoadCrossing crossing, WorldGenerator world) =>
+    private static float ReachDeck(RoadCrossing crossing, WorldGenerator world) => ReachDeck(crossing, world, AtGrade(crossing, world));
+
+    /// <summary><see cref="ReachDeck(RoadCrossing, WorldGenerator)"/> with the deck at grade <paramref name="atGrade"/>.</summary>
+    private static float ReachDeck(RoadCrossing crossing, WorldGenerator world, float atGrade) =>
         Recorded(crossing) is { } ends ? ends.near.Height
-            : AtGrade(crossing, world) + Mathf.Max(0, Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost)) * StairLayout.PieceRise;
+            : atGrade + Mathf.Max(0, Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost)) * StairLayout.PieceRise;
 
     // ----------------------------------------------------------- deck reach
 
@@ -665,11 +699,15 @@ public static class DvergrViaduct
     {
         var (piers, _, first, last) = DeckGrid(crossing.Width, way, spacing);
         Vector2 dir = crossing.Direction;
-        // A module's floors on the ground: the ground meets their bounds grown as the game grows them, anywhere along it.
-        float reach = Module * 0.5f + SupportGraph.Reach, underside = deck - FloorDrop - Extents(Floor).y - SupportGraph.Reach;
-        bool OnGround(float along) =>
-            Mathf.Max(Ground(crossing.FromBank + dir * (along - reach), world), Mathf.Max(Ground(crossing.FromBank + dir * along, world),
-                Ground(crossing.FromBank + dir * (along + reach), world))) >= underside;
+        // A module's floors on the ground: the ground meets their bounds grown as the game grows them, anywhere along it (an
+        // estimate at three samples on its line, by the one contact verdict, SupportGraph.Against).
+        float reach = Module * 0.5f + SupportGraph.Reach, underside = deck - FloorDrop - Extents(Floor).y;
+        bool OnGround(float along)
+        {
+            float highest = Mathf.Max(Ground(crossing.FromBank + dir * (along - reach), world), Mathf.Max(Ground(crossing.FromBank + dir * along, world),
+                Ground(crossing.FromBank + dir * (along + reach), world)));
+            return SupportGraph.Against(highest, highest, underside, underside) is SupportGraph.Terrain.Meets or SupportGraph.Terrain.Under;
+        }
         // The modules on the ground, from each end in (a valley's deck has none past its banks' edges).
         float nearGround = float.NaN, farGround = float.NaN;
         for (float c = first; c <= last + 1e-3f && OnGround(c); c += Module) nearGround = c;
@@ -707,11 +745,50 @@ public static class DvergrViaduct
     /// <summary>The tallest pier as built, deck surface to the ground under its lowest shaft (0 with none).</summary>
     public static float TallestPier(RoadCrossing crossing, WorldGenerator world) => TallestPier(crossing, world, DeckHeight(crossing, world));
 
+    /// <summary>
+    /// The mounds under the viaduct's piers as built (<see cref="DeckHeight"/>): <see cref="Mounds(RoadCrossing, WorldGenerator, float)"/>,
+    /// none where it needs none; empty where it is not one. What its road stores with it (RoadNetworkGenerator.GroundOf).
+    /// </summary>
+    public static List<StructureGround.Mound> Mounds(RoadCrossing crossing, WorldGenerator world) =>
+        crossing == null || world == null || !BridgeStructures.IsViaduct(crossing, world) ? new List<StructureGround.Mound>()
+            : Mounds(crossing, world, DeckHeight(crossing, world)) ?? new List<StructureGround.Mound>();
+
+    /// <summary>
+    /// The mounds that bring every pier of a deck at <paramref name="deck"/> taller than <see cref="PierCeiling"/> (deck
+    /// surface to the ground under its lowest shaft, <see cref="PierGround"/>) down to it: under each such pier, the ground
+    /// where its shafts and screens stand (where <see cref="Solve"/> reads it) raised to the ceiling under the deck, the
+    /// least it needs, where a mound may be made there (<see cref="StructureGround.MayRaise"/>: RoadRules.ViaductMostMound at
+    /// most, within the terrain writer's cap, its top under any water it stands in). Null where one may not: the pier stands
+    /// over the ceiling, and the viaduct is refused (<see cref="Refusal"/>). Empty where no pier is over it.
+    /// </summary>
+    internal static List<StructureGround.Mound>? Mounds(RoadCrossing crossing, WorldGenerator world, float deck, List<float>? piers = null)
+    {
+        var mounds = new List<StructureGround.Mound>();
+        Vector2 dir = crossing.Direction, side = new(-dir.y, dir.x);
+        float top = deck - PierCeiling;
+        foreach (float a in piers ?? PierAlongs(crossing, world))
+        {
+            float ground = PierGround(crossing, a, world);
+            if (!(deck - ground > PierCeiling)) continue;
+            if (!StructureGround.MayRaise(ground, top, BridgeStructures.Kit.DvergrViaduct)) return null;
+            Vector2 at = crossing.FromBank + dir * a;
+            var points = new List<Vector2>();
+            foreach (var (du, v, _) in Shafts) points.Add(at + dir * du + side * v);
+            foreach (float du in ScreenAlongs) points.Add(at + dir * du);
+            mounds.Add(new StructureGround.Mound(points, top));
+        }
+        return mounds;
+    }
+
     /// <summary><see cref="TallestPier(RoadCrossing, WorldGenerator)"/> under a deck at <paramref name="deck"/>.</summary>
-    private static float TallestPier(RoadCrossing crossing, WorldGenerator world, float deck)
+    private static float TallestPier(RoadCrossing crossing, WorldGenerator world, float deck) =>
+        TallestPier(crossing, world, deck, PierAlongs(crossing, world));
+
+    /// <summary><see cref="TallestPier(RoadCrossing, WorldGenerator, float)"/> of the piers at <paramref name="piers"/>.</summary>
+    private static float TallestPier(RoadCrossing crossing, WorldGenerator world, float deck, List<float> piers)
     {
         float tallest = 0f;
-        foreach (float a in PierAlongs(crossing, world))
+        foreach (float a in piers)
             tallest = Mathf.Max(tallest, deck - PierGround(crossing, a, world));
         return tallest;
     }
@@ -751,9 +828,6 @@ public static class DvergrViaduct
     public const float MaxValleySpan = 96f;
     /// <summary>The shortest: two search cells.</summary>
     public const float MinValleySpan = 16f;
-    /// <summary>Ground this far over the deck pokes through it.</summary>
-    public const float DeckClip = 0.25f;
-
     /// <summary>
     /// A viaduct straight across a dry Mistlands valley from <paramref name="from"/> to
     /// <paramref name="to"/>, the deck at the higher bank, or null with <paramref name="reason"/>.
@@ -762,19 +836,32 @@ public static class DvergrViaduct
     /// <see cref="MinValleySpan"/>..<see cref="MaxValleySpan"/>, a heading the hammer cannot
     /// build, banks further apart in height than a bridge's (<see cref="RoadConstants.MaxBridgeBankDelta"/>),
     /// water or a river under it (a river is a bridge's crossing), ground over the deck, and
-    /// whatever <see cref="Refusal"/> refuses (not the Mistlands, under 6 m, piers too tall).
+    /// whatever <see cref="Refusal"/> refuses (not the Mistlands, under 6 m, piers too tall). Its Mistlands share is asked
+    /// before any ground is read: the verdict is Refusal's, only sooner.
     /// </summary>
-    public static RoadCrossing? ValleyCrossing(Vector2 from, Vector2 to, WorldGenerator world, out string reason)
+    public static RoadCrossing? ValleyCrossing(Vector2 from, Vector2 to, WorldGenerator world, out string reason) =>
+        ValleyCrossing(from, to, world, out reason, out _);
+
+    /// <summary><see cref="ValleyCrossing(Vector2, Vector2, WorldGenerator, out string)"/>, with the deck at grade it read
+    /// (<see cref="GradeDeck"/>) in <paramref name="grade"/> where it lays one, for the search's price
+    /// (<see cref="Price(GradeDeck, float, float, float)"/>): one probe reads its deck once.</summary>
+    internal static RoadCrossing? ValleyCrossing(Vector2 from, Vector2 to, WorldGenerator world, out string reason, out GradeDeck? grade)
     {
+        grade = null;
         float length = Vector2.Distance(from, to);
         if (length < MinValleySpan - 1e-3f || length > MaxValleySpan + 1e-3f) { reason = "span"; return null; }
         Vector2 dir = (to - from) * (1f / length);
         if (!BridgeLayout.HeadingIsPlaceable(BridgeLayout.YawDegrees(dir), 0.5f)) { reason = "heading"; return null; }
+        // The share rule first (BridgeStructures.InMistlands, which Refusal asks of the same banks): it reads the banks
+        // alone, so a valley outside the Mistlands is refused before its deck and every ground sample under it are read.
+        if (!BridgeStructures.InMistlands(from, to, world)) { reason = "not in the Mistlands"; return null; }
         float hFrom = Ground(from, world), hTo = Ground(to, world);
         if (Mathf.Abs(hFrom - hTo) > RoadConstants.MaxBridgeBankDelta) { reason = "banks apart"; return null; }
         float lowest = float.MaxValue;
-        var probe = RoadCrossing.Between(from, to, Mathf.Min(hFrom, hTo), (from + to) * 0.5f, 0f, CrossingKind.Bridge);
-        float deck = AtGrade(probe, world);
+        // The crossing, its riverbed set once the line is sampled: its deck at grade reads no riverbed.
+        var crossing = RoadCrossing.Between(from, to, Mathf.Min(hFrom, hTo), (from + to) * 0.5f, 0f, CrossingKind.Bridge);
+        var atGrade = new GradeDeck(crossing, world);
+        float deck = atGrade.Height;
         int samples = Mathf.CeilToInt(length);
         for (int i = 0; i <= samples; i++)
         {
@@ -787,19 +874,62 @@ public static class DvergrViaduct
                 world.GetRiverWeight(p.x, p.y, out float river, out _);
                 if (river > 0f) { reason = "river"; return null; }
             }
-            if (g > deck + DeckClip) { reason = "ground over the deck"; return null; }
+            if (g > deck + RoadCrossingDetector.DeckClip) { reason = "ground over the deck"; return null; }
         }
-        var crossing = RoadCrossing.Between(from, to, lowest, (from + to) * 0.5f, 0f, CrossingKind.Bridge);
+        crossing.RiverbedHeight = lowest;
         crossing.ValleyJump = true;
-        string? refused = Refusal(crossing, world);
+        string? refused = Refusal(crossing, world, PierCeiling, atGrade);
         if (refused != null) { reason = refused; return null; }
         reason = "";
+        grade = atGrade;
         return crossing;
     }
 
     /// <summary>
+    /// Where else a valley viaduct's banks may stand on its line, in the order they are tried: its banks moved along the line
+    /// (<see cref="BankMoves"/>), each the viaduct <see cref="ValleyCrossing(Vector2, Vector2, WorldGenerator, out string)"/>
+    /// lays there (span, heading, banks, ground over the deck, every refusal as it stands); a move it refuses is left out.
+    /// <paramref name="nearFirst"/>: the near end's moves before the far end's (the end the road did not meet first). The one
+    /// owner of a valley viaduct's banks past the probe's (RoadPathfinder.ViaductOverTerrain: the rim and the first cell back at
+    /// its height): StructureEnds.MeetEnds takes the first whose ends the road meets.
+    /// </summary>
+    internal static IEnumerable<RoadCrossing> MovedBanks(RoadCrossing viaduct, WorldGenerator world, bool nearFirst)
+    {
+        Vector2 from = viaduct.FromBank, to = viaduct.ToBank, dir = viaduct.Direction;
+        foreach (var (near, far) in BankMoves(nearFirst))
+            if (ValleyCrossing(from - dir * near, to + dir * far, world, out _) is RoadCrossing moved)
+                yield return moved;
+    }
+
+    /// <summary>How far each bank of a valley viaduct is moved along its line (<see cref="MovedBanks"/>), outward positive, in
+    /// the order tried: one end alone, a deck <see cref="Module"/> at a time out and back up to a search cell
+    /// (RoadConstants.PathfindingCellSize), <paramref name="nearFirst"/>'s end first, then the other's; then both, two modules
+    /// at a time. Every bound is an existing number: the deck's module and the search's cell.</summary>
+    private static IEnumerable<(float near, float far)> BankMoves(bool nearFirst) => nearFirst ? s_nearFirst : s_farFirst;
+
+    private static readonly (float near, float far)[] s_nearFirst = Moves(true), s_farFirst = Moves(false);
+
+    private static (float near, float far)[] Moves(bool nearFirst)
+    {
+        const float most = RoadConstants.PathfindingCellSize;
+        var singles = new List<float>();
+        for (float d = Module; d <= most + 1e-3f; d += Module) { singles.Add(d); singles.Add(-d); }
+        var moves = new List<(float, float)>();
+        foreach (float d in singles) moves.Add(nearFirst ? (d, 0f) : (0f, d));
+        foreach (float d in singles) moves.Add(nearFirst ? (0f, d) : (d, 0f));
+        for (float n = -most; n <= most + 1e-3f; n += 2f * Module)
+            for (float f = -most; f <= most + 1e-3f; f += 2f * Module)
+                if (n != 0f && f != 0f) moves.Add((n, f));
+        return moves.ToArray();
+    }
+
+    /// <summary>How near two jumps' ends are to be the same viaduct jump, either way round (<see cref="AddJumps"/>, and a
+    /// banned valley viaduct's match, RoadPathfinder.BanViaduct): a metre.</summary>
+    internal const float JumpMatch = 1f;
+
+    /// <summary>
     /// The viaducts a search bought (RoadPathfinder.LastViaductJumps) as crossings of the finished
-    /// path: a segment whose two ends lie on a jump's (either way round, within a metre) is one,
+    /// path: a segment whose two ends lie on a jump's (either way round, within <see cref="JumpMatch"/>) is one,
     /// judged again at the path's own points. Added to <paramref name="crossings"/> in path order;
     /// a segment another crossing already covers is left to it.
     /// </summary>
@@ -812,8 +942,7 @@ public static class DvergrViaduct
             Vector2 a = path[i - 1], b = path[i];
             bool onJump = false;
             foreach (var (from, to) in jumps)
-                if ((Vector2.Distance(a, from) <= 1f && Vector2.Distance(b, to) <= 1f) || (Vector2.Distance(a, to) <= 1f && Vector2.Distance(b, from) <= 1f))
-                { onJump = true; break; }
+                if (SameJump(a, b, from, to)) { onJump = true; break; }
             if (!onJump) continue;
             bool taken = false;
             foreach (RoadCrossing c in crossings)
@@ -829,11 +958,17 @@ public static class DvergrViaduct
         if (added) crossings.Sort((x, y) => x.FromIndex.CompareTo(y.FromIndex));
     }
 
+    /// <summary>Whether a jump from <paramref name="a"/> to <paramref name="b"/> is the jump from <paramref name="from"/> to
+    /// <paramref name="to"/>, either way round, each end within <see cref="JumpMatch"/>.</summary>
+    internal static bool SameJump(Vector2 a, Vector2 b, Vector2 from, Vector2 to) =>
+        (Vector2.Distance(a, from) <= JumpMatch && Vector2.Distance(b, to) <= JumpMatch)
+        || (Vector2.Distance(a, to) <= JumpMatch && Vector2.Distance(b, from) <= JumpMatch);
+
     // ------------------------------------------- what later roads keep clear of
 
-    /// <summary>Pathfinding cells under the viaducts laid this generation, their bank cells apart:
-    /// no later road is built through a pier or under a deck. Generation only, like the stairs'.</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), byte> s_standing = new();
+    /// <summary>Pathfinding cells under the valley viaducts in the network (laid this session, or loaded with it), their bank
+    /// cells apart: no later road is built through a pier or under a deck.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, int), int> s_standing = new(CellPairComparer.Instance);
     private static volatile bool s_anyStanding;
     /// <summary>Cells within this of a viaduct's line stand under it.</summary>
     public const float StandingReach = 6f;
@@ -842,7 +977,7 @@ public static class DvergrViaduct
     {
         s_standing.Clear();
         s_anyStanding = false;
-        lock (s_laidGate) { s_laid = System.Array.Empty<(Vector2 from, Vector2 to)>(); s_laidIslands = System.Array.Empty<byte>(); }
+        lock (s_laidGate) { s_laid = System.Array.Empty<(Vector2 from, Vector2 to)>(); s_laidIslands = System.Array.Empty<int>(); }
     }
 
     // ------------------------------------------- between structures
@@ -858,16 +993,16 @@ public static class DvergrViaduct
     /// <summary>Half a viaduct's width, its arches and heads included (the course and arches stand 3 m out).</summary>
     public const float HalfWidth = 3f;
 
-    /// <summary>Viaducts laid this generation, banks only (valley and river alike). Copied on write under
+    /// <summary>Viaducts in the network (laid this session, or loaded with it), banks only (valley and river alike). Copied on write under
     /// <see cref="s_laidGate"/> and published whole, so the search (<see cref="TooClose"/>, from every island worker's
     /// valley jumps) reads it without a lock or a copy.</summary>
     private static volatile (Vector2 from, Vector2 to)[] s_laid = System.Array.Empty<(Vector2 from, Vector2 to)>();
     /// <summary>The island that laid each of <see cref="s_laid"/> (<see cref="CrossIslandReads.Tag"/>), by index; published
     /// before <see cref="s_laid"/>, so a reader of <see cref="s_laid"/> reads at least as many.</summary>
-    private static volatile byte[] s_laidIslands = System.Array.Empty<byte>();
+    private static volatile int[] s_laidIslands = System.Array.Empty<int>();
     private static readonly object s_laidGate = new();
 
-    /// <summary>Record a viaduct laid this generation, for <see cref="TooClose"/>.</summary>
+    /// <summary>Record a viaduct in the network, for <see cref="TooClose"/> (RoadNetworkGenerator.KeepClearOfViaducts).</summary>
     public static void MarkLaid(RoadCrossing crossing)
     {
         RoadNetworkGenerator.IslandNetworkChanged();
@@ -877,7 +1012,7 @@ public static class DvergrViaduct
             var grown = new (Vector2 from, Vector2 to)[laid.Length + 1];
             System.Array.Copy(laid, grown, laid.Length);
             grown[laid.Length] = (crossing.FromBank, crossing.ToBank);
-            var islands = new byte[laid.Length + 1];
+            var islands = new int[laid.Length + 1];
             System.Array.Copy(s_laidIslands, islands, laid.Length);
             islands[laid.Length] = CrossIslandReads.Tag;
             s_laidIslands = islands;
@@ -893,7 +1028,7 @@ public static class DvergrViaduct
     /// the clearance between structures, like stairs against roads. Back to back: an end within <see cref="EndSpacing"/> of
     /// the other's end. Or in it: its deck and end-approach volume (<see cref="Footprint"/>) overlapping the other's. The
     /// same viaduct (a shared crossing) is
-    /// not another. <paramref name="others"/>: the viaducts to keep clear of, else those laid this generation.
+    /// not another. <paramref name="others"/>: the viaducts to keep clear of, else those in the network.
     /// </summary>
     public static string? TooClose(Vector2 a, Vector2 b, IReadOnlyList<(Vector2 from, Vector2 to)>? others = null)
     {
@@ -914,7 +1049,7 @@ public static class DvergrViaduct
     /// <summary>The first viaduct in <paramref name="list"/> a viaduct from <paramref name="a"/> to <paramref name="b"/> stands
     /// too close to (<see cref="TooClose"/>), or -1: back to back (<paramref name="end"/> and <paramref name="theirs"/>, the two
     /// ends; else both NaN), or in its deck or approach. Allocation-free: it runs on every valley jump the search looks at.</summary>
-    private static int Clash(Vector2 a, Vector2 b, IReadOnlyList<(Vector2 from, Vector2 to)> list, byte[]? islands, out Vector2 end, out Vector2 theirs)
+    private static int Clash(Vector2 a, Vector2 b, IReadOnlyList<(Vector2 from, Vector2 to)> list, int[]? islands, out Vector2 end, out Vector2 theirs)
     {
         end = theirs = new Vector2(float.NaN, float.NaN);
         int n = list.Count;
@@ -994,7 +1129,7 @@ public static class DvergrViaduct
         (int, int) Cell(Vector2 p) => (Mathf.RoundToInt(p.x / cell), Mathf.RoundToInt(p.y / cell));
         var ends = new HashSet<(int, int)> { Cell(crossing.FromBank), Cell(crossing.ToBank) };
         Vector2 a = crossing.FromBank, b = crossing.ToBank;
-        byte tag = CrossIslandReads.Tag;
+        int tag = CrossIslandReads.Tag;
         int x0 = Mathf.FloorToInt((Mathf.Min(a.x, b.x) - StandingReach) / cell), x1 = Mathf.CeilToInt((Mathf.Max(a.x, b.x) + StandingReach) / cell);
         int z0 = Mathf.FloorToInt((Mathf.Min(a.y, b.y) - StandingReach) / cell), z1 = Mathf.CeilToInt((Mathf.Max(a.y, b.y) + StandingReach) / cell);
         for (int x = x0; x <= x1; x++)
@@ -1007,11 +1142,11 @@ public static class DvergrViaduct
         s_anyStanding = true;
     }
 
-    /// <summary>Whether a viaduct laid this generation stands over this pathfinding cell: on an island worker, one its own
+    /// <summary>Whether a viaduct in the network stands over this pathfinding cell: on an island worker, one its own
     /// island laid or an untagged one (CrossIslandReads).</summary>
     public static bool Standing(int cellX, int cellZ)
     {
-        if (!s_anyStanding || !s_standing.TryGetValue((cellX, cellZ), out byte tag)) return false;
+        if (!s_anyStanding || !s_standing.TryGetValue((cellX, cellZ), out int tag)) return false;
         if (CrossIslandReads.Sees(tag)) return true;
         CrossIslandReads.Skipped(CrossIslandReads.Kind.Viaducts, tag, new Vector2(cellX * RoadPathfinder.CellSize, cellZ * RoadPathfinder.CellSize));
         return false;
@@ -1033,6 +1168,11 @@ public static class DvergrViaduct
     /// Past it at either end <see cref="Refusal"/> refuses the viaduct: a valley keeps
     /// its stairs or road, a river its wooden bridge. 0: level banks only. Settable for tests.</summary>
     public static float MaxEndStairRise = DefaultMaxEndStairRise;
+
+    /// <summary>Whether end stairs rising <paramref name="rise"/> are past <see cref="MaxEndStairRise"/>: the one test, for
+    /// the viaduct's ends as the bank takes them (<see cref="Refusal"/>) and the most steps the road may meet an end by
+    /// (StructureEnds.MostSteps).</summary>
+    internal static bool EndStairsPastMost(float rise) => rise > MaxEndStairRise + 1e-3f;
 
     // ----------------------------------------------------- at grade or raised
 
@@ -1068,7 +1208,7 @@ public static class DvergrViaduct
     private static int RaisedSteps(RoadCrossing crossing, WorldGenerator world, float atGrade)
     {
         for (int steps = Mathf.Min(DrawnSteps(crossing, world.GetSeed()), crossing.RaiseAtMost); steps > 0; steps--)
-            if (DeckRefusal(crossing, world, PierCeiling, atGrade + steps * StairLayout.PieceRise) == null)
+            if (DeckRefusal(crossing, world, PierCeiling, atGrade + steps * StairLayout.PieceRise, mounds: false) == null)
                 return steps;
         return 0;
     }
@@ -1119,11 +1259,12 @@ public static class DvergrViaduct
         NaturalEnds(crossing, world, crossing == null || world == null ? 0f : DeckHeight(crossing, world));
 
     /// <summary><see cref="NaturalEnds(RoadCrossing, WorldGenerator)"/> from a deck at <paramref name="deck"/>.</summary>
-    private static (StructureEnds.End near, StructureEnds.End far) NaturalEnds(RoadCrossing crossing, WorldGenerator world, float deck)
+    private static (StructureEnds.End near, StructureEnds.End far) NaturalEnds(RoadCrossing crossing, WorldGenerator world, float deck,
+        (Vector2 near, Vector2 far)? edges = null)
     {
         if (crossing == null || world == null || crossing.Width < Module) return default;
         Vector2 dir = crossing.Direction;
-        var (nearEdge, farEdge) = EdgesOf(crossing, world);
+        var (nearEdge, farEdge) = edges ?? EdgesOf(crossing, world);
         float G(Vector2 p) => Ground(p, world);
         return (StructureEnds.Decide(nearEdge, dir, deck, G), StructureEnds.Decide(farEdge, -dir, deck, G));
     }
@@ -1146,11 +1287,15 @@ public static class DvergrViaduct
     /// drawn raise would turn the road away from a crossing it would otherwise take). Its steps are free, as a low
     /// structure's first steps are (StructureEnds.LowSteps), and it keeps within every limit <see cref="Refusal"/> holds.</para>
     /// </summary>
-    public static float Price(RoadCrossing crossing, WorldGenerator world, float fixedCost, float perMeter, float endStairPerMeter)
+    public static float Price(RoadCrossing crossing, WorldGenerator world, float fixedCost, float perMeter, float endStairPerMeter) =>
+        Price(new GradeDeck(crossing, world), fixedCost, perMeter, endStairPerMeter);
+
+    /// <summary><see cref="Price(RoadCrossing, WorldGenerator, float, float, float)"/> of a deck at grade already read
+    /// (<see cref="GradeDeck"/>: a valley probe's, which its refusal read).</summary>
+    internal static float Price(GradeDeck grade, float fixedCost, float perMeter, float endStairPerMeter)
     {
-        float deck = AtGrade(crossing, world);
-        var (near, far) = NaturalEnds(crossing, world, deck);
-        return (fixedCost + perMeter * crossing.Width) * HeightFactor(TallestPier(crossing, world, deck)) + endStairPerMeter * (near.Rise + far.Rise);
+        var (near, far) = grade.Ends;
+        return (fixedCost + perMeter * grade.Crossing.Width) * HeightFactor(grade.Tallest) + endStairPerMeter * (near.Rise + far.Rise);
     }
 
     /// <summary>
@@ -1205,7 +1350,8 @@ public static class DvergrViaduct
 
     /// <summary>
     /// The viaduct as the game's support rule holds it (<see cref="SupportGraph"/>, <see cref="ViaductSupport"/>), every
-    /// piece at <see cref="HoldMargin"/> times its material's least or more:
+    /// piece at <see cref="HoldMargin"/> times its material's least or more (the builder's response to the rule: docs/OWNERS.md,
+    /// support estimates and responses):
     /// <list type="bullet">
     /// <item>its bays as long as the deck reach lets them be (<see cref="Spacing"/>);</item>
     /// <item>a module whose black marble course the piers do not hold, as over a navigation bay too long for it (its width a
@@ -1213,41 +1359,82 @@ public static class DvergrViaduct
     /// (<see cref="IronDeckDrop"/>), each on an iron plate across the deck standing on the deck's own floor, iron losing
     /// 1/13 a metre where black marble loses 1/2 sideways, so the way across stays level;</item>
     /// <item>then an ornament that still would not hold left out (an arch, a corbel, a head: <see cref="Hold"/>), in the
-    /// whole viaduct and again in the ruin, which takes more of what holds the rest; nothing anyone walks on.</item>
+    /// whole viaduct and again in the ruin, which takes more of what holds the rest; nothing anyone walks on; read again
+    /// after a bank parapet is left out (<see cref="HoldBankParapets"/>);</item>
+    /// <item>last, a piece that carries the deck or the walk which the rule still breaks (<see cref="HoldReport.Falling"/>):
+    /// the viaduct is refused, no piece laid (an empty list, which nothing saves), and said. One held under the margin but not
+    /// broken is laid and said (<see cref="HoldReport.Unheld"/>).</item>
     /// </list>
     /// </summary>
     private static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin) =>
         Solve(crossing, world, worldSeed, ruin, out _);
 
+    /// <summary>
+    /// Whether the support rule refuses the viaduct as it is built (whole or ruined as <see cref="StructureWear.Bridges"/>
+    /// says, as BridgeStructures.Solve lays it): its own solve's verdict, a piece carrying the deck or the walk still falling
+    /// with every remedy taken, so nothing is laid (<see cref="Solve(RoadCrossing, WorldGenerator, int, bool, out HoldReport, bool)"/>),
+    /// said nothing (the record is its build's). Ground not known under a piece is no verdict: not refused. What
+    /// BridgeStructures.BuiltInNoKit asks of a viaduct before its road is stored.
+    /// </summary>
+    internal static bool Refuses(RoadCrossing crossing, WorldGenerator world, int worldSeed) =>
+        Solve(crossing, world, worldSeed, StructureWear.Bridges, out HoldReport report, say: false).Count == 0 && report.Falling.Count > 0;
+
     /// <inheritdoc cref="Solve(RoadCrossing, WorldGenerator, int, bool)"/>
     /// <param name="report">What the rule changed: the modules walked on iron, the ornaments left out, and any piece that
     /// carries the deck or the walk left under the margin (laid all the same, and said in the log).</param>
-    internal static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin, out HoldReport report)
+    /// <param name="say">Whether its calibration record and what the rule changed are said (false: read before its road is
+    /// stored, <see cref="Refuses"/>).</param>
+    internal static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin, out HoldReport report,
+        bool say = true)
     {
         report = new HoldReport();
         if (crossing == null || world == null || crossing.Width < Module) return new List<StructurePiece>();
-        Func<Vector2, float> ground = FinishedGround(crossing, world);
-        var grounding = new ViaductSupport.Grounding();
+        // The finished ground (StructureGround), its ends' joining stretches as the writer levels them: what its piers
+        // reach and what grounds its pieces, at its vertices exactly (the one reader of ground not known, as the bridge's
+        // solve reads it: BridgeStructures.Solve).
+        var grounding = new ViaductSupport.Grounding(StructureGround.Vertices(world));
         // The whole viaduct, its course laid in iron module by module where the rule does not hold it: a round takes every
         // module under the margin at once, and the course beside them, a neighbour short, may follow in the next.
         var iron = new HashSet<int>();
         Layout layout;
         for (int round = 0; ; round++)
         {
-            layout = Lay(crossing, world, worldSeed, ruin: false, iron);
+            layout = Lay(crossing, world, worldSeed, ruin: false, iron, grounding);
             bool more = false;
-            foreach (ViaductSupport.Held h in ViaductSupport.Of(crossing, ground, layout.Pieces, grounding))
+            foreach (ViaductSupport.Held h in ViaductSupport.Of(grounding, layout.Pieces))
                 if (h.Share < HoldMargin && IsCourse(h.Piece) && iron.Add(layout.ModuleOf(crossing, h.Piece)))
                     more = true;
             if (!more || round >= layout.Modules) break;
         }
         foreach (int m in iron) report.IronAlongs.Add(layout.First + m * Module);
-        if (ruin) layout = Lay(crossing, world, worldSeed, ruin: true, iron);
-        Hold(crossing, ground, grounding, layout.Pieces, ruin, report);
-        HoldBankParapets(layout, report);
+        if (ruin) layout = Lay(crossing, world, worldSeed, ruin: true, iron, grounding);
+        report.Buried.AddRange(layout.Buried);
+        Hold(grounding, layout.Pieces, ruin, report);
+        // A bank parapet left out takes support from what it held: the rest read again.
+        if (HoldBankParapets(layout, report)) Hold(grounding, layout.Pieces, ruin, report);
+        // A piece carrying the deck or the walk that the rule breaks with every remedy taken (iron, ornaments left out): no
+        // viaduct is laid (none saved), never one laid to fall.
+        bool refused = report.Falling.Count > 0;
+        // Ground not known under a piece (StructureGround.FirstOnUnknownGround, over the vertices the bridge's solve reads)
+        // is no verdict: neither refused nor recorded, the pieces as they stand, for the caller to lay none of them and say
+        // so (BridgeStructures.Solve, which finds the same vertex), as a staircase does.
+        if (StructureGround.FirstOnUnknownGround(layout.Pieces, grounding.Vertex) != null) return layout.Pieces;
+        // The calibration record (BridgeStructures.SupportLine): the pier ceiling's margin, a limit read in game, against the
+        // rule's reading of what stands; once per viaduct, whole or ruined as it is first solved. A pier over the ceiling on
+        // its mound (Mounds) is within the estimate: the margin is the natural ground's, the mound makes it up.
+        if (say && ruin == StructureWear.Bridges && !BridgeStructures.SupportSaid(crossing))
+            BridgeStructures.SaySupport(crossing, BridgeStructures.Read(BridgeStructures.Kit.DvergrViaduct,
+                TallestPier(crossing, world) <= PierCeiling || Mounds(crossing, world).Count > 0,
+                PierCeiling - TallestPier(crossing, world), "m under the pier ceiling", ViaductSupport.Of(grounding, layout.Pieces)),
+                refused ? "refused" : report.IronAlongs.Count > 0 || report.Dropped.Count > 0 ? "built, iron or ornaments taken" : "built");
+        if (refused)
+        {
+            if (say) Say(crossing, ruin, report);
+            return new List<StructurePiece>();
+        }
         layout.HangVines(crossing);
         if (ruin) layout.Ruin.ApplyLocationDamage(layout.Pieces); // vanilla's Location.m_applyRandomDamage (BridgeLayout.LocationDamageMin)
-        Say(crossing, ruin, report);
+        if (say) Say(crossing, ruin, report);
         return layout.Pieces;
     }
 
@@ -1261,12 +1448,19 @@ public static class DvergrViaduct
         public readonly Dictionary<string, int> Dropped = new();
         /// <summary>The pieces left out.</summary>
         public readonly List<StructurePiece> DroppedPieces = new();
-        /// <summary>Pieces that carry the deck or the walk under the margin, laid all the same: none, by the layout's rules
-        /// (its bays, its ceiling, its iron); a stored deck taller than those rules would build is where one shows.</summary>
+        /// <summary>Pieces that carry the deck or the walk under the margin, laid all the same where the rule does not break
+        /// them: none, by the layout's rules (its bays, its ceiling, its iron); a stored deck taller than those rules would
+        /// build, or ground not known under a pier, is where one shows.</summary>
         public readonly List<StructurePiece> Unheld = new();
+        /// <summary>Of <see cref="Unheld"/>, those the rule breaks (<see cref="ViaductSupport.Held.Falls"/>): with any, the
+        /// viaduct is refused, no piece laid (<see cref="Solve(RoadCrossing, WorldGenerator, int, bool, out HoldReport)"/>).</summary>
+        public readonly List<StructurePiece> Falling = new();
         /// <summary>The pieces of a parapet run on past a deck's end left out where they would stand on a road
         /// (<see cref="OnTheRoad"/>).</summary>
         public readonly List<StructurePiece> OffTheRoad = new();
+        /// <summary>The pieces left out as wholly in the finished ground, the rest standing without them
+        /// (<see cref="LeaveOutBuried"/>).</summary>
+        public readonly List<StructurePiece> Buried = new();
     }
 
     /// <summary>An ornament: an arch or a head along the deck's edge, the end stairs' parapet and what it stands on, a corbel's
@@ -1280,6 +1474,14 @@ public static class DvergrViaduct
     /// <summary>A block of the deck's black marble course, which the walk is on.</summary>
     private static bool IsCourse(StructurePiece p) => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == Block;
 
+    /// <summary>Whether a piece of the deck is walked on, <paramref name="deck"/> the deck's walking surface
+    /// (<see cref="DeckHeight"/>): a block of its course (<see cref="IsCourse"/>), or an iron floor of a module walked on iron,
+    /// laid <see cref="IronDeckDrop"/> under the deck at the course's top. Not the deck's own floors under the course
+    /// (<see cref="FloorDrop"/> under it) nor the iron plate under a walk: a floor is the walk where it lies over the
+    /// course's middle (<see cref="CourseDrop"/> under the deck). A pit a ruin leaves in the course is not counted a walk.</summary>
+    internal static bool Walked(StructurePiece p, float deck) =>
+        IsCourse(p) || p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == Floor && p.Position.y > deck - CourseDrop;
+
     /// <summary>How far under the deck surface the iron walking floors of a module laid in iron lie (their centre): their
     /// top at the course's.</summary>
     public const float IronDeckDrop = 0.05f;
@@ -1289,20 +1491,25 @@ public static class DvergrViaduct
     /// <see cref="HoldMargin"/>, and in a ruin the course too (a ruin takes course anyway: a pit to the floors a player
     /// jumps), again until none is left: a piece left out only takes support from those it held. Floors, the walk on iron,
     /// the pier's core and screens and the end steps are never left out: the ruin's way across is the floors', chosen
-    /// before; one of them under the margin is laid and reported (<see cref="HoldReport.Unheld"/>).
+    /// before; one of them under the margin is reported (<see cref="HoldReport.Unheld"/>), and one the rule breaks too
+    /// (<see cref="HoldReport.Falling"/>), for <see cref="Solve(RoadCrossing, WorldGenerator, int, bool, out HoldReport)"/> to refuse.
     /// </summary>
-    private static void Hold(RoadCrossing crossing, Func<Vector2, float> ground, ViaductSupport.Grounding grounding,
-        List<StructurePiece> pieces, bool ruin, HoldReport report)
+    private static void Hold(ViaductSupport.Grounding grounding, List<StructurePiece> pieces, bool ruin, HoldReport report)
     {
         for (int round = 0; ; round++)
         {
             var drop = new HashSet<StructurePiece>();
             report.Unheld.Clear();
-            foreach (ViaductSupport.Held h in ViaductSupport.Of(crossing, ground, pieces, grounding))
+            report.Falling.Clear();
+            foreach (ViaductSupport.Held h in ViaductSupport.Of(grounding, pieces))
             {
                 if (h.Share >= HoldMargin) continue;
                 if (IsOrnament(h.Piece) || (ruin && IsCourse(h.Piece))) drop.Add(h.Piece);
-                else report.Unheld.Add(h.Piece);
+                else
+                {
+                    report.Unheld.Add(h.Piece);
+                    if (h.Falls) report.Falling.Add(h.Piece);
+                }
             }
             if (drop.Count == 0 || round >= 32) return;
             foreach (StructurePiece p in drop)
@@ -1317,8 +1524,9 @@ public static class DvergrViaduct
     /// <summary>Viaducts whose <see cref="HoldReport"/> was said, whole or ruined: once each a process.</summary>
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Vector2, Vector2, bool), byte> s_said = new();
 
-    /// <summary>One line to the log for a viaduct the support rule changed: iron, ornaments left out (info), and a piece
-    /// that carries the deck left under the margin (a warning: the layout's rules should not let one through).</summary>
+    /// <summary>One line to the log for a viaduct the support rule changed: iron, ornaments left out (info), a piece that
+    /// carries the deck left under the margin (a warning: the layout's rules should not let one through), or the viaduct
+    /// refused for one the rule breaks (a warning).</summary>
     private static void Say(RoadCrossing crossing, bool ruin, HoldReport report)
     {
         if (report.IronAlongs.Count == 0 && report.Dropped.Count == 0 && report.Unheld.Count == 0 && report.OffTheRoad.Count == 0) return;
@@ -1329,6 +1537,13 @@ public static class DvergrViaduct
             + (report.OffTheRoad.Count == 0 ? "" : FormattableString.Invariant($"; {report.OffTheRoad.Count} bank parapet piece(s) left off the road: ")
                 + string.Join(", ", report.OffTheRoad.Take(6).Select(p => FormattableString.Invariant($"{p.Prefab} ({p.Position.x:F1}, {p.Position.y:F1}, {p.Position.z:F1})"))));
         var log = ProceduralRoadsPlugin.ProceduralRoadsLogger;
+        if (report.Falling.Count > 0)
+        {
+            log?.LogWarning(at + FormattableString.Invariant($"refused, nothing laid: {report.Falling.Count} piece(s) carrying the deck the game's support rule breaks: ")
+                + string.Join(", ", report.Falling.Take(6).Select(p => FormattableString.Invariant($"{p.Prefab} ({p.Position.x:F1}, {p.Position.y:F1}, {p.Position.z:F1})")))
+                + "; " + what);
+            return;
+        }
         if (report.Unheld.Count == 0) { log?.LogInfo(at + what); return; }
         log?.LogWarning(at + what + FormattableString.Invariant($"; {report.Unheld.Count} piece(s) carrying the deck under {HoldMargin} times their least, laid: ")
             + string.Join(", ", report.Unheld.Take(6).Select(p => FormattableString.Invariant($"{p.Prefab} ({p.Position.x:F1}, {p.Position.y:F1}, {p.Position.z:F1})"))));
@@ -1345,6 +1560,8 @@ public static class DvergrViaduct
         /// <summary>The bank parapet's pieces left out for standing on a road (<see cref="OnTheRoad"/>), and the black marble
         /// that held only them.</summary>
         public readonly List<StructurePiece> OffTheRoad = new();
+        /// <summary>The pieces left out as wholly in the finished ground (<see cref="LeaveOutBuried"/>).</summary>
+        public readonly List<StructurePiece> Buried = new();
         public BridgeLayout.Ruin Ruin;
         public Func<Vector2, float> Ground = null!;
         public float First, Deck, Yaw;
@@ -1363,7 +1580,7 @@ public static class DvergrViaduct
             var laid = new List<(string prefab, float along, float v, float y)>();
             foreach (StructurePiece p in Pieces)
             {
-                if (p.Prefab == StepPrefab || ViaductSupport.MaterialOf(p.Prefab) == null) continue;
+                if (p.Prefab == StepPrefab || !BuriedPieces.DataOf(p.Prefab, out BuriedPieces.Measured data) || data.Material == null) continue;
                 Vector2 rel = new Vector2(p.Position.x, p.Position.z) - crossing.FromBank;
                 laid.Add((p.Prefab, Vector2.Dot(rel, dir), Vector2.Dot(rel, side), p.Position.y));
             }
@@ -1386,8 +1603,10 @@ public static class DvergrViaduct
         }
     }
 
-    /// <summary>The viaduct laid, whole or ruined, the modules in <paramref name="iron"/> walked on iron, no vines yet.</summary>
-    private static Layout Lay(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin, ISet<int> iron)
+    /// <summary>The viaduct laid, whole or ruined, the modules in <paramref name="iron"/> walked on iron, no vines yet; its
+    /// pieces wholly in the finished ground left out where the rest stands without them (<see cref="LeaveOutBuried"/>).</summary>
+    private static Layout Lay(RoadCrossing crossing, WorldGenerator world, int worldSeed, bool ruin, ISet<int> iron,
+        ViaductSupport.Grounding grounding)
     {
         var layout = new Layout();
         List<StructurePiece> pieces = layout.Pieces;
@@ -1415,11 +1634,11 @@ public static class DvergrViaduct
         float Survives(float along, float share) => BridgeLayout.RuinProfile.Survives(BridgeLayout.SpanSurvival(Mid(along)), share);
 
         Vector2 At(float along, float v) => crossing.FromBank + dir * along + side * v;
-        // The finished ground (StructureGround): raised or cut by the road's levelling, and cut to the meeting height where
-        // the road runs on under the end module (StructureEnds.JoinOverlap), so that module is not dropped as buried under a
-        // bank the road cuts away. The piers' shafts and screens reach it, and a piece wholly under it is not laid.
+        // The finished ground (StructureGround): raised or cut by the road's levelling, which levels the road's width to the
+        // meeting height where it runs on under the end module (StructureEnds.JoinOverlap). The piers' shafts and screens
+        // reach it; what is wholly under it is left out once the whole viaduct is laid (LeaveOutBuried).
         var (nearEnd, farEnd) = Ends(crossing, world);
-        Func<Vector2, float> finished = layout.Ground = FinishedGround(world, nearEnd, farEnd);
+        Func<Vector2, float> finished = layout.Ground = StructureGround.At(world);
         float G(Vector2 p) => finished(p);
         // Every pier's piece laid, on the bridge's axes, and its pier: a corbel's ornament is left out where another pier's
         // piece stands (a pier past the deck's end beside a bay pier; bays are never shorter than two corbel bands).
@@ -1429,7 +1648,6 @@ public static class DvergrViaduct
         void Add(StructurePieceKind kind, string prefab, float along, float v, float y, float turn, float health)
         {
             Vector2 p = At(along, v);
-            if (WhollyBuried(prefab, p, dir, side, y, G)) return;
             if (kind == StructurePieceKind.ViaductPier) { laid.Add((prefab, along, v, y)); laidPier.Add(pierOf); }
             pieces.Add(new StructurePiece
             {
@@ -1456,6 +1674,8 @@ public static class DvergrViaduct
             foreach (var (du, v, footingTurn) in Shafts)
             {
                 float ground = G(At(a + du, v));
+                // Over ground not known no shaft: none reaches it, and the solve that read it lays nothing (BridgeStructures.Solve).
+                if (float.IsNaN(ground)) continue;
                 float bottom = deck + ShaftTop;
                 // Down from under the corbel band, a band every 8 m (vanilla's two at 9 and 17 m under the deck).
                 for (int level = 0; ; level++)
@@ -1471,9 +1691,10 @@ public static class DvergrViaduct
                     Add(StructurePieceKind.ViaductPier, Footing, a + du, v, bottom - 4f, footingTurn, 1f);
             }
             // The iron screens through the pier, from the deck down until one is in the ground.
-            foreach (float du in new[] { -1f, 1f })
+            foreach (float du in ScreenAlongs)
             {
                 float ground = G(At(a + du, 0f));
+                if (float.IsNaN(ground)) continue;
                 for (int level = 0; ; level++)
                 {
                     float centre = deck - FloorDrop - level * 2f;
@@ -1685,7 +1906,21 @@ public static class DvergrViaduct
             }
         }
 
+        LeaveOutBuried(layout, grounding);
         return layout;
+    }
+
+    /// <summary>The laid viaduct's pieces wholly in the finished ground (<paramref name="grounding"/>'s, at its vertices) left
+    /// out where the rest stands without them, the whole viaduct read by the support rule as <see cref="Solve"/> reads it
+    /// (<see cref="BuriedPieces.Omit"/>, the one owner): piers, deck, ornaments, end steps and both parapets alike.</summary>
+    private static void LeaveOutBuried(Layout layout, ViaductSupport.Grounding grounding)
+    {
+        List<StructurePiece> left = BuriedPieces.Omit(layout.Pieces, grounding.Vertex, pieces => ViaductSupport.Of(grounding, pieces));
+        if (left.Count == 0) return;
+        layout.Buried.AddRange(left);
+        var gone = new HashSet<StructurePiece>(left);
+        foreach (List<StructurePiece> bank in layout.BankParapets) bank.RemoveAll(gone.Contains);
+        layout.BankParapets.RemoveAll(bank => bank.Count == 0);
     }
 
     /// <summary>
@@ -1706,9 +1941,10 @@ public static class DvergrViaduct
         float Finished(int x, int z) => finished(new Vector2(x, z));
         foreach (var (outward, laid) in StairRailing.LayBankParapet(end, BridgeLayout.EndStairsWidth, Finished))
         {
+            // The arch laid whatever the ground: one wholly in it is left out with the rest of the viaduct's (LeaveOutBuried),
+            // and unknown ground never leaves it out.
             Vector2 at = end.Edge + outward * 2.5f;
-            if (!WhollyBuried(Arch, at, dir, side, end.Height + ArchRise, finished))
-                laid.Insert(0, new StructurePiece { Prefab = Arch, Position = new Vector3(at.x, end.Height + ArchRise, at.y), YawDegrees = Wrap(yaw + archTurn) });
+            laid.Insert(0, new StructurePiece { Prefab = Arch, Position = new Vector3(at.x, end.Height + ArchRise, at.y), YawDegrees = Wrap(yaw + archTurn) });
             foreach (StructurePiece p in laid)
             {
                 p.Kind = StructurePieceKind.ViaductParapet;
@@ -1793,8 +2029,9 @@ public static class DvergrViaduct
 
     /// <summary>A side of a parapet run on past a deck's end the support rule took a piece of (<see cref="Hold"/>) is left out
     /// whole: no column stands in a drop with nothing on it, nor a cap on a column that fell. Said with what the rule left
-    /// out (<see cref="HoldReport.Dropped"/>); and the pieces left off a road (<see cref="Layout.OffTheRoad"/>).</summary>
-    private static void HoldBankParapets(Layout layout, HoldReport report)
+    /// out (<see cref="HoldReport.Dropped"/>); and the pieces left off a road (<see cref="Layout.OffTheRoad"/>). Whether any
+    /// was left out now.</summary>
+    private static bool HoldBankParapets(Layout layout, HoldReport report)
     {
         report.OffTheRoad.AddRange(layout.OffTheRoad);
         var dropped = new HashSet<StructurePiece>(report.DroppedPieces);
@@ -1810,6 +2047,7 @@ public static class DvergrViaduct
             }
         }
         layout.Pieces.RemoveAll(rest.Contains);
+        return rest.Count > 0;
     }
 
     /// <summary>Whether a <paramref name="prefab"/> of pier <paramref name="pier"/> centred at (<paramref name="along"/>,
@@ -1831,16 +2069,6 @@ public static class DvergrViaduct
         return false;
     }
 
-    /// <summary>The finished ground a viaduct of <paramref name="crossing"/> is laid on (StructureGround, under its ends as
-    /// they meet the road): what its piers reach and what grounds its pieces.</summary>
-    internal static Func<Vector2, float> FinishedGround(RoadCrossing crossing, WorldGenerator world)
-    {
-        var (nearEnd, farEnd) = Ends(crossing, world);
-        return FinishedGround(world, nearEnd, farEnd);
-    }
-
-    private static Func<Vector2, float> FinishedGround(WorldGenerator world, StructureEnds.End nearEnd, StructureEnds.End farEnd) =>
-        StructureGround.Of(world, nearEnd, farEnd, HalfWidth + SupportGraph.Reach);
 
     /// <summary>Whether a vine's origin lies within <see cref="VineTouch"/> of a stone piece laid (its bounds,
     /// <see cref="Extents"/>), on the bridge's axes.</summary>
@@ -1867,25 +2095,6 @@ public static class DvergrViaduct
 
     /// <summary>The ground the layout stands on: the game's blended terrain, as the wooden kit's.</summary>
     internal static float Ground(Vector2 p, WorldGenerator world) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
-
-    /// <summary>Whether a piece would be wholly under the ground: its top at or under the ground
-    /// over its whole footprint grown by <see cref="SupportGraph.Reach"/> (the game breaks such a
-    /// piece: it touches no terrain triangle, so it is not grounded).</summary>
-    internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, WorldGenerator world) =>
-        WhollyBuried(prefab, centre, dir, side, y, p => Ground(p, world));
-
-    /// <summary>As above, on <paramref name="ground"/> (the finished ground, <see cref="StructureGround"/>).</summary>
-    internal static bool WhollyBuried(string prefab, Vector2 centre, Vector2 dir, Vector2 side, float y, Func<Vector2, float> ground)
-    {
-        var (hu, hv, hy) = Extents(prefab);
-        float top = y + hy + SupportGraph.Reach;
-        hu += SupportGraph.Reach; hv += SupportGraph.Reach;
-        foreach (float su in new[] { -1f, 0f, 1f })
-            foreach (float sv in new[] { -1f, 0f, 1f })
-                if (ground(centre + dir * (su * hu) + side * (sv * hv)) < top)
-                    return false;
-        return true;
-    }
 
     // ----------------------------------------------------------- describing
 

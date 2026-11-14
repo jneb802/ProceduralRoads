@@ -7,7 +7,7 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// Where a road arrives when the place it is going to stands at a height of
+/// Where a road arrives when the location it is going to stands at a height of
 /// its own. The ramp used to blend toward the natural terrain under the road's
 /// last point, which on a cliff-mouth cave is the cliff face, not the cave.
 /// </summary>
@@ -154,7 +154,7 @@ public class EndpointPoiHeightTests
 
         // The road stops at the exterior radius, outside the cut. Nothing
         // is offered, so the ramp meets the natural terrain under the
-        // road's own end. Aiming at the middle of the place instead is what
+        // road's own end. Aiming at the middle of the location instead is what
         // built a rim around the doorstep.
         Assert.Null(RoadNetworkGenerator.LocationGround(new Vector2(32f, 0f), centre, 32f));
 
@@ -171,7 +171,7 @@ public class EndpointPoiHeightTests
     }
 
     [Fact]
-    public void TheRoadEndIsNotLiftedToTheMiddleOfThePlace()
+    public void TheRoadEndIsNotLiftedToTheMiddleOfTheLocation()
     {
         // The regression this pins: a road arriving on a hillside was given the
         // ground height from the location's CENTRE, ten metres uphill, and the

@@ -9,10 +9,10 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// A place whose landing turns with it (<see cref="PlacedSites.NeedsPlacing(string, bool, bool, Heightmap.Biome, IReadOnlyList{LevelOp}?)"/>)
-/// gets a road only where it was placed before its roads (<see cref="PlacedSites.NotPlaced"/>): one that missed its
+/// A location whose landing turns with it (<see cref="PlacedLocations.NeedsPlacing(string, bool, bool, Heightmap.Biome, IReadOnlyList{LevelOp}?)"/>)
+/// gets a road only where it was placed before its roads (<see cref="PlacedLocations.NotPlaced"/>): one that missed its
 /// placing gets none, in any biome, and is counted a destination not reached. On the synthetic one-island world, a frost cave
-/// turned to face downhill among the standard places.
+/// turned to face downhill among the standard locations.
 /// </summary>
 public class PlacedBeforeItsRoadTests : IDisposable
 {
@@ -63,7 +63,7 @@ public class PlacedBeforeItsRoadTests : IDisposable
         LocationLevelling.FacesDownhillSource = AtCave;
         _scope.WithZdos().WithNetwork(server: true);
         RoadNetworkGenerator.Reset();
-        PlacedSites.Reset();
+        PlacedLocations.Reset();
         return world;
     }
 
@@ -71,25 +71,25 @@ public class PlacedBeforeItsRoadTests : IDisposable
     {
         LocationLevelling.Source = null;
         LocationLevelling.FacesDownhillSource = null;
-        PlacedSites.Reset();
+        PlacedLocations.Reset();
         RoadNetworkGenerator.Reset();
         _scope.Dispose();
     }
 
     /// <summary>The cave as the game placed it before its roads: turned to face +x, on the ground at its centre.</summary>
-    private static PlacedSiteRecord PlacedCave(WorldGenerator world) => new()
+    private static PlacedLocationRecord PlacedCave(WorldGenerator world) => new()
     {
         Prefab = "MountainCave02", Centre = CaveAt, Yaw = 90f, Root = world.GetHeight(CaveAt.x, CaveAt.y), RockRadius = 0f,
         Ops = new List<LevelOp>(CaveFloor), X0 = (int)CaveAt.x - 60, Z0 = (int)CaveAt.y - 60, W = 121, H = 121,
     };
 
     /// <summary>The other two destinations as the game placed them before their roads: neither levels anything (the
-    /// test's prefabs carry no levelling), so each is placed with no flat and reached at its ring (PlacedSites.FlatlessPlaced).
-    /// In the Mountains every destination waits for its placing (PlacedSites.NeedsPlacing).</summary>
+    /// test's prefabs carry no levelling), so each is placed with no flat and reached at its ring (PlacedLocations.FlatlessPlaced).
+    /// In the Mountains every destination waits for its placing (PlacedLocations.NeedsPlacing).</summary>
     private static void PlaceTheOthers(WorldGenerator world)
     {
         foreach (var (name, x, z) in new[] { ("Eikthyrnir", 260f, 40f), ("Crypt4", 120f, -260f) })
-            PlacedSites.Remember(new PlacedSiteRecord
+            PlacedLocations.Remember(new PlacedLocationRecord
             {
                 Prefab = name, Centre = new Vector2(x, z), Yaw = 0f, Root = world.GetHeight(x, z), RockRadius = 0f,
                 X0 = (int)x - 60, Z0 = (int)z - 60, W = 121, H = 121,
@@ -104,15 +104,15 @@ public class PlacedBeforeItsRoadTests : IDisposable
         RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(CaveAt.x, 0f, CaveAt.y), reach).Any(p => p.IsRoad && Vector2.Distance(p.p, CaveAt) <= reach)
         || StairStructures.PiecesNear(new Vector3(CaveAt.x, 0f, CaveAt.y), reach).Count > 0;
 
-    /// <summary>A place whose landing turns with it and that was not placed before its roads (here: a generation that places
+    /// <summary>A location whose landing turns with it and that was not placed before its roads (here: a generation that locations
     /// nothing first) gets no road at all, in the Meadows as in the Mountains: no road ends at its ring and no staircase is
     /// predicted onto it, and it is a destination not reached. Before, outside the Mountains its road ended at its ring and
     /// counted it reached ("keeps the outskirts end"); in the Mountains such an end was refused only where it was not level
-    /// with the place.</summary>
+    /// with the location.</summary>
     [Theory]
     [InlineData(Heightmap.Biome.Meadows)]
     [InlineData(Heightmap.Biome.Mountain)]
-    public void APlaceWithALandingNotPlacedBeforeItsRoadGetsNoRoad(Heightmap.Biome biome)
+    public void ALocationWithALandingNotPlacedBeforeItsRoadGetsNoRoad(Heightmap.Biome biome)
     {
         var world = SetUp(biome);
         PlaceTheOthers(world);
@@ -132,26 +132,58 @@ public class PlacedBeforeItsRoadTests : IDisposable
     [Theory]
     [InlineData(Heightmap.Biome.Meadows)]
     [InlineData(Heightmap.Biome.Mountain)]
-    public void APlaceWithALandingPlacedBeforeItsRoadKeepsItsRoad(Heightmap.Biome biome)
+    public void ALocationWithALandingPlacedBeforeItsRoadKeepsItsRoad(Heightmap.Biome biome)
     {
         var world = SetUp(biome);
-        PlacedSites.Remember(PlacedCave(world));
+        PlacedLocations.Remember(PlacedCave(world));
         PlaceTheOthers(world);
 
         RoadNetworkGenerator.GenerateRoads(force: true);
 
-        Assert.True(PlacedSites.TryGetReady(CaveAt, out _), "the placed cave was not made ready for its roads");
+        Assert.True(PlacedLocations.TryGetReady(CaveAt, out _), "the placed cave was not made ready for its roads");
         Assert.True(RoadNetworkGenerator.Reached(new Vector3(CaveAt.x, 0f, CaveAt.y), CaveRadius, "MountainCave02"),
             "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
         Assert.Equal(3, Counter("m_destinationsSelected"));
         Assert.Equal(3, Counter("m_destinationsConnected"));
     }
 
-    /// <summary>The places the load places first and the places a road may go to with a landing are the same list: a place
+    /// <summary>A Mistlands destination on no preload list (the boss altar: no levelling off its centre) is placed first only to aim
+    /// its road at (PlacedLocations.PlacesFirst). Where its placing could not be read it is given no road, as a location on the preload list
+    /// is, and counted not reached, never routed on the ground predicted for it; placed and read, it is prepared to aim at and
+    /// reached. Through the generation's own preparation (FindNotPlaced) and routing.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMistlandsDestinationPlacedOnlyToAimAtGetsARoadOnlyWhereItsPlacingWasRead(bool read)
+    {
+        var world = SetUp(Heightmap.Biome.Mistlands);
+        var eikthyr = new Vector2(260f, 40f);
+        ZoneSystem.LocationInstance altar = ZoneSystem.instance!.m_locationInstances[ZoneSystem.GetZone(new Vector3(eikthyr.x, 0f, eikthyr.y))];
+        Assert.False(PlacedLocations.NeedsPlacing(altar, world));
+        Assert.True(PlacedLocations.PlacesFirst(altar, world));
+        PlacedLocations.Remember(PlacedCave(world));
+        PlaceTheOthers(world);
+        if (!read)
+        {
+            // As the load's placing leaves it (LocationsFirstLoad): placed, but no record written.
+            var others = PlacedLocations.All.Where(r => r.Centre != eikthyr).ToList();
+            PlacedLocations.Reset();
+            PlacedLocations.Load(others);
+            PlacedLocations.NoteWhyNotPlaced(eikthyr, "placed, but what its placing settled could not be read");
+        }
+
+        RoadNetworkGenerator.GenerateRoads(force: true);
+
+        Assert.Equal(read, PlacedLocations.TryGetAimed(eikthyr, out _));
+        Assert.Equal(read ? 0 : 1, Counter("m_destinationsNotPlaced"));
+        Assert.Equal(read, RoadNetworkGenerator.Reached(new Vector3(eikthyr.x, 0f, eikthyr.y), 10f, "Eikthyrnir"));
+    }
+
+    /// <summary>The locations the load places first and the locations a road may go to with a landing are the same list: a location
     /// turned to face downhill with its floor off its centre waits for its placing, and so does a crypt turned at random in
     /// the Meadows (its door turns with it); a boss altar with no levelling off its centre does not.</summary>
     [Fact]
-    public void ThePlacesPlacedFirstAreThePlacesThatWaitForIt()
+    public void TheLocationsPlacedFirstAreTheLocationsThatWaitForIt()
     {
         var world = SetUp(Heightmap.Biome.Meadows);
         var zones = ZoneSystem.instance!;
@@ -159,54 +191,54 @@ public class PlacedBeforeItsRoadTests : IDisposable
 
         var crypt = new Vector2(120f, -260f);
         var eikthyr = new Vector2(260f, 40f);
-        Assert.True(PlacedSites.NeedsPlacing(At(CaveAt.x, CaveAt.y), world));
-        Assert.True(PlacedSites.NeedsPlacing(At(crypt.x, crypt.y), world));
-        PlacedSites.FindNotPlaced(new[] { CaveAt, crypt, eikthyr }, world);
-        Assert.True(PlacedSites.NotPlaced(CaveAt));
-        Assert.True(PlacedSites.NotPlaced(crypt));
-        Assert.False(PlacedSites.NotPlaced(eikthyr));
+        Assert.True(PlacedLocations.NeedsPlacing(At(CaveAt.x, CaveAt.y), world));
+        Assert.True(PlacedLocations.NeedsPlacing(At(crypt.x, crypt.y), world));
+        PlacedLocations.FindNotPlaced(new[] { CaveAt, crypt, eikthyr }, world);
+        Assert.True(PlacedLocations.NotPlaced(CaveAt));
+        Assert.True(PlacedLocations.NotPlaced(crypt));
+        Assert.False(PlacedLocations.NotPlaced(eikthyr));
 
-        PlacedSites.Remember(PlacedCave(world));
-        PlacedSites.Prepare((x, z) => world.GetHeight(x, z));
-        PlacedSites.FindNotPlaced(new[] { CaveAt, crypt }, world);
-        Assert.False(PlacedSites.NotPlaced(CaveAt));
+        PlacedLocations.Remember(PlacedCave(world));
+        PlacedLocations.Prepare((x, z) => world.GetHeight(x, z));
+        PlacedLocations.FindNotPlaced(new[] { CaveAt, crypt }, world);
+        Assert.False(PlacedLocations.NotPlaced(CaveAt));
     }
 
-    /// <summary>The places a generation leaves without a road are found once, on the main thread, before its island workers
-    /// start: a worker only looks one up, reading neither a place's levelling (a search of the world's location
+    /// <summary>The locations a generation leaves without a road are found once, on the main thread, before its island workers
+    /// start: a worker only looks one up, reading neither a location's levelling (a search of the world's location
     /// list) nor the location list the main thread writes, however often it asks. The set is the generation's: over once
     /// the generation is, so a later road (a manual one) is not judged by it.</summary>
     [Fact]
-    public void ThePlacesLeftWithoutARoadAreFoundOnceAndOnlyLookedUpAfter()
+    public void TheLocationsLeftWithoutARoadAreFoundOnceAndOnlyLookedUpAfter()
     {
         var world = SetUp(Heightmap.Biome.Mountain);
 
         PlaceTheOthers(world);
         RoadNetworkGenerator.GenerateRoads(force: true);
         Assert.Equal(1, Counter("m_destinationsNotPlaced"));
-        Assert.False(PlacedSites.NotPlaced(CaveAt), "the set outlived its generation");
+        Assert.False(PlacedLocations.NotPlaced(CaveAt), "the set outlived its generation");
 
-        PlacedSites.FindNotPlaced(new[] { CaveAt }, world);
-        LocationLevelling.Source = _ => throw new InvalidOperationException("a place's levelling was read after the set was found");
+        PlacedLocations.FindNotPlaced(new[] { CaveAt }, world);
+        LocationLevelling.Source = _ => throw new InvalidOperationException("a location's levelling was read after the set was found");
         ZoneSystem.instance!.m_locationInstances.Clear();
-        for (int i = 0; i < 100; i++) Assert.True(PlacedSites.NotPlaced(CaveAt));
+        for (int i = 0; i < 100; i++) Assert.True(PlacedLocations.NotPlaced(CaveAt));
     }
 
-    /// <summary>A place given no road says why, as the placing knew it (placed but not readable, its
+    /// <summary>A location given no road says why, as the placing knew it (placed but not readable, its
     /// zone left as it is); with no word from the placing it says only that it was not placed before its roads.</summary>
     [Fact]
-    public void APlaceGivenNoRoadSaysWhyAsThePlacingKnewIt()
+    public void ALocationGivenNoRoadSaysWhyAsThePlacingKnewIt()
     {
         var world = SetUp(Heightmap.Biome.Mountain);
-        PlacedSites.FindNotPlaced(new[] { CaveAt }, world);
-        Assert.Equal("not placed before its roads", PlacedSites.NotPlacedWhy(CaveAt));
+        PlacedLocations.FindNotPlaced(new[] { CaveAt }, world);
+        Assert.Equal("not placed before its roads", PlacedLocations.NotPlacedWhy(CaveAt));
 
-        PlacedSites.NoteWhyNotPlaced(CaveAt, "its zone is generated, but no placing of it was found there to read");
-        PlacedSites.FindNotPlaced(new[] { CaveAt }, world);
-        Assert.Equal("its zone is generated, but no placing of it was found there to read", PlacedSites.NotPlacedWhy(CaveAt));
+        PlacedLocations.NoteWhyNotPlaced(CaveAt, "its zone is generated, but no placing of it was found there to read");
+        PlacedLocations.FindNotPlaced(new[] { CaveAt }, world);
+        Assert.Equal("its zone is generated, but no placing of it was found there to read", PlacedLocations.NotPlacedWhy(CaveAt));
         // A note is the generation's: the next one finds its own.
-        PlacedSites.FindNotPlaced(new[] { CaveAt }, world);
-        Assert.Equal("not placed before its roads", PlacedSites.NotPlacedWhy(CaveAt));
+        PlacedLocations.FindNotPlaced(new[] { CaveAt }, world);
+        Assert.Equal("not placed before its roads", PlacedLocations.NotPlacedWhy(CaveAt));
     }
 
     /// <summary>Drives the owned generation as the game's frames do, to its end.</summary>
@@ -223,37 +255,37 @@ public class PlacedBeforeItsRoadTests : IDisposable
 
     /// <summary>Every destination in the Mountains waits for its placing (the Mountains are too varied to
     /// guess): a cabin that only smooths round its centre and is turned at random (AbandonedLogCabin04: never placed before,
-    /// its road ended 14 m out and 10 m under it), and a place that turns nowhere and levels nothing. Elsewhere such places
+    /// its road ended 14 m out and 10 m under it), and a location that turns nowhere and levels nothing. Elsewhere such locations
     /// do not; the rule for a turned landing stands.</summary>
     [Fact]
     public void EveryMountainDestinationWaitsForItsPlacing()
     {
         var cabin = new[] { new LevelOp(0f, 0f, 0f, 0f, false, 9f, 5f) };
-        Assert.True(PlacedSites.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Mountain, cabin));
-        Assert.True(PlacedSites.NeedsPlacing("SomePlace", false, false, Heightmap.Biome.Mountain, null));
-        Assert.False(PlacedSites.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Meadows, cabin));
-        Assert.False(PlacedSites.NeedsPlacing("SomePlace", false, false, Heightmap.Biome.Mistlands, null));
-        Assert.True(PlacedSites.NeedsPlacing("MountainCave02", true, false, Heightmap.Biome.Meadows, CaveFloor));
+        Assert.True(PlacedLocations.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Mountain, cabin));
+        Assert.True(PlacedLocations.NeedsPlacing("SomeLocation", false, false, Heightmap.Biome.Mountain, null));
+        Assert.False(PlacedLocations.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Meadows, cabin));
+        Assert.False(PlacedLocations.NeedsPlacing("SomeLocation", false, false, Heightmap.Biome.Mistlands, null));
+        Assert.True(PlacedLocations.NeedsPlacing("MountainCave02", true, false, Heightmap.Biome.Meadows, CaveFloor));
     }
 
-    /// <summary>A Mountain place placed before its roads with no flat to land on (a cabin, or one that levels nothing) is not
-    /// left without a road: it is reached at its ring, as a place not placed first. Not placed, it waits for its placing and
+    /// <summary>A Mountain location placed before its roads with no flat to land on (a cabin, or one that levels nothing) is not
+    /// left without a road: it is reached at its ring, as a location not placed first. Not placed, it waits for its placing and
     /// gets none.</summary>
     [Fact]
-    public void AMountainPlacePlacedWithNoFlatKeepsItsRoad()
+    public void AMountainLocationPlacedWithNoFlatKeepsItsRoad()
     {
         var world = SetUp(Heightmap.Biome.Mountain);
         var eikthyr = new Vector2(260f, 40f);
-        PlacedSites.FindNotPlaced(new[] { eikthyr }, world);
-        Assert.True(PlacedSites.NotPlaced(eikthyr), "a Mountain place not placed was given a road");
+        PlacedLocations.FindNotPlaced(new[] { eikthyr }, world);
+        Assert.True(PlacedLocations.NotPlaced(eikthyr), "a Mountain location not placed was given a road");
 
-        PlacedSites.Remember(PlacedCave(world));
+        PlacedLocations.Remember(PlacedCave(world));
         PlaceTheOthers(world);
-        PlacedSites.Prepare((x, z) => world.GetHeight(x, z));
-        Assert.False(PlacedSites.TryGetReady(eikthyr, out _), "a place with no flat has no landing to be made ready for");
-        Assert.True(PlacedSites.FlatlessPlaced(eikthyr));
-        PlacedSites.FindNotPlaced(new[] { eikthyr }, world);
-        Assert.False(PlacedSites.NotPlaced(eikthyr));
+        PlacedLocations.Prepare((x, z) => world.GetHeight(x, z));
+        Assert.False(PlacedLocations.TryGetReady(eikthyr, out _), "a location with no flat has no landing to be made ready for");
+        Assert.True(PlacedLocations.FlatlessPlaced(eikthyr));
+        PlacedLocations.FindNotPlaced(new[] { eikthyr }, world);
+        Assert.False(PlacedLocations.NotPlaced(eikthyr));
 
         RoadNetworkGenerator.GenerateRoads(force: true);
         Assert.Equal(0, Counter("m_destinationsNotPlaced"));
@@ -261,15 +293,15 @@ public class PlacedBeforeItsRoadTests : IDisposable
             "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
     }
 
-    /// <summary>road_generate and road_regen_island preload the places they will visit, as the load does: an
-    /// operator's generation on a world whose cave was never placed places it first, over frames on the main thread (here
+    /// <summary>road_generate and road_regen_island preload the locations they will visit, as the load does: an
+    /// operator's generation on a world whose cave was never placed locations it first, over frames on the main thread (here
     /// the placing leaves its record as the game's would), and its road goes onto the cave's landing. Before, road_generate
-    /// placed nothing first, so under the strict rule every such place got no road.</summary>
+    /// placed nothing first, so under the strict rule every such location got no road.</summary>
     [Theory]
     [InlineData(Heightmap.Biome.Meadows, false)]
     [InlineData(Heightmap.Biome.Mountain, false)]
     [InlineData(Heightmap.Biome.Mountain, true)]
-    public void AnOperatorsGenerationPlacesItsPlacesFirstAndReachesThem(Heightmap.Biome biome, bool oneIsland)
+    public void AnOperatorsGenerationPlacesItsLocationsFirstAndReachesThem(Heightmap.Biome biome, bool oneIsland)
     {
         var world = SetUp(biome);
         int main = Environment.CurrentManagedThreadId;
@@ -281,10 +313,10 @@ public class PlacedBeforeItsRoadTests : IDisposable
             // A zone is placed a frame later, as the game's prefabs and terrain load between frames.
             preparation.EndSlice(); yield return true;
             placedOn.Add(Environment.CurrentManagedThreadId);
-            PlacedSites.Remember(PlacedCave(world));
+            PlacedLocations.Remember(PlacedCave(world));
             PlaceTheOthers(world);
         }
-        RoadNetworkGenerator.SitesFirst = Place;
+        RoadNetworkGenerator.LocationsFirst = Place;
         try
         {
             var told = new List<string>();
@@ -295,13 +327,13 @@ public class PlacedBeforeItsRoadTests : IDisposable
             Assert.True(chosen, "the cave was not among the destinations");
             Assert.Equal(new[] { main }, placedOn);
             Assert.True(RoadNetworkGenerator.RoadsAvailable);
-            Assert.True(PlacedSites.TryGetReady(CaveAt, out _), "the placed cave was not made ready for its roads");
+            Assert.True(PlacedLocations.TryGetReady(CaveAt, out _), "the placed cave was not made ready for its roads");
             Assert.True(RoadNetworkGenerator.Reached(new Vector3(CaveAt.x, 0f, CaveAt.y), CaveRadius, "MountainCave02"),
                 "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
             Assert.Equal(0, Counter("m_destinationsNotPlaced"));
             Assert.Equal(3, Counter("m_destinationsConnected"));
             Assert.Contains(told, l => oneIsland ? l.StartsWith("Island ") : l == "Road generation complete!");
         }
-        finally { RoadNetworkGenerator.SitesFirst = null; }
+        finally { RoadNetworkGenerator.LocationsFirst = null; }
     }
 }

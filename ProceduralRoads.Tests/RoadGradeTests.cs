@@ -145,6 +145,21 @@ public class RoadGradeTests
         Assert.True(RoadGrade.Capped(0.2f));
     }
 
+    /// <summary>A test's grade cap scope (GradeCap) is a positive cap: zero or below is refused by RoadGrade.Capped before
+    /// the configured cap changes, and a positive one is put back when the scope ends.</summary>
+    [Theory]
+    [InlineData(0f)]
+    [InlineData(-1f)]
+    public void AGradeCapScopeIsAPositiveCap(float cap)
+    {
+        float was = RoadGrade.Configured;
+        Assert.Throws<System.ArgumentOutOfRangeException>(() => GradeCap.At(cap));
+        Assert.Equal(was, RoadGrade.Configured);
+        using (GradeCap.At(Cap))
+            Assert.Equal(Cap, RoadGrade.Configured);
+        Assert.Equal(was, RoadGrade.Configured);
+    }
+
     [Fact]
     public void TwoPointsAreCheckedToo()
     {

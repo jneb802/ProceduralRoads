@@ -83,12 +83,18 @@ public class PlacementHeightsTests : System.IDisposable
             "a road that could not read a saved height was not marked, so it would be built anyway");
     }
 
+    /// <summary>A location's saved root is its own placement's, found at its centre exactly (decision 6d: the game stands a
+    /// location's proxy at its centre and saves its position losslessly): a location whose own placement is not saved is not
+    /// given the placement of a location beside it, here 0.4 m off across a zone's edge (zones meet at x = 96). Before, any
+    /// saved placement within half a metre was taken for it.</summary>
     [Fact]
-    public void APlacementIsFoundBelowConsolePrecision()
+    public void ALocationIsNeverGivenTheSavedRootOfTheLocationBesideIt()
     {
-        Fill();
-        // Stored and generated coordinates differ in the last digits.
-        Assert.Equal(41.5f, LocationPlacementHeights.At(new Vector2(100.3f, 200.3f)));
-        Assert.Null(LocationPlacementHeights.At(new Vector2(101.5f, 200f)));
+        LocationLevelling.Unseal();
+        LocationPlacementHeights.Source = () => new[] { (new Vector2(96.2f, 200f), 41.5f) };
+        LocationPlacementHeights.Clear();
+        LocationPlacementHeights.Read();
+        Assert.Equal(41.5f, LocationPlacementHeights.At(new Vector2(96.2f, 200f)));
+        Assert.Null(LocationPlacementHeights.At(new Vector2(95.8f, 200f)));
     }
 }

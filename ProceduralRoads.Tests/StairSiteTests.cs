@@ -18,7 +18,7 @@ public sealed class StairSiteTests : IDisposable
     public StairSiteTests()
     {
         RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
-        RoadNetworkGenerator.MarkLocationsReady(); RoadSiteProtection.Set(Array.Empty<RoadSiteProtection.Footprint>());
+        RoadNetworkGenerator.MarkLocationsReady(); RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         RoadGrade.Configured = RoadConstants.DefaultMaxRoadGrade; RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         CommitFixtureRoad();
     }
@@ -44,7 +44,9 @@ public sealed class StairSiteTests : IDisposable
     internal static StairRun AddStaircase(WorldGenerator world, float x)
     {
         Vector2 from = new(x, 10f), to = new(x, 50f);
-        StairPlan plan = StairLayout.Build(from, to, (px, pz) => 32f + 0.5f * (pz - 10f) - (pz > 22f && pz < 42f ? 3f : 0f), kit: StairKit.Stone);
+        // Its slope climbs 4 m off the world's 32 m ground and stays within a wall's height over it, so its kit holds every
+        // piece up by the game's support rule (StairKit.Dress refuses one it cannot).
+        StairPlan plan = StairLayout.Build(from, to, (px, pz) => Mathf.Min(32f + 0.5f * (pz - 10f), 36f) - (pz > 22f && pz < 42f ? 3f : 0f), kit: StairKit.Stone);
         Assert.True(plan.Reached, plan.Reason);
         StairRun run = StairRun.FromPlan(from, to, RoadStairRuns.Width, plan, StairKit.Stone);
         StairStructures.Add(run);

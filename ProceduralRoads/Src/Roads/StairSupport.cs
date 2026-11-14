@@ -92,15 +92,29 @@ public static class StairSupport
 
     /// <summary>What one <see cref="Lay"/> could not hold up as the search priced it, for its caller to say where: each walking
     /// piece left unheld (the middle of its underside), each wall cell stopped short (its lowest course's top), each support
-    /// piece left out because the game's support rule breaks it, and each walking piece the rule holds under
-    /// <see cref="DvergrViaduct.HoldMargin"/> times its least (their positions).</summary>
+    /// piece left out because the game's support rule breaks it, each walking piece the rule breaks (under its material's
+    /// least: <see cref="Falling"/>), and each walking piece the rule holds, but under <see cref="DvergrViaduct.HoldMargin"/>
+    /// times its least (their positions).</summary>
     public sealed class Shortfall
     {
         public readonly List<Vector3> Unheld = new();
         public readonly List<Vector3> ShortWalls = new();
         public readonly List<Vector3> Fell = new();
+        /// <summary>Walking pieces the game's support rule breaks as laid (<see cref="ViaductSupport.Held.Falls"/>): a staircase
+        /// with any is not laid (<see cref="StairKit.Dress"/>).</summary>
+        public readonly List<Vector3> Falling = new();
         public readonly List<Vector3> Weak = new();
-        public bool Any => Unheld.Count > 0 || ShortWalls.Count > 0 || Fell.Count > 0 || Weak.Count > 0;
+        public bool Any => Unheld.Count > 0 || ShortWalls.Count > 0 || Fell.Count > 0 || Falling.Count > 0 || Weak.Count > 0;
+
+        /// <summary>Everything <paramref name="other"/> says, added to this.</summary>
+        internal void Add(Shortfall other)
+        {
+            Unheld.AddRange(other.Unheld);
+            ShortWalls.AddRange(other.ShortWalls);
+            Fell.AddRange(other.Fell);
+            Falling.AddRange(other.Falling);
+            Weak.AddRange(other.Weak);
+        }
     }
 
     // Search prices, in the search's units (a metre walked costs 2): up to WallHeight, by the mean air under the walking
@@ -155,6 +169,16 @@ public static class StairSupport
         public float Surface(float along, StairKit kit) => SurfaceBy(along, kit.FloorThickness);
     }
 
+    /// <summary>A stair's footprint: origin at its foot's height, centred, a <see cref="StairLayout.PieceRun"/> square; it climbs
+    /// toward its local -z (StairLayout.AddPiece). A staircase's step, and a bridge's end step, laid the same way
+    /// (BridgeLayout.EndStep).</summary>
+    public static Walk StairWalk(StructurePiece piece)
+    {
+        float heading = StairLayout.Wrap(piece.YawDegrees + 180f);
+        return new Walk(new Vector2(piece.Position.x, piece.Position.z) - StairLayout.Forward(heading) * (StairLayout.PieceRun / 2f), heading,
+            StairLayout.PieceRun, StairLayout.PieceRun, piece.Position.y, true, 0f);
+    }
+
     /// <summary>The walking pieces of a staircase's layout as footprints, null for any other piece.</summary>
     public static Walk? WalkOf(StructurePiece piece, StairKit kit)
     {
@@ -162,12 +186,7 @@ public static class StairSupport
         switch (piece.Kind)
         {
             case StructurePieceKind.StairStep:
-            {
-                // Origin at its foot's height, centred; it climbs toward its local -z (StairLayout.AddPiece).
-                float heading = StairLayout.Wrap(piece.YawDegrees + 180f);
-                return new Walk(at - StairLayout.Forward(heading) * (StairLayout.PieceRun / 2f), heading, StairLayout.PieceRun,
-                    StairLayout.PieceRun, piece.Position.y, true, 0f);
-            }
+                return StairWalk(piece);
             case StructurePieceKind.StairFloor:
             case StructurePieceKind.StairFiller:
             {
@@ -245,6 +264,107 @@ public static class StairSupport
             deepest = Math.Max(deepest, c);
         }
         return new Choice(Style.Arch, side, deepest + 1, Held(air, ArchPrice + CorbelCoursePrice * deepest, face));
+    }
+
+    /// <summary>
+    /// The answers <see cref="Choose"/> gave on one ground, for the walks a road's stretch's layouts ask it again: a stretch's
+    /// staircase is searched several times over the same face (held to its road's headings, then free of them, of its cells,
+    /// of its facing, merged with the one before), and each search tries most of the pieces the one before it tried. Choose
+    /// reads nothing but its kit, its walk and the ground, so a walk asked again on the same ground is answered as it was
+    /// first chosen, to the bit; only the reading is not done again. Its caller names the ground (RoadStairRuns.Plan: a layout's
+    /// ground and the generation of the lattice under it) and keeps one a stretch (RoadStairRuns.LayOnce), as the search keeps
+    /// its own open queue; the ground the search reads past a road's end, levelled to the road there
+    /// (<see cref="RoadEndRing.RoadsGround"/>), and the kit each have their own answers (<see cref="On"/>). Kept only while the
+    /// generation spends memory for speed (<see cref="GenerationMemory.KeepsSupportAnswers"/>).
+    /// </summary>
+    public sealed class Answers
+    {
+        private readonly List<Answered> m_answered = new(1);
+
+        /// <summary>The answers for <paramref name="kit"/> on this ground, levelled past <paramref name="ring"/>'s road end where
+        /// the search reads it so (<see cref="RoadEndRing.RoadsGround"/>), null where it is read as it stands.</summary>
+        internal Answered On(RoadEndRing? ring, StairKit kit)
+        {
+            foreach (Answered a in m_answered)
+                if (a.Is(ring, kit)) return a;
+            var made = new Answered(ring, kit);
+            m_answered.Add(made);
+            return made;
+        }
+    }
+
+    /// <summary>Walks this thread's searches asked again and answered from <see cref="Answers"/> (tests).</summary>
+    [ThreadStatic] private static long t_reused;
+    internal static long AnswersReused => t_reused;
+
+    /// <summary>One kit's answers on one ground (<see cref="Answers.On"/>), by walk, every field of it to the bit.</summary>
+    public sealed class Answered
+    {
+        private readonly RoadEndRing? m_ring;
+        private readonly StairKit m_kit;
+        private readonly Dictionary<WalkBits, Choice> m_choices = new();
+        /// <summary>Walks chosen on this ground, each once (tests).</summary>
+        internal int Chosen => m_choices.Count;
+
+        internal Answered(RoadEndRing? ring, StairKit kit) { m_ring = ring; m_kit = kit; }
+
+        internal bool Is(RoadEndRing? ring, StairKit kit)
+        {
+            if (!ReferenceEquals(kit, m_kit) || ring.HasValue != m_ring.HasValue) return false;
+            if (ring is not RoadEndRing r || m_ring is not RoadEndRing o) return true;
+            return Bits(r.Centre.x) == Bits(o.Centre.x) && Bits(r.Centre.y) == Bits(o.Centre.y) && Bits(r.Travel) == Bits(o.Travel)
+                && Bits(r.Height) == Bits(o.Height) && Bits(r.Radius) == Bits(o.Radius) && r.Through == o.Through;
+        }
+
+        /// <summary><see cref="StairSupport.Choose"/> for <paramref name="w"/> of this kit on <paramref name="ground"/> (the ground
+        /// these answers were given on), answered as first chosen where it was asked before.</summary>
+        internal Choice Choose(Walk w, Func<float, float, float> ground)
+        {
+            var key = new WalkBits(w);
+            if (m_choices.TryGetValue(key, out Choice known)) { t_reused++; return known; }
+            Choice chosen = StairSupport.Choose(m_kit, w, ground);
+            m_choices[key] = chosen;
+            return chosen;
+        }
+    }
+
+    private static int Bits(float v) => TerrainFingerprint.Bits(v);
+
+    /// <summary>A walk's every field, as bits (<see cref="Answered"/>'s key): what <see cref="Choose"/> reads of it.</summary>
+    private readonly struct WalkBits : IEquatable<WalkBits>
+    {
+        private readonly int m_x, m_z, m_heading, m_depth, m_across, m_underside, m_thickness, m_dirX, m_dirZ, m_rightX, m_rightZ;
+        private readonly bool m_stair;
+
+        public WalkBits(Walk w)
+        {
+            m_x = Bits(w.Back.x); m_z = Bits(w.Back.y); m_heading = Bits(w.Heading); m_depth = Bits(w.Depth); m_across = Bits(w.Across);
+            m_underside = Bits(w.Underside); m_thickness = Bits(w.Thickness); m_stair = w.Stair;
+            m_dirX = Bits(w.Dir.x); m_dirZ = Bits(w.Dir.y); m_rightX = Bits(w.Right.x); m_rightZ = Bits(w.Right.y);
+        }
+
+        public bool Equals(WalkBits o) =>
+            m_x == o.m_x && m_z == o.m_z && m_heading == o.m_heading && m_underside == o.m_underside && m_depth == o.m_depth
+            && m_across == o.m_across && m_thickness == o.m_thickness && m_stair == o.m_stair && m_dirX == o.m_dirX && m_dirZ == o.m_dirZ
+            && m_rightX == o.m_rightX && m_rightZ == o.m_rightZ;
+
+        public override bool Equals(object? obj) => obj is WalkBits o && Equals(o);
+
+        public override int GetHashCode()
+        {
+            unchecked
+            {
+                uint h = (uint)m_x;
+                h = h * 31u + (uint)m_z;
+                h = h * 31u + (uint)m_heading;
+                h = h * 31u + (uint)m_underside;
+                h = h * 31u + (uint)m_depth;
+                h = h * 31u + (uint)m_across;
+                h = h * 31u + (m_stair ? 1u : 0u);
+                h *= 2654435769u;
+                return (int)(h ^ (h >> 16));
+            }
+        }
     }
 
     private static float Held(float air, float held, float face) => face >= HeldFromGrade ? Mathf.Min(air, held) : Mathf.Max(air, held);
@@ -330,7 +450,8 @@ public static class StairSupport
 
     /// <summary>How many of a cornice column's courses hang over the first that touches the ground: its box (2 m across, a
     /// metre along, 2 m tall), grown <see cref="SupportGraph.Reach"/> as the game grows it, meets the ground on its middle
-    /// line or its wall-side edge. The column's courses down to its sunk one (<see cref="CorniceCourse"/>) all touch by
+    /// line or its wall-side edge (an estimate at those samples, on the layout's ground, by the one contact verdict:
+    /// <see cref="SupportGraph.Against"/>). The column's courses down to its sunk one (<see cref="CorniceCourse"/>) all touch by
     /// then; the slope's face is read at them only.</summary>
     private static int HungCourses(Walk w, float along, float top, int side, Func<float, float, float> ground)
     {
@@ -342,29 +463,35 @@ public static class StairSupport
                 for (int k = 0; k <= 1; k++)
                 {
                     Vector2 p = w.At(along + e * (0.5f + r), side * (middle + k * (1f + r)));
-                    if (ground(p.x, p.y) >= bottom - r) return c;
+                    float g = ground(p.x, p.y);
+                    if (SupportGraph.Against(g, g, bottom, bottom) is SupportGraph.Terrain.Meets or SupportGraph.Terrain.Under) return c;
                 }
         }
         return CorniceCourses;
     }
 
     /// <summary>
-    /// The pieces that hold a staircase's walking pieces up, laid at its first build: each piece held as <see cref="Choose"/>
-    /// chooses on the <paramref name="natural"/> ground; walls stand down to the <paramref name="finished"/> ground (the
-    /// game's vertices after the network's earthwork). Straight runs of walled pieces share one wall in running bond, and a
+    /// The pieces that hold a staircase's walking pieces up, laid at its first build: each piece held in the style
+    /// <see cref="Choose"/> chooses on the <paramref name="natural"/> ground (the ground its layout was searched and priced
+    /// on); what is laid stands on the <paramref name="finished"/> ground (the game's vertices after the network's
+    /// earthwork, the game's mesh between them): walls down to it, arches, corbels and cornices out and down to the first
+    /// course sunk in it (the planned courses where none within reach is, for the support rule to judge), and the support
+    /// rule grounds each piece on it alone (<see cref="SupportGraph.OnTerrain"/>). Straight runs of walled pieces share one wall in running bond, and a
     /// walled floor's open end is walled across, bonded at its corners (<see cref="LayWalls"/>).
-    /// A support piece that would stand in a walking piece, or wholly under the ground, is left out. A walking piece nothing
+    /// A support piece that would stand in a walking piece is left out, and one wholly under the ground where the staircase
+    /// stands without it (<see cref="BuriedPieces.Omit"/>). A walking piece nothing
     /// within reach holds (refused, which the search never lays: an older build's saved layout) is left unheld and counted
     /// (<see cref="Unheld"/>), not hung with an arch's first course or every cornice course down to the support ceiling;
     /// it and every wall cell stopped short (<see cref="ShortWalls"/>) are added to <paramref name="shortfall"/>, for the
     /// caller to say where. Last, the whole is read with the game's support rule (<see cref="HoldUp"/>): a support piece it
-    /// would break is left out, never laid to fall.
+    /// would break is left out, never laid to fall, and a walking piece it breaks is said (<see cref="Shortfall.Falling"/>).
     /// </summary>
     public static List<StructurePiece> Lay(StairKit kit, IReadOnlyList<StructurePiece> walking, Func<float, float, float> natural,
         Func<int, int, float> finished, Shortfall? shortfall = null, List<StructurePiece>? vines = null,
         Func<float, float, Heightmap.Biome>? biomeAt = null)
     {
         var laid = new List<StructurePiece>();
+        Func<float, float, float> ground = (x, z) => BuriedPieces.MeshHeight(x, z, finished);
         var hung = vines != null && biomeAt != null ? new List<(StructurePiece host, StructurePiece vine)>() : null;
         var walls = new List<(Walk w, int downhill)>();
         var walks = new List<Walk>();
@@ -383,8 +510,8 @@ public static class StairSupport
             switch (choice.Style)
             {
                 case Style.Wall: walls.Add((w, -choice.Side)); break;
-                case Style.Arch: LayArches(laid, w, choice, natural); break;
-                case Style.Cornice: LayCornices(laid, w, choice, walks, natural, hung); break;
+                case Style.Arch: LayArches(laid, w, choice, ground); break;
+                case Style.Cornice: LayCornices(laid, w, choice, walks, ground, hung); break;
             }
         }
         LayWalls(laid, walls, walks, finished, shortfall);
@@ -392,11 +519,17 @@ public static class StairSupport
         var seen = new HashSet<(string, float, float, float, float, float, float)>();
         List<StructurePiece> outcorners = laid.FindAll(p => p.Prefab == OutCorner);
         foreach (StructurePiece p in laid)
-            if (!InWalking(p, walking, kit) && !BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, finished)
+            if (!InWalking(p, walking, kit)
                 && !(p.Prefab == Cornice && InOutcorner(p, outcorners)) && seen.Add((p.Prefab, p.Position.x, p.Position.y, p.Position.z, p.PitchDegrees, p.YawDegrees, p.RollDegrees)))
                 keep.Add(p);
-        HoldUp(walking, keep, natural, finished, shortfall);
-        if (hung != null) HangVines(kit, walks, keep, hung, natural, finished, biomeAt!, vines!);
+        // A support wholly in the finished ground left out where the staircase stands without it (BuriedPieces.Omit).
+        var staircase = new List<StructurePiece>(walking);
+        staircase.AddRange(keep);
+        var supports = new HashSet<StructurePiece>(keep);
+        foreach (StructurePiece p in BuriedPieces.Omit(staircase, finished, pieces => Holding(pieces, finished), supports.Contains))
+            keep.Remove(p);
+        HoldUp(walking, keep, finished, shortfall);
+        if (hung != null) HangVines(kit, walks, keep, hung, finished, biomeAt!, vines!);
         return keep;
     }
 
@@ -405,15 +538,15 @@ public static class StairSupport
     /// curtain down the downhill face of one cornice column under a walking piece (its first, <see cref="CorniceRow"/> 0),
     /// there at the viaduct's <see cref="DvergrViaduct.VineCurtainChance"/>, a vine on each course; ornaments only, hung
     /// after the support rule has read the staircase (<see cref="HoldUp"/>) and never read by it. A vine is hung only on a
-    /// cornice still laid, with its origin at or over the finished ground (none inside it), and with no part of it in the
+    /// cornice still laid, with its origin at or over the finished ground (none inside it, none where it is not known), and with no part of it in the
     /// headroom over any walked surface (<see cref="RoadRockPolicy.ClearanceHeight"/>). Its leaves may reach down to the
     /// ground and lie on it, as vanilla's Mistlands Dvergr structures drape theirs to the grass at the foot of the stone:
     /// the viaduct's <see cref="DvergrViaduct.VineGroundClear"/> is not read here. A vine grows only where the game's biome at
-    /// its own place is one vanilla's vines grow in (<see cref="DvergrViaduct.VineBiomes"/>): a staircase climbing out of the
+    /// its own location is one vanilla's vines grow in (<see cref="RoadRules.Vines"/>): a staircase climbing out of the
     /// Mistlands into the Mountains is bare up there. With no biome to read (<paramref name="biomeAt"/> null), none is hung.
     /// </summary>
     private static void HangVines(StairKit kit, IReadOnlyList<Walk> walks, List<StructurePiece> keep,
-        List<(StructurePiece host, StructurePiece vine)> hung, Func<float, float, float> natural, Func<int, int, float> finished,
+        List<(StructurePiece host, StructurePiece vine)> hung, Func<int, int, float> finished,
         Func<float, float, Heightmap.Biome> biomeAt, List<StructurePiece> vines)
     {
         var kept = new HashSet<StructurePiece>(keep);
@@ -421,8 +554,7 @@ public static class StairSupport
         {
             if (!kept.Contains(host)) continue;
             float g = BuriedPieces.MeshHeight(vine.Position.x, vine.Position.z, finished);
-            if (float.IsNaN(g)) g = natural(vine.Position.x, vine.Position.z);
-            if (vine.Position.y < g || (biomeAt(vine.Position.x, vine.Position.z) & DvergrViaduct.VineBiomes) == 0
+            if (float.IsNaN(g) || vine.Position.y < g || !RoadRules.For(biomeAt(vine.Position.x, vine.Position.z)).Vines
                 || InHeadroom(kit, walks, vine)) continue;
             vines.Add(vine);
         }
@@ -465,17 +597,19 @@ public static class StairSupport
     }
 
     /// <summary>
-    /// The laid staircase as the game's support rule holds it (<see cref="Holding"/>): every support piece of
-    /// <paramref name="supports"/> under its material's least (the game breaks it, dropping its stone) left out, again until
-    /// none is, as the game breaks one after another; each counted (<see cref="Fell"/>). Then every walking piece held under
-    /// <see cref="DvergrViaduct.HoldMargin"/> times its least is counted (<see cref="Weak"/>) and said, but laid: walking
-    /// pieces are never left out. The search keeps both from happening (<see cref="MostHungCourses"/>); this is what holds a
-    /// layout the search did not (an older build's, or a road's cut under a wall the search could not see).
+    /// The laid staircase as the game's support rule holds it (<see cref="Holding"/>), whatever was laid under it, nothing
+    /// included: every support piece of <paramref name="supports"/> the rule breaks (<see cref="ViaductSupport.Held.Falls"/>,
+    /// the one verdict: under its material's least once the model's over-reading is taken off; the game breaks it, dropping
+    /// its stone) left out, again until none is, as the game breaks one after another; each counted (<see cref="Fell"/>).
+    /// Then the walking pieces, which are never left out: one the rule breaks (<see cref="ViaductSupport.Held.Falls"/>) is
+    /// said in <see cref="Shortfall.Falling"/>, for the kit to hold the staircase otherwise or not lay it
+    /// (<see cref="StairKit.Dress"/>); one held under <see cref="DvergrViaduct.HoldMargin"/> times its least is counted
+    /// (<see cref="Weak"/>) and said. The search keeps both from happening (<see cref="MostHungCourses"/>); this is what reads
+    /// a layout the search did not (an older build's, or a road's cut under a wall or a stair the search could not see).
     /// </summary>
-    private static void HoldUp(IReadOnlyList<StructurePiece> walking, List<StructurePiece> supports, Func<float, float, float> natural,
+    private static void HoldUp(IReadOnlyList<StructurePiece> walking, List<StructurePiece> supports,
         Func<int, int, float> finished, Shortfall? shortfall)
     {
-        if (supports.Count == 0) return;
         var mine = new HashSet<StructurePiece>(supports);
         for (int round = 0; round < 64; round++)
         {
@@ -483,9 +617,11 @@ public static class StairSupport
             all.AddRange(supports);
             var fell = new HashSet<StructurePiece>();
             var weak = new List<StructurePiece>();
-            foreach (ViaductSupport.Held h in Holding(all, natural, finished))
+            var falling = new List<StructurePiece>();
+            foreach (ViaductSupport.Held h in Holding(all, finished))
             {
-                if (mine.Contains(h.Piece)) { if (h.Support < h.Min) fell.Add(h.Piece); }
+                if (mine.Contains(h.Piece)) { if (h.Falls) fell.Add(h.Piece); }
+                else if (h.Falls) falling.Add(h.Piece);
                 else if (h.Share < DvergrViaduct.HoldMargin) weak.Add(h.Piece);
             }
             if (fell.Count > 0)
@@ -498,6 +634,7 @@ public static class StairSupport
                 supports.RemoveAll(fell.Contains);
                 continue;
             }
+            foreach (StructurePiece p in falling) shortfall?.Falling.Add(p.Position);
             foreach (StructurePiece p in weak)
             {
                 System.Threading.Interlocked.Increment(ref s_weak);
@@ -507,13 +644,14 @@ public static class StairSupport
         }
     }
 
-    private static void LayArches(List<StructurePiece> laid, Walk w, Choice choice, Func<float, float, float> natural)
+    private static void LayArches(List<StructurePiece> laid, Walk w, Choice choice, Func<float, float, float> ground)
     {
         float yaw = choice.Side > 0 ? w.Heading : StairLayout.Wrap(w.Heading + 180f); // the arch's tall end (+x) to the wall
         for (int row = 0; row < ArchRowCount(w); row++)
         {
             float along = ArchRow(row);
-            int last = ArchCourse(w, along, choice.Side, natural);
+            int last = ArchCourse(w, along, choice.Side, ground);
+            if (last < 0) last = choice.Courses - 1;
             for (int c = 0; c <= last; c++)
             {
                 Vector2 at = w.At(along, choice.Side * (2f * c + FillerShift(w)));
@@ -524,7 +662,7 @@ public static class StairSupport
     }
 
     private static void LayCornices(List<StructurePiece> laid, Walk w, Choice choice, IReadOnlyList<Walk> walks,
-        Func<float, float, float> natural, List<(StructurePiece host, StructurePiece vine)>? hung = null)
+        Func<float, float, float> ground, List<(StructurePiece host, StructurePiece vine)>? hung = null)
     {
         // The cornice's lower block is on its local -x: turned so that faces the wall.
         float yaw = choice.Side > 0 ? StairLayout.Wrap(w.Heading + 180f) : w.Heading;
@@ -542,7 +680,7 @@ public static class StairSupport
             // courses Choose priced where none within the support ceiling is.
             Vector2 outward = w.Right * -choice.Side + w.Dir * end;
             float cornerYaw = Mathf.Atan2(outward.x, outward.y) * Mathf.Rad2Deg - 45f;
-            int last = CornerCourse(w, choice.Side, end, natural);
+            int last = CornerCourse(w, choice.Side, end, ground);
             if (last < 0) last = choice.Courses - 1;
             for (int c = 0; c <= last; c++)
                 laid.Add(Support(OutCorner, CornerAt(w, choice.Side, end, c), w.Underside - 1f - 2f * c, cornerYaw));
@@ -553,7 +691,8 @@ public static class StairSupport
         for (int row = 0; row < CorniceRowCount(w); row++)
         {
             var (along, top) = CorniceRow(w, row);
-            int last = CorniceCourse(w, along, top, choice.Side, natural);
+            int last = CorniceCourse(w, along, top, choice.Side, ground);
+            if (last < 0) last = choice.Courses - 1;
             for (int c = 0; c <= last; c++)
             {
                 StructurePiece cornice = Support(Cornice, w.At(along, choice.Side * (c + FillerShift(w))), top - 1f - 2f * c, yaw);
@@ -856,8 +995,8 @@ public static class StairSupport
         }
 
         /// <summary>Each cell's courses, from its top down: the deepest it needs. None where the finished ground under it is
-        /// not known (inside a place's footprint whose levelling is not known: <see cref="RoadTerrainModifier.FinishedGround"/>),
-        /// as columns were carried down: walled to a guess, a wall stood 8 m down through the place's own ground. A cell
+        /// not known (inside a location's footprint whose levelling is not known: <see cref="RoadTerrainModifier.FinishedGround"/>),
+        /// as columns were carried down: walled to a guess, a wall stood 8 m down through the location's own ground. A cell
         /// that would need more than <see cref="MostCourses"/> stops there, counted in <see cref="ShortWalls"/>.</summary>
         public void Course(Func<int, int, float> finished, Shortfall? shortfall)
         {
@@ -903,12 +1042,12 @@ public static class StairSupport
             ? Support("stone_wall_2x1", At(i + 1f), courseTop - 0.5f, StairLayout.Wrap(Heading - 90f))
             : Support("stone_wall_1x1", Cell(i), courseTop - 0.5f, Heading);
 
-        /// <summary>The lowest finished ground under cell <paramref name="i"/> (<see cref="BuriedPieces.LowestOver"/>): NaN
+        /// <summary>The lowest finished ground under cell <paramref name="i"/> (<see cref="BuriedPieces.RangeOver"/>): NaN
         /// where any of it is not known.</summary>
         private float LowestUnder(int i, Func<int, int, float> finished)
         {
             Vector2 right = StairLayout.Right(Heading), near = At(i + 0.05f), far = At(i + 0.95f);
-            return BuriedPieces.LowestOver(new[] { near - right * 0.45f, far - right * 0.45f, far + right * 0.45f, near + right * 0.45f }, finished);
+            return BuriedPieces.RangeOver(new[] { near - right * 0.45f, far - right * 0.45f, far + right * 0.45f, near + right * 0.45f }, finished).lowest;
         }
     }
 
@@ -946,78 +1085,67 @@ public static class StairSupport
     private static bool Over(Walk w, Vector2 point) =>
         StairLayout.OnFootprint(w.Back, w.Dir, w.Right, w.Depth, w.Across, point, 0.01f);
 
-    /// <summary>A staircase piece's centre of mass on its own axes (WearNTear.m_comOffset, read off the game's prefabs): a
-    /// stair's half a metre over its foot, stone's arch 0.6 m toward its tall end; every other piece's at its transform.</summary>
-    private static Vector3 ComOffset(string prefab) => prefab switch
-    {
-        "blackmarble_stair" or "stone_stair" => new Vector3(0f, 0.5f, 0f),
-        "stone_arch" => new Vector3(0.6f, 0f, 0f),
-        _ => Vector3.zero,
-    };
-
     /// <summary>
     /// What the game's support rule (<see cref="SupportGraph"/>) holds of a dressed staircase: the support every stone or
     /// black marble piece of <paramref name="pieces"/> (its walking pieces and their supports, as <see cref="StairKit.Dress"/>
-    /// lays them) settles at, each piece its collider's box turned as it is laid, grounded where that box grown
-    /// <see cref="SupportGraph.Reach"/> meets the game's terrain: the <paramref name="finished"/> ground's mesh
-    /// (<see cref="BuriedPieces.MeshHeight"/>), the <paramref name="natural"/> ground where that is not known. Its railing
-    /// (wood) is not read.
+    /// lays them) settles at, grounded where its box grown <see cref="SupportGraph.Reach"/> meets the game's terrain: the
+    /// <paramref name="finished"/> ground's mesh (<see cref="SupportGraph.OnTerrain"/>, the one terrain contact; ground not
+    /// known is left out of it). Its railing (wood) is not read.
     /// </summary>
-    public static List<ViaductSupport.Held> Holding(IReadOnlyList<StructurePiece> pieces, Func<float, float, float> natural,
-        Func<int, int, float> finished)
+    public static List<ViaductSupport.Held> Holding(IReadOnlyList<StructurePiece> pieces, Func<int, int, float> finished) =>
+        Holding(pieces, (_, box) => SupportGraph.OnTerrain(box, finished) == SupportGraph.Terrain.Meets);
+
+    /// <summary>
+    /// The one way a laid structure is put to the support rule, a staircase's and the Dvergr viaduct's alike
+    /// (<see cref="ViaductSupport.Of(ViaductSupport.Grounding, IReadOnlyList{StructurePiece})"/>): every piece of
+    /// <paramref name="pieces"/> whose measured data (<see cref="BuriedPieces.DataOf"/>) has a material, laid level and turned
+    /// only about the vertical, is the support rule's piece at its origin and turn, its collider's measured bounds (or its
+    /// box colliders pitched inside its prefab, <see cref="BuriedPieces.Measured.Pitched"/>) and its centre of mass about
+    /// that origin, its collider's kind (<see cref="BuriedPieces.Measured.MeshCollider"/>), grounded as
+    /// <paramref name="grounded"/> reads that piece's box (the support rule's piece, ungrounded); then the support each
+    /// settles at, and whether it touches a level piece with measured bounds but no material, which the rule does not read
+    /// (<see cref="ViaductSupport.Held.ThroughUnread"/>).
+    /// </summary>
+    internal static List<ViaductSupport.Held> Holding(IReadOnlyList<StructurePiece> pieces,
+        Func<StructurePiece, SupportGraph.Piece, bool> grounded)
     {
         var graph = new List<SupportGraph.Piece>();
         var laid = new List<StructurePiece>();
+        var unread = new List<SupportGraph.Piece>();
         foreach (StructurePiece p in pieces)
         {
-            if (ViaductSupport.MaterialOf(p.Prefab) is not SupportGraph.Material material || p.PitchDegrees != 0f || p.RollDegrees != 0f
-                || !BuriedPieces.BoundsOf(p.Prefab, out Vector3 min, out Vector3 max))
+            if (!BuriedPieces.DataOf(p.Prefab, out BuriedPieces.Measured data) || p.PitchDegrees != 0f || p.RollDegrees != 0f)
                 continue;
-            bool mesh = MeshCollider(p.Prefab);
-            graph.Add(new SupportGraph.Piece(p.Position, ComOffset(p.Prefab), p.YawDegrees, min, max, material,
-                Grounded(p, min, max, mesh, natural, finished), mesh));
+            if (data.Material is not SupportGraph.Material material)
+            {
+                // Its box round its colliders, for what it touches only (the material is no part of that).
+                unread.Add(new SupportGraph.Piece(p.Position, data.ComOffset, p.YawDegrees, data.Min, data.Max, SupportGraph.Wood, false, data.MeshCollider));
+                continue;
+            }
+            if (data.Pitched != null)
+            {
+                // Its box colliders pitched inside its prefab, each read as the game overlaps it.
+                var parts = new SupportGraph.Piece(p.Position, data.ComOffset, p.YawDegrees, data.Pitched, material, false);
+                graph.Add(grounded(p, parts) ? new SupportGraph.Piece(p.Position, data.ComOffset, p.YawDegrees, data.Pitched, material, true) : parts);
+                laid.Add(p);
+                continue;
+            }
+            var box = new SupportGraph.Piece(p.Position, data.ComOffset, p.YawDegrees, data.Min, data.Max, material, false, data.MeshCollider);
+            graph.Add(grounded(p, box)
+                ? new SupportGraph.Piece(p.Position, data.ComOffset, p.YawDegrees, data.Min, data.Max, material, true, data.MeshCollider)
+                : box);
             laid.Add(p);
         }
         float[] support = SupportGraph.Settle(graph);
         var held = new List<ViaductSupport.Held>(laid.Count);
-        for (int i = 0; i < laid.Count; i++) held.Add(new ViaductSupport.Held(laid[i], support[i], graph[i].Material.Min));
-        return held;
-    }
-
-    /// <summary>A staircase piece whose collider is a convex mesh, not a box (the game's prefabs): the game overlaps its
-    /// bounds on the world's axes (<see cref="SupportGraph.Piece.WorldBounds"/>).</summary>
-    private static bool MeshCollider(string prefab) =>
-        prefab is "blackmarble_stair" or "stone_stair" or "blackmarble_out_1" or "blackmarble_outcorner";
-
-    /// <summary>Whether a laid piece's box, grown <see cref="SupportGraph.Reach"/>, meets the ground's surface: the ground over
-    /// its footprint (grown too), on a half-metre grid, reaches its bottom somewhere and is under its top somewhere. A
-    /// <paramref name="mesh"/> collider's footprint is its box's bounds on the world's axes.</summary>
-    private static bool Grounded(StructurePiece p, Vector3 min, Vector3 max, bool mesh, Func<float, float, float> natural,
-        Func<int, int, float> finished)
-    {
-        float r = SupportGraph.Reach, lo = float.MaxValue, hi = float.MinValue;
-        Vector2 at = new(p.Position.x, p.Position.z), right = StairLayout.Right(p.YawDegrees), forward = StairLayout.Forward(p.YawDegrees);
-        if (mesh)
+        for (int i = 0; i < laid.Count; i++)
         {
-            // The turned box's bounds on the world's axes, about its middle.
-            Vector2 mid = at + right * ((min.x + max.x) * 0.5f) + forward * ((min.z + max.z) * 0.5f);
-            float hx = (max.x - min.x) * 0.5f, hz = (max.z - min.z) * 0.5f;
-            float ex = Mathf.Abs(right.x) * hx + Mathf.Abs(forward.x) * hz, ez = Mathf.Abs(right.y) * hx + Mathf.Abs(forward.y) * hz;
-            at = mid; right = new Vector2(1f, 0f); forward = new Vector2(0f, 1f);
-            min = new Vector3(-ex, min.y, -ez); max = new Vector3(ex, max.y, ez);
+            bool through = false;
+            foreach (SupportGraph.Piece u in unread)
+                if (SupportGraph.Touches(graph[i], u)) { through = true; break; }
+            held.Add(new ViaductSupport.Held(laid[i], support[i], graph[i].Material.Min, through));
         }
-        float x0 = min.x - r, x1 = max.x + r, z0 = min.z - r, z1 = max.z + r;
-        int nx = Mathf.Max(2, Mathf.CeilToInt((x1 - x0) / 0.5f)), nz = Mathf.Max(2, Mathf.CeilToInt((z1 - z0) / 0.5f));
-        for (int i = 0; i <= nx; i++)
-            for (int j = 0; j <= nz; j++)
-            {
-                Vector2 q = at + right * Mathf.Lerp(x0, x1, i / (float)nx) + forward * Mathf.Lerp(z0, z1, j / (float)nz);
-                float g = BuriedPieces.MeshHeight(q.x, q.y, finished);
-                if (float.IsNaN(g)) g = natural(q.x, q.y);
-                lo = Mathf.Min(lo, g);
-                hi = Mathf.Max(hi, g);
-            }
-        return hi >= p.Position.y + min.y - r && lo <= p.Position.y + max.y + r;
+        return held;
     }
 
     private static StructurePiece Support(string prefab, Vector2 at, float y, float yaw) => new()

@@ -7,7 +7,7 @@ namespace ProceduralRoads.Tests;
 
 /// <summary>
 /// No staircase's foot sets off back along its road on the road (judged by its ring at the road's end, RoadEndRing) (the staircase onto Hildir_cave
-/// -2304,1536 from MountainCave02 started in the middle of the road, heading backwards). The pieces are a recorded layout's (replayed to the millimetre on the place's ground, road_site_ground):
+/// -2304,1536 from MountainCave02 started in the middle of the road, heading backwards). The pieces are a recorded layout's (replayed to the millimetre on the location's ground, road_site_ground):
 /// the road came in heading 180 to its end at -2304.35,1566.65, 255.77 m; the search set off back (StairLayout's
 /// MostSetOffBack) with a floor on the road's end heading 337.5, turned on a filler floor 3 m back up the road and
 /// climbed away at 247.5. Both floors lay within the joining step's 3.2 m, under the road's level, and as an approach's

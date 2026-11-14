@@ -8,10 +8,12 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// The navigation gap: only a river the world generator laid gets one, within the river's part of the crossing and
-/// over its deepest water there (not the deepest water the whole crossing measured), as wide as a longship's way at the
-/// deck's height and none under a deck it passes under (<see cref="Ships"/>), for every kit: the wooden kit, the Dvergr
-/// wood bridge (in whole bays of its grid) and the Dvergr viaduct (in modules).
+/// The navigation gap: a river the world generator laid gets one, within the river's part of the crossing and over its
+/// deepest water there (not the deepest water the whole crossing measured); water off a river gets one where a ship floats
+/// for a ship's way across (<see cref="RoadCrossingDetector.FairwayMinDepth"/>, <see cref="Ships.NarrowestWay"/>), over
+/// its deepest water; as wide as a longship's way at the deck's height and none under a deck it passes under
+/// (<see cref="Ships"/>), river or not, for every kit: the wooden kit, the stone kit, the Dvergr wood bridge (in whole
+/// bays of its grid) and the Dvergr viaduct (in modules).
 /// </summary>
 public sealed class ShipGapTests : IDisposable
 {
@@ -170,17 +172,24 @@ public sealed class ShipGapTests : IDisposable
         for (int i = 1; i < floors.Count; i++)
             Assert.Equal(DvergrViaduct.Module, floors[i] - floors[i - 1], 3);
 
-        // A railed wooden bridge as high: a whole deck, no column in the way, built or repaired.
+        // A railed wooden bridge as high: each railed kit lays a whole deck, no column in the way, built or repaired. The
+        // support rule breaks it (its deck carried over the pier opening, 16 m over the bed), so the builder builds it in
+        // neither railed kit and, in the Meadows, in none (BridgeStructures.KitFor): the layout is what is read here.
         var (wc, ww) = Make(new Channel { Bank = 42f });
         BridgeLayout.ShipWay wood = BridgeLayout.NavigationGap(wc, ww)!.Value;
         Assert.Equal(0f, wood.DeckWidth);
         Assert.Equal(Ships.NarrowestWay, wood.PierWidth, 3);
         Assert.False(BridgeLayout.InNavigationGap(wc, ww, wood.Centre));
-        var complete = BridgeStructures.SolveComplete(wc, ww, 1);
-        Assert.DoesNotContain(complete, p => p.Prefab == BridgeLayout.PostPrefab && p.Kind == StructurePieceKind.Post && BridgeLayout.InPierOpening(wood, Along(wc, p)));
-        Assert.Contains(complete, p => p.Kind == StructurePieceKind.Deck && Mathf.Abs(Along(wc, p) - wood.Centre) < 1.5f);
-        for (int s = 1; s <= 10; s++)
-            Assert.DoesNotContain(BridgeStructures.Solve(wc, ww, s), p => p.Prefab == BridgeLayout.PostPrefab && p.Kind == StructurePieceKind.Post && BridgeLayout.InPierOpening(wood, Along(wc, p)));
+        foreach (BridgeLayout.RailedKit kit in new[] { BridgeLayout.Rail, BridgeLayout.Braced })
+        {
+            var complete = BridgeLayout.SolveRailedComplete(wc, ww, 1, kit);
+            Assert.DoesNotContain(complete, p => p.Prefab == BridgeLayout.PostPrefab && p.Kind == StructurePieceKind.Post && BridgeLayout.InPierOpening(wood, Along(wc, p)));
+            Assert.Contains(complete, p => p.Kind == StructurePieceKind.Deck && Mathf.Abs(Along(wc, p) - wood.Centre) < 1.5f);
+            for (int s = 1; s <= 10; s++)
+                Assert.DoesNotContain(BridgeLayout.SolveRailed(wc, ww, s, kit), p => p.Prefab == BridgeLayout.PostPrefab && p.Kind == StructurePieceKind.Post && BridgeLayout.InPierOpening(wood, Along(wc, p)));
+        }
+        Assert.All(new[] { BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced }, kit => Assert.True(BridgeStructures.CheckSupport(wc, ww, kit).Breaks));
+        Assert.Null(BridgeStructures.KitFor(wc, ww));
 
         // The Dvergr wood bridge as high: whole bays of its grid without bents, their deck carried over.
         var (dc, dw) = Make(new Channel { Bank = 43.5f, Biome = Heightmap.Biome.Mistlands }); // its stringers hang 1.3 m under the planks
@@ -253,7 +262,7 @@ public sealed class ShipGapTests : IDisposable
             Assert.True(count * BridgeLayout.BayLength(kit) - BridgeLayout.PoleWidth >= yard, $"{kit.Name}: {count} bays");
         }
         // Every kit measures its own top: the stone kit's railing, the Dvergr wood kit's piles, the viaduct's parapet.
-        Assert.Equal(BridgeLayout.RailHeight + BridgeLayout.RailHalfDepth, BridgeStructures.TopOverDeck(BridgeStructures.Kit.WoodBraced), 4);
+        Assert.Equal(BridgeLayout.RailHeight + 0.2f, BridgeStructures.TopOverDeck(BridgeStructures.Kit.WoodBraced), 4);   // the handrail beam's measured top
         Assert.Equal(1f, BridgeStructures.TopOverDeck(BridgeStructures.Kit.Stone), 4);
         Assert.True(BridgeStructures.TopOverDeck(BridgeStructures.Kit.DvergrWood) > DvergrWoodBridge.PileAboveDeck);
         Assert.Equal(2f, BridgeStructures.TopOverDeck(BridgeStructures.Kit.DvergrViaduct), 4);
@@ -324,9 +333,10 @@ public sealed class ShipGapTests : IDisposable
 
     /// <summary>Shaped like a 66 m Mistlands bridge over a harbour's water whose first 21 m of deck was left open: the
     /// river weight passes the river line over the near bank (peaking 10 m out, over dry ground) and only the edge of the
-    /// deep water, narrower than a ship's way; the water a ship sails is not river.</summary>
+    /// deep water, narrower than a ship's way. The river's part opens nothing; the harbour's deep water, river or not, is
+    /// where the gap goes, never the bank.</summary>
     [Fact]
-    public void ARiversWeightOverABankOpensNoGap()
+    public void ARiversWeightOverABankOpensNoGapOverTheBank()
     {
         float[] t = { 0f, 4f, 8f, 12f, 16f, 20f, 24f, 30f, 40f, 50f, 60f, 66f };
         float[] h = { 39.5f, 36f, 32.9f, 30.5f, 28.2f, 25f, 23.5f, 22.3f, 22.3f, 25.3f, 34f, 39.5f };
@@ -340,57 +350,138 @@ public sealed class ShipGapTests : IDisposable
         var w = new Channel { BedHalf = 60f, Bed = x => Ground(x + half), RiverLine = 10f - half, RiverHalf = 24f, Biome = Heightmap.Biome.Mistlands };
         _scope.WithWorld(w);
         RoadCrossing c = RoadCrossing.Between(new Vector2(-half, 0f), new Vector2(half, 0f), 22.3f, new Vector2(35f - half, 0f), 40f, CrossingKind.Bridge);
-        Assert.Null(BridgeLayout.NavigationGap(c, w));
-        Assert.Null(DvergrWoodBridge.NavigationBays(c, w));
-        float length = BridgeLayout.BuiltLength(c.Width);
+        BridgeLayout.ShipWay way = BridgeLayout.NavigationGap(c, w)!.Value;
+        float edge = way.PierWidth * 0.5f + BridgeLayout.FairwayClearance;
+        // The whole ship's way over water a ship floats in, clear of the bank the river weight peaks over.
+        for (float a = way.Centre - way.PierWidth * 0.5f; a <= way.Centre + way.PierWidth * 0.5f; a += 0.5f)
+            Assert.True(c.WaterLevel - Ground(a) >= RoadCrossingDetector.FairwayMinDepth, $"{c.WaterLevel - Ground(a):F2} m of water at {a:F1} m, gap at {way.Centre:F1}");
+        Assert.True(way.Centre - edge > 21f, $"gap from {way.Centre - edge:F1} m");
+        Assert.NotNull(DvergrWoodBridge.NavigationBays(c, w));
         for (int s = 1; s <= 10; s++)
         {
-            var pieces = DvergrWoodBridge.Solve(c, w, s);
-            Assert.Equal(DvergrWoodBridge.SolveComplete(c, w, s).Count(p => p.Prefab == DvergrWoodBridge.Pile), pieces.Count(p => p.Prefab == DvergrWoodBridge.Pile));
-            // The deck runs bank to bank: a plank missing now and then, never a bay's worth.
-            var planks = pieces.Where(p => p.Kind == StructurePieceKind.Deck).Select(p => Along(c, p)).OrderBy(a => a).ToList();
-            Assert.True(planks.First() < 1f && planks.Last() > length - 1f, $"seed {s}: deck {planks.First():F1}..{planks.Last():F1} of {length:F1} m");
+            // Over the near bank's first 21 m the deck runs: a plank missing now and then, never a bay's worth.
+            var planks = DvergrWoodBridge.Solve(c, w, s).Where(p => p.Kind == StructurePieceKind.Deck).Select(p => Along(c, p))
+                .Where(a => a < 21f).OrderBy(a => a).ToList();
+            Assert.True(planks.Count > 0 && planks.First() < 1f && planks.Last() > 21f - DvergrWoodBridge.BentSpacing, $"seed {s}: deck {planks.FirstOrDefault():F1}..{planks.LastOrDefault():F1}");
             for (int i = 1; i < planks.Count; i++)
                 Assert.True(planks[i] - planks[i - 1] < DvergrWoodBridge.BentSpacing, $"seed {s}: no deck {planks[i - 1]:F1}..{planks[i]:F1}");
         }
     }
 
-    // ------------------------------------------------------------ over a lake
+    // ------------------------------------------------------- deep water off a river
 
+    /// <summary>The ship's way under the same deck over the same channel, river or lake: the lane over deep water off a
+    /// river keeps the river lane's width and clear height (the one owner, <see cref="Ships.NavigationGapWidth"/>).</summary>
     [Fact]
-    public void OverALakeTheWoodenKitHasNoGap()
+    public void OverADeepLakeTheWoodenKitLeavesTheRiversLane()
     {
+        var (rc, rw) = Make(new Channel());
+        BridgeLayout.ShipWay river = BridgeLayout.NavigationGap(rc, rw)!.Value;
         var (c, w) = Make(new Channel { RiverLine = null });
-        Assert.True(c.FairwayWidth > 0f);
-        Assert.Null(BridgeLayout.NavigationGap(c, w));
-        Assert.False(BridgeLayout.InNavigationGap(c, w, c.Along(c.FairwayCenter)));
+        BridgeLayout.ShipWay? lake = BridgeLayout.NavigationGap(c, w);
+        Assert.True(lake.HasValue, "4 m of water over 60 m: a ship sails it");
+        Assert.Equal(river.DeckWidth, lake!.Value.DeckWidth, 4);
+        Assert.Equal(river.PierWidth, lake.Value.PierWidth, 4);
+        // An even bed: the middle of the deep water, the whole 60 m bed afloat.
+        Assert.Equal(c.Width * 0.5f, lake.Value.Centre, 1);
         Assert.False(BridgeLayout.IsFreeSpan(c, w));
-        // Every station over the deep water stands in the complete layout's place in some ruin: nothing is kept open.
-        var bays = Enumerable.Range(1, 40).SelectMany(s => BridgeStructures.Solve(c, w, s))
-            .Where(p => p.Kind == StructurePieceKind.Post).Select(p => Mathf.Round(Along(c, p))).Distinct().ToList();
-        Assert.Contains(bays, a => Mathf.Abs(a - c.Along(c.FairwayCenter)) <= 1f);
-        Assert.Contains(bays, a => Mathf.Abs(a - RiverAlong) <= 1f);
+        for (int s = 1; s <= 10; s++)
+            Assert.DoesNotContain(BridgeStructures.Solve(c, w, s), p => BridgeLayout.InNavigationGap(lake, Along(c, p)));
+        Assert.Contains(BridgeStructures.SolveComplete(c, w, 1), p => p.Kind == StructurePieceKind.Deck && BridgeLayout.InNavigationGap(lake, Along(c, p)));
+    }
+
+    /// <summary>
+    /// Shaped like a 121 m stone bridge over deep water no river runs in (a Black Forest lake): every kit the crossing may be
+    /// built in leaves the boat lane open, through the builder's own solve (BridgeStructures.Solve with the kit saved on the
+    /// crossing), stone with its opening between two half arches.
+    /// </summary>
+    [Fact]
+    public void ALongBridgeOverDeepWaterOffARiverLeavesTheBoatLaneInEveryKit()
+    {
+        var w = new Channel { RiverLine = null, Bank = 31f, BedHalf = 59.5f, Bed = _ => 27f, Biome = Heightmap.Biome.BlackForest };
+        _scope.WithWorld(w);
+        RoadCrossing c = RoadCrossing.Between(new Vector2(-60.5f, 0f), new Vector2(60.5f, 0f), 27f, new Vector2(0f, 0f), 119f, CrossingKind.Bridge);
+        Assert.Equal(121f, c.Width, 3);
+        Assert.True(BridgeLayout.StoneFits(c, w), "the stone kit fits, its opening over the ship's way");
+        BridgeLayout.ShipWay stone = BridgeLayout.StoneShipWay(c, w)!.Value;
+        Assert.True(stone.DeckWidth > 0f);
+        Assert.Equal(c.Width * 0.5f, stone.Centre, 1);
+        BridgeLayout.ShipWay wood = BridgeLayout.NavigationGap(c, w)!.Value;
+        foreach (BridgeStructures.Kit kit in new[] { BridgeStructures.Kit.Stone, BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced })
+        {
+            c.Kit = kit;
+            for (int s = 1; s <= 5; s++)
+            {
+                var plan = BridgeStructures.Solve(c, w, s);
+                Assert.NotEmpty(plan);
+                if (kit == BridgeStructures.Kit.Stone)
+                    Assert.DoesNotContain(plan, p => BridgeLayout.InStoneNavigationGap(c, w, Along(c, p)));
+                else
+                    Assert.DoesNotContain(plan, p => BridgeLayout.InNavigationGap(wood, Along(c, p)));
+            }
+        }
+        Assert.True(BridgeLayout.InStoneNavigationGap(c, w, stone.Centre));
     }
 
     [Fact]
-    public void OverALakeTheDvergrWoodBridgeStandsEveryBent()
+    public void OverADeepLakeTheDvergrWoodBridgeOpensWholeBays()
     {
         var (c, w) = Make(new Channel { RiverLine = null, Biome = Heightmap.Biome.Mistlands });
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(c, w));
-        int Piles(List<StructurePiece> ps) => ps.Count(p => p.Prefab == DvergrWoodBridge.Pile);
-        Assert.Equal(Piles(DvergrWoodBridge.SolveComplete(c, w, 1)), Piles(DvergrWoodBridge.Solve(c, w, 1)));
+        Assert.NotNull(DvergrWoodBridge.NavigationBays(c, w));
+        for (int s = 1; s <= 10; s++)
+            Assert.DoesNotContain(DvergrWoodBridge.Solve(c, w, s), p => p.Kind != StructurePieceKind.Debris && DvergrWoodBridge.InNavigationGap(c, w, Along(c, p)));
     }
 
     [Fact]
-    public void OverALakeTheViaductsDeckRunsBankToBank()
+    public void OverADeepLakeTheViaductKeepsANavigationBay()
     {
-        var (c, w) = Make(new Channel { RiverLine = null, Bank = 45f, Biome = Heightmap.Biome.Mistlands });
+        // The river viaduct's deck at the yard's height (the yard's 13.2 m way, in 7 modules: 14 m), the river taken away.
+        var (c, w) = Make(new Channel { RiverLine = null, Bank = 40f, Bed = _ => 20f, Biome = Heightmap.Biome.Mistlands });
         Assert.Equal(BridgeStructures.Kit.DvergrViaduct, BridgeStructures.KitFor(c, w));
-        Assert.False(DvergrViaduct.HasNavigationBay(c, w));
-        Assert.Contains(c.Width * 0.5f, DvergrViaduct.PierAlongs(c, w));
-        var floors = DvergrViaduct.SolveComplete(c, w, 1).Where(p => p.Prefab == DvergrViaduct.Floor)
-            .Select(p => Mathf.Round(Along(c, p) * 2f) / 2f).Distinct().OrderBy(a => a).ToList();
-        for (int i = 1; i < floors.Count; i++)
-            Assert.Equal(DvergrViaduct.Module, floors[i] - floors[i - 1], 3);
+        Assert.True(DvergrViaduct.HasNavigationBay(c, w));
+        BridgeLayout.ShipWay way = DvergrViaduct.ShipWayUnder(c, w)!.Value;
+        Assert.Equal(14f, DvergrViaduct.NavigationGap(way.DeckWidth), 3);
+    }
+
+    // ---------------------------------------------------- shallow water off a river
+
+    /// <summary>Water no ship floats in (under <see cref="RoadCrossingDetector.FairwayMinDepth"/>), or deep for less than
+    /// a ship's way (<see cref="Ships.NarrowestWay"/>), off a river: no lane, every kit's deck and supports bank to bank.</summary>
+    [Theory]
+    [InlineData(29f, 30f)]     // a metre of water over the whole 60 m bed
+    [InlineData(28.9f, 8f)]    // 1.1 m: still under a ship's depth
+    [InlineData(24f, 9f)]      // 6 m deep, but for 9 m only (shallow either side)
+    public void OverShallowWaterOffARiverNoKitLeavesALane(float bed, float deepWidth)
+    {
+        float Bed(float x) => Mathf.Abs(x) <= deepWidth * 0.5f ? bed : 29f;
+        var (c, w) = Make(new Channel { RiverLine = null, Bed = Bed });
+        Assert.Null(BridgeLayout.NavigationGap(c, w));
+        Assert.False(BridgeLayout.InNavigationGap(c, w, c.Width * 0.5f));
+        Assert.False(BridgeLayout.IsFreeSpan(c, w));
+        // Every station over the water stands in the complete layout's place in some ruin: nothing is kept open.
+        var posts = Enumerable.Range(1, 40).SelectMany(s => BridgeStructures.Solve(c, w, s))
+            .Where(p => p.Kind == StructurePieceKind.Post).Select(p => Mathf.Round(Along(c, p))).Distinct().ToList();
+        Assert.Contains(posts, a => Mathf.Abs(a - c.Width * 0.5f) <= 1f);
+        var (dc, dw) = Make(new Channel { RiverLine = null, Bed = Bed, Biome = Heightmap.Biome.Mistlands });
+        Assert.Null(DvergrWoodBridge.NavigationBays(dc, dw));
+        var (vc, vw) = Make(new Channel { RiverLine = null, Bed = Bed, Bank = 45f, Biome = Heightmap.Biome.Mistlands });
+        Assert.False(DvergrViaduct.HasNavigationBay(vc, vw));
+    }
+
+    /// <summary>One test of the water a ship floats in (RoadCrossingDetector.Afloat), asked by the detector's fairway and the
+    /// bridge's boat lane alike: off a river, a bed 1.5 m under the water has both a fairway and a boat lane; one 1 m under
+    /// it, neither.</summary>
+    [Theory]
+    [InlineData(28.5f, true)]
+    [InlineData(29f, false)]
+    public void TheFairwayAndTheBoatLaneAskOneDepthAShipFloatsIn(float bed, bool afloat)
+    {
+        var (c, w) = Make(new Channel { RiverLine = null, Bed = _ => bed });
+        Assert.Equal(afloat, RoadCrossingDetector.Afloat(c.WaterLevel, bed));
+        var profile = typeof(RoadCrossingDetector).GetMethod("Profile", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var (_, _, fairway) = ((float, Vector2, float))profile.Invoke(null, new object[] { c.FromBank, c.ToBank, (WorldGenerator)w })!;
+        Assert.Equal(afloat, fairway > 0f);
+        Assert.Equal(afloat, BridgeLayout.NavigationGap(c, w).HasValue);
     }
 }

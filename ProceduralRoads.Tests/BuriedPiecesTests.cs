@@ -100,26 +100,29 @@ public class BuriedPiecesTests : IDisposable
         Func<int, int, float> valley = (x, z) => x == z ? 10f : 0f;
         var box = new[] { new Vector2(0.3f, 0.55f), new Vector2(0.4f, 0.55f), new Vector2(0.4f, 0.75f), new Vector2(0.3f, 0.75f) };
         foreach (Vector2 c in box) Assert.True(BuriedPieces.MeshHeight(c.x, c.y, valley) >= 0.5f - 1e-4f);
-        Assert.Equal(0f, BuriedPieces.LowestOver(box, valley), 4);
+        Assert.Equal(0f, BuriedPieces.RangeOver(box, valley).lowest, 4);
     }
 
-    /// <summary>A piece is buried only where the ground stands at or over its top all over its footprint grown by the
-    /// game's 0.15 m, on any heading; unknown ground or an unknown piece never.</summary>
+    /// <summary>A piece is buried only where its box grown by the game's 0.15 m is wholly in the ground: the ground over its
+    /// grown footprint higher than its top by more than the growth everywhere, on any heading; unknown ground or an unknown
+    /// piece never.</summary>
     [Fact]
     public void BuriedMeansUnderTheGroundAllOverTheGrownFootprint()
     {
         // A slope rising 1 in 2 to the north (+z).
         Func<int, int, float> slope = (x, z) => 0.5f * z;
-        // A 1 x 1 x 2 pillar at the origin, top 1 m up: the ground over its grown footprint runs -0.325 .. 0.325.
+        // A 1 x 1 x 2 pillar at the origin, top 1 m up: the ground over its grown footprint runs -0.325 .. 0.325, so it is
+        // buried with its top under -0.475.
         Assert.False(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -0.4f, 0f), 0f, slope));
-        Assert.True(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.33f, 0f), 0f, slope));
+        Assert.False(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.45f, 0f), 0f, slope));
+        Assert.True(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.5f, 0f), 0f, slope));
         // Turned 45 degrees its grown corners reach further downhill: 0.65 * sqrt 2 = 0.92 m, 0.46 m lower.
-        Assert.False(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.4f, 0f), 45f, slope));
-        Assert.True(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.47f, 0f), 45f, slope));
+        Assert.False(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.55f, 0f), 45f, slope));
+        Assert.True(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -1.65f, 0f), 45f, slope));
         Assert.False(BuriedPieces.Buried("no_such_piece", new Vector3(0f, -50f, 0f), 0f, slope));
         Assert.False(BuriedPieces.Buried("stone_pillar", new Vector3(0f, -50f, 0f), 0f, (x, z) => x > 0 ? float.NaN : 0f));
         // Every kit's pieces are known.
-        foreach (StairKit kit in new[] { StairKit.Stone, StairKit.BlackMarble, StairKit.Wood })
+        foreach (StairKit kit in StairKit.All)
         {
             Assert.True(BuriedPieces.Known(kit.Stair));
             Assert.True(BuriedPieces.Known(kit.Floor));
@@ -128,6 +131,55 @@ public class BuriedPiecesTests : IDisposable
         // And every piece StairSupport lays.
         foreach (string support in new[] { "stone_wall_2x1", "stone_wall_1x1", "stone_arch", "blackmarble_2x1x1", "blackmarble_out_1", "blackmarble_outcorner" })
             Assert.True(BuriedPieces.Known(support));
+    }
+
+    /// <summary>
+    /// A piece flush with the ground (its top at the surface, as a viaduct's deck end module laid flush with its bank), or into
+    /// it by no more than the game's support growth, is grounded by the game and stands: not buried, so it is laid (by the
+    /// burial test, <see cref="BuriedPieces.Buried"/>, and by the one way a structure leaves buried pieces out,
+    /// <see cref="BuriedPieces.Omit"/>). Past the growth it touches none of the mesh: buried, and alone it falls, so it is left out.
+    /// </summary>
+    [Fact]
+    public void AFlushPieceIsLaidAndOneInTheGroundPastTheGrowthIsLeftOut()
+    {
+        Func<int, int, float> flat = (_, _) => 10f;
+        foreach (var (into, buried) in new[] { (0f, false), (0.14f, false), (0.16f, true) })
+        {
+            // blackmarble_floor: its box half a metre over and under its origin.
+            var floor = new StructurePiece { Kind = StructurePieceKind.ViaductDeck, Prefab = "blackmarble_floor", Position = new Vector3(0.3f, 9.5f - into, 0.2f) };
+            Assert.Equal(buried, BuriedPieces.Buried(floor.Prefab, floor.Position, 0f, flat));
+            var laid = new List<StructurePiece> { floor };
+            List<StructurePiece> left = BuriedPieces.Omit(laid, flat, pieces => StairSupport.Holding(pieces, flat));
+            Assert.Equal(buried ? 1 : 0, left.Count);
+            Assert.Equal(buried ? 0 : 1, laid.Count);
+        }
+    }
+
+    /// <summary>
+    /// A buried piece the structure's own reading has falling with everything laid (<see cref="ViaductSupport.Held.Falls"/>) is
+    /// left out whatever it carries (<see cref="BuriedPieces.Omit"/>): the game breaks it, and a piece it carries falls with it,
+    /// so a piece that stands with it laid and falls without it does not keep it. Here a buried floor falls in every reading and
+    /// the floor over it stands only while it is laid: it is left out, the one over it laid. With that rule bypassed every test
+    /// passed (the buried floor was kept for the one it carries); this is its own.
+    /// </summary>
+    [Fact]
+    public void ABuriedPieceFallingWithEverythingLaidIsLeftOutWhateverItCarries()
+    {
+        Func<int, int, float> flat = (_, _) => 10f;
+        // blackmarble_floor: its box half a metre over and under its origin; the lower one wholly in the ground at 10.
+        var under = new StructurePiece { Kind = StructurePieceKind.ViaductDeck, Prefab = "blackmarble_floor", Position = new Vector3(0.3f, 8f, 0.2f) };
+        var over = new StructurePiece { Kind = StructurePieceKind.ViaductDeck, Prefab = "blackmarble_floor", Position = new Vector3(0.3f, 20f, 0.2f) };
+        Assert.True(BuriedPieces.Buried(under.Prefab, under.Position, 0f, flat));
+        Assert.False(BuriedPieces.Buried(over.Prefab, over.Position, 0f, flat));
+        // The structure's reading: the buried floor always falls; the one over it stands only on it.
+        List<ViaductSupport.Held> Reading(IReadOnlyList<StructurePiece> laid) => laid.Select(p => new ViaductSupport.Held(p,
+            p == under || !laid.Contains(under) ? 0f : 1000f, 1f)).ToList();
+        Assert.True(Reading(new[] { under, over })[0].Falls && !Reading(new[] { under, over })[1].Falls && Reading(new[] { over })[0].Falls);
+
+        var laid = new List<StructurePiece> { under, over };
+        List<StructurePiece> left = BuriedPieces.Omit(laid, flat, Reading);
+        Assert.Equal(new[] { under }, left);
+        Assert.Equal(new[] { over }, laid);
     }
 
     private sealed class SlopeWorld : WorldGenerator
@@ -211,5 +263,64 @@ public class BuriedPiecesTests : IDisposable
         Assert.Equal(2, open.Pieces.Count);
         Assert.DoesNotContain(open.Pieces, p => p.Position.y < 28f);
         Assert.Equal(3, cut.Pieces.Count);
+    }
+
+    /// <summary>
+    /// A staircase settled on the finished ground (StairStructures.Settle) leaves out a wholly buried piece only where the
+    /// rest stands without it (BuriedPieces.Omit, the support rule's reading). Three black marble 1 m blocks: one at the
+    /// surface, grounded; one under it wholly in the ground, which the game does not ground, carried by the one above; one
+    /// beside the buried one, deeper still and under ground not known at one vertex (so never judged buried), carried only
+    /// through the buried one. Alone, the buried block carries nothing and is left out; with the block beside it, left out
+    /// it would drop that block (the game breaks it, dropping its resources), so it stays.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ABuriedPieceIsLeftOutOnlyWhereTheRestStandsWithoutIt(bool beside)
+    {
+        // Flat ground at 10, not known at (2, 0): under the block beside only (the buried block's own footprint reads x 1 at most).
+        Func<int, int, float> vertex = (x, z) => x == 2 && z == 0 ? float.NaN : 10f;
+        StructurePiece Block(float x, float y) => new() { Kind = StructurePieceKind.StairSupport, Prefab = "blackmarble_1x1", Position = new Vector3(x, y, 0.5f) };
+        StructurePiece top = Block(0.25f, 10f), buried = Block(0.25f, 9f), hung = Block(1.35f, 8.8f);
+        Assert.True(BuriedPieces.Buried(buried.Prefab, buried.Position, 0f, vertex));
+        Assert.False(BuriedPieces.Buried(hung.Prefab, hung.Position, 0f, vertex));
+        var run = new StairRun();
+        run.Pieces.Add(top);
+        run.Pieces.Add(buried);
+        if (beside) run.Pieces.Add(hung);
+        StairStructures.Settle(run, vertex);
+        Assert.Contains(top, run.Pieces);
+        Assert.Equal(beside, run.Pieces.Contains(buried));
+        if (beside) Assert.Contains(hung, run.Pieces);
+    }
+
+    private sealed class FlatAt10 : WorldGenerator
+    {
+        public override float GetHeight(float wx, float wy) => 10f;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+    }
+
+    /// <summary>
+    /// A bridge's end stairs are laid whole and their steps wholly in the ground left out by the one owner, as a staircase's
+    /// and the viaduct's are (BridgeLayout.LeaveOutBuried, BuriedPieces.Omit, the bridge read by the support rule), not at
+    /// emit by burial alone: an end whose two steps stand under the bank at 10 m lays all four (two lanes), and the bridge
+    /// leaves them out, carrying nothing. Before, BridgeLayout.EmitSteps dropped them as it laid them (and StoneGround.Place,
+    /// StairRailing's rails and posts likewise), without asking whether anything stood on them.
+    /// </summary>
+    [Fact]
+    public void ABridgesEndStepsInTheGroundAreLeftOutByTheOneOwnerNotAsTheyAreLaid()
+    {
+        var world = new FlatAt10();
+        _scope.WithWorld(world);
+        var crossing = RoadCrossing.Between(new Vector2(0f, 0f), new Vector2(20f, 0f), riverbedHeight: 5f, fairwayCenter: new Vector2(10f, 0f),
+            fairwayWidth: 0f, CrossingKind.Bridge, FordStyle.None);
+        var end = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 8f, 2);
+        var pieces = new List<StructurePiece>();
+        BridgeLayout.LayEndStairs(pieces, _ => 10f, end, new Vector2(0f, 1f), new BridgeLayout.Ruin(77, crossing), 0, "stone_stair", carry: false);
+        List<StructurePiece> steps = pieces.FindAll(p => p.Kind == StructurePieceKind.Stair);
+        Assert.Equal(4, steps.Count);
+        Assert.All(steps, p => Assert.True(BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (_, _) => 10f), $"step at {p.Position}"));
+        BridgeLayout.LeaveOutBuried(pieces, _ => 10f, crossing, world, p => p.Kind == StructurePieceKind.Stair);
+        Assert.DoesNotContain(pieces, p => p.Kind == StructurePieceKind.Stair);
     }
 }

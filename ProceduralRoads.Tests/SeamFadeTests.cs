@@ -76,7 +76,7 @@ public sealed class SeamFadeTests : IDisposable
     private static void ExcludeOnANewNetwork(params Vector2s[] explored)
     {
         NetworkCutoff.SnapshotWorld(explored);
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
     }
 
     [Fact]
@@ -169,40 +169,6 @@ public sealed class SeamFadeTests : IDisposable
     }
 
     /// <summary>
-    /// road_generate and road_regen_island admit the excluded zones they write (like a manual road): every writer
-    /// writes them from then on, they are not an edge for the seam fade, and the operator is told which they are.
-    /// </summary>
-    [Fact]
-    public void AnOperatorsWriteAdmitsTheZonesItWritesAndSaysSo()
-    {
-        var path = new List<Vector2>();
-        for (float x = -40f; x <= 100f; x += 4f) path.Add(new Vector2(x, 0f));
-        RoadSpatialGrid.AddRoadPath(path, RoadWidth, WorldGenerator.instance!);
-        RoadSpatialGrid.FinalizeRoadNetwork();
-        ExcludeOnANewNetwork(Explored);
-        Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);
-
-        Heightmap hm = _world.RegisterHeightmap(Explored, Width);
-        var log = new List<string>();
-        BepInEx.Logging.ManualLogSource.Captured = log;
-        try
-        {
-            RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out List<Vector2s> admitted);
-            Assert.Equal(new[] { Explored }, admitted);
-            Assert.Contains(log, line => line.Contains(NetworkCutoff.AdmissionWarning("this command builds roads in", admitted)));
-        }
-        finally { BepInEx.Logging.ManualLogSource.Captured = null; }
-        Assert.True(hm.m_terrainComp!.SaveCount > 0, "the operator's write reaches the explored zone");
-        Assert.False(NetworkCutoff.Excludes(Explored), "it is the network's now, for every writer");
-        Assert.Equal(1f, NetworkCutoff.SeamWeight(new Vector2(30f, 0f)));
-
-        // A zone off the loaded ones stays as it is, and the next session starts over from the record.
-        NetworkCutoff.Forget();
-        ExcludeOnANewNetwork(Explored);
-        Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);
-    }
-
-    /// <summary>
     /// The kept zone holds an earlier network's cut along the border they share (x = 32), and its paint: the zone written
     /// now starts its fade from that ground, so the two hold the same heights and paint on every shared vertex, whether
     /// the kept zone's compiler is live or only saved. Started from the generator's ground, the border stood 1.86 m
@@ -246,7 +212,7 @@ public sealed class SeamFadeTests : IDisposable
     }
 
     /// <summary>
-    /// A place's footprint in the fade, no road onto its landing: its ground is left as it is, as anywhere in a footprint,
+    /// A location's footprint in the fade, no road onto its landing: its ground is left as it is, as anywhere in a footprint,
     /// though the kept zone holds a cut beside it. Only on the shared border is it written, where the two zones must agree.
     /// </summary>
     [Fact]
@@ -264,7 +230,7 @@ public sealed class SeamFadeTests : IDisposable
         }
         keptTc.Save();
         kept.RebuildTerrain();
-        RoadSiteProtection.Set(new[] { new RoadSiteProtection.Footprint(new Vector2(30f, 20f), 4f) });
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(30f, 20f), 4f) });
         try
         {
             ExcludeOnANewNetwork(Explored);
@@ -275,11 +241,11 @@ public sealed class SeamFadeTests : IDisposable
             // Outside the footprint the fade runs from the kept cut as before.
             Assert.True(written.m_modifiedHeight[Index(28, 10)]);
         }
-        finally { RoadSiteProtection.Reset(); }
+        finally { RoadLocationProtection.Reset(); }
     }
 
     /// <summary>
-    /// The same footprint in the fade, with a road onto another place's landing in the zone: away from that road its ground
+    /// The same footprint in the fade, with a road onto another location's landing in the zone: away from that road its ground
     /// is still left as it is. Only the road onto the landing and the shared border write inside a footprint; before, the
     /// fade moved the footprint's ground under its pieces wherever the zone held any road onto a landing.
     /// </summary>
@@ -299,22 +265,24 @@ public sealed class SeamFadeTests : IDisposable
         keptTc.Save();
         kept.RebuildTerrain();
         var landing = new Vector2(-20f, 20f);
-        RoadSiteProtection.Set(new[]
+        RoadLocationProtection.Set(new[]
         {
-            new RoadSiteProtection.Footprint(new Vector2(30f, 20f), 4f), new RoadSiteProtection.Footprint(landing, 4f),
+            new RoadLocationProtection.Footprint(new Vector2(30f, 20f), 4f), new RoadLocationProtection.Footprint(landing, 4f),
         });
         try
         {
             ExcludeOnANewNetwork(Explored);
             float natural = BiomeBlendedHeight.GetBlendedHeight(landing.x, landing.y, WorldGenerator.instance!);
-            TerrainComp written = Write(Writable, new RoadSpatialGrid.RoadPoint(landing, RoadWidth, natural + Lift, intoSite: true));
+            // The other location's ground, published by its preload.
+            PlacedLocations.Preload(landing, (x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, WorldGenerator.instance!));
+            TerrainComp written = Write(Writable, new RoadSpatialGrid.RoadPoint(landing, RoadWidth, natural + Lift, intoLocation: true, location: landing));
             Assert.True(written.m_modifiedHeight[Index(-20, 20)], "the road onto the other landing writes its footprint");
             Assert.False(written.m_modifiedHeight[Index(28, 20)], "a footprint vertex in the fade, away from the road onto a landing");
             Assert.Equal(0f, written.m_levelDelta[Index(28, 20)]);
             Assert.Equal(Cut, written.m_levelDelta[Index(32, 20)], 4);
             Assert.True(written.m_modifiedHeight[Index(28, 10)]);
         }
-        finally { RoadSiteProtection.Reset(); }
+        finally { PlacedLocations.Reset(); RoadLocationProtection.Reset(); }
     }
 
     /// <summary>

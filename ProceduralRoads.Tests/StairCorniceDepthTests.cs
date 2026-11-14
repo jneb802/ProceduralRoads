@@ -28,7 +28,7 @@ public class StairCorniceDepthTests
     private static Func<float, float, float> Face(float faceAt) => (x, z) => x < faceAt ? 100f : -50f - x;
 
     private static List<ViaductSupport.Held> Hold(List<StructurePiece> walking, List<StructurePiece> laid, Func<float, float, float> ground) =>
-        StairSupport.Holding(walking.Concat(laid).ToList(), ground, (x, z) => ground(x, z));
+        StairSupport.Holding(walking.Concat(laid).ToList(), (x, z) => ground(x, z));
 
     private static string Say(IEnumerable<ViaductSupport.Held> held) => string.Join(", ", held.OrderBy(h => h.Share).Take(4)
         .Select(h => FormattableString.Invariant($"{h.Piece.Prefab} at {h.Piece.Position} {h.Support:F0} ({h.Share:F2})")));
@@ -99,22 +99,46 @@ public class StairCorniceDepthTests
     /// <summary>
     /// The first build's own reading (StairSupport.HoldUp), on a column the search never sees: the ground the search chose
     /// on (natural) meets the column's third course, but the finished ground is cut 50 m down under all of it but the face
-    /// 7.5 m out (a road's cut under it). Every support piece laid holds by the rule; the stair, held under the margin, is
-    /// laid and said.
+    /// 7.5 m out (a road's cut under it). The column is laid on the finished ground, out to that face, not to the third
+    /// course and hanging there: none of it falls, and every support piece laid holds by the rule; the stair, held under
+    /// the margin, is laid and said.
     /// </summary>
     [Fact]
-    public void AColumnTheFinishedGroundLeavesHangingIsHeldUpAsFarAsTheRuleLets()
+    public void AColumnIsLaidOutToTheFaceTheFinishedGroundLeaves()
     {
         Func<float, float, float> natural = Face(-2.5f), cut = Face(-7.5f);
         StructurePiece stair = Stair(20f);
         var walking = new List<StructurePiece> { stair };
         var shortfall = new StairSupport.Shortfall();
         List<StructurePiece> laid = StairSupport.Lay(Kit, walking, natural, (x, z) => cut(x, z), shortfall);
-        List<ViaductSupport.Held> held = StairSupport.Holding(walking.Concat(laid).ToList(), natural, (x, z) => cut(x, z));
+        List<ViaductSupport.Held> held = StairSupport.Holding(walking.Concat(laid).ToList(), (x, z) => cut(x, z));
         foreach (ViaductSupport.Held h in held.Where(h => h.Piece != stair))
             Assert.True(h.Support >= h.Min, $"{h.Piece.Prefab} at {h.Piece.Position} laid to fall ({h.Support:F0})");
-        Assert.True(shortfall.Fell.Count > 0, "the cornices hung in air with nothing under them are left out");
+        Assert.Empty(shortfall.Fell);
+        Assert.Contains(laid, p => p.Prefab == "blackmarble_out_1" && p.Position.x < -5f);
         Assert.Contains(new Vector3(0f, 20f, 1f), shortfall.Weak);
+    }
+
+    /// <summary>
+    /// The first build's reading leaves out a support the calibration says may break (StairSupport.HoldUp asks
+    /// ViaductSupport.Held.Falls, the model's over-reading taken off, as every other verdict does), not only one under its
+    /// material's least as read: a black marble stair 12 m up, its wall side east, the ground the search chose on a face 3.5 m
+    /// out, the finished ground a face 9 m out (a road's cut under it). Laid out to that face, the cornice at (0, 10, 0.5) reads
+    /// 103 against its least of 100, which the 1.2 over-reading of blackmarble_out_1 puts at 0.86 of it: the game breaks it.
+    /// On the parent it was laid.
+    /// </summary>
+    [Fact]
+    public void ASupportTheCalibrationSaysMayBreakIsNotLaid()
+    {
+        Func<float, float, float> natural = (x, z) => x > 3.5f ? 100f : x - 50f, cut = (x, z) => x > 9f ? 100f : x - 27f;
+        var stair = new StructurePiece { Kind = StructurePieceKind.StairStep, Prefab = Kit.Stair, Position = new Vector3(0f, 12f, 1f), YawDegrees = 180f };
+        var walking = new List<StructurePiece> { stair };
+        var shortfall = new StairSupport.Shortfall();
+        List<StructurePiece> laid = StairSupport.Lay(Kit, walking, natural, (x, z) => cut(x, z), shortfall);
+        Assert.Contains(laid, p => p.Prefab == "blackmarble_out_1");
+        foreach (ViaductSupport.Held h in Hold(walking, laid, cut).Where(h => h.Piece != stair))
+            Assert.False(h.Falls, $"{h.Piece.Prefab} at {h.Piece.Position} laid to fall ({h.Support:F1} of {h.Min:F0}, share {h.Share:F2})");
+        Assert.Contains(new Vector3(0f, 10f, 0.5f), shortfall.Fell);
     }
 
     /// <summary>
@@ -130,7 +154,7 @@ public class StairCorniceDepthTests
         if (!plan.Reached) return; // refused outright: nothing laid, nothing falls
         StairRun run = StairRun.FromPlan(new Vector2(0f, 0f), new Vector2(plan.End.x, plan.End.z), 2f, plan, Kit);
         List<StructurePiece> dressed = Kit.Dress(run, ground, (x, z) => ground(x, z), false);
-        List<ViaductSupport.Held> held = StairSupport.Holding(dressed, ground, (x, z) => ground(x, z));
+        List<ViaductSupport.Held> held = StairSupport.Holding(dressed, (x, z) => ground(x, z));
         Assert.True(held.All(h => h.Share >= DvergrViaduct.HoldMargin), Say(held));
     }
 }

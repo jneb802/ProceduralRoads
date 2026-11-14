@@ -8,7 +8,7 @@ using Valheim.Testing.Doubles;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// A way onto a placed place's landing is held off the road's own earlier stretch as off the network's roads
+/// A way onto a placed location's landing is held off the road's own earlier stretch as off the network's roads
 /// (RoadNetworkGenerator.EntryMeetingRefusal, DoublesBackBesideItsRoad): read from a generated Mountains tower, whose landing
 /// stands at 104.49. Its road came in from the south already at the landing's height (104.40 at -9294.4,1726.5), went on
 /// down a dip to its end at -9294.4,1734.5 (102.71, passing 103.27 at 1730.5), and the staircase onto the landing from

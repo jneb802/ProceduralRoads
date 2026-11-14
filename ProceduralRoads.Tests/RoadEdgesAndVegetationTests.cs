@@ -86,18 +86,18 @@ public class RoadEdgesAndVegetationTests
     [InlineData(3f, 3.5f)]
     [InlineData(4f, 4f)]
     [InlineData(10f, 10f)]
-    public void AZoneSeesPointsAsFarAsTheyReachAndFromFourMetresUpAsBefore(float width, float reach)
+    public void AZoneSeesPointsAsFarAsTheirFitReaches(float width, float reach)
     {
-        // The plain cross-section's reach; the earthworks widen it (below).
+        // The gather includes the fit's rounding allowance, even with plain earthworks.
         using (PlainEarthworks.Apply().And(() => RoadTerrainModifier.BatterPerMetre, 0f))
-            Assert.Equal(reach, RoadSpatialGrid.ZoneReach(width), 5);
+            Assert.Equal(Mathf.Max(width, RoadTerrainModifier.FitReach(width)), RoadSpatialGrid.ZoneReach(width), 5);
         // With the earthworks a zone sees as far as they can reach.
         Assert.Equal(Mathf.Max(width, RoadTerrainModifier.GatherRadius(width)), RoadSpatialGrid.ZoneReach(width), 5);
         Assert.True(RoadSpatialGrid.ZoneReach(width) >= reach);
     }
 
     [Fact]
-    public void AZoneARoadOnlyBrushesHasNothingToWriteAndIsNotStamped()
+    public void AZoneARoadOnlyBrushesHasNothingToWriteAndIsStampedWithNothingSaved()
     {
         // The plain cross-section (60 % flat core, no earthwork widening),
         // whose reach the 3.9 m below is set against.
@@ -115,11 +115,13 @@ public class RoadEdgesAndVegetationTests
             RoadNorthSouth(35.9f, 4f, world);
             Assert.NotEmpty(RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0, 0)));
 
+            // Nothing saved, but final for this network: stamped with the network and the writer.
             TerrainComp west = Write(new Vector2s(0, 0));
             Assert.Equal(RoadTerrainModifier.WriteOutcome.NothingToWrite, RoadTerrainModifier.LastWriteOutcome);
             Assert.Equal(0, west.SaveCount);
-            Assert.False(RoadTerrainModifier.CarriesCurrentRoads(west));
-            Assert.Equal(0, west.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
+            Assert.Null(west.m_nview.GetZDO().GetByteArray(ZDOVars.s_TCData));
+            Assert.True(RoadTerrainModifier.CarriesCurrentRoads(west));
+            Assert.Equal(RoadTerrainModifier.WriterVersion, west.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
 
             TerrainComp east = Write(new Vector2s(1, 0));
             Assert.Equal(RoadTerrainModifier.WriteOutcome.Written, RoadTerrainModifier.LastWriteOutcome);
@@ -128,6 +130,95 @@ public class RoadEdgesAndVegetationTests
             Assert.Equal(RoadTerrainModifier.WriterVersion, east.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
         }
         finally { RoadSpatialGrid.Clear(); }
+    }
+
+    /// <summary>A loaded zone a road only brushes is written once, finds nothing to write and is stamped: no path that
+    /// reads the stamp writes it again for the same network, in this session or after a reload (the sweep, a compiler
+    /// coming alive, a zone spawn; unstamped it was written again on every load). A new network writes it again, and a
+    /// road of the new one that reaches into it is written.</summary>
+    [Fact]
+    public void AZoneWhoseWriteFoundNothingToWriteIsNotWrittenAgainUntilTheNetworkChanges()
+    {
+        var world = new SlopeWorld();
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        using var plain = PlainEarthworks.Apply()
+            .And(() => RoadTerrainModifier.BatterPerMetre, 0f)
+            .And(() => RoadProfile.FlatCoreRatio, RoadConstants.RoadFlatCoreRatio);
+        try
+        {
+            RoadSpatialGrid.Clear();
+            RoadTerrainModifier.ResetForWorld();
+            RoadNorthSouth(35.9f, 4f, world);
+            var zone = new Vector2s(0, 0);
+            Heightmap hm = scope.RegisterHeightmap(zone, 64);
+            RoadTerrainModifier.OnZoneSpawned(zone, RoadSpatialGrid.GetRoadPointsInZone(zone));
+            Assert.Equal(RoadTerrainModifier.WriteOutcome.NothingToWrite, RoadTerrainModifier.LastWriteOutcome);
+            TerrainComp tc = hm.m_terrainComp!;
+            Assert.True(RoadTerrainModifier.CarriesCurrentRoads(tc));
+
+            // In this session, and after a reload (the session's sweep record forgotten, the saved compiler coming alive
+            // again, the zone spawning again): nothing writes it.
+            for (int load = 0; load < 2; load++)
+            {
+                if (load == 1) RoadTerrainModifier.ResetForWorld();
+                RoadTerrainModifier.LastWriteOutcome = RoadTerrainModifier.WriteOutcome.None;
+                Assert.Equal(0, RoadTerrainModifier.SweepUnstamped());
+                RoadTerrainModifier.OnTerrainCompilerReady(tc);
+                RoadTerrainModifier.OnZoneSpawned(zone, RoadSpatialGrid.GetRoadPointsInZone(zone));
+                Assert.Equal(RoadTerrainModifier.WriteOutcome.None, RoadTerrainModifier.LastWriteOutcome);
+                Assert.Equal(0, tc.SaveCount);
+            }
+
+            // A new network whose road reaches into the zone: the stamp is stale and the zone is written.
+            int old = RoadSpatialGrid.RoadNetworkVersion;
+            RoadSpatialGrid.Clear();
+            RoadNorthSouth(34.5f, 2f, world);
+            Assert.NotEqual(old, RoadSpatialGrid.RoadNetworkVersion);
+            Assert.False(RoadTerrainModifier.CarriesCurrentRoads(tc));
+            RoadTerrainModifier.OnTerrainCompilerReady(tc);
+            Assert.Equal(RoadTerrainModifier.WriteOutcome.Written, RoadTerrainModifier.LastWriteOutcome);
+            Assert.Equal(1, tc.SaveCount);
+            Assert.True(RoadTerrainModifier.CarriesCurrentRoads(tc));
+        }
+        finally { RoadTerrainModifier.ResetForWorld(); RoadSpatialGrid.Clear(); }
+    }
+
+    /// <summary>The server bake's write of a zone the roads only brush: nothing to write, reported so, the compiler kept
+    /// stamped and empty, and the bake's plan for its saved compiler then leaves it alone (a dropped compiler would be made
+    /// again and written on every load).</summary>
+    [Fact]
+    public void TheBakeKeepsAZoneWithNothingToWriteStampedAndEmpty()
+    {
+        var world = new SlopeWorld();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
+        using var plain = PlainEarthworks.Apply()
+            .And(() => RoadTerrainModifier.BatterPerMetre, 0f)
+            .And(() => RoadProfile.FlatCoreRatio, RoadConstants.RoadFlatCoreRatio);
+        try
+        {
+            RoadSpatialGrid.Clear();
+            RoadTerrainModifier.ResetForWorld();
+            RoadNorthSouth(35.9f, 4f, world);
+            var zone = new Vector2s(0, 0);
+            Heightmap hm = scope.RegisterHeightmap(zone, 64);
+            TerrainComp tc = hm.m_terrainComp!;
+            RoadTerrainModifier.LastWriteOutcome = RoadTerrainModifier.WriteOutcome.None;
+            RoadTerrainModifier.BakeRoadTerrain(zone, hm, tc);
+            bool carries = RoadTerrainModifier.CarriesCurrentRoads(tc);
+            Assert.True(carries);
+            Assert.Equal(ServerBakePlanner.WriteReport.NothingToWrite,
+                ServerBakePlanner.ReportOf(carries, RoadTerrainModifier.LastWriteOutcome));
+            Assert.Null(tc.m_nview.GetZDO().GetByteArray(ZDOVars.s_TCData));
+
+            int applied = tc.m_nview.GetZDO().GetInt(RoadTerrainModifier.AppliedVersionHash);
+            var saved = new[] { new ServerBakePlanner.Compiler(applied, 0, false, RoadTerrainModifier.CarriesCurrentRoads(zone, applied)) };
+            Assert.Equal(ServerBakePlanner.Action.AlreadyCurrent,
+                ServerBakePlanner.Decide(RoadSpatialGrid.RoadNetworkVersion, true, false, false, saved, 1));
+            RoadTerrainModifier.LastWriteOutcome = RoadTerrainModifier.WriteOutcome.None;
+            RoadTerrainModifier.BakeRoadTerrain(zone, hm, tc);
+            Assert.Equal(RoadTerrainModifier.WriteOutcome.None, RoadTerrainModifier.LastWriteOutcome);
+        }
+        finally { RoadTerrainModifier.ResetForWorld(); RoadSpatialGrid.Clear(); }
     }
 
     private static readonly int Tree = "Beech1".GetStableHashCode();
@@ -516,24 +607,6 @@ public class RoadEdgesAndVegetationTests
         Assert.False(VegetationClearing.IsRock(Tree));
     }
 
-    /// <summary>A structure's clear area (a staircase, a bridge) takes every rock off on the server, whatever the rock
-    /// clearing would do with it on a road; a player's own rock still stays.</summary>
-    [Fact]
-    public void AStructuresClearAreaTakesEveryRockOnTheServer()
-    {
-        var vegetation = new HashSet<int> { Boulder, MistlandsCliff };
-        var onStair = new Vector2(40f, 0f);
-        // The road's area at (10, 10), then the staircase's.
-        var stair = new VegetationClearing.ZoneAreas(new List<ZoneSystem.ClearArea>
-            { new(new Vector3(10f, 0f, 10f), 2.4f), new(new Vector3(onStair.x, 0f, onStair.y), 3f) }, 0, 1);
-        Assert.True(VegetationClearing.ShouldRemove(Boulder, onStair, false, vegetation, stair, NoLocations, NoPlayerGround,
-            biomeAt: _ => Heightmap.Biome.Mountain));
-        Assert.True(VegetationClearing.ShouldRemove(MistlandsCliff, onStair, false, vegetation, stair, NoLocations, NoPlayerGround,
-            biomeAt: _ => Heightmap.Biome.Mistlands));
-        Assert.False(VegetationClearing.ShouldRemove(Boulder, onStair, true, vegetation, stair, NoLocations, NoPlayerGround,
-            biomeAt: _ => Heightmap.Biome.Mountain));
-    }
-
     /// <summary>
     /// The middle 90 % of the road is inside its clear areas, at every point
     /// and at any heading: straight along an axis off the old 4 m grid, where
@@ -606,7 +679,7 @@ public class RoadEdgesAndVegetationTests
     public void TheClearedZonesSurviveASaveAndLoadWithTheNetwork()
     {
         var world = new SlopeWorld();
-        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos().WithNetwork(server: true);
         RoadNetworkGenerator.Reset();
         try
         {

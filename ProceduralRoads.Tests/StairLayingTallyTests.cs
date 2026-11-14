@@ -29,7 +29,7 @@ public class StairLayingTallyTests
             string line = Assert.Single(log, l => l.Contains("Staircases:"));
             Assert.Contains("7 started further back down their road", line);
             Assert.Contains("5 stretch(es) laid again in the kit their staircase stood in", line);
-            Assert.Contains("3 start(s) onto a place's landing refused over a ridge or trench to the foot", line);
+            Assert.Contains("3 start(s) onto a location's landing refused over a ridge or trench to the foot", line);
         }
         finally { BepInEx.Logging.ManualLogSource.Captured = null; RoadNetworkGenerator.Reset(); }
     }

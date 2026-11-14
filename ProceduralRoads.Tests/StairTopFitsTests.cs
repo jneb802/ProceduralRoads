@@ -11,7 +11,7 @@ namespace ProceduralRoads.Tests;
 /// What a road staircase's top is carried on with past its top (RoadStairRuns.TopOntoSurface: stairs climbed on, then a
 /// floor or a crest onto the surface) passes the same check as the staircase itself, or another finish is tried, or the top
 /// stays as it is. Unchecked, up to three stairs and a crest past the top could land on
-/// another road, another staircase, water or a place.
+/// another road, another staircase, water or a location.
 /// </summary>
 public class StairTopFitsTests : IDisposable
 {

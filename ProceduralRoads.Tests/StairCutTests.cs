@@ -115,18 +115,18 @@ public class StairCutTests : IDisposable
     }
 
     [Fact]
-    public void ARoadOnlyNetworkSavesAsBeforeAndCutsSaveAsFormatFour()
+    public void ARoadOnlyNetworkAndOneWithCutsSaveInTheOneCurrentFormat()
     {
-        // Save format v4 (road statistics): the envelope, then the geometry encoding the network needs.
+        // One format whatever the network holds: format 4, encoding 8.
         byte[] roadOnly = RoadSpatialGrid.SerializeAllRoadPoints()!;
         Assert.Equal(4, BitConverter.ToInt32(roadOnly, 0));
-        Assert.Equal(2, BitConverter.ToInt32(roadOnly, 4));
+        Assert.Equal(8, BitConverter.ToInt32(roadOnly, 4));
 
         Cut(new Vector3(0f, 29f, 0f));
         int version = RoadSpatialGrid.RoadNetworkVersion;
         byte[] withCuts = RoadSpatialGrid.SerializeAllRoadPoints()!;
         Assert.Equal(4, BitConverter.ToInt32(withCuts, 0));
-        Assert.Equal(4, BitConverter.ToInt32(withCuts, 4));
+        Assert.Equal(8, BitConverter.ToInt32(withCuts, 4));
 
         RoadSpatialGrid.Clear();
         Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(withCuts));
@@ -187,8 +187,7 @@ public class StairCutTests : IDisposable
         Assert.False(RoadSpatialGrid.TryGetRoadHeightWithin(new Vector2(0f, 0f), 5f, out _));
         Assert.False(RoadSpatialGrid.TryGetRoadWithin(new Vector2(0f, 0f), 5f, out _));
         Assert.DoesNotContain(RoadSpatialGrid.RoadTargets(_ => true), p => p.magnitude < 5f);
-        RoadSpatialGrid.GetRoadWeight(0f, 0f, out float weight, out _);
-        Assert.Equal(0f, weight);
+        Assert.False(RoadSpatialGrid.AnyRoadAt(0f, 0f));
         Assert.Contains(RoadSpatialGrid.RoadTargets(_ => true), p => p.x > 299f);
     }
 

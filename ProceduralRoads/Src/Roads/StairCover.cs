@@ -10,7 +10,7 @@ public static class StairCover
     /// out. 1.5 m let leg-by-leg search cut 1.8 m deep on the real face; with backtracking it routes round instead.</summary>
     public const float RoadStaircase = 1f;
 
-    /// <summary>The search for an approach to a placed place: its footprint takes no earthwork, so it is kept shallower than a road's
+    /// <summary>The search for an approach to a placed location: its footprint takes no earthwork, so it is kept shallower than a road's
     /// staircase and the cuts under its treads are never made. 0.5 m shows too much terrain overlap.</summary>
     public const float ApproachSearch = 0.3f;
 

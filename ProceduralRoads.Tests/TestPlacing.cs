@@ -5,8 +5,8 @@ using UnityEngine;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// A stand-in for the load's placing (SitesFirstLoad, not compiled here) for tests whose generation goes to places that
-/// wait for their placing (PlacedSites.NeedsPlacing: every Mountain destination, a crypt): each chosen destination that
+/// A stand-in for the load's placing (LocationsFirstLoad, not compiled here) for tests whose generation goes to locations that
+/// wait for their placing (PlacedLocations.NeedsPlacing: every Mountain destination, a crypt): each chosen destination that
 /// does is remembered as the game would leave it, turned to 0, its root on the ground at its centre, its levelling the
 /// world's for it (none known: none).
 /// </summary>
@@ -21,8 +21,8 @@ internal static class TestPlacing
             var centre = new Vector2(position.x, position.z);
             if (!zones.m_locationInstances.TryGetValue(ZoneSystem.GetZone(position), out ZoneSystem.LocationInstance instance)) continue;
             if (Vector2.Distance(new Vector2(instance.m_position.x, instance.m_position.z), centre) > 1f) continue;
-            if (!PlacedSites.NeedsPlacing(instance, world) || PlacedSites.TryGet(centre, out _)) continue;
-            PlacedSites.Remember(new PlacedSiteRecord
+            if (!PlacedLocations.NeedsPlacing(instance, world) || PlacedLocations.TryGet(centre, out _)) continue;
+            PlacedLocations.Remember(new PlacedLocationRecord
             {
                 Prefab = instance.m_location.m_prefab.Name ?? "", Centre = centre, Yaw = 0f, Root = world.GetHeight(centre.x, centre.y),
                 RockRadius = instance.m_location.m_exteriorRadius,

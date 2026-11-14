@@ -33,6 +33,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
     private readonly ExistingWorldRoads _setting = ExistingWorldFirstLoad.Setting;
     private readonly Func<bool> _canAsk = ExistingWorldFirstLoad.CanAsk;
     private readonly Func<string?>? _backup = ExistingWorldFirstLoad.Backup;
+    private readonly Func<bool>? _saveNow = ExistingWorldFirstLoad.SaveNow;
     private readonly Action<string>? _tell = ExistingWorldFirstLoad.Tell;
     private readonly List<string> _told = new();
     private int _menus;
@@ -40,6 +41,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
     public ExistingWorldFirstLoadTests()
     {
         ExistingWorldFirstLoad.Backup = () => "World_backup_20261030-120000";
+        ExistingWorldFirstLoad.SaveNow = () => true;
         ExistingWorldFirstLoad.Tell = _told.Add;
         RoadLifecycleManager.ReturnToMenuForTests = () => _menus++;
     }
@@ -50,6 +52,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
         ExistingWorldFirstLoad.Setting = _setting;
         ExistingWorldFirstLoad.CanAsk = _canAsk;
         ExistingWorldFirstLoad.Backup = _backup;
+        ExistingWorldFirstLoad.SaveNow = _saveNow;
         ExistingWorldFirstLoad.Tell = _tell;
         RoadLifecycleManager.ReturnToMenuForTests = null;
         if (ZoneSystem.instance != null) RoadLifecycleManager.OnZoneSystemDestroy(ZoneSystem.instance);
@@ -69,7 +72,7 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
     }
 
     /// <summary>
-    /// A world with places, and the zones its save says were generated: <paramref name="explored"/> true gives it the
+    /// A world with locations, and the zones its save says were generated: <paramref name="explored"/> true gives it the
     /// three explored zones (one with a player's piece, one dug), false is a fresh world.
     /// </summary>
     private ZoneSystem World(bool explored)
@@ -294,8 +297,227 @@ public sealed class ExistingWorldFirstLoadTests : IDisposable
         Assert.NotNull(path);
         Assert.DoesNotContain(path!, p => ZoneSystem.GetZone(new Vector3(p.x, 0f, p.y)) == avoided);
 
-        // A place inside the zone is still reached, up to it; and a jump cannot fly over one.
-        Assert.False(NetworkCutoff.AvoidsSegment(new Vector2(90f, 0f), new Vector2(120f, 0f), new Vector2(0f, 0f), new Vector2(120f, 0f)));
+        // An automatic network has no exemption for the zone a road ends in: a location inside the zone is not one of its
+        // destinations, and no road is laid up to it (before, it was reached up to the zone). A jump cannot fly over one.
+        Assert.True(NetworkCutoff.AvoidsSegment(new Vector2(90f, 0f), new Vector2(120f, 0f), new Vector2(0f, 0f), new Vector2(120f, 0f)));
         Assert.True(NetworkCutoff.AvoidsSegment(new Vector2(80f, 0f), new Vector2(176f, 0f), null, null));
+        // A manual road keeps its own: the zones its marks are in.
+        using (NetworkCutoff.AvoidWhilePlanning(new HashSet<Vector2s> { avoided }, 0f))
+            Assert.False(NetworkCutoff.AvoidsSegment(new Vector2(90f, 0f), new Vector2(120f, 0f), new Vector2(0f, 0f), new Vector2(120f, 0f)));
+    }
+
+    [Fact]
+    public void AFailedEarthworkRetryClearsTheFinderBeforeItsNextRoad()
+    {
+        _world.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem();
+        ResetState();
+        NetworkCutoff.SnapshotWorld(new[] { new Vector2s(1, 1), new Vector2s(2, 1), new Vector2s(3, 1) });
+        NetworkCutoff.BeginNewNetwork();
+        var finder = new RoadPathfinder(WorldGenerator.instance!);
+        SetPathfinder(finder);
+        bool injected = false;
+        RoadNetworkGenerator.AfterEarthworkPenalty = active =>
+        {
+            Assert.Same(finder, active);
+            Assert.True(active.EarthworkPenaltyCells > 0);
+            injected = true;
+            throw new InvalidOperationException("controlled earthwork retry failure");
+        };
+        try
+        {
+            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector3(0f, 0f, 24f), 0f,
+                new Vector3(256f, 0f, 24f), 0f, 8f, "wide"));
+            Assert.True(injected);
+            Assert.Equal(RoadNetworkGenerator.PlanningExceptionRefusal, RoadSpatialGrid.LastRefusal);
+            Assert.Equal(0, finder.EarthworkPenaltyCells);
+            RoadNetworkGenerator.AfterEarthworkPenalty = null;
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(0f, 0f, -64f), 0f,
+                new Vector3(256f, 0f, -64f), 0f, 4f, "next"), RoadSpatialGrid.LastRefusal);
+            Assert.Equal(0, finder.EarthworkPenaltyCells);
+        }
+        finally
+        {
+            RoadNetworkGenerator.AfterEarthworkPenalty = null;
+            SetPathfinder(null);
+        }
+    }
+
+    private static void SetPathfinder(RoadPathfinder? pathfinder) =>
+        typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, pathfinder);
+
+    /// <summary>
+    /// The same protected strip across a road's straight line, in both modes for an explored world: the search, and the
+    /// generator's whole road (straightened, swayed and snapped after it), go only through zones the writers may write
+    /// (NetworkCutoff.Excludes, captured as the network begins). Built only in new land, every explored zone of the strip
+    /// is protected; over the explored land only the two players built in, so the road may take the wild one. Before, a
+    /// network built only in new land planned straight through the explored zones its writers then left as they were.
+    /// </summary>
+    [Theory]
+    [InlineData(ExistingWorldRoads.NewZonesOnly)]
+    [InlineData(ExistingWorldRoads.IncludeExplored)]
+    public void ARoadIsPlannedOnlyThroughZonesItsWritersMayWrite(ExistingWorldRoads mode)
+    {
+        _world.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem();
+        ResetState();
+        // Column x 96..160 across the line from (0,0) to (256,0): players built in (2,0) and (2,1); (2,-1) is wild.
+        var built = new[] { new Vector2s(2, 0), new Vector2s(2, 1) };
+        var wild = new Vector2s(2, -1);
+        NetworkCutoff.SnapshotWorld(built.Append(wild));
+        if (mode == ExistingWorldRoads.IncludeExplored) NetworkCutoff.IncludeExplored(built);
+        NetworkCutoff.BeginNewNetwork();
+        Assert.Equal(mode == ExistingWorldRoads.NewZonesOnly, NetworkCutoff.Excludes(wild));
+        static Vector2s Zone(Vector2 p) => ZoneSystem.GetZone(new Vector3(p.x, 0f, p.y));
+        var from = new Vector2(0f, 0f);
+        var to = new Vector2(256f, 0f);
+
+        List<Vector2>? path = new RoadPathfinder(WorldGenerator.instance!).FindPath(from, to);
+        Assert.NotNull(path);
+        Assert.DoesNotContain(path!, p => NetworkCutoff.Excludes(Zone(p)));
+
+        SetPathfinder(new RoadPathfinder(WorldGenerator.instance!));
+        try
+        {
+            Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(from.x, 0f, from.y), 0f, new Vector3(to.x, 0f, to.y), 0f, 4f, "across"), RoadSpatialGrid.LastRefusal);
+            List<RoadSpatialGrid.RoadPoint> laid = RoadSpatialGrid.SnapshotAllRoadPoints();
+            Assert.NotEmpty(laid);
+            Assert.DoesNotContain(laid, p => NetworkCutoff.Excludes(Zone(p.p)));
+        }
+        finally { SetPathfinder(null); }
+    }
+
+    /// <summary>
+    /// A generated road whose whole footprint, as it would be stored, reaches a zone the network goes round is searched again
+    /// round it, and where that does not take it out is refused whole by the one final check (NetworkCutoff.Protected over
+    /// ManualRoads.ZonesReached), whatever stage put it there. Here a road 8 m wide past the protected zones above it: its
+    /// levelling reaches further than the search keeps a road of the 4 m setting (the writer's reach at the setting's width).
+    /// With the searches again spent (EarthworkRetries 0) it is refused and nothing of it is stored; with them it is laid round,
+    /// out of the zones' reach. Before, it was stored either way, and the writer gathered its points for the protected zones.
+    /// </summary>
+    [Fact]
+    public void AGeneratedRoadWhoseFootprintReachesAProtectedZoneIsSearchedRoundElseRefusedWhole()
+    {
+        var kept = new[] { new Vector2s(1, 1), new Vector2s(2, 1), new Vector2s(3, 1) };
+        int retries = RoadNetworkGenerator.EarthworkRetries;
+        foreach (int spent in new[] { 0, retries })
+        {
+            _world.WithWorld(new FlatWorld()).WithZdos().WithZoneSystem();
+            ResetState();
+            NetworkCutoff.SnapshotWorld(kept);
+            NetworkCutoff.BeginNewNetwork();
+            SetPathfinder(new RoadPathfinder(WorldGenerator.instance!));
+            RoadNetworkGenerator.EarthworkRetries = spent;
+            try
+            {
+                bool built = RoadNetworkGenerator.GenerateRoad(new Vector3(0f, 0f, 24f), 0f, new Vector3(256f, 0f, 24f), 0f, 8f, "wide");
+                if (spent == 0)
+                {
+                    Assert.False(built, "a road writing into a protected zone was stored");
+                    Assert.Equal(RoadNetworkGenerator.ProtectedZoneRefusal, RoadSpatialGrid.LastRefusal);
+                    Assert.Empty(RoadSpatialGrid.SnapshotAllRoadPoints());
+                }
+                else
+                {
+                    Assert.True(built, RoadSpatialGrid.LastRefusal);
+                    Assert.NotEmpty(RoadSpatialGrid.SnapshotAllRoadPoints());
+                    foreach (Vector2s zone in kept) Assert.True(RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0, $"the writer gathers road points for {zone}");
+                }
+            }
+            finally { SetPathfinder(null); RoadNetworkGenerator.EarthworkRetries = retries; }
+        }
+    }
+
+    /// <summary>
+    /// A location in a zone the network leaves alone is not chosen at all, in both modes for an explored world: it neither
+    /// ranks its island nor takes a location in its quota, and no road is aimed at it; the spawn there does not start the
+    /// island's roads. A location in land the network may write is chosen. Before, it was chosen and connected up to the
+    /// protected zone's border.
+    /// </summary>
+    [Theory]
+    [InlineData(ExistingWorldRoads.NewZonesOnly)]
+    [InlineData(ExistingWorldRoads.IncludeExplored)]
+    public void ALocationInAProtectedZoneIsNotChosen(ExistingWorldRoads mode)
+    {
+        ExistingWorldFirstLoad.Setting = mode;
+        ZoneSystem zones = World(explored: true);
+        var spawnZone = new Vector2s(0, 0);
+        zones.Generated.Add(spawnZone);
+        ZDO bench = ZDOMan.instance!.CreateNewZDO(new Vector3(6f, 0f, 9f), "piece_workbench".GetStableHashCode());
+        bench.Set(ZDOVars.s_creator, 1234L);
+        Vector3 inBuilt = ZoneSystem.GetZonePos(Built), open = new(0f, 0f, -200f);
+        foreach ((string name, Vector3 at) in new[] { ("Crypt4", inBuilt), ("Crypt3", open) })
+            TestLocations.Add(zones, new ZoneSystem.LocationInstance
+            {
+                m_position = at,
+                m_location = new ZoneSystem.ZoneLocation { m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(name), m_exteriorRadius = 16f },
+            });
+        List<string>? chosen = null;
+        bool startsAtSpawn = true;
+        IEnumerable<bool> Look(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
+        {
+            chosen = work.AllSelected.Select(d => d.name).ToList();
+            startsAtSpawn = work.Islands.Any(i => i.Spawn != null);
+            yield break;
+        }
+        RoadNetworkGenerator.LocationsFirst = Look;
+        try
+        {
+            Open(zones);
+            FinishGeneration();
+        }
+        finally { RoadNetworkGenerator.LocationsFirst = null; }
+        Assert.True(NetworkCutoff.Excludes(Built));
+        Assert.True(NetworkCutoff.Excludes(spawnZone));
+        Assert.NotNull(chosen);
+        Assert.DoesNotContain("Crypt4", chosen!);
+        Assert.Contains("Crypt3", chosen!);
+        Assert.Contains("Eikthyrnir", chosen!);
+        Assert.False(startsAtSpawn, "the roads start at a spawn the network leaves alone");
+    }
+
+    /// <summary>What a network over the explored world leaves as it is, the zones it goes round while planned, and its roads.</summary>
+    private sealed record Outcome(string Excluded, string Avoided, string Points);
+
+    private static string ZonesOf(Func<Vector2s, bool> holds) =>
+        string.Join(" ", new[] { Wild, Built, Dug }.Where(holds).Select(z => $"{z.x},{z.y}"));
+
+    private static Outcome Run(Func<bool> begin)
+    {
+        Assert.True(begin());
+        Assert.True(System.Threading.SpinWait.SpinUntil(() => { RoadLifecycleManager.Tick(); return NetworkCutoff.AvoidsAny || !RoadLifecycleManager.IsGenerating; }, 20000));
+        string avoided = ZonesOf(NetworkCutoff.Avoids);
+        FinishGeneration();
+        Assert.True(RoadNetworkGenerator.RoadsGenerated);
+        return new Outcome(ZonesOf(NetworkCutoff.Excludes), avoided,
+            string.Join(";", RoadSpatialGrid.SnapshotAllRoadPoints().Select(p => FormattableString.Invariant($"{p.p.x:F2},{p.p.y:F2}"))));
+    }
+
+    /// <summary>
+    /// One answer, one outcome, whichever path carries it out (rule 13): the first load given the answer, road_generate
+    /// given it on the same world once its first load skipped the roads, and road_regen_island at the island. The same zones
+    /// left as they are and gone round, and the same roads (road_regen_island: the zones). Before, the commands took no
+    /// answer: they planned through every explored zone and left out all three.
+    /// </summary>
+    [Theory]
+    [InlineData(ExistingWorldRoads.NewZonesOnly)]
+    [InlineData(ExistingWorldRoads.IncludeExplored)]
+    public void TheLoadAndTheCommandsTakeAnAnswerAlike(ExistingWorldRoads answer)
+    {
+        ExistingWorldFirstLoad.Setting = answer;
+        ZoneSystem zones = World(explored: true);
+        Outcome load = Run(() => { Open(zones); return true; });
+
+        foreach (Vector3? island in new Vector3?[] { null, Vector3.zero })
+        {
+            RoadLifecycleManager.OnZoneSystemDestroy(zones);
+            ExistingWorldFirstLoad.Setting = ExistingWorldRoads.Skip;
+            zones = World(explored: true);
+            Open(zones);
+            Assert.False(RoadNetworkGenerator.NetworkInMemory);
+            Outcome command = Run(() => RoadLifecycleManager.BeginForOperator(island, _ => { },
+                command: island == null ? "road_generate" : "road_regen_island", force: true, answer: answer) == null);
+            Assert.Equal(load.Excluded, command.Excluded);
+            Assert.Equal(load.Avoided, command.Avoided);
+            if (island == null) Assert.Equal(load.Points, command.Points);
+        }
     }
 }

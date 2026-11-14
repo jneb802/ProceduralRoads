@@ -15,7 +15,7 @@ namespace ProceduralRoads;
 ///
 /// A zone counts from the first time the bake asks for its terrain until the zone is finished with it: it took its
 /// data, gave up, or left the queue for any other reason (<see cref="Release"/>; every pass through a zone that does
-/// not end waiting on its terrain releases it). A zone asked for already is never refused: it holds its place.
+/// not end waiting on its terrain releases it). A zone asked for already is never refused: it holds its location.
 ///
 /// The order the bake's queue is worked in is decided here too (<see cref="RunSlice"/>): the zones holding a request
 /// (at most <see cref="Max"/>) are tried first each slice, outside the queue; the queue is worked from its front only
@@ -105,4 +105,26 @@ public sealed class ServerBakeBuilderRequests
 
     /// <summary>The zones holding a request, in the order they were asked.</summary>
     public IReadOnlyList<Vector2s> Waiting => m_waiting;
+
+    /// <summary>
+    /// Zones owed new work (an append's, RoadSpatialGrid.ZonesChangedSince) join the queue at its back, each once: not one
+    /// still in the queue's unworked part (from <paramref name="next"/>), holding a request (it is worked again before
+    /// the queue), or held for later elsewhere (<paramref name="held"/>: deferred or due a repair, it comes back on its own).
+    /// Each reads what it owes when it is worked, so one already waiting takes the new work with it. A zone the queue has
+    /// worked already is owed again: a zone completed earlier still owes a new append. Returns how many joined. The one
+    /// owner of the bake queue's admission (docs/OWNERS.md).
+    /// </summary>
+    public int Admit(List<Vector2s> queue, int next, IEnumerable<Vector2s> owed, Func<Vector2s, bool>? held = null)
+    {
+        var pending = new HashSet<Vector2s>(m_waiting);
+        for (int i = Math.Max(0, next); i < queue.Count; i++) pending.Add(queue[i]);
+        int added = 0;
+        foreach (Vector2s zone in owed)
+        {
+            if (!pending.Add(zone) || held != null && held(zone)) continue;
+            queue.Add(zone);
+            added++;
+        }
+        return added;
+    }
 }

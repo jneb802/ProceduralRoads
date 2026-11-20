@@ -17,6 +17,8 @@ public static class RoadConnectionPlanner
         { Name=name; Position=position; Radius=radius; }
     }
 
+    /// <param name="lastResort">Builds the location's last-resort road (one refused only for ending too far
+    /// under it) when nothing else connected it; null for none.</param>
     public static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority,
@@ -105,6 +107,14 @@ public static class RoadConnectionPlanner
                             }
                             break;
                         }
+                }
+                // Every edge and the join tried: the road refused only for ending too far under the
+                // location, kept for it, rather than nothing.
+                if (!joined && lastResort != null && lastResort(locations[next]))
+                {
+                    report(locations[next],"connected by its last-resort road");
+                    tree.Add(next); remaining.Remove(next); settled?.Invoke(next);
+                    continue;
                 }
                 report(locations[next],joined ? "joined without a priced edge" : "new component; no priced connection to network");
                 tree.Add(next); remaining.Remove(next);

@@ -145,7 +145,8 @@ public static class LocationPrefabLevelling
                     terrainRadius = Mathf.Max(terrainRadius, new Vector2(local.x, local.z).magnitude + reach);
                     if (!modifier.m_level) continue;
                     ops.Add(new LevelOp(local.x, local.z, local.y + modifier.m_levelOffset,
-                        modifier.m_levelRadius, modifier.m_square));
+                        modifier.m_levelRadius, modifier.m_square,
+                        modifier.m_smooth ? modifier.m_smoothRadius : 0f, modifier.m_smoothPower));
                 }
                 return true;
             });

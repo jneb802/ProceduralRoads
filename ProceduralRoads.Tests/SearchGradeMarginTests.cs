@@ -44,7 +44,7 @@ public class SearchGradeMarginTests
     // The variance term prices a plane alike everywhere and only slows the
     // search; these tests are about the grade.
     private static RoadPathfinder Finder(WorldGenerator world, float cap) =>
-        new RoadPathfinder(world) { MaxGrade = cap, TerrainVarianceThreshold = 1000f };
+        new RoadPathfinder(world) { MaxGrade = cap, TerrainVarianceThreshold = 1000f, Stairs = false }; // road's margin, no staircases
 
     private static float SteepestAlong(IReadOnlyList<Vector2> path, WorldGenerator world)
     {

@@ -126,6 +126,24 @@ public static class StructureEnds
         return generator;
     }
 
+    /// <summary>Road between two structures shorter than this is a stub (a tiny bit of road between them, about 6-8 m): it is one level landing at the joining height, or not laid.</summary>
+    public const float StubLength = 8f;
+
+    /// <summary>
+    /// Why the road <paramref name="points"/> between two structures, held at <paramref name="from"/> and
+    /// <paramref name="to"/> at its ends, is a stub: shorter than <see cref="StubLength"/> (the stretch under a viaduct's
+    /// joining piece apart) and its ends further apart in height than a step (<see cref="StepTolerance"/>), so it is not one
+    /// level landing. Null where it is a landing, or long enough to be road.
+    /// </summary>
+    public static string? IsStub(IReadOnlyList<Vector2> points, float from, float to)
+    {
+        float length = 0f;
+        for (int i = 1; i < points.Count; i++) length += Vector2.Distance(points[i - 1], points[i]);
+        if (length >= StubLength + JoinOverlap - 1e-3f) return null;
+        if (Mathf.Abs(from - to) <= StepTolerance + 1e-3f) return null;
+        return FormattableString.Invariant($"a stub of road {length:F1} m long between two structures {Mathf.Abs(from - to):F1} m apart in height");
+    }
+
     /// <summary>Whether a player walks from road at <paramref name="roadHeight"/> where the road meets
     /// <paramref name="end"/> onto it.</summary>
     public static bool Reachable(float roadHeight, End end) => Mathf.Abs(roadHeight - end.MeetHeight) <= StepTolerance;

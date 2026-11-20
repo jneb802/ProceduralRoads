@@ -460,7 +460,7 @@ public static class ServerTerrainBake
             List<ZDO> saved = RoadTerrainModifier.SavedTerrainCompilers(zone);
             if (saved.Count == 1)
             {
-                // The ground as the players have it, road cut included: the carve's support test leans on it.
+                // The ground as the players have it, road cut included: the carve judges what stands on it.
                 compiler = BringSavedAlive(saved[0], hmap.m_terrainCompilerPrefab);
                 hmap.Regenerate();
             }
@@ -530,7 +530,7 @@ public static class ServerTerrainBake
             int n = 0; double sum = 0, worst = 0;
             foreach (var point in RoadSpatialGrid.GetRoadPointsInZone(zone))
             {
-                if (point.paintOnly || !ZoneSystem.instance.GetGroundHeight(new Vector3(point.p.x, 0f, point.p.y), out float g)) continue;
+                if (!point.IsRoad || !ZoneSystem.instance.GetGroundHeight(new Vector3(point.p.x, 0f, point.p.y), out float g)) continue;
                 double d = Mathf.Abs(g - point.h); n++; sum += d; worst = System.Math.Max(worst, d);
             }
             if (n > 0) Log.LogDebug($"[BAKE] zone {zone}: ghost ground vs road height over {n} points: mean {sum / n:F2} m, worst {worst:F2} m");
@@ -892,8 +892,10 @@ public static class ServerTerrainBake
             return Outcome.Done;
         }
         List<VegetationClearing.Area> areas = ClearAreasFor(zone);
+        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
         bool rocks = ServerBakePlanner.SavedRocksOwed(loadedHere, RoadRockPolicy.Clears(RoadRockClearing.Mode));
-        if (areas.Count > 0 || rocks)
+        if (areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 || rocks)
         {
             if (AnyPeerNear(zone))
             {
@@ -901,7 +903,7 @@ public static class ServerTerrainBake
                 s_ghostRepair.Defer(zone, Time.time, RetryDelaySeconds);
                 return Outcome.Waiting;
             }
-            int removed = areas.Count > 0 ? RemoveVegetation(zone, areas) : 0;
+            int removed = areas.Count > 0 || structureAreas.Count > 0 || road.Count > 0 ? RemoveVegetation(zone, areas, structureAreas, road) : 0;
             if (removed > 0)
             {
                 s_counts.VegetationZones++;
@@ -919,15 +921,37 @@ public static class ServerTerrainBake
         return Outcome.Done;
     }
 
-    /// <summary>The clear areas generation hands PlaceVegetation for this zone: the road's and the bridges'.</summary>
-    private static List<VegetationClearing.Area> ClearAreasFor(Vector2s zone)
+    /// <summary>The road clear areas generation hands PlaceVegetation for this zone.</summary>
+    private static List<VegetationClearing.Area> ClearAreasFor(Vector2s zone) => ToAreas(RoadClearAreaManager.GetOrCreateClearAreas(zone));
+
+    /// <summary>The structures' clear areas (bridges, staircases) generation hands PlaceVegetation for this zone.</summary>
+    private static List<VegetationClearing.Area> StructureClearAreasFor(Vector2s zone) => ToAreas(StructurePlacement.GetClearAreas(zone));
+
+    private static List<VegetationClearing.Area> ToAreas(List<ZoneSystem.ClearArea> clearAreas)
     {
         var areas = new List<VegetationClearing.Area>();
-        foreach (ZoneSystem.ClearArea area in RoadClearAreaManager.GetOrCreateClearAreas(zone))
-            areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius));
-        foreach (ZoneSystem.ClearArea area in StructurePlacement.GetClearAreas(zone))
+        foreach (ZoneSystem.ClearArea area in clearAreas)
             areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius));
         return areas;
+    }
+
+    /// <summary>The biome at a saved object's position, as generation saw it.</summary>
+    private static Heightmap.Biome BiomeAt(Vector2 position) => WorldGenerator.instance.GetBiome(position.x, position.y);
+
+    /// <summary>The road points generation tests this zone's grown trees against (RoadClearAreaManager.GetOrCreateRoadCentres),
+    /// or those of the roads after <paramref name="sinceAppend"/> appends.</summary>
+    private static List<VegetationClearing.RoadCentre> RoadCentresFor(Vector2s zone) =>
+        RoadClearAreaManager.GetOrCreateRoadCentres(zone);
+
+    /// <summary>A saved object's scale, as ZNetView restores it: the saved scale, else the saved scalar, else the prefab's
+    /// own.</summary>
+    private static float SavedScale(ZDO zdo)
+    {
+        Vector3 scale = zdo.GetVec3(ZDOVars.s_scaleHash, Vector3.zero);
+        if (scale != Vector3.zero)
+            return scale.x;
+        GameObject prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
+        return zdo.GetFloat(ZDOVars.s_scaleScalarHash, prefab != null ? prefab.transform.localScale.x : 1f);
     }
 
     private static bool AnyPeerNear(Vector2s zone)
@@ -944,7 +968,9 @@ public static class ServerTerrainBake
     internal static int CountVegetationOnRoad(Vector2s zone)
     {
         List<VegetationClearing.Area> areas = ClearAreasFor(zone);
-        if (areas.Count == 0)
+        List<VegetationClearing.Area> structureAreas = StructureClearAreasFor(zone);
+        List<VegetationClearing.RoadCentre> road = RoadCentresFor(zone);
+        if (areas.Count == 0 && structureAreas.Count == 0 && road.Count == 0)
             return 0;
         HashSet<int> vegetation = VegetationPrefabs();
         List<VegetationClearing.Footprint> locations = LocationsNear(zone);
@@ -958,7 +984,8 @@ public static class ServerTerrainBake
         {
             Vector3 position = zdo.GetPosition();
             if (VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround))
+                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                    structureAreas, RoadRockClearing.Mode, BiomeAt))
                 count++;
         }
         return count;
@@ -1022,7 +1049,8 @@ public static class ServerTerrainBake
         return ground;
     }
 
-    private static int RemoveVegetation(Vector2s zone, List<VegetationClearing.Area> areas)
+    private static int RemoveVegetation(Vector2s zone, List<VegetationClearing.Area> areas, List<VegetationClearing.Area> structureAreas,
+        List<VegetationClearing.RoadCentre> road)
     {
         HashSet<int> vegetation = VegetationPrefabs();
         List<VegetationClearing.Footprint> locations = LocationsNear(zone);
@@ -1035,7 +1063,8 @@ public static class ServerTerrainBake
         {
             Vector3 position = zdo.GetPosition();
             if (!VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
-                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround))
+                    IsPlayerCreated(zdo), vegetation, areas, locations, playerGround, road, SavedScale(zdo),
+                    structureAreas, RoadRockClearing.Mode, BiomeAt))
                 continue;
             // As StructurePlacement.ClearSpawnedPieces: through the scene when the
             // object is alive here, straight from the ZDOs otherwise.

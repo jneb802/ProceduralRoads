@@ -40,7 +40,8 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 |---------|---------|-------------|
 | RoadWidth | 4 | Road width in meters (2-10) |
 | IslandRoadPercentage | 33 | Percentage of islands selected for roads (0 disables generation) |
-| MaxLocationsPerIsland | 48 | Destinations selected per island (2-128) |
+| WorldDestinationBudget | 300 | Destinations shared across the islands that get roads, by their land, at least 8 each; higher means more roads and longer generation and loading, lower sparser roads; worlds with more land than vanilla get sparser unless raised (50-2000) |
+| MaxLocationsPerIsland | 512 | Most destinations one island may take from the world budget (2-1024) |
 | ReplaceUnreachableLocations | true | Not every location can be reached by road (water, cliffs, protected zones). On, a chosen location no road reaches is replaced by another on its island, so islands keep their density and stay better connected; on our test worlds a quarter to a third more locations got a road, for about 15-30% longer generation (up to about twice as long on the busiest island). Off, each island keeps its first picks |
 | PathfindingMaxIterations | 30000 | Search budget per road; higher finds more roads, slower |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |

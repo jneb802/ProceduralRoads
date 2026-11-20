@@ -54,17 +54,59 @@ public class NetworkSelectionTests
         Assert.Equal(3, Assert.Single(RoadNetworkSelection.Islands(islands, _ => 1, 33)).Id);
     }
 
-    // Eight, plus four for every two square kilometres, capped.
+    // The world budget shared by land: an island's part of the selected land, at least eight, capped.
     [Theory]
-    [InlineData(0, 48, 8)]
-    [InlineData(2_000_000, 48, 12)]
-    [InlineData(4_000_000, 48, 16)]
-    [InlineData(20_000_000, 48, 48)]
-    [InlineData(100_000_000, 48, 48)]
-    [InlineData(100_000_000, 12, 12)]
-    [InlineData(0, 1, 2)]
-    public void AreaBudgetGrowsWithIslandAndStopsAtTheCap(float area, int cap, int expected) =>
-        Assert.Equal(expected, RoadNetworkSelection.Quota(area, cap));
+    [InlineData(36_600_000, 84_900_000, 300, 512, 129)]   // a continent's share
+    [InlineData(5_500_000, 60_900_000, 300, 512, 27)]     // a vanilla-size world's largest island
+    [InlineData(1_000_000, 60_900_000, 300, 512, 8)]      // under the minimum
+    [InlineData(36_600_000, 84_900_000, 300, 48, 48)]     // the cap
+    [InlineData(10_000_000, 10_000_000, 300, 512, 300)]   // alone, the whole budget
+    [InlineData(10_000_000, 10_000_000, 2000, 512, 512)]  // the whole budget, capped
+    public void QuotaSharesTheWorldBudgetByIslandArea(float area, double sharedArea, int budget, int cap, int expected) =>
+        Assert.Equal(expected, RoadNetworkSelection.Quota(area, sharedArea, budget, cap));
+
+    [Fact]
+    public void AnIslandsCandidatesAreTheLastCeilingOnItsQuota()
+    {
+        var locations = new List<(string, Vector3, float)> { Location("a",0), Location("b",100), Location("c",200) };
+        int quota = RoadNetworkSelection.Quota(10_000_000, 10_000_000, 300, 512);
+        Assert.Equal(300, quota);
+        Assert.Equal(3, Choose(locations, quota, area: 10_000_000).Count);
+    }
+
+    [Fact]
+    public void TheSharesSumToTheBudgetWhenNoMinimumOrCapApplies()
+    {
+        float[] areas = { 7_300_000, 13_100_000, 21_700_000, 57_900_000 };
+        double shared = areas.Sum(a => (double)a);
+        int total = areas.Sum(a => RoadNetworkSelection.Quota(a, shared, 300, 512));
+        // Each share is floored: at most one short per island.
+        Assert.InRange(total, 300 - areas.Length, 300);
+    }
+
+    // A tiny island still earns the minimum; only a cap below it lowers it, never under two.
+    [Theory]
+    [InlineData(0, 60_900_000, 512, 8)]
+    [InlineData(10_000, 60_900_000, 512, 8)]
+    [InlineData(1_000_000, 0, 512, 8)]
+    [InlineData(0, 60_900_000, 5, 5)]
+    [InlineData(0, 60_900_000, 1, 2)]
+    public void QuotaKeepsTheMinimumForTinyIslands(float area, double sharedArea, int cap, int expected) =>
+        Assert.Equal(expected, RoadNetworkSelection.Quota(area, sharedArea, 300, cap));
+
+    // One island generated alone shares the budget over the same land as in the whole world.
+    [Fact]
+    public void AnIslandAloneSharesTheBudgetOverTheWorldSelection()
+    {
+        var a = new Island { Id = 1, ApproxArea = 4_000_000 };
+        var b = new Island { Id = 2, ApproxArea = 6_000_000 };
+        var c = new Island { Id = 3, ApproxArea = 1_000_000 };
+        var world = new List<Island> { a, b };
+        Assert.Equal(10_000_000, RoadNetworkSelection.SharedArea(world, world));
+        Assert.Equal(10_000_000, RoadNetworkSelection.SharedArea(world, new[] { b }));
+        // An island the world selection left out is counted with it.
+        Assert.Equal(11_000_000, RoadNetworkSelection.SharedArea(world, new[] { c }));
+    }
 
     [Fact]
     public void RequiredLocationsConsumeSlotsAndMayExceedBudget()

@@ -38,7 +38,8 @@ Version 1.4.4 supports Valheim 1.0. Install Jotunn 2.30.2 or newer on each clien
 | `RoadWidth` | 4 | 2-10 | Width of generated roads in meters. |
 | `IslandRoadPercentage` | 33 | 0-100 | Percentage of islands the mod will attempt to generate roads on (largest islands first). Setting this to 100 does not guarantee every island will have roads — see "Why some islands have no roads" below. |
 | `PathfindingMaxIterations` | 30000 | 1000-100000 | Maximum number of iterations for each road segment's pathfinding algorithm. Higher values will generate more roads but increase generation time. Lower values will speed up generation time but cause less roads to generate. |
-| `MaxLocationsPerIsland` | 48 | 2-128 | Maximum number of locations selected for road connections on each island. |
+| `WorldDestinationBudget` | 300 | 50-2000 | Total locations selected for road connections, shared across the islands that get roads in proportion to their land (at least 8 per island). Higher values give more roads but increase generation and loading time; lower values give fewer, sparser roads. The default suits a vanilla-size world; worlds with more land (Riverheim, Better Continents) get proportionally sparser roads unless you raise it. |
+| `MaxLocationsPerIsland` | 512 | 2-1024 | Most locations any one island may take from `WorldDestinationBudget`. |
 | `CustomLocations` | *(empty)* | | Comma-separated list of location names to include in road generation. Use this for locations added by Expand World Data or other mods. |
 
 ## Why some islands have no roads
@@ -49,7 +50,7 @@ Even with IslandRoadPercentage set to 100, some islands may not receive roads. T
 - **Pathfinding iteration limit** — Complex or long-distance routes may require more iterations than the PathfindingMaxIterations config allows. Try increasing this value if you notice roads failing to generate.
 - **Island is too small** — Very small landmasses are not detected as islands during the island detection phase.
 
-To improve road coverage, try increasing `PathfindingMaxIterations`, raising `MaxLocationsPerIsland`, and adding location names to `CustomLocations`.
+To improve road coverage, try increasing `PathfindingMaxIterations`, raising `WorldDestinationBudget`, and adding location names to `CustomLocations`.
 
 ## Console Commands
 

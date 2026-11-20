@@ -10,6 +10,7 @@ namespace ProceduralRoads
         public static ConfigEntry<int> IslandRoadPercentage = null!;
         public static ConfigEntry<int> PathfindingMaxIterations = null!;
         public static ConfigEntry<int> MaxLocationsPerIsland = null!;
+        public static ConfigEntry<int> WorldDestinationBudget = null!;
         public static ConfigEntry<bool> LowMemoryGeneration = null!;
         public static ConfigEntry<bool> ReplaceUnreachableLocations = null!;
 
@@ -51,6 +52,7 @@ namespace ProceduralRoads
             // number is a property of the machine, not of the player's taste.
             RoadParallel.Configured = DebugSwitches.Count("ISLAND_WORKERS", 0, 0, 256);
             RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
+            RoadNetworkGenerator.WorldDestinationBudget = WorldDestinationBudget.Value;
             RoadNetworkGenerator.ReplaceUnreached = ReplaceUnreachableLocations.Value;
             RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions
             {

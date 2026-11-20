@@ -105,8 +105,14 @@ public static partial class RoadNetworkGenerator
     public static RoadNetworkOptions NetworkOptions { get; set; } = new();
 
     /// <summary>The shipped Roads.MaxLocationsPerIsland.</summary>
-    public const int DefaultMaxLocationsPerIsland = 48;
+    public const int DefaultMaxLocationsPerIsland = 512;
     public static int MaxLocationsPerIsland = DefaultMaxLocationsPerIsland;
+
+    /// <summary>The shipped Roads.WorldDestinationBudget (the owner's decision of 16 Nov 2026): the destinations a world's
+    /// network gets, shared among the islands selected for roads by their land (<see cref="RoadNetworkSelection.Quota"/>), so a
+    /// world with more land gets proportionally sparser and the total work stays about the same. Tuned by this one number.</summary>
+    public const int DefaultWorldDestinationBudget = 300;
+    public static int WorldDestinationBudget = DefaultWorldDestinationBudget;
 
 
     /// <summary>
@@ -2044,11 +2050,11 @@ public static partial class RoadNetworkGenerator
         var zones=ZoneSystem.instance;
         var options=NetworkOptions.Snapshot();
         var start=DateTime.Now;
-        int percentage=IslandRoadPercentage,maxLocations=MaxLocationsPerIsland;
-        return new RoadPreparation(p=>PrepareSteps(force,island,world,zones,options,start,percentage,maxLocations,p));
+        int percentage=IslandRoadPercentage,maxLocations=MaxLocationsPerIsland,budget=WorldDestinationBudget;
+        return new RoadPreparation(p=>PrepareSteps(force,island,world,zones,options,start,percentage,maxLocations,budget,p));
     }
     private static IEnumerable<bool> PrepareSteps(bool force,Vector3? only,WorldGenerator? capturedWorld,ZoneSystem? capturedZones,
-        RoadNetworkOptions options,DateTime startTime,int percentage,int maxLocations,RoadPreparation preparation)
+        RoadNetworkOptions options,DateTime startTime,int percentage,int maxLocations,int budget,RoadPreparation preparation)
     {
         if (!RoadLifecycleManager.HoldsTheNetwork)
         {
@@ -2085,11 +2091,13 @@ public static partial class RoadNetworkGenerator
 
         List<Island>? islands=null;
         foreach(var step in IslandDetector.DetectRoadIslandsSteps(world,options,preparation,value=>islands=value)) yield return step;
+        // One island is found here, but every island is indexed and its destinations found as for the whole world: the
+        // world's selection is the land the destination budget is shared over (RoadNetworkSelection.SharedArea).
+        Island? onlyIsland = null;
         if (only is Vector3 at)
         {
-            Island? there = islands!.FirstOrDefault(i => i.ContainsPoint(at));
-            if (there == null) { preparation.Refuse($"No island at ({at.x:F0},{at.z:F0})"); yield break; }
-            islands = new List<Island> { there };
+            onlyIsland = islands!.FirstOrDefault(i => i.ContainsPoint(at));
+            if (onlyIsland == null) { preparation.Refuse($"No island at ({at.x:F0},{at.z:F0})"); yield break; }
         }
         preparation.BeginStage("Indexing island membership",islands!.Sum(i=>(long)i.Cells.Count),"cells"); yield return true;
         foreach(var island in islands!)
@@ -2108,24 +2116,27 @@ public static partial class RoadNetworkGenerator
             eligible[island]=found;
         }
         List<Island> selectedIslands;
-        if (only != null)
+        var worldSelection = RoadNetworkSelection.Islands(islands, i => eligible[i].Count, percentage);
+        if (onlyIsland != null)
         {
-            if (eligible[islands[0]].Count == 0) { preparation.Refuse($"Island {islands[0].Id} has no road-eligible locations"); yield break; }
-            selectedIslands = islands;
+            if (eligible[onlyIsland].Count == 0) { preparation.Refuse($"Island {onlyIsland.Id} has no road-eligible locations"); yield break; }
+            selectedIslands = new List<Island> { onlyIsland };
         }
         else
         {
-            selectedIslands = RoadNetworkSelection.Islands(islands, i => eligible[i].Count, percentage);
+            selectedIslands = worldSelection;
             Log.LogDebug($"Islands: {islands.Count} total, {selectedIslands.Count} selected (target {IslandRoadPercentage}%; boss islands are not automatically included)");
         }
 
         preparation.BeginStage("Selecting road destinations",selectedIslands.Count,"islands"); yield return true;
         var work = new GenerationWork(startTime, world, oneIsland: only != null);
+        double sharedArea = RoadNetworkSelection.SharedArea(worldSelection, selectedIslands);
+        Log.LogDebug($"Destination budget: {budget} shared over {sharedArea/1_000_000:F1}km² of selected land");
         foreach (var island in selectedIslands)
         {
             var candidates = eligible[island];
             if(candidates.Count==0) { preparation.Checkpoint(); yield return true; continue; }
-            int maxLocs = RoadNetworkSelection.Quota(island.ApproxArea,maxLocations);
+            int maxLocs = RoadNetworkSelection.Quota(island.ApproxArea,sharedArea,budget,maxLocations);
             var selected = SelectIslandDestinations(island, candidates, maxLocs);
             Log.LogDebug($"Island {island.Id}: {candidates.Count} candidates -> {selected.Count} selected (max {maxLocs}, area {island.ApproxArea/1_000_000:F1}km²)");
             // The spawn starts the island's roads only where the network may go (NetworkCutoff.Avoids); else its edge does.

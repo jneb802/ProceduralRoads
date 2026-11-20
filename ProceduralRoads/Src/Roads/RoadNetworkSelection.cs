@@ -25,15 +25,25 @@ public static class RoadNetworkSelection
         return ranked.Take(count).ToList();
     }
 
-    /// <summary>Destinations an island earns: eight, plus four for every two
-    /// square kilometres, capped by MaxLocationsPerIsland. One formula and one
-    /// cap - the density multiplier this replaced was a third knob that could
-    /// only be set to a value the other two already expressed. The one owner of automatic destinations (docs/OWNERS.md).</summary>
-    public static int Quota(float area, int cap)
+    /// <summary>The fewest destinations any island earns, however small its share of the world budget.</summary>
+    public const int MinimumDestinationsPerIsland = 8;
+
+    /// <summary>Destinations an island earns: its share of the world's destination budget (Roads.WorldDestinationBudget,
+    /// <see cref="RoadNetworkGenerator.DefaultWorldDestinationBudget"/>) by its part of <paramref name="sharedArea"/>, the land
+    /// of the islands selected for roads (<see cref="SharedArea"/>); at least <see cref="MinimumDestinationsPerIsland"/>,
+    /// capped by MaxLocationsPerIsland. The island's candidates are the last ceiling (<see cref="Destinations"/>).
+    /// The one owner of automatic destinations (docs/OWNERS.md).</summary>
+    public static int Quota(float area, double sharedArea, int budget, int cap)
     {
-        double requested = (2 + Math.Floor(Math.Max(0, area) / 2000000d)) * 4;
-        return (int)Math.Min(Math.Max(2, cap), Math.Max(2, requested));
+        double share = sharedArea > 0 ? Math.Floor(Math.Max(0, budget) * (double)Math.Max(0, area) / sharedArea) : 0;
+        return (int)Math.Min(Math.Max(2, cap), Math.Max(MinimumDestinationsPerIsland, share));
     }
+
+    /// <summary>The land the world budget is shared over: the islands a whole-world generation selects for roads
+    /// (<see cref="Islands"/>), and an island generated on its own if it is not one of them, so one island gets the same
+    /// quota alone as in the whole world.</summary>
+    public static double SharedArea(IEnumerable<Island> worldSelection, IEnumerable<Island> generated) =>
+        worldSelection.Union(generated).Sum(i => (double)i.ApproxArea);
 
     public static List<(string name, Vector3 position, float radius)> Destinations(
         List<(string name, Vector3 position, float radius)> candidates, int quota, float area,

@@ -58,11 +58,12 @@ public static class RoadClearAreaManager
     public static bool OnRoad(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea,
         IReadOnlyList<VegetationClearing.RoadCentre> road, Vector3 point, string prefab, float scale,
         RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt, ref float yaw, VegetationClearing.Lean? lean = null,
-        bool turns = true)
+        bool turns = true, int? firstRockKeepingArea = null)
     {
         int hash = prefab.GetStableHashCode();
         var at = new Vector2(point.x, point.z);
-        VegetationClearing.Lying lying = VegetationClearing.OnRoad(InsideClearArea(areas, firstRoadArea, firstStructureArea, point, prefab, rockClearing, biomeAt),
+        VegetationClearing.Lying lying = VegetationClearing.OnRoad(InsideClearArea(areas, firstRoadArea, firstStructureArea, point, prefab, rockClearing, biomeAt,
+                firstRockKeepingArea),
             hash, scale, road, at, yaw, out float turned, VegetationClearing.IsLying(hash) ? KeptBy(areas, firstRoadArea, firstStructureArea) : null,
             lean);
         VegetationClearing.Note(hash, at, lying, yaw, turned);
@@ -95,18 +96,22 @@ public static class RoadClearAreaManager
     /// apply to every entry. The roads' keep vegetation out, but not a large rock the rock clearing takes there
     /// (<see cref="RoadRockPolicy.ClearingTakes"/>, in the biome <paramref name="biomeAt"/> gives): that one is placed as
     /// in a world without roads and Roads/RockClearing carves or removes it. A rock the rock clearing would leave is kept
-    /// off the road as vegetation is.
+    /// off the road as vegetation is. The structures' from <paramref name="firstStructureArea"/> to
+    /// <paramref name="firstRockKeepingArea"/> (the staircases', none when it is not given) leave such a rock to the rock
+    /// clearing as the roads' do: it clears a staircase's walking box (StairLayout.AddClearance), and a rock its supports or
+    /// handrails stand in stays.
     /// </summary>
     public static bool InsideClearArea(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea, Vector3 point,
-        string prefab, RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt)
+        string prefab, RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt, int? firstRockKeepingArea = null)
     {
         int roadStart = Mathf.Min(firstRoadArea, areas.Count);
         int roadEnd = Mathf.Clamp(firstStructureArea, roadStart, areas.Count);
-        bool rockKeepsRoad = RoadRockPolicy.IsClearableRock(prefab) && roadStart < roadEnd &&
+        int leftEnd = Mathf.Clamp(firstRockKeepingArea ?? roadEnd, roadEnd, areas.Count);
+        bool rockKeepsRoad = RoadRockPolicy.IsClearableRock(prefab) && roadStart < leftEnd &&
             RoadRockPolicy.ClearingTakes(prefab, biomeAt(point), rockClearing);
         for (int i = 0; i < areas.Count; i++)
         {
-            if (rockKeepsRoad && i >= roadStart && i < roadEnd)
+            if (rockKeepsRoad && i >= roadStart && i < leftEnd)
                 continue;
             ZoneSystem.ClearArea area = areas[i];
             if (point.x > area.m_center.x - area.m_radius && point.x < area.m_center.x + area.m_radius &&

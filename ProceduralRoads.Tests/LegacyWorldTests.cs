@@ -140,4 +140,20 @@ public sealed class LegacyWorldTests : IDisposable
         Assert.True(NetworkCutoff.Excludes(LaterZone));
     }
 
+    /// <summary>
+    /// A cleared grid forgets the append chain of the network it held. An earlier world's network with appends,
+    /// loaded and then cleared as a world change clears it, must not make the next network save as appended:
+    /// RoadSpatialGrid.Clear kept the chain, so a later network saved as encoding 3 with the earlier world's parents.
+    /// </summary>
+    [Fact]
+    public void AClearedGridForgetsAnEarlierNetworksAppends()
+    {
+        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(RoadStatisticsTests.Legacy(3, empty: true)));
+        RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); RoadNetworkGenerator.Reset();
+
+        SaveAsReleased144();
+        Assert.True(Released144.Reads(Blob, out int points));
+        Assert.True(points > 0);
+    }
+
 }

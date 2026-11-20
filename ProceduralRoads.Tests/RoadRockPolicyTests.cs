@@ -664,6 +664,50 @@ public class RoadRockPolicyTests
         Assert.Equal(new[] { 2 }, cut);
     }
 
+    /// <summary>
+    /// In game: a mountain boulder and a Mistlands cliff, each on a zone corner, carved before the zone next door loaded,
+    /// kept chunks hanging with nothing under them ("+ 0 cut off"). A fragment's ground is read off the loaded terrain only
+    /// where that zone's terrain is ready; anywhere else it is the finished ground. A column over a zone not loaded (no
+    /// terrain read), or loaded but not yet cut (the ungraded ground right under the fragment), is judged on the finished
+    /// ground the road cut leaves, and what the carve leaves joined to nothing goes; an arch still standing on the ground at
+    /// both ends stays.
+    /// </summary>
+    [Fact]
+    public void AFragmentOverAZoneNotReadyIsJudgedOnTheFinishedGround()
+    {
+        const float cut = 3f;   // how far the road's cut leaves the finished ground under the ungraded ground
+        // Per fragment: its underside, and over which zone (ready or not) it stands.
+        float[] underside = { 0f, 1f, 2f, 0f, 1.5f, 0f };
+        bool[] readyZone = { true, true, false, true, true, false };
+        bool[] answers = { true, true, false, true, true, true };   // a zone not loaded has no terrain to read
+        const float terrain = 0f;  // the loaded ground, uncut where its zone is not ready
+        float Finished(int i) => readyZone[i] ? terrain : terrain - cut;
+        bool OnGround(int i) =>
+            RoadRockPolicy.FragmentGround(readyZone[i], answers[i], terrain, Finished(i), out float g) && RoadRockPolicy.StandsOn(underside[i], g);
+        // 0 in the way on the ground; 1 sits on 0 and leans on 2; 2 over a zone not loaded, joined to nothing else.
+        // 3 and 5 hold up 4, an arch: 5 over a zone loaded but not yet cut, reaching a metre into the ground the cut leaves.
+        underside[5] = terrain - cut - 1f;
+        bool Touch(int a, int b) => (System.Math.Min(a, b), System.Math.Max(a, b)) is (0, 1) or (1, 2) or (3, 4) or (4, 5);
+        var cutOff = RoadRockPolicy.CutOff(new[] { 0, 1, 2, 3, 4, 5 }, new System.Collections.Generic.HashSet<int> { 0 }, OnGround, Touch);
+        cutOff.Sort();
+        Assert.Equal(new[] { 1, 2 }, cutOff);
+
+        // The ground each is judged on.
+        Assert.True(RoadRockPolicy.FragmentGround(true, true, terrain, terrain - cut, out float g0) && g0 == terrain, "a ready zone: its terrain");
+        Assert.True(RoadRockPolicy.FragmentGround(false, true, terrain, terrain - cut, out float g1) && g1 == terrain - cut, "a zone not cut yet: the finished ground");
+        Assert.True(RoadRockPolicy.FragmentGround(false, false, 0f, terrain - cut, out float g2) && g2 == terrain - cut, "a zone not loaded: the finished ground");
+        Assert.True(RoadRockPolicy.FragmentGround(true, false, 0f, terrain - cut, out float g3) && g3 == terrain - cut, "no terrain answers: the finished ground");
+        Assert.False(RoadRockPolicy.FragmentGround(false, false, 0f, float.NaN, out _), "nothing answers: not judged");
+        // Standing on the ground: within GroundTouch over it, or under it.
+        Assert.True(RoadRockPolicy.StandsOn(terrain + RoadRockPolicy.GroundTouch, terrain));
+        Assert.False(RoadRockPolicy.StandsOn(terrain + RoadRockPolicy.GroundTouch + 0.01f, terrain));
+        Assert.True(RoadRockPolicy.StandsOn(terrain - cut, terrain));
+        // Read as before (the uncut ground over a zone not ready, and no read where none answers, which held it up),
+        // fragment 2 stood and held 1: nothing was cut off.
+        bool Before(int i) => !answers[i] || RoadRockPolicy.StandsOn(underside[i], terrain);
+        Assert.Empty(RoadRockPolicy.CutOff(new[] { 0, 1, 2, 3, 4, 5 }, new System.Collections.Generic.HashSet<int> { 0 }, Before, Touch));
+    }
+
     /// <summary>How many carves one frame applies when each costs <paramref name="carveMs"/>, from the pass's queue.</summary>
     private static List<int> CarvesPerFrame(int queued, double carveMs, double budgetMs)
     {

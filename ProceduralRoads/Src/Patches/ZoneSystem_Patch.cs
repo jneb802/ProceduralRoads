@@ -27,8 +27,11 @@ public static class ZoneSystem_Patch
     {
         /// <summary>Index of the first clear area the roads added to the zone being generated; the game's come before it.</summary>
         private static int s_firstRoadArea = int.MaxValue;
-        /// <summary>Index of the first structure clear area (bridges, staircases); the roads' come before it.</summary>
+        /// <summary>Index of the first structure clear area (staircases, then bridges); the roads' come before it.</summary>
         private static int s_firstStructureArea = int.MaxValue;
+        /// <summary>Index of the first structure clear area that keeps every rock out (a bridge's); the staircases' before it
+        /// leave a rock the rock clearing takes to it, as the roads' do.</summary>
+        private static int s_firstRockKeepingArea = int.MaxValue;
         private static readonly List<VegetationClearing.RoadCentre> NoRoad = new();
         /// <summary>The road points the zone being generated tests its grown trees against.</summary>
         private static List<VegetationClearing.RoadCentre> s_road = NoRoad;
@@ -38,6 +41,7 @@ public static class ZoneSystem_Patch
         {
             s_firstRoadArea = clearAreas.Count;
             s_firstStructureArea = int.MaxValue;
+            s_firstRockKeepingArea = int.MaxValue;
             s_road = NoRoad;
             if (!RoadNetworkGenerator.RoadsAvailable)
                 return;
@@ -46,12 +50,15 @@ public static class ZoneSystem_Patch
             List<ZoneSystem.ClearArea> roadClearAreas = RoadClearAreaManager.GetOrCreateClearAreas(zoneID);
             clearAreas.AddRange(roadClearAreas);
             s_firstStructureArea = clearAreas.Count;
-            List<ZoneSystem.ClearArea> bridgeClearAreas = StructurePlacement.GetClearAreas(zoneID);
+            List<ZoneSystem.ClearArea> stairClearAreas = StructurePlacement.GetClearAreas(zoneID, staircases: true);
+            clearAreas.AddRange(stairClearAreas);
+            s_firstRockKeepingArea = clearAreas.Count;
+            List<ZoneSystem.ClearArea> bridgeClearAreas = StructurePlacement.GetClearAreas(zoneID, staircases: false);
             clearAreas.AddRange(bridgeClearAreas);
 
             // Generated with the road's clear areas: its vegetation matches the
             // network from the start, and the server never clears it later.
-            if (roadClearAreas.Count > 0 || bridgeClearAreas.Count > 0 || s_road.Count > 0)
+            if (roadClearAreas.Count > 0 || stairClearAreas.Count > 0 || bridgeClearAreas.Count > 0 || s_road.Count > 0)
                 VegetationClearing.MarkCleared(zoneID, RoadSpatialGrid.RoadNetworkVersion);
         }
 
@@ -152,7 +159,8 @@ public static class ZoneSystem_Patch
         public static bool InsideClearArea(ZoneSystem zones, List<ZoneSystem.ClearArea> areas, Vector3 point, ZoneSystem.ZoneVegetation veg, float scale,
             ref float yaw, float tiltX, float tiltZ) =>
             RoadClearAreaManager.OnRoad(areas, s_firstRoadArea, s_firstStructureArea, s_road, point, veg.m_prefab.name, scale,
-                RoadRockClearing.Mode, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset), turns: s_yawFound);
+                RoadRockClearing.Mode, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset), turns: s_yawFound,
+                firstRockKeepingArea: s_firstRockKeepingArea);
 
         private static Heightmap.Biome BiomeAt(Vector3 point) => WorldGenerator.instance.GetBiome(point);
 
@@ -167,6 +175,7 @@ public static class ZoneSystem_Patch
         {
             s_firstRoadArea = int.MaxValue;
             s_firstStructureArea = int.MaxValue;
+            s_firstRockKeepingArea = int.MaxValue;
             s_road = NoRoad;
             if (mode == ZoneSystem.SpawnMode.Ghost)
                 ServerTerrainBake.OnGhostZoneGenerated(zoneID, hmap);

@@ -234,10 +234,11 @@ public class StairLayoutTests
             Assert.True(f.YawDegrees % StairLayout.HeadingStep < 1e-3f, $"filler yaw {f.YawDegrees} is off the hammer's grid"));
     }
 
-    /// <summary>Every piece walked on has its body and 2 m of headroom kept
-    /// clear of rock: two stretches per stair, following the steps up.</summary>
+    /// <summary>Every piece walked on has its walking box kept clear of rock: from just over its walk (a road's
+    /// ClearanceLift) to 2 m of headroom over its highest walk, never its body under the walk; ClearanceStretches per stair,
+    /// following the steps up.</summary>
     [Fact]
-    public void EveryWalkedPieceHasAClearanceFromItsUndersideToHeadroom()
+    public void EveryWalkedPieceHasAClearanceFromJustOverItsWalkToHeadroom()
     {
         StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 24), PlaneAlongZ(0.25f));
         int walkedPieces = plan.Pieces.Count(p => p.Kind != StairPieceKind.Support);
@@ -246,11 +247,15 @@ public class StairLayoutTests
         Assert.Equal(walkedPieces + stairs * (StairLayout.ClearanceStretches - 1), plan.Clearances.Count);
         Assert.All(plan.Clearances, c =>
         {
-            Assert.Equal(c.Surface + StairLayout.ClearanceHeight, c.Centre.y + c.Half.y, 3);
-            Assert.True(c.Centre.y - c.Half.y <= c.Surface, "the box starts at or below the walking surface");
+            // Over a floor's walk, or a stair stretch's highest (half its rise over its middle).
+            float over = c.Centre.y + c.Half.y - StairLayout.ClearanceHeight - c.Surface;
+            Assert.True(Mathf.Abs(over) < 1e-3f || Mathf.Abs(over - StairLayout.PieceRise / StairLayout.ClearanceStretches / 2f) < 1e-3f, $"top {over:F3} over the headroom");
+            Assert.True(c.Centre.y - c.Half.y > c.Surface - StairLayout.PieceRise / StairLayout.ClearanceStretches / 2f,
+                "the box starts over the stretch's lowest walk, never under the piece's body");
+            Assert.True(c.Centre.y - c.Half.y <= c.Surface + RoadRockPolicy.ClearanceLift + 1e-3f, "the box starts no higher than a road's over its walk");
         });
-        // The first stair's two stretches step up a half rise apart.
-        Assert.Equal(0.5f, plan.Clearances[1].Surface - plan.Clearances[0].Surface, 3);
+        // The first stair's stretches step up a stretch's rise apart.
+        Assert.Equal(StairLayout.PieceRise / StairLayout.ClearanceStretches, plan.Clearances[1].Surface - plan.Clearances[0].Surface, 3);
     }
 
     /// <summary>Real ground: an 82 m climb up a Mountain face of 1:1 to 2:1,

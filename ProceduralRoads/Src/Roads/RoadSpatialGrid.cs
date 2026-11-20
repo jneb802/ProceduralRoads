@@ -190,6 +190,7 @@ public static partial class RoadSpatialGrid
         {
             LoadedFromReleasedFormat = false;
             m_roadPoints.Clear();
+            s_appendParents.Clear();
             m_initialized = false;
             m_storedPointRecords = 0;
             lock (m_recordGate) Junctions.Clear();

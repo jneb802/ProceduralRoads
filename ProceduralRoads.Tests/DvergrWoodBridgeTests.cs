@@ -10,7 +10,7 @@ namespace ProceduralRoads.Tests;
 
 /// <summary>
 /// Low Mistlands bridges of the Dvergr harbour pier's wood (DvergrWoodBridge): the kit choice, that only
-/// the look changes (deck, ends and stair positions are the plain wooden kit's), piles grounded, determinism, ruin, the navigation
+/// the look changes (deck, ends and stair positions are the wooden kits'), piles grounded, determinism, ruin, the navigation
 /// gap and the free span. Whether the game's support holds the pier's pieces as laid, and what they drop, has to be
 /// measured in game; these tests check the layout by construction.
 /// </summary>
@@ -45,88 +45,306 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         _scope.WithWorld(high);
         Assert.Equal(BridgeStructures.Kit.DvergrViaduct, BridgeStructures.KitFor(c, high));
 
-        // Over the 20 m ceiling, no viaduct: still Dvergr wood, as every Mistlands bridge that is not a viaduct is.
-        var deep = new MistRiver { Bed = 20f };
+        // Over the 26 m ceiling, no viaduct: still Dvergr wood, as every Mistlands bridge that is not a viaduct is.
+        var deep = new MistRiver { Bank = 62f, Bed = 20f };
         _scope.WithWorld(deep);
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(c, deep));
 
-        // The same low river out of the Mistlands: the plain wooden kit.
-        var meadows = new MistRiver { Bank = 34f, Biome = Heightmap.Biome.Meadows };
-        _scope.WithWorld(meadows);
-        Assert.Equal(BridgeStructures.Kit.Wood, BridgeStructures.KitFor(c, meadows));
-        Assert.All(BridgeStructures.Solve(c, meadows, 1), p => Assert.StartsWith("wood_", p.Prefab));
+        // The same low river out of the Mistlands, in the Meadows: a railed wooden kit; in the Mountains, a railed kit or
+        // the stone kit where it fits. Never the Dvergr pieces.
+        foreach (Heightmap.Biome biome in new[] { Heightmap.Biome.Meadows, Heightmap.Biome.Mountain })
+        {
+            var other = new MistRiver { Bank = 34f, Biome = biome };
+            _scope.WithWorld(other);
+            string prefix = BridgeStructures.KitFor(c, other) == BridgeStructures.Kit.Stone ? "stone_" : "wood_";
+            Assert.True(biome != Heightmap.Biome.Meadows || prefix == "wood_");
+            Assert.All(BridgeStructures.Solve(c, other, 1), p => Assert.StartsWith(prefix, p.Prefab));
+            // A ford's spanned footbridge out of the Mistlands takes its kit by the same rule.
+            BridgeStructures.Kit? span = BridgeStructures.KitFor(SpanFord(), other);
+            Assert.True(BridgeStructures.RailedKitOf(span) != null || (span == BridgeStructures.Kit.Stone && biome != Heightmap.Biome.Meadows));
+            Assert.Contains(BridgeStructures.Solve(SpanFord(), other, 1),
+                p => p.Prefab == (span == BridgeStructures.Kit.Stone ? BridgeLayout.StoneFloorPrefab : BridgeLayout.RailPostPrefab));
+        }
 
-        // A Mistlands ford's spanned footbridge is Dvergr wood too; a wading ford has no kit's pieces, and a
-        // span out of the Mistlands keeps the plain footbridge.
+        // A Mistlands ford's spanned footbridge is Dvergr wood too; a wading ford has no kit's pieces.
         _scope.WithWorld(low);
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(SpanFord(), low));
-        Assert.Equal(BridgeStructures.Kit.Wood, BridgeStructures.KitFor(SpanFord(FordStyle.Wade), low));
-        _scope.WithWorld(meadows);
-        Assert.Equal(BridgeStructures.Kit.Wood, BridgeStructures.KitFor(SpanFord(), meadows));
-        Assert.All(BridgeStructures.Solve(SpanFord(), meadows, 1), p => Assert.StartsWith("wood_", p.Prefab));
+        Assert.Empty(BridgeStructures.Solve(SpanFord(FordStyle.Wade), low, 1));
     }
 
     /// <summary>
-    /// One rule for every structure with end stairs: a viaduct, a Dvergr wood bridge, a plain wooden bridge and a ford's
-    /// spanned footbridge in either kit all have their ends from StructureEnds, and a road come at either end from the side
-    /// is put through the stairs' foot, on their line (StructureEnds.MeetTheRoad), as the generator does for every one
-    /// (MeetsTheRoad), never ending at the deck's end instead.
+    /// One rule for every structure with end stairs: a viaduct, a Dvergr wood bridge, a railed wooden bridge in any biome
+    /// but the Mistlands and a ford's spanned footbridge in either wood (in the Mountains the stone kit, where it is drawn) all have their ends from StructureEnds, and a road come at either end from the side
+    /// is brought to the stairs' foot, on their line (StructureEnds.MeetEnds), as the generator does for every one
+    /// (MeetsTheRoad), never ending at the deck's end instead. So too where an end is landed on a row or met level, kept
+    /// as the road that laid the crossing met it: the stairs laid are the ones its end reports, and the road is brought to
+    /// their foot.
     /// </summary>
     [Theory]
     [InlineData("viaduct")]
     [InlineData("dvergr wood")]
-    [InlineData("wood")]
+    [InlineData("wood mountain")]
     [InlineData("dvergr wood span")]
     [InlineData("wood span")]
-    public void EveryStructuresEndIsMetAtItsStairsFootTheSameWay(string kind)
+    [InlineData("wood span mountain")]
+    [InlineData("wood railed")]
+    [InlineData("wood railed landed")]
+    [InlineData("wood railed level")]
+    [InlineData("wood span level")]
+    [InlineData("dvergr wood landed")]
+    public void EveryStructuresEndIsMetAtItsStairsFootTheSameWay(string meeting)
     {
+        string kind = meeting.Replace(" landed", "").Replace(" level", "");
         WorldGenerator world = kind switch
         {
             "viaduct" => new MistRiver(),
             "dvergr wood" or "dvergr wood span" => new MistRiver { Bank = 34f },
-            _ => new MistRiver { Bank = 34f, Biome = Heightmap.Biome.Meadows },
+            "wood railed" or "wood span" => new MistRiver { Bank = 34f, Biome = Heightmap.Biome.Meadows },
+            _ => new MistRiver { Bank = 34f, Biome = Heightmap.Biome.Mountain },
         };
+        // A bank falling away west of the near end, for a run long enough to land halfway down.
+        if (meeting.EndsWith(" landed")) ((MistRiver)world).NearFall = 0.6f;
         _scope.WithWorld(world);
         RoadCrossing c = kind.EndsWith("span") ? SpanFord() : River();
-        Assert.Equal(kind switch
-        {
-            "viaduct" => BridgeStructures.Kit.DvergrViaduct,
-            "dvergr wood" or "dvergr wood span" => BridgeStructures.Kit.DvergrWood,
-            _ => BridgeStructures.Kit.Wood,
-        }, BridgeStructures.KitFor(c, world));
+        BridgeStructures.Kit? kit = BridgeStructures.KitFor(c, world);
+        if (kind.StartsWith("wood"))
+            Assert.True(BridgeStructures.RailedKitOf(kit) != null || (kit == BridgeStructures.Kit.Stone && kind.EndsWith("mountain")), $"{kit}");
+        else
+            Assert.Equal(kind == "viaduct" ? BridgeStructures.Kit.DvergrViaduct : BridgeStructures.Kit.DvergrWood, kit);
         Assert.True(RoadNetworkGenerator.MeetsTheRoad(c), "its ends are not met through StructureEnds");
         c.FromIndex = 1; c.ToIndex = 2;
+        // Landed on the row halfway down the near end's run; the far end met level along its line.
+        var natural = StructureEnds.Natural(c, world);
+        MetEnds.Set(c, world, fromRow: meeting.EndsWith(" landed") ? natural.near.Steps / 2 : null, toLevel: meeting.EndsWith(" level"));
         var (near, far) = BridgeStructures.Ends(c, world);
+        if (meeting.EndsWith(" landed")) Assert.True(near.Steps >= 2 && near.Steps < BridgeStructures.Ends(River(), world).near.Steps, $"landed on row {near.Steps}");
+        if (meeting.EndsWith(" level")) Assert.Equal(0, far.Steps);
+        var laid = BridgeStructures.Solve(c, world, 1).FindAll(p => p.Kind == StructurePieceKind.Stair);
+        Assert.Equal(2 * near.Steps, laid.Count(p => p.Position.x < 0f));
+        Assert.Equal(2 * far.Steps, laid.Count(p => p.Position.x > 0f));
         Vector2 outward = (c.ToBank - c.FromBank).normalized;
         var path = new List<Vector2> { c.FromBank - outward * 60f, c.FromBank, c.ToBank, c.ToBank + new Vector2(-outward.y, outward.x) * 10f, c.ToBank + outward * 40f + new Vector2(0f, 30f) };
-        StructureEnds.MeetTheRoad(path, new[] { c }, world, out int unmet, out _);
-        Assert.Equal(0, unmet);
+        c.Shared = true;
+        Assert.Null(StructureEnds.MeetEnds(path, new List<RoadCrossing> { c }, world, float.PositiveInfinity, null));
+        Assert.Equal((near.Meet, far.Meet), (path[c.FromIndex], path[c.ToIndex]));
         Assert.Contains(near.Apron, path);
         Assert.Contains(far.Apron, path);
         Assert.DoesNotContain(c.ToBank + new Vector2(-outward.y, outward.x) * 10f, path);
     }
 
-    [Theory]
-    [InlineData("viaduct", true)]
-    [InlineData("dvergr wood", false)]
-    [InlineData("wood", false)]
-    public void AViaductsEndsAreMetAndCheckedEvenWhileARoadIsPlannedAgainWithItsEndsAsTheyWere(string kind, bool met)
+    /// <summary>A river across x, its water |x| under <see cref="Half"/>: the bed at 26 m, the banks at <see cref="Bank"/>, in
+    /// <see cref="Biome"/>.</summary>
+    private sealed class Channel : WorldGenerator
     {
-        // A road refused with its ends met is planned again once with its structures' ends as they were. A viaduct is not
-        // one of them: its stairs come down where the road arrives only if the road is brought to their foot, so its ends
-        // are always met and always checked.
-        WorldGenerator world = kind switch
+        public float Bank = 34f, Bed = 26f, Half = 30f;
+        public Heightmap.Biome Biome = Heightmap.Biome.Meadows;
+        public override float GetHeight(float wx, float wy) => Mathf.Abs(wx) <= Half ? Bed : Bank;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Biome;
+        public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
         {
-            "viaduct" => new MistRiver(),
-            "dvergr wood" => new MistRiver { Bank = 34f },
-            _ => new MistRiver { Bank = 34f, Biome = Heightmap.Biome.Meadows },
-        };
+            weight = Mathf.Abs(wx) < Half ? 1f : 0f;
+            width = 2f * Half;
+        }
+        public override int GetSeed() => 76;
+    }
+
+    /// <summary>One crossing of every kind and kit that occurs, in a world it occurs in.</summary>
+    private (RoadCrossing c, WorldGenerator world) Crossing(string kind)
+    {
+        Heightmap.Biome biome = kind.Contains("DvergrWood") || kind.Contains("viaduct") ? Heightmap.Biome.Mistlands
+            : kind.Contains("Stone") ? Heightmap.Biome.Mountain : Heightmap.Biome.Meadows;
+        if (kind == "valley viaduct")
+        {
+            var valley = new StructureEndTests.RimValley();
+            _scope.WithWorld(valley);
+            float bank = valley.Rim + 1f;
+            return (DvergrViaduct.ValleyCrossing(new Vector2(-bank, 0f), new Vector2(bank, 0f), valley, out _)!, valley);
+        }
+        var world = new Channel { Biome = biome, Bank = kind is "river viaduct" or "tall bridge WoodRail" ? 45f : 34f };
+        if (kind is "wade" or "raise") { world.Bank = 30.6f; world.Bed = 29.6f; world.Half = 4f; }
         _scope.WithWorld(world);
-        RoadCrossing c = River();
-        var again = typeof(RoadNetworkGenerator).GetField("t_endsAsTheyWere", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-        again.SetValue(null, true);
-        try { Assert.Equal(met, RoadNetworkGenerator.MeetsTheRoad(c)); }
-        finally { again.SetValue(null, false); }
+        // A free span: 11 m over an 11 m fairway, the boat's lane covering it all.
+        float edge = kind.StartsWith("free span") ? 5.5f : world.Half + 1f;
+        bool ford = kind is "wade" or "raise" || kind.StartsWith("span");
+        var c = RoadCrossing.Between(new Vector2(-edge, 0f), new Vector2(edge, 0f), world.Bed, new Vector2(0f, 0f), kind.StartsWith("free span") ? 11f : 0f,
+            ford ? CrossingKind.Ford : CrossingKind.Bridge, kind == "wade" ? FordStyle.Wade : kind == "raise" ? FordStyle.Raise : ford ? FordStyle.Span : FordStyle.None);
+        string kit = kind.Split(' ').Last();
+        if (Enum.TryParse(kit, out BridgeStructures.Kit k) && k != BridgeStructures.Kit.DvergrViaduct) c.Kit = k;
+        return (c, world);
+    }
+
+    /// <summary>
+    /// One owner of every crossing's ends, every kind and kit alike (StructureEnds.MeetEnds): a road come along the line
+    /// at one bank and from the side at the other is brought to each end's foot, which the crossing saves, on the end's
+    /// line, the road leading away from it outward and never back under it; every kit lays exactly the stairs its ends say,
+    /// their lowest step at the foot (BridgeLayout.LayEndStairs); and the record reads the ends back, the bridge laid from
+    /// it the same. A waded or raised ford is road: its ends are its banks, met as they are.
+    /// </summary>
+    [Theory]
+    [InlineData("wade")]
+    [InlineData("raise")]
+    [InlineData("span DvergrWood")]
+    [InlineData("span WoodRail")]
+    [InlineData("span WoodBraced")]
+    [InlineData("span Stone")]
+    [InlineData("bridge DvergrWood")]
+    [InlineData("bridge WoodRail")]
+    [InlineData("bridge WoodBraced")]
+    [InlineData("bridge Stone")]
+    [InlineData("free span DvergrWood")]
+    [InlineData("tall bridge WoodRail")]
+    [InlineData("river viaduct")]
+    [InlineData("valley viaduct")]
+    public void EveryCrossingKindAndKitHasItsEndsFromTheOneOwner(string kind)
+    {
+        var (c, world) = Crossing(kind);
+        Assert.True(kind.StartsWith("free span") == BridgeLayout.IsFreeSpan(c, world), $"{kind}: free span {BridgeLayout.IsFreeSpan(c, world)}");
+        Assert.Equal(kind.Contains("viaduct"), BridgeStructures.IsViaduct(c, world));
+        Vector2 dir = c.Direction, side = new(-dir.y, dir.x);
+        Vector2 aside = c.ToBank + side * 10f;
+        var path = new List<Vector2> { c.FromBank - dir * 60f, c.FromBank - dir * 30f, c.FromBank, c.ToBank, aside, c.ToBank + dir * 40f + side * 30f };
+        var asSearched = new List<Vector2>(path);
+        c.FromIndex = 2; c.ToIndex = 3;
+        Assert.Null(StructureEnds.MeetEnds(path, new List<RoadCrossing> { c }, world, RoadConstants.TerrainDeltaMax, null));
+        StructureEnds.End near = Assert.NotNull(c.FromEnd), far = Assert.NotNull(c.ToEnd);
+        Assert.Equal(near.Meet, path[c.FromIndex]);
+        Assert.Equal(far.Meet, path[c.ToIndex]);
+        if (kind is "wade" or "raise")
+        {
+            Assert.True(near.Road && far.Road);
+            Assert.Equal((c.FromBank, c.ToBank), (near.Meet, far.Meet));
+            Assert.Equal(asSearched, path);
+            Assert.False(BridgeStructures.Ends(c, world).near.IsSet);
+            Assert.Empty(BridgeStructures.SolveComplete(c, world, 1));
+            return;
+        }
+        Assert.False(near.Road || far.Road);
+        Assert.Equal((near, far), BridgeStructures.Ends(c, world));
+        foreach (var (end, outward) in new[] { (near, path[c.FromIndex - 1]), (far, path[c.ToIndex + 1]) })
+        {
+            // On its line, the road leading away from it outward.
+            Assert.True(Vector2.Dot(outward - end.Meet, -end.Up) > 0.5f, $"{kind}: the road leaves the end at {end.Meet} toward {outward}");
+            Assert.True(Mathf.Abs(Vector2.Dot(outward - end.Meet, new Vector2(-end.Up.y, end.Up.x))) < 0.01f, $"{kind}: the road off the end's line at {outward}");
+            Assert.Contains(end.Apron, path);
+        }
+        Assert.DoesNotContain(aside, path);
+
+        // Every kit lays exactly the stairs its ends say, their lowest step at the foot.
+        void AssertLays(RoadCrossing crossing, StructureEnds.End n, StructureEnds.End f, string what)
+        {
+            var stairs = BridgeStructures.SolveComplete(crossing, world, 1).FindAll(p => p.Kind == StructurePieceKind.Stair);
+            foreach (var (end, other) in new[] { (n, f), (f, n) })
+            {
+                var mine = stairs.FindAll(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), end.Edge) < Vector2.Distance(new Vector2(p.Position.x, p.Position.z), other.Edge));
+                Assert.True(2 * end.Steps == mine.Count, $"{kind}, {what}: {mine.Count} stairs laid at the end at {end.Edge}, its {end.Steps} steps two abreast");
+                if (end.Steps == 0) continue;
+                StructurePiece lowest = mine.OrderBy(p => p.Position.y).First();
+                Assert.True(Mathf.Abs(lowest.Position.y - end.MeetHeight) < 0.01f, $"{kind}, {what}: the lowest step at {lowest.Position.y:F2}, the foot at {end.MeetHeight:F2}");
+                Vector2 at = new(lowest.Position.x, lowest.Position.z);
+                Assert.True(Mathf.Abs(Vector2.Dot(at - end.Meet, end.Up) - BridgeLayout.StairHalfRun) < 0.01f, $"{kind}, {what}: the lowest step at {at}, the foot at {end.Meet}");
+            }
+        }
+        AssertLays(c, near, far, "as met");
+
+        // Saved and read back: the same ends, the same stairs.
+        var loaded = new List<RoadCrossing>();
+        Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(RoadNetworkPersistence.SerializeRoadCrossings(new[] { c }), loaded));
+        RoadCrossing back = Assert.Single(loaded);
+        Assert.Equal((near, far), BridgeStructures.Ends(back, world));
+        AssertLays(back, near, far, "read back");
+    }
+
+    /// <summary>
+    /// One stub rule for every crossing with a deck, every kind and kit alike (BridgeStructures.HasDeck; it was a valley
+    /// viaduct's alone, and a ford span's end left a staircase 4.4 m over its levelled road): a staircase starting a few
+    /// metres past an end, 3 m over its foot, is not planned with that road. A waded or raised ford is road, with no end
+    /// of its own to hold the road to.
+    /// </summary>
+    [Theory]
+    [InlineData("wade")]
+    [InlineData("raise")]
+    [InlineData("span DvergrWood")]
+    [InlineData("span WoodRail")]
+    [InlineData("span WoodBraced")]
+    [InlineData("span Stone")]
+    [InlineData("bridge DvergrWood")]
+    [InlineData("bridge WoodRail")]
+    [InlineData("bridge WoodBraced")]
+    [InlineData("bridge Stone")]
+    [InlineData("free span DvergrWood")]
+    [InlineData("tall bridge WoodRail")]
+    [InlineData("river viaduct")]
+    [InlineData("valley viaduct")]
+    public void EveryCrossingKindAndKitKeepsTheStubRule(string kind)
+    {
+        var (c, world) = Crossing(kind);
+        Vector2 dir = c.Direction;
+        var path = new List<Vector2> { c.FromBank - dir * 60f, c.FromBank - dir * 30f, c.FromBank, c.ToBank, c.ToBank + dir * 40f, c.ToBank + dir * 80f };
+        c.FromIndex = 2; c.ToIndex = 3;
+        Assert.Null(StructureEnds.MeetEnds(path, new List<RoadCrossing> { c }, world, RoadConstants.TerrainDeltaMax, null));
+        StructureEnds.End far = Assert.NotNull(c.ToEnd);
+        Assert.Equal(BridgeStructures.HasDeck(c), far.IsStructure);
+        if (!far.IsStructure) return;
+        Vector2 foot = far.Meet - far.Up * 5f, top = foot - far.Up * 10f;
+        path.RemoveRange(c.ToIndex + 1, path.Count - c.ToIndex - 1);
+        path.AddRange(new[] { foot, top, top - far.Up * 30f });
+        var stairs = new List<RoadStairSpan> { new() { FromIndex = c.ToIndex + 1, ToIndex = c.ToIndex + 2, FromPoint = foot, ToPoint = top, FromHeight = far.MeetHeight + 3f, ToHeight = far.MeetHeight + 3f } };
+        RoadSpatialGrid.LastRefusal = null;
+        Assert.Null(RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing> { c }, 4f, null, null, stairs));
+        Assert.Equal("a stub of road between two structures", RoadSpatialGrid.LastRefusal);
+    }
+
+    /// <summary>
+    /// A road come along the bank square to a bridge's line, a few metres out from its near end's foot, where the bank
+    /// falls away west of the deck: it cannot come in along the line over an apron, and under a 1 m earthwork cap no flat
+    /// approach fits, so the end keeps its stairs (down to the ground, or a metre over it) and opens onto its landing pad,
+    /// and the road leaves the pad
+    /// square to the line (StructureEnds.PadLength), turning a road's half-width out from the foot (StructureEnds.PadTurn):
+    /// its centreline across the pad 2 m beyond the foot, the bottom step on the road's edge, not its middle. Planned, the
+    /// road is level with the foot over the pad, as at any end, within the grade and earthwork caps.
+    /// </summary>
+    [Fact]
+    public void AnEndOpensOntoItsLandingPadWhereTheRoadComesSquareToIt()
+    {
+        var world = new MistRiver { Bank = 40f, NearFall = 0.8f, Biome = Heightmap.Biome.Meadows };
+        _scope.WithWorld(world);
+        var c = River();
+        c.Kit = BridgeStructures.Kit.WoodRail;
+        StructureEnds.End natural = StructureEnds.Natural(c, world).near;
+        Assert.True(natural.Steps >= 3, $"{natural.Steps} stairs down the falling bank");
+        float x = natural.Meet.x - 4f;
+        var path = new List<Vector2> { new(x, 60f), new(x, 20f), new(x, 3f), c.FromBank, c.ToBank, new(60f, 0f), new(100f, 0f) };
+        c.FromIndex = 3; c.ToIndex = 4;
+        // Under a 1 m earthwork cap no flat approach fits: the stairs are laid down to the ground, or a metre over it.
+        Assert.Null(StructureEnds.MeetEnds(path, new List<RoadCrossing> { c }, world, 1f, null));
+        Assert.True(c.FromPad && !c.ToPad, "the near end opens onto its pad, the far end is met along its line");
+        StructureEnds.End near = c.FromEnd!.Value;
+        Assert.True(near.Steps >= natural.Steps - 1, $"{near.Steps} of the whole run's {natural.Steps} stairs laid");
+        Assert.Equal(natural.Up, near.Up);
+        Vector2 turn = near.Meet - near.Up * StructureEnds.PadTurn;
+        Assert.Equal(new[] { new Vector2(x, 60f), new Vector2(x, 20f), turn, near.Meet }, path.Take(c.FromIndex + 1));
+        var plans = RoadNetworkGenerator.PlanRoadPathWithCrossings(path, new List<RoadCrossing> { c }, 4f, null, null);
+        Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        // The road's centreline, past the foot's own stub, never nearer the foot along the line than the turn: the
+        // bottom step meets the road's edge.
+        int across = 0;
+        foreach (var r in plans!)
+            for (int i = 0; i < r.Points.Count; i++)
+            {
+                Vector2 p = r.Points[i];
+                float outward = Vector2.Dot(p - near.Meet, -near.Up), aside = Mathf.Abs(Vector2.Dot(p - near.Meet, new Vector2(-near.Up.y, near.Up.x)));
+                if (aside > 0.5f && outward > -0.25f && Vector2.Distance(p, near.Meet) <= 12f)
+                {
+                    across++;
+                    Assert.True(outward >= StructureEnds.PadTurn - 0.05f, $"the road across the pad at {p} is {outward:F2} m out from the foot {near.Meet}");
+                }
+                if (Vector2.Distance(p, near.Meet) <= StructureEnds.PadLength)
+                {
+                    Assert.True(Mathf.Abs(r.Heights[i] - near.MeetHeight) <= 0.05f, $"the pad at {p} stands {r.Heights[i]:F2}, the foot {near.MeetHeight:F2}");
+                    Assert.True(Mathf.Abs(r.Heights[i] - world.GetHeight(p.x, p.y)) <= RoadConstants.TerrainDeltaMax, $"the pad at {p} past the earthwork cap");
+                }
+            }
+        Assert.True(across > 0, "no road leaves the pad across the line");
     }
 
     [Fact]
@@ -169,21 +387,21 @@ public sealed class DvergrWoodBridgeTests : IDisposable
     // ---------------------------------------------- only the look changes
 
     [Fact]
-    public void TheDeckTheEndsAndTheStairsAreThePlainWoodenKits()
+    public void TheDeckTheEndsAndTheStairsAreTheRailedWoodenKits()
     {
         var (c, low) = Low();
         Assert.Equal(BridgeLayout.DeckHeight(c, low), BridgeStructures.DeckHeight(c, low));
         var (n, f) = BridgeStructures.Ends(c, low);
-        var (wn, wf) = BridgeLayout.Ends(c, low);
+        var (wn, wf) = BridgeLayout.NaturalEnds(c, low);
         foreach (var (a, b) in new[] { (n, wn), (f, wf) })
         {
             Assert.Equal(b.Edge, a.Edge);
             Assert.Equal(b.Height, a.Height);
             Assert.Equal(b.Steps, a.Steps);
         }
-        // The stairs, piece for piece, where the plain wooden bridge lays them, in the Dvergr stair.
+        // The stairs, piece for piece, where a railed wooden bridge lays them, in the Dvergr stair.
         string Key(StructurePiece p) => FormattableString.Invariant($"{p.Position.x:F3} {p.Position.y:F3} {p.Position.z:F3} {p.YawDegrees:F2}");
-        var wood = BridgeLayout.Solve(c, low, 1).Where(p => p.Kind == StructurePieceKind.Stair).Select(Key).OrderBy(k => k).ToList();
+        var wood = BridgeLayout.SolveRailed(c, low, 1, BridgeLayout.Rail).Where(p => p.Kind == StructurePieceKind.Stair).Select(Key).OrderBy(k => k).ToList();
         var dvergr = DvergrWoodBridge.Solve(c, low, 1).Where(p => p.Kind == StructurePieceKind.Stair).Select(Key).OrderBy(k => k).ToList();
         Assert.NotEmpty(wood);
         Assert.Equal(wood, dvergr);
@@ -195,7 +413,7 @@ public sealed class DvergrWoodBridgeTests : IDisposable
     }
 
     [Fact]
-    public void AMistlandsFordSpanIsLaidOnThePlainFootbridgesDeckAndStairs()
+    public void AMistlandsFordSpanIsLaidOnTheWoodenFootbridgesDeckAndStairs()
     {
         var (_, low) = Low();
         RoadCrossing ford = SpanFord();
@@ -206,9 +424,9 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         Assert.All(dvergr, p => Assert.StartsWith("dvergrprops_", p.Prefab));
         foreach (StructurePiece p in dvergr.Where(p => p.Kind == StructurePieceKind.Deck))
             Assert.Equal(deck, p.Position.y + DvergrWoodBridge.BeamDepth * 0.5f, 3);
-        // Its stairs where the plain footbridge lays them, so the road meets it where it did.
+        // Its stairs where a railed footbridge lays them, so the road meets it as it meets any ford span.
         string Key(StructurePiece p) => FormattableString.Invariant($"{p.Position.x:F3} {p.Position.y:F3} {p.Position.z:F3} {p.YawDegrees:F2}");
-        var wood = BridgeLayout.Solve(ford, low, 1).Where(p => p.Kind == StructurePieceKind.Stair).Select(Key).OrderBy(k => k).ToList();
+        var wood = BridgeLayout.SolveRailed(ford, low, 1, BridgeLayout.Rail).Where(p => p.Kind == StructurePieceKind.Stair).Select(Key).OrderBy(k => k).ToList();
         Assert.NotEmpty(wood);
         Assert.Equal(wood, dvergr.Where(p => p.Kind == StructurePieceKind.Stair).Select(Key).OrderBy(k => k).ToList());
         // Its deck runs where the footbridge's did: from the near bank over the built length.
@@ -241,6 +459,39 @@ public sealed class DvergrWoodBridgeTests : IDisposable
             .GroupBy(p => (Mathf.Round(p.Position.x * 100f), Mathf.Round(p.Position.z * 100f))).Select(g => g.Max(p => p.Position.y) + 2f).ToList();
         Assert.NotEmpty(tops);
         Assert.All(tops, t => Assert.Equal(deck + 0.75f, t, 3));
+    }
+
+    /// <summary>
+    /// The wood support ceiling is every wooden kit's (BridgeLayout.RailedMaxColumn): over a deep Mistlands river no bent's
+    /// piles stand taller than it, deck to ground; the deck is carried over a run without bents only from bents within the
+    /// free span of each other, and a longer run is left open, no plank over it.
+    /// </summary>
+    [Fact]
+    public void NoPileColumnStandsOverTheWoodSupportCeiling()
+    {
+        var w = new MistRiver { Bank = 50f };
+        _scope.WithWorld(w);
+        RoadCrossing c = River();
+        float deck = DvergrWoodBridge.DeckHeight(c, w);
+        float length = BridgeLayout.BuiltLength(c.Width);
+        Assert.True(deck - w.Bed > BridgeLayout.RailedMaxColumn, $"deck {deck:F1} m over a {w.Bed:F0} m bed");
+        foreach (bool complete in new[] { true, false })
+        {
+            var pieces = complete ? DvergrWoodBridge.SolveComplete(c, w, 1) : DvergrWoodBridge.Solve(c, w, 1);
+            var bentPiles = pieces.Where(p => p.Prefab == DvergrWoodBridge.Pile && Along(c, p) > -0.01f && Along(c, p) < length + 0.01f).ToList();
+            Assert.NotEmpty(bentPiles);
+            foreach (StructurePiece pile in bentPiles)
+                Assert.True(pile.Position.y - DvergrWoodBridge.PileLength * 0.5f >= deck - BridgeLayout.RailedMaxColumn - DvergrWoodBridge.PileLength - 1e-3f,
+                    $"a pile's foot at {pile.Position.y - DvergrWoodBridge.PileLength * 0.5f:F1} m under a deck at {deck:F1} m");
+            var bentAlongs = bentPiles.Select(p => Along(c, p)).Distinct().OrderBy(a => a).ToList();
+            foreach (StructurePiece plank in pieces.Where(p => p.Prefab == DvergrWoodBridge.Plank && p.Kind == StructurePieceKind.Deck))
+            {
+                float at = Along(c, plank);
+                float before = bentAlongs.Where(a => a <= at + 1e-3f).DefaultIfEmpty(float.NegativeInfinity).Max();
+                float after = bentAlongs.Where(a => a >= at - 1e-3f).DefaultIfEmpty(float.PositiveInfinity).Min();
+                Assert.True(after - before <= BridgeLayout.FreeSpanMaxWidth + 1e-3f, $"a plank {at:F1} m along, between bents {before:F1} and {after:F1}");
+            }
+        }
     }
 
     /// <summary>A Mistlands river whose near bank (x &lt; 0) is 4 m lower than the far one: the near stair walks down off
@@ -299,36 +550,50 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         Assert.True(healths.Min() < 0.2f && healths.Max() > 0.5f, $"health {healths.Min():F2}..{healths.Max():F2}");
     }
 
+    /// <summary>
+    /// Every pile stands (the kit departs from the profile's falling columns, as the vanilla harbour keeps its piles), and a
+    /// plank is lost at the profile's deck share (<see cref="BridgeLayout.BridgeRuin"/>), more toward mid-span, never two
+    /// running: over 300 seeds about as many as the share says, a little under it for the planks put back.
+    /// </summary>
     [Fact]
-    public void EveryPileStandsAndAPlankIsMissingAsRarelyAsTheHarboursAre()
+    public void EveryPileStandsAndAPlankIsLostAtTheDeckShareNeverTwoRunning()
     {
         var (c, low) = Low();
         float length = BridgeLayout.BuiltLength(c.Width);
         float[] bents = DvergrWoodBridge.BentAlongs(length);
         int n = bents.Length, planks = Mathf.RoundToInt(length / DvergrWoodBridge.PlankPitch);
-        int laid = 0, could = 0;
-        for (int s = 1; s <= 100; s++)
+        int lost = 0, could = 0;
+        float expected = 0f;
+        for (int s = 1; s <= 300; s++)
         {
             var pieces = DvergrWoodBridge.Solve(c, low, s);
             var complete = DvergrWoodBridge.SolveComplete(c, low, s);
             // Every bent but the navigation gap's stands: no pile falls, none leaves a stub, nothing lies on the bed.
-            Assert.Equal(complete.Count(p => p.Prefab == DvergrWoodBridge.Pile && !BridgeLayout.InNavigationGap(c, Along(c, p))),
+            Assert.Equal(complete.Count(p => p.Prefab == DvergrWoodBridge.Pile && !DvergrWoodBridge.InNavigationGap(c, low, Along(c, p))),
                 pieces.Count(p => p.Prefab == DvergrWoodBridge.Pile));
             Assert.DoesNotContain(pieces, p => p.Kind == StructurePieceKind.Debris);
             // Planks over the standing middle bays (the end bays keep every plank, the way on from the stairs).
+            bool previousLost = false;
             for (int j = 0; j < planks; j++)
             {
                 float a = (j + 0.5f) * DvergrWoodBridge.PlankPitch;
                 int bay = Array.FindIndex(bents, b => b >= a) - 1;
-                if (bay <= 0 || bay >= n - 2 || BridgeLayout.InNavigationGap(c, bents[bay]) || BridgeLayout.InNavigationGap(c, bents[bay + 1])) continue;
+                if (bay <= 0 || bay >= n - 2 || DvergrWoodBridge.InNavigationGap(c, low, bents[bay]) || DvergrWoodBridge.InNavigationGap(c, low, bents[bay + 1]))
+                {
+                    previousLost = false;
+                    continue;
+                }
                 could++;
-                if (pieces.Any(p => p.Kind == StructurePieceKind.Deck && Mathf.Abs(Along(c, p) - a) < 0.01f)) laid++;
+                expected += 1f - BridgeLayout.RuinProfile.Survives(
+                    BridgeLayout.SpanSurvival(1f - Mathf.Abs(a - length * 0.5f) / (length * 0.5f)), BridgeLayout.BridgeRuin.DeckShare);
+                bool gone = !pieces.Any(p => p.Kind == StructurePieceKind.Deck && Mathf.Abs(Along(c, p) - a) < 0.01f);
+                Assert.False(gone && previousLost, $"seed {s}: two planks running lost at {a:F1} m");
+                if (gone) lost++;
+                previousLost = gone;
             }
         }
-        float survival = (float)laid / could;
-        Assert.True(could > 500, $"only {could} planks sampled");
-        // 31 of 36 (1 - BridgeLayout.DvergrWoodPlankLoss), within the sampling's spread.
-        Assert.InRange(survival, 1f - BridgeLayout.DvergrWoodPlankLoss - 0.04f, 1f - BridgeLayout.DvergrWoodPlankLoss + 0.04f);
+        Assert.True(could > 1500, $"only {could} planks sampled");
+        Assert.True(lost >= expected * 0.8f && lost <= expected * 1.1f, FormattableString.Invariant($"{lost} planks lost, the share says {expected:F0}"));
     }
 
     // ------------------------------------------------------ by construction
@@ -432,9 +697,9 @@ public sealed class DvergrWoodBridgeTests : IDisposable
         Assert.True(c.FairwayWidth > 0f && !BridgeLayout.IsFreeSpan(c, low));
         for (int s = 1; s <= 12; s++)
             foreach (StructurePiece p in DvergrWoodBridge.Solve(c, low, s).Where(p => p.Kind != StructurePieceKind.Debris))
-                Assert.False(BridgeLayout.InNavigationGap(c, Along(c, p)), $"{p.Prefab} at {Along(c, p):F1} m stands in the navigation gap");
+                Assert.False(DvergrWoodBridge.InNavigationGap(c, low, Along(c, p)), $"{p.Prefab} at {Along(c, p):F1} m stands in the navigation gap");
         // The complete bridge fills it, as the wooden kit's does: it is a run of bays a player could close.
-        Assert.Contains(DvergrWoodBridge.SolveComplete(c, low, 1), p => p.Kind == StructurePieceKind.Deck && BridgeLayout.InNavigationGap(c, Along(c, p)));
+        Assert.Contains(DvergrWoodBridge.SolveComplete(c, low, 1), p => p.Kind == StructurePieceKind.Deck && DvergrWoodBridge.InNavigationGap(c, low, Along(c, p)));
     }
 
     [Fact]
@@ -442,8 +707,8 @@ public sealed class DvergrWoodBridgeTests : IDisposable
     {
         var w = new MistRiver { Bank = 34f };
         _scope.WithWorld(w);
-        // 14 m over a 14 m fairway: the boat's lane covers it all, so nothing stands in the water.
-        RoadCrossing c = RoadCrossing.Between(new Vector2(-7f, 0f), new Vector2(7f, 0f), 26f, new Vector2(0f, 0f), 14f, CrossingKind.Bridge);
+        // 11 m over an 11 m fairway: the boat's lane (9.8 m and its clearance) covers it all, so nothing stands in the water.
+        RoadCrossing c = RoadCrossing.Between(new Vector2(-5.5f, 0f), new Vector2(5.5f, 0f), 26f, new Vector2(0f, 0f), 11f, CrossingKind.Bridge);
         Assert.True(BridgeLayout.IsFreeSpan(c, w));
         Assert.Equal(BridgeStructures.Kit.DvergrWood, BridgeStructures.KitFor(c, w));
         float length = BridgeLayout.BuiltLength(c.Width);

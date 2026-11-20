@@ -181,25 +181,6 @@ public class StairLayoutTests
         return true;
     }
 
-    /// <summary>Where the stair crosses a dip, pillars reach down into the ground.</summary>
-    [Fact]
-    public void PiecesOverADipStandOnPillarsBuriedInTheGround()
-    {
-        Func<float, float, float> dip = (x, z) => 0.5f * z - (z > 6f && z < 12f ? 5f : 0f);
-        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 20), dip);
-
-        Assert.True(plan.Reached, plan.Reason);
-        // Columns, and a cantilever's strip columns (its arches and blocks are held by them).
-        StairPiece[] supports = plan.Pieces.Where(p => p.Kind == StairPieceKind.Support && p.Prefab == StairKit.Stone.Support).ToArray();
-        Assert.NotEmpty(supports);
-        foreach (var column in supports.GroupBy(p => (p.Position.x, p.Position.z)))
-        {
-            float bottom = column.Min(p => p.Position.y) - StairKit.Stone.SupportHeight / 2f;
-            Assert.True(bottom <= dip(column.Key.x, column.Key.z) - StairLayout.SupportBury + 1e-3f,
-                $"column at {column.Key} ends at {bottom:F2}, ground {dip(column.Key.x, column.Key.z):F2}");
-        }
-    }
-
     /// <summary>A gully up a face twice as steep as a flight, 12 m wide
     /// between rock walls: too narrow to curve round, so the stair zigzags,
     /// turning back on switchback landings.</summary>
@@ -297,7 +278,7 @@ public class StairLayoutTests
 
     /// <summary>A landing lines up with the stair below it; the turn comes
     /// as the next stair leaves it. A landing turned 45 degrees off the stair
-    /// below left a gap to the stair above.</summary>
+    /// below left a gap to the stair above. Only a staircase's last row turns off the stair below it.</summary>
     [Theory]
     [InlineData("face")]
     [InlineData("gentle")]
@@ -314,10 +295,12 @@ public class StairLayoutTests
         Assert.Contains(walked, p => p.Kind == StairPieceKind.Landing);
         for (int i = 1; i < walked.Length; i++)
         {
-            // A floor after a stair lines up with it (a stair faces back down its flight); a floor
-            // after a floor may turn, overlapping it.
+            // A floor after a stair lines up with it (a stair faces back down its flight), save the staircase's last row,
+            // which may turn off it as far as a stair off a floor; a floor after a floor may turn, overlapping it.
             if (walked[i].Kind != StairPieceKind.Landing || walked[i - 1].Kind != StairPieceKind.Stair) continue;
-            Assert.Equal(StairLayout.Wrap(walked[i - 1].YawDegrees + 180f), walked[i].YawDegrees, 3);
+            float off = Math.Abs(StairLayout.Wrap(walked[i].YawDegrees - walked[i - 1].YawDegrees) - 180f);
+            if (i == walked.Length - 1) Assert.InRange(off, 0f, StairLayout.MaxJoinTurnSteps * StairLayout.HeadingStep + 1e-3f);
+            else Assert.Equal(0f, off, 3);
         }
     }
 
@@ -338,39 +321,6 @@ public class StairLayoutTests
         // The first piece really faces the way the plan says (a stair faces back down its flight).
         StairPiece first = Walked(plan)[0];
         Assert.Equal(plan.StartHeading, first.Kind == StairPieceKind.Stair ? StairLayout.Wrap(first.YawDegrees + 180f) : first.YawDegrees, 3);
-    }
-
-    /// <summary>A piece sitting on the ground hovers a few centimetres above it in
-    /// game and falls: every walked piece not sunk SupportBury into the ground
-    /// stands on a column (a black marble staircase lost a quarter of its pieces).</summary>
-    [Fact]
-    public void EveryPieceNotSunkIntoTheGroundStandsOnAColumn()
-    {
-        // Real ground: on an exact 0.5 slope a stair is sunk half a metre at its
-        // middle and needs nothing; floors and fillers on a rough face do.
-        Func<float, float, float> ground = FixtureGround("mountain-face-2m.txt");
-        StairPlan plan = StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), ground);
-        var columns = plan.Pieces.Where(p => p.Kind == StairPieceKind.Support && !p.Cantilevered).ToList();
-        var arches = plan.Pieces.Where(p => p.Prefab == StairKit.Stone.Cantilever!.Arch).ToList();
-
-        Assert.NotEmpty(columns);
-        foreach (StairPiece piece in plan.Pieces.Where(p => p.Kind != StairPieceKind.Support))
-        {
-            float underside = piece.Prefab == StairKit.Stone.Stair ? piece.Position.y : piece.Position.y + StairKit.Stone.FloorTop - StairKit.Stone.FloorThickness;
-            float g = ground(piece.Position.x, piece.Position.z);
-            if (underside <= g - StairLayout.SupportBury) continue;
-            // A turn's filler off a cantilevered piece rests on the turn's arch (CantileverTests: the hand-built turns).
-            if (piece.Cantilevered && piece.Kind == StairPieceKind.Filler) continue;
-            if (piece.Cantilevered)
-            {
-                // Held out from the face: two arches under it, their tops at its underside (CantileverTests).
-                Assert.True(2 <= arches.Count(a => Vector2.Distance(new Vector2(a.Position.x, a.Position.z), new Vector2(piece.Position.x, piece.Position.z)) < 0.6f
-                    && Math.Abs(a.Position.y + StairKit.Stone.Cantilever!.ArchHeight / 2f - underside) < 0.01f));
-                continue;
-            }
-            Assert.Contains(columns, c => Math.Abs(c.Position.x - piece.Position.x) < 0.01f && Math.Abs(c.Position.z - piece.Position.z) < 0.01f
-                && c.Position.y - StairKit.Stone.SupportHeight / 2f <= g - StairLayout.SupportBury + 1e-3f);
-        }
     }
 
     /// <summary>Ground from an x z height grid file, bilinear between samples, clamped at its edges.</summary>
@@ -564,79 +514,6 @@ public class StairLayoutTests
         for (int i = 0; i < walked.Length; i++)
             for (int j = i + 2; j < walked.Length; j++)
                 Assert.False(Overlap(walked[i], walked[j]), $"{walked[j].Kind} at {walked[j].Position} over {walked[i].Kind} at {walked[i].Position}");
-    }
-
-    /// <summary>Every column's base lies wholly under the finished ground beneath it
-    /// (after the staircase's own cuts and their batters), not only at its centre
-    /// (the whole bottom must clip into the ground; a support that did not fully clip its bottom into the ground was
-    /// 1.6 m short beside a cut's batter).</summary>
-    /// <summary>A cantilever's pillars are its anchor (Valheim grounds a piece that touches terrain): on
-    /// the real face, each one's foot stands at least SupportBury inside the ground the staircase's own
-    /// cuts and their batters leave, and each stone arch's tall end meets it.</summary>
-    [Fact]
-    public void EveryCantileverPillarIsClippedIntoTheFinishedGround()
-    {
-        Func<float, float, float> ground = FixtureGround("mountain-face-2m.txt");
-        StairPlan plan = StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), ground);
-        CantileverKit ck = StairKit.Stone.Cantilever!;
-        var pillars = plan.Pieces.Where(p => p.Cantilevered && p.Prefab == ck.Pillar).ToList();
-        Assert.NotEmpty(pillars);
-        float Finished(float px, float pz)
-        {
-            float h = ground(px, pz);
-            foreach (Vector3 c in plan.Cuts)
-            {
-                float d = Vector2.Distance(new Vector2(c.x, c.z), new Vector2(px, pz));
-                if (d <= StairLayout.CutRadius + 3f) h = Math.Min(h, c.y + Math.Max(0f, d - StairLayout.CutRadius));
-            }
-            return h;
-        }
-        foreach (StairPiece pillar in pillars)
-        {
-            float foot = pillar.Position.y - ck.PillarHeight / 2f;
-            Assert.True(Finished(pillar.Position.x, pillar.Position.z) >= foot + StairLayout.SupportBury - 1e-3f,
-                $"pillar at {pillar.Position}: foot {foot:F2}, finished ground {Finished(pillar.Position.x, pillar.Position.z):F2}");
-        }
-    }
-
-    [Fact]
-    public void EveryColumnsBaseIsWhollyInTheGround()
-    {
-        Func<float, float, float> ground = FixtureGround("mountain-face-2m.txt");
-        StairPlan plan = StairLayout.Build(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), ground);
-        // The finished ground: natural, lowered by every cut within reach, each
-        // flat to its radius and climbing back on a 1:1 batter for 3 m beyond.
-        float Finished(float px, float pz)
-        {
-            float h = ground(px, pz);
-            foreach (Vector3 c in plan.Cuts)
-            {
-                float d = Vector2.Distance(new Vector2(c.x, c.z), new Vector2(px, pz));
-                if (d <= StairLayout.CutRadius + 3f) h = Math.Min(h, c.y + Math.Max(0f, d - StairLayout.CutRadius));
-            }
-            return h;
-        }
-        // Columns are carried to the finished ground by one owner, once the network's earthwork is known: the
-        // layout sizes them on the ground it read, and BuriedPieces.CarryColumns carries them on below the cuts.
-        StairRun run = StairRun.FromPlan(new Vector2(-2061.41f, 1504.82f), new Vector2(-2125f, 1460f), 2f, plan);
-        BuriedPieces.CarryColumns(run, (i, k) => Finished(i, k));
-        BuriedPieces.Drop(run, (i, k) => Finished(i, k));
-        Assert.All(run.Pieces, p => Assert.False(BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (i, k) => Finished(i, k)), $"{p.Prefab} at {p.Position} wholly under the ground"));
-        var columns = run.Pieces.Where(p => p.Kind == StructurePieceKind.StairSupport && !p.Cantilevered)
-            .GroupBy(p => (Math.Round(p.Position.x, 2), Math.Round(p.Position.z, 2)));
-        Assert.NotEmpty(columns);
-        foreach (var column in columns)
-        {
-            StructurePiece bottom = column.OrderBy(p => p.Position.y).First();
-            float baseY = bottom.Position.y - StairKit.Stone.SupportHeight / 2f;
-            float x = bottom.Position.x, z = bottom.Position.z;
-            float lowest = new[] { Finished(x - 0.5f, z - 0.5f), Finished(x + 0.5f, z - 0.5f), Finished(x - 0.5f, z + 0.5f), Finished(x + 0.5f, z + 0.5f) }.Min();
-            // SupportBury under the lowest corner, or already in the ground under all of the next pillar's grown footprint
-            // (the one column rule, BuriedPieces.ColumnGoesOn: no pillar wholly under the ground).
-            Assert.True(baseY <= lowest - StairLayout.SupportBury + 1e-3f
-                || BuriedPieces.Buried("stone_pillar", new Vector3(x, baseY - 1f, z), bottom.YawDegrees, (i, k) => Finished(i, k)),
-                $"column at {bottom.Position} ends at {baseY:F2}, finished ground as low as {lowest:F2}");
-        }
     }
 
     /// <summary>A staircase ends level with the ground at its own end, not merely

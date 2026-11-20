@@ -58,12 +58,14 @@ public class ValleySpanRoadTests : IDisposable
         var spans = new List<RoadStairSpan> { first };
         string why = "laid";
         bool spanned = RoadStairRuns.SpanTheValley(below, second, StairKit.BlackMarble, CantileverTests.SharedFloorValleyGround, 32.5f, 2f,
+            FlatRunJoinTests.Relay(CantileverTests.SharedFloorValleyGround, CantileverTests.SharedFloorValleyTop, StairKit.BlackMarble),
             (p, at) =>
             {
                 bool ok = RoadStairRuns.SpanUsable(p, Road, first, SecondTo, _world, spans, at);
                 if (!ok) why = RoadStairRuns.LastRefusal.ToString();
                 return ok;
-            }, out _);
+            }, out StairPlan laid, out _);
+        up = laid;
         refusal = why;
         return spanned;
     }
@@ -78,14 +80,15 @@ public class ValleySpanRoadTests : IDisposable
     public void ASpanOverTheFirstStaircasesStretchIsNotOnItsRoad()
     {
         Assert.True(Span(out StairPlan up, out string refusal), "refused: " + refusal);
-        // The repro holds: the span's first floor stands over the first's last segment (index 3 -> 4), away from the
+        // The repro holds: a walked piece of the span stands over the first's last segment (index 3 -> 4), away from the
         // bottom's junction, so judged over the second's stretch alone (4..6) it was on its road.
-        var floors = up.Pieces.Where(p => p.Kind == StairPieceKind.Landing).ToList();
-        Assert.Equal(4, floors.Count);
-        Vector2 firstFloor = new Vector2(floors[0].Position.x, floors[0].Position.z);
-        Assert.True(Across(firstFloor, Road[FirstFrom], Road[Bottom]) < RoadStairRuns.OnRoad - 0.25f,
-            $"first floor at {firstFloor} not over the first's last segment");
-        Assert.True(Vector2.Distance(firstFloor, Road[Bottom]) > RoadStairRuns.JoiningStep, $"first floor at {firstFloor} joins the road at the bottom");
+        Assert.Contains(up.Pieces, p => p.Kind == StairPieceKind.Landing);
+        Assert.Contains(up.Pieces, p =>
+        {
+            var at = new Vector2(p.Position.x, p.Position.z);
+            return p.Kind != StairPieceKind.Support && Across(at, Road[FirstFrom], Road[Bottom]) < RoadStairRuns.OnRoad - 0.25f
+                && Vector2.Distance(at, Road[Bottom]) > RoadStairRuns.JoiningStep;
+        });
         Assert.True(RoadStairRuns.OverRoad(up, Road, Bottom, SecondTo, (x, z) => _world.GetHeight(x, z)), "judged over the second's stretch alone, not on its road");
     }
 

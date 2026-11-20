@@ -25,7 +25,7 @@ public class NetworkEndpointTests
     {
         var world = new Shore();
         var point = RoadEndpoint.FindGround(world, new Vector2(0, 0), 15);
-        Assert.True(world.GetHeight(point.x, point.y) >= RoadPathfinder.LandingFloor);
+        Assert.True(world.GetHeight(point.x, point.y) >= RoadWater.LandingFloor);
         Assert.InRange(Vector2.Distance(point, new Vector2(0, 0)), 0.01f, 31f);
         Assert.Equal(point, RoadEndpoint.FindGround(world, new Vector2(0, 0), 15));
     }
@@ -49,7 +49,7 @@ public class NetworkEndpointTests
     {
         var world = new Spit();
         var found = RoadEndpoint.FindGround(world, new Vector2(0, 0), 64);
-        Assert.True(world.GetHeight(found.x, found.y) >= RoadPathfinder.LandingFloor,
+        Assert.True(world.GetHeight(found.x, found.y) >= RoadWater.LandingFloor,
             $"ring search returned ({found.x:F1},{found.y:F1}), which is not ground");
         Assert.InRange(Vector2.Distance(found, Spit.Patch), 0f, 6f);
     }

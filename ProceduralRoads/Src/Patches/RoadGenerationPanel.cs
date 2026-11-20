@@ -24,12 +24,12 @@ internal static partial class RoadGenerationPanel
     private static RectTransform? viewport, content;
     private static Vector2 layoutSize = new(-1,-1);
     internal static bool OwnsPointer => panel!=null && panel.activeInHierarchy && hud==Hud.instance
-        && RoadLifecycleManager.InitialGenerationActive && !VanillaModal;
+        && RoadLifecycleManager.GenerationRunning && !VanillaModal;
     private static bool VanillaModal => Menu.IsActive() || Menu.IsVisible() || UnifiedPopup.IsVisible()
         || TextInput.IsVisible() || ZNet.IsPasswordDialogShowing();
     internal static void Synchronize()
     {
-        if(!RoadLifecycleManager.InitialGenerationActive || hud==null || hud!=Hud.instance) { Clear(); return; }
+        if(!RoadLifecycleManager.GenerationRunning || hud==null || hud!=Hud.instance) { Clear(); return; }
         Relayout();
         if(interaction!=null) { interaction.alpha=VanillaModal?0:1; interaction.interactable=!VanillaModal; interaction.blocksRaycasts=!VanillaModal; }
         RefreshTooltip();
@@ -64,7 +64,7 @@ internal static partial class RoadGenerationPanel
             viewport=view;
             view.anchorMin=Vector2.zero; view.anchorMax=Vector2.one; view.offsetMin=new Vector2(16,56); view.offsetMax=new Vector2(-16,-46);
             viewObject.GetComponent<Image>().color=Color.clear;
-            var buttonObject=new GameObject("Cancel and return to menu",typeof(RectTransform),typeof(Image),typeof(Button));
+            var buttonObject=new GameObject("Cancel",typeof(RectTransform),typeof(Image),typeof(Button));
             buttonObject.transform.SetParent(panel.transform,false);
             var buttonRect=(RectTransform)buttonObject.transform;
             buttonRect.anchorMin=new Vector2(.25f,0); buttonRect.anchorMax=new Vector2(.75f,0);
@@ -85,7 +85,7 @@ internal static partial class RoadGenerationPanel
             cancel.onClick.AddListener(()=> {
                 if(RoadLifecycleManager.Progress.Phase=="ReturningToMenu" || RoadLifecycleManager.Progress.Phase=="MenuFailed")
                     RoadLifecycleManager.RetryReturnToMenu(expectedRun);
-                else RoadLifecycleManager.RequestCancelToMenu(expectedRun);
+                else RoadLifecycleManager.RequestCancel(expectedRun);
             });
             var label=new GameObject("Label",typeof(RectTransform),typeof(TextMeshProUGUI)); label.transform.SetParent(buttonRect,false);
             var labelRect=(RectTransform)label.transform; labelRect.anchorMin=Vector2.zero; labelRect.anchorMax=Vector2.one; labelRect.offsetMin=labelRect.offsetMax=Vector2.zero;
@@ -104,7 +104,9 @@ internal static partial class RoadGenerationPanel
             var tip=MakeText("Explanation",tipRect,template,15,TextAlignmentOptions.Center);
             var tipTextRect=(RectTransform)tip.transform; tipTextRect.anchorMin=Vector2.zero; tipTextRect.anchorMax=Vector2.one;
             tipTextRect.offsetMin=new Vector2(8,4); tipTextRect.offsetMax=new Vector2(-8,-4); tip.textWrappingMode=TextWrappingModes.Normal;
-            tip.text="Discard this unfinished road network and return to the menu. The world and character may still be saved.";
+            tip.text=RoadLifecycleManager.OperatorRunActive
+                ? "Stop building this road network and keep the roads as they were. You stay in the world."
+                : "Discard this unfinished road network and return to the menu. The world and character may still be saved.";
             tooltip.SetActive(false);
             var contentObject=new GameObject("Island slots",typeof(RectTransform)); contentObject.transform.SetParent(view,false);
             var area=(RectTransform)contentObject.transform;
@@ -137,7 +139,8 @@ internal static partial class RoadGenerationPanel
         shown=progress;
         visibleCount=progress.ActiveIslands.Count;
         if(cancel!=null) cancel.interactable=progress.Phase=="Preparing" || progress.Phase=="Generating" || progress.Phase=="ReturningToMenu" || progress.Phase=="MenuFailed";
-        if(cancelText!=null) cancelText.text=progress.Phase=="Stopping" ? "Stopping generation…" : progress.Phase=="ReturningToMenu" || progress.Phase=="MenuFailed" ? "Return to menu" : "Cancel and return to menu";
+        if(cancelText!=null) cancelText.text=progress.Phase=="Stopping" ? "Stopping generation…" : progress.Phase=="ReturningToMenu" || progress.Phase=="MenuFailed" ? "Return to menu"
+            : RoadLifecycleManager.OperatorRunActive ? "Cancel, keep the roads as they were" : "Cancel and return to menu";
         bool stopped=progress.Phase=="ReturningToMenu" || progress.Phase=="MenuFailed";
         string length=progress.TotalKilometres.HasValue ? $"{progress.TotalKilometres:F1} km committed" : "committed length unknown (legacy save)";
         if(summary!=null) summary.text=progress.Phase=="Preparing" ? $"Preparing roads · {(int)progress.ElapsedSeconds/60}m {(int)progress.ElapsedSeconds%60:00}s elapsed" : stopped ? "Road generation stopped; unpublished roads discarded." :

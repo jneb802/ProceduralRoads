@@ -33,12 +33,14 @@ public static class RoadBeside
     public enum Place { Off, Beside, On }
 
     /// <summary>Whether <paramref name="p"/>, at <paramref name="height"/>, is on a road (within <see cref="OnRoad"/>),
-    /// beside one at its height (within <see cref="Reach"/> across and <see cref="Height"/> of its surface), or off.</summary>
-    public static Place At(Vector2 p, float height)
+    /// beside one at its height (within <see cref="Reach"/> across and <see cref="Height"/> of its surface), or off. The
+    /// road is the network's line (<see cref="RoadRide.Lines"/>): a structure in a road's place (a crossing, a staircase)
+    /// is road here, so a road along it is on it or beside it as along any road.</summary>
+    public static Place At(RoadRide.Lines lines, Vector2 p, float height)
     {
-        if (!RoadSpatialGrid.IsInitialized || !RoadSpatialGrid.TryGetRoadWithin(p, Reach, out Vector2 other)) return Place.Off;
-        if (Vector2.Distance(p, other) <= OnRoad) return Place.On;
-        return RoadSpatialGrid.TryGetRoadHeightWithin(other, 1f, out float h) && AtItsHeight(h, height) ? Place.Beside : Place.Off;
+        if (!lines.Nearest(p, Reach, out RoadRide.Hit other)) return Place.Off;
+        if (other.Distance <= OnRoad) return Place.On;
+        return AtItsHeight(other.Height, height) ? Place.Beside : Place.Off;
     }
 
     /// <summary>Whether a road within <see cref="Reach"/> of <paramref name="p"/>, on it or not, stands at <paramref name="height"/>:

@@ -11,7 +11,8 @@ namespace ProceduralRoads;
 /// record of which zones have received their pieces. The one owner of
 /// structures: placement, appends, the server bake and the zone report all
 /// read from here. Plans are recomputed deterministically from the network
-/// and the world seed, never stored; the spawned-zone set is persisted with
+/// and the world seed, but for the structures saved with it (a staircase, a
+/// bridge whose first zone was built: BuiltBridges); the spawned-zone set is persisted with
 /// the network (see RoadNetworkPersistence; its saved key and the pieces'
 /// ZDO marker keep their bridge names, so existing worlds load unchanged), so
 /// a zone whose pieces were all destroyed does not get them again on the next
@@ -50,6 +51,10 @@ public static class StructurePlans
 
     /// <summary>Forget which zones have pieces (they are being destroyed).</summary>
     public static void ForgetSpawned() => s_spawnedZones.Clear();
+
+    /// <summary>These zones' emitted pieces are being destroyed for a partial respawn: they are forgotten, so each gets its
+    /// whole plan again.</summary>
+    public static void ForgetSpawned(ICollection<Vector2s> zones) => s_spawnedZones.ExceptWith(zones);
 
     public static bool IsSpawned(Vector2s zone) => s_spawnedZones.Contains(zone);
 
@@ -242,6 +247,7 @@ public static class StructurePlans
             if (total > 0)
                 Log.LogInfo($"{source.LogTag} planned {total} pieces across {byZone.Count} zones");
         }
+        if (SearchStats.Enabled) Log.LogInfo($"[BRIDGES] site solves: {BridgeStructures.SolveTimes.Summary()}");
         s_plansBySource = plansBySource;
         s_plansByZone = plansByZone;
     }

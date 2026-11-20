@@ -87,6 +87,41 @@ public class CorridorSnapTests
         });
     }
     [Fact]
+    public void AHeldWaypointBesideAnotherRoadStaysPut()
+    {
+        // A structure's end the road was brought to (its Meet, 4 m off another road) is not snapped onto that road,
+        // neither by the road snap nor by the corridor snap round it, and is kept in the path.
+        With(new Terrace(), () =>
+        {
+            var line = Line(10f);
+            var meet = new Vector2(4f, 4f);
+            line.Insert(line.FindIndex(p => p.x > 4f), meet);
+            var snapped = RoadNetworkGenerator.SnapToNetwork(line, held: p => (p - meet).sqrMagnitude < 0.25f)!;
+            Assert.Contains(snapped, p => Vector2.Distance(p, meet) < 0.01f);
+            Assert.True(snapped.Count(p => Mathf.Abs(p.y) < 1f) >= snapped.Count - 5, "the rest still merges");
+        });
+    }
+
+    [Fact]
+    public void APlannedRoadKeepsAHeldMeetWithinTheSnapOfAnotherRoad()
+    {
+        With(new Terrace(), () =>
+        {
+            var meet = new Vector2(0f, 4f);
+            var path = new List<Vector2> { new Vector2(0f, 60f), new Vector2(0f, 30f), new Vector2(0f, 12f), meet, new Vector2(40f, 4f), new Vector2(80f, 40f) };
+            RoadSpatialGrid.HeldPoints = new List<Vector2> { meet };
+            try
+            {
+                var plan = RoadSpatialGrid.PlanRoadPath(path, 4f, new Terrace());
+                Assert.NotNull(plan);
+                float nearest = plan!.Points.Min(p => Vector2.Distance(p, meet));
+                Assert.True(nearest < 0.5f, $"the held Meet is {nearest:F2} m off the planned road");
+            }
+            finally { RoadSpatialGrid.HeldPoints = null; }
+        });
+    }
+
+    [Fact]
     public void TwoCrossingsOfTheSameWaterSideBySideAreOneSite()
     {
         // Measured: two roads left one place through a pool, each with its own ford 6.5 m apart.

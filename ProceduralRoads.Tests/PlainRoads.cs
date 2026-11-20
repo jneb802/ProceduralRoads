@@ -8,7 +8,7 @@ namespace ProceduralRoads.Tests;
 /// The suite runs on plain roads: the route and shape features that the mod
 /// turns on by default (the meander, the sway, the pull, turn and slope
 /// prices, switchback and bend shaping, pitches, following the ground, joins,
-/// the earthwork cap, the bridge-end rules) are off, so a test of one
+/// the earthwork cap, the bridge-end rules, the viaducts raised a step or two) are off, so a test of one
 /// mechanism sees that mechanism and a straight fixture road stays straight.
 /// A test of a feature turns it on and restores the plain value. The mod's
 /// own defaults are captured before they are replaced, and
@@ -33,6 +33,7 @@ internal static class PlainRoads
         ("curve checks", () => RoadSpatialGrid.CurveChecks, v => RoadSpatialGrid.CurveChecks = (bool)v, false),
         ("pitches", () => RoadPitches.Enabled, v => RoadPitches.Enabled = (bool)v, false),
         ("junction landing", () => RoadPitches.JunctionLanding, v => RoadPitches.JunctionLanding = (float)v, 0f),
+        ("junction fillet", () => RoadJunctionFillet.Radius, v => RoadJunctionFillet.Radius = (float)v, 0f),
         ("pull", () => RoadPathPull.Enabled, v => RoadPathPull.Enabled = (bool)v, false),
         ("pull tolerance", () => RoadPathPull.Tolerance, v => RoadPathPull.Tolerance = (float)v, 0f),
         ("sway", () => RoadWiggle.Amplitude, v => RoadWiggle.Amplitude = (float)v, 0f),
@@ -43,6 +44,7 @@ internal static class PlainRoads
         ("bridge ends to water", () => RoadCrossingDetector.ToWater, v => RoadCrossingDetector.ToWater = (bool)v, false),
         ("decline tall climbs", () => RoadCrossingDetector.DeclineTallClimbs, v => RoadCrossingDetector.DeclineTallClimbs = (bool)v, false),
         ("viaducts", () => RoadPathfinder.ConfiguredViaducts, v => RoadPathfinder.ConfiguredViaducts = (bool)v, false),
+        ("viaduct raise", () => DvergrViaduct.RaisedShare, v => DvergrViaduct.RaisedShare = (float)v, 0f),
     };
 
     /// <summary>The mod's own values, captured before the plain ones replaced them.</summary>

@@ -29,9 +29,9 @@ public static class RoadEndpoint
 
     private static bool IsGround(WorldGenerator world, Vector2 point)
     {
-        if (world.GetHeight(point.x, point.y) < RoadPathfinder.FloorFor(world.GetBiome(point.x, point.y)))
+        if (!RoadWater.OnLand(world, point))
             return false;
         world.GetRiverWeight(point.x, point.y, out float weight, out _);
-        return weight <= RoadConstants.RiverImpassableThreshold;
+        return !RoadWater.River(weight);
     }
 }

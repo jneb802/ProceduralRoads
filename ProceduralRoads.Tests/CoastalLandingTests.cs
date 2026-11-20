@@ -21,7 +21,7 @@ public class CoastalLandingTests
                 float wx=(x-80)*spacing, wz=(z-80)*spacing;
                 float h=height?.Invoke(wx,wz) ?? (wx<0 ? 25 : 33);
                 heights[x*size+z]=h;
-                if (h>=RoadPathfinder.LandingFloor) island.Cells.Add(new Vector2Int(x,z));
+                if (h>=RoadWater.LandingFloor) island.Cells.Add(new Vector2Int(x,z));
             }
         return (island,heights);
     }

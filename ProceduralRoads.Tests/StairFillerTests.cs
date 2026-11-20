@@ -144,37 +144,15 @@ public class StairFillerTests
 /// <summary>Stairs are built of the biome's pieces.</summary>
 public class StairKitTests
 {
-    [Fact]
-    public void EachBiomeBuildsItsOwnMaterial()
-    {
-        Assert.Same(StairKit.Stone, StairKit.ForSite(Heightmap.Biome.Mountain, new Vector2(5000f, 0f), 1));
-        Assert.Same(StairKit.BlackMarble, StairKit.ForSite(Heightmap.Biome.Mistlands, new Vector2(5000f, 0f), 1));
-        Assert.Same(StairKit.Wood, StairKit.ForSite(Heightmap.Biome.Meadows, new Vector2(5000f, 0f), 1));
-    }
-
-    /// <summary>"the stone should resolve to 0 in the early centre game, just
-    /// wood stairs should never not resolve - probility just lowers".</summary>
-    [Fact]
-    public void TheBlackForestIsWoodAtTheCentreAndNeverAllStoneOutward()
-    {
-        int Stone(float radius)
-        {
-            int n = 0;
-            for (int i = 0; i < 400; i++)
-            {
-                float a = i * 0.0157f;
-                var at = new Vector2(Mathf.Cos(a), Mathf.Sin(a)) * radius;
-                if (StairKit.ForSite(Heightmap.Biome.BlackForest, at, 1234) == StairKit.Stone) n++;
-            }
-            return n;
-        }
-        Assert.Equal(0, Stone(800f));
-        Assert.Equal(0, Stone(StairKit.ForestStoneFrom));
-        int middle = Stone(2100f), outer = Stone(6000f);
-        Assert.InRange(middle, 80, 320);
-        Assert.InRange(outer, 280, 360); // about four in five; wood still turns up
-        Assert.True(outer > middle);
-    }
+    /// <summary>Stone everywhere except the Mistlands, black marble only there; no new wood stairs.</summary>
+    [Theory]
+    [InlineData(Heightmap.Biome.Meadows, "stone")]
+    [InlineData(Heightmap.Biome.BlackForest, "stone")]
+    [InlineData(Heightmap.Biome.Mountain, "stone")]
+    [InlineData(Heightmap.Biome.Plains, "stone")]
+    [InlineData(Heightmap.Biome.Mistlands, "blackmarble")]
+    public void StoneIsBuiltEverywhereButTheMistlands(Heightmap.Biome biome, string kit) =>
+        Assert.Equal(kit, StairKit.ForSite(biome).Name);
 
     /// <summary>A staircase that starts in the Mistlands but is 90% in the mountains uses stone; black marble only if it is 50%+ in the
     /// Mistlands, then 40%.</summary>
@@ -188,7 +166,7 @@ public class StairKitTests
         var line = new List<Vector2> { new(0f, 0f), new(0f, 100f) };
         Heightmap.Biome At(float x, float z) => z < mistMetres ? Heightmap.Biome.Mistlands : Heightmap.Biome.Mountain;
 
-        Assert.Equal(kit, StairKit.ForLine(line, At, 1).Name);
+        Assert.Equal(kit, StairKit.ForLine(line, At).Name);
     }
 
     [Fact]

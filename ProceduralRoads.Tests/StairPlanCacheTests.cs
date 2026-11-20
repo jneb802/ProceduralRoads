@@ -62,9 +62,8 @@ public class StairPlanCacheTests : IDisposable
         Assert.Equal(first, again);
     }
 
-    /// <summary>A copy carries every field of the plan it copies, and lists of its own.</summary>
-    [Fact]
-    public void ACopyCarriesEveryFieldAndListsOfItsOwn()
+    /// <summary>A plan with every public field set to a value of its own, and one piece, clearance and cut.</summary>
+    private static StairPlan EveryFieldSet()
     {
         var plan = new StairPlan();
         int n = 0;
@@ -74,13 +73,43 @@ public class StairPlanCacheTests : IDisposable
             if (f.IsInitOnly) continue;
             object value = f.FieldType == typeof(string) ? "kit" + n : f.FieldType == typeof(bool) ? true : f.FieldType == typeof(int) ? 100 + n
                 : f.FieldType == typeof(float) ? 0.5f + n : f.FieldType == typeof(Vector3) || f.FieldType == typeof(Vector3?) ? new Vector3(n, n, n)
-                : f.FieldType == typeof(Vector2) ? new Vector2(n, n) : f.FieldType == typeof(StairPieceKind) ? StairPieceKind.Landing
+                : f.FieldType == typeof(Vector2) || f.FieldType == typeof(Vector2?) ? new Vector2(n, n) : f.FieldType == typeof(StairPieceKind) ? StairPieceKind.Landing
+                : f.FieldType == typeof(RoadEndRing?) ? new RoadEndRing(new Vector2(n, n), n, n)
                 : throw new InvalidOperationException($"{f.Name}: {f.FieldType} not covered by this test");
             f.SetValue(plan, value);
         }
-        plan.Pieces.Add(new StairPiece());
+        plan.Pieces.Add(new StairPiece { Prefab = "stone_stair", Position = new Vector3(1f, 2f, 3f) });
         plan.Clearances.Add(new StairClearance(new Vector3(1f, 2f, 3f), new Vector3(1f, 1f, 1f), 0f, 2f));
         plan.Cuts.Add(new Vector3(1f, 2f, 3f));
+        return plan;
+    }
+
+    /// <summary>Restoring a tentative layout brings back every field of the plan saved, not a hand-kept list of them (one
+    /// left out, the longest flight, kept a tentative finish's after it was taken off), and pieces of its own.</summary>
+    [Fact]
+    public void ARestoreBringsBackEveryFieldAndPiecesOfItsOwn()
+    {
+        StairPlan saved = EveryFieldSet();
+        var plan = new StairPlan();
+        plan.Pieces.Add(new StairPiece());
+        plan.Restore(saved);
+
+        foreach (var f in typeof(StairPlan).GetFields())
+            if (!f.IsInitOnly) Assert.True(Equals(f.GetValue(saved), f.GetValue(plan)), $"{f.Name}: {f.GetValue(plan)}, saved {f.GetValue(saved)}");
+        Assert.NotSame(saved.Pieces, plan.Pieces);
+        Assert.Single(plan.Pieces);
+        Assert.NotSame(saved.Pieces[0], plan.Pieces[0]);
+        Assert.Equal(saved.Pieces[0].Position, plan.Pieces[0].Position);
+        Assert.Equal(saved.Clearances, plan.Clearances);
+        Assert.NotSame(saved.Cuts, plan.Cuts);
+        Assert.Equal(saved.Cuts, plan.Cuts);
+    }
+
+    /// <summary>A copy carries every field of the plan it copies, and lists of its own.</summary>
+    [Fact]
+    public void ACopyCarriesEveryFieldAndListsOfItsOwn()
+    {
+        StairPlan plan = EveryFieldSet();
 
         StairPlan copy = plan.Copy();
 

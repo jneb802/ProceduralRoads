@@ -58,14 +58,14 @@ public class BridgeFreeSpanTests
         return v.Min();
     }
 
-    /// <summary>Boats need about 6 m and 10 m is comfortable, so the gap left
-    /// for them is set by what the kit can span rather than the other way
-    /// round. It used to be 20 m, which invited a repair that falls down.</summary>
+    /// <summary>The widest gap left for a longship (Ships.NavigationGapWidth, at any
+    /// deck height) is one the kit can span: a wider one would invite a repair that falls down.</summary>
     [Fact]
     public void TheNavigationGapIsNoWiderThanTheKitCanSpan()
     {
-        Assert.True(BridgeLayout.FairwayGapWidth <= BridgeLayout.FreeSpanMaxWidth,
-            $"a {BridgeLayout.FairwayGapWidth:F0} m gap in a kit that spans "
+        float widest = Enumerable.Range(-10, 140).Select(i => Ships.NavigationGapWidth(i * 0.1f, i * 0.1f + 0.5f).piers).Max();
+        Assert.True(widest <= BridgeLayout.FreeSpanMaxWidth,
+            $"a {widest:F1} m gap in a kit that spans "
             + $"{BridgeLayout.FreeSpanMaxWidth:F0} m is a hole nothing we build can close");
     }
 
@@ -105,9 +105,9 @@ public class BridgeFreeSpanTests
             $"fixture drifted: pier {BridgeLayout.PierHeight(crossing, world):F1} m would stand, "
             + "so this is not the can't-build-a-pier case the rule is for");
 
-        var pieces = BridgeLayout.Solve(crossing, world, worldSeed: 1);
+        var pieces = BridgeStructures.Solve(crossing, world, 1);
         var postsInWater = pieces
-            .Where(p => p.Kind == StructurePieceKind.Post)
+            .Where(p => p.Kind == StructurePieceKind.Post && p.Prefab == BridgeLayout.PostPrefab)
             .Where(p => Mathf.Abs(p.Position.x) < 7f)
             .ToList();
         Assert.Empty(postsInWater);
@@ -120,7 +120,7 @@ public class BridgeFreeSpanTests
     public void TheSpanStillCarriesADeckRightAcross()
     {
         var (crossing, world) = Narrow();
-        var deck = BridgeLayout.Solve(crossing, world, worldSeed: 1)
+        var deck = BridgeStructures.Solve(crossing, world, 1)
             .Where(p => p.Kind == StructurePieceKind.Deck)
             .Select(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), crossing.FromBank))
             .ToList();
@@ -147,14 +147,14 @@ public class BridgeFreeSpanTests
     /// under test, so it is the thing called.
     /// </summary>
     [Theory]
-    // width, fairway, expected: gap = min(fairway, max(16, width*0.3)), + 2 m clearance
-    [InlineData(14f, 14f, true)]    // 14 m gap + 2 covers all 14 m
-    [InlineData(16f, 16f, true)]    // 16 m gap + 2 covers all 16 m
-    [InlineData(16f, 6f, false)]    //  6 m gap + 2 leaves 8 m of bank to stand on
-    [InlineData(16f, 0f, false)]    // not sailable at all: ordinary piered bridge
-    public void ACrossingThatIsAllBoatLaneIsSpannedRatherThanLeftEmpty(float width, float fairway, bool expected)
+    // width, fairway, river, expected: over a river under a low deck the gap is Ships.NavigationGapWidth (9.8 m) + 2 m clearance
+    [InlineData(11f, 11f, true, true)]     // 11.8 m covers all 11 m
+    [InlineData(14f, 14f, true, false)]    // but not 14 m: piers stand either side of the gap
+    [InlineData(16f, 16f, false, false)]   // as deep, but a lake: no gap, an ordinary piered bridge
+    [InlineData(16f, 0f, false, false)]    // not sailable at all: ordinary piered bridge
+    public void ACrossingThatIsAllBoatLaneIsSpannedRatherThanLeftEmpty(float width, float fairway, bool river, bool expected)
     {
-        var world = new ShallowFlat();
+        var world = new ShallowFlat { River = river };
         Vector2 a = new(-width * 0.5f, 0f), b = new(width * 0.5f, 0f);
         var crossing = RoadCrossing.Between(a, b, riverbedHeight: 26f, fairwayCenter: new Vector2(0f, 0f),
             fairwayWidth: fairway, CrossingKind.Bridge, FordStyle.None);
@@ -169,12 +169,13 @@ public class BridgeFreeSpanTests
 
     private sealed class ShallowFlat : WorldGenerator
     {
-        public override float GetHeight(float x, float z) => 31f;
+        public bool River;
+        public override float GetHeight(float x, float z) => 26f; // 4 m of water: a river a ship sails
         public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
         public override void GetRiverWeight(float x, float z, out float weight, out float width)
         {
-            weight = 0f;
-            width = 0f;
+            weight = River ? Mathf.Max(0f, 1f - Mathf.Abs(x) / 30f) : 0f;
+            width = River ? 60f : 0f;
         }
     }
 }

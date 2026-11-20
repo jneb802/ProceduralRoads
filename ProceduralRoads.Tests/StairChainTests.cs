@@ -32,23 +32,26 @@ public sealed class StairChainTests
         StairKit kit = StairKit.BlackMarble;
         // The chain's one rule, for approaches and road staircases alike.
         Assert.True(StairChain.CrossesLevel(32.5f, 34.5f, 34.5f));
-        Assert.False(StairChain.CrossesLevel(32.5f, 37.5f, 35.5f));
-        Assert.Equal(RoadStairRuns.ShallowDip, StairChain.ShallowDip);
+        Assert.True(StairChain.CrossesLevel(30.5f, 37.5f, 35.5f));
+        Assert.False(StairChain.CrossesLevel(29.5f, 37.5f, 35.5f));
+        Assert.Equal(StairKit.WalkwayCap, StairChain.ValleyDepth);
 
         var (below, up) = ShallowValley(kit);
-        Assert.True(RoadStairRuns.SpanTheValley(below, up, kit, Dip, 32.5f, 2f, (_, _) => true, out Vector2 from, level: true));
+        Assert.True(RoadStairRuns.SpanTheValley(below, up, kit, Dip, 32.5f, 2f, FlatRunJoinTests.Relay(Dip, new Vector2(4f, 0f), kit), (_, _) => true,
+            out StairPlan spanned, out Vector2 from, level: true));
         // No stair left down into the dip: floors at the tops' height from one top edge to the other.
         Assert.DoesNotContain(below.Pieces, p => p.Kind == StairPieceKind.Stair);
-        Assert.DoesNotContain(up.Pieces, p => p.Kind == StairPieceKind.Stair);
-        var floors = up.Pieces.Where(p => p.Kind == StairPieceKind.Landing).ToList();
+        Assert.DoesNotContain(spanned.Pieces, p => p.Kind == StairPieceKind.Stair);
+        var floors = spanned.Pieces.Where(p => p.Kind == StairPieceKind.Landing).ToList();
         Assert.Equal(4, floors.Count);
         Assert.All(floors, f => Assert.Equal(34.5f, f.Position.y + kit.FloorTop, 2));
         Assert.Equal(-4f, from.x, 2);
 
         // Control: as a deep valley (the span turning least, then lowest) it stays a rise down, a floor and a rise up.
         var (b2, u2) = ShallowValley(kit);
-        Assert.True(RoadStairRuns.SpanTheValley(b2, u2, kit, Dip, 32.5f, 2f, (_, _) => true, out _, level: false));
+        Assert.True(RoadStairRuns.SpanTheValley(b2, u2, kit, Dip, 32.5f, 2f, FlatRunJoinTests.Relay(Dip, new Vector2(4f, 0f), kit), (_, _) => true,
+            out StairPlan s2, out _, level: false));
         Assert.Contains(b2.Pieces, p => p.Kind == StairPieceKind.Stair);
-        Assert.Contains(u2.Pieces, p => p.Kind == StairPieceKind.Stair);
+        Assert.Contains(s2.Pieces, p => p.Kind == StairPieceKind.Stair);
     }
 }

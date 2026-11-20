@@ -11,7 +11,9 @@ namespace ProceduralRoads.Tests;
 /// leaves the outer paint cell on the bank; the paint-below rule keeps paint
 /// off it, and a flat core as wide as the road puts the paint on flat ground.
 /// Built with snapped paint and plain earthworks, so the cells are the ones
-/// the fixed cross-section gives.
+/// the fixed cross-section gives, and with the face rule off
+/// (RoadTerrainModifier.PaintFace), which would keep that cell's paint off the
+/// bank as well.
 /// </summary>
 public class CausewayPaintTests
 {
@@ -23,6 +25,7 @@ public class CausewayPaintTests
         using var scope = new ValheimWorldScope();
         using var plain = PlainEarthworks.Apply()
             .And(() => RoadTerrainModifier.PaintBelow, paintBelow)
+            .And(() => RoadTerrainModifier.PaintFace, 0f)
             .And(() => RoadProfile.FlatCoreRatio, flatCore);
         scope.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false });
         var zone = new Vector2s(0, 0);
@@ -42,8 +45,8 @@ public class CausewayPaintTests
     public void WithoutPaintBelowTheOuterPaintCellLiesOnTheBank()
     {
         var tc = Build(0f, RoadConstants.RoadFlatCoreRatio);
-        // The road runs along z = 0.5, so a cell is a metre out at z = 2 and 2.5 m at z = 3. Its far corner is only ~80 % levelled:
-        // ~0.8 m below the deck.
+        // The road runs along z = 0.5, so a cell is a metre out at z = 2 and 2.5 m at z = 3. Its far corner is only ~55 % levelled:
+        // ~1.7 m below the deck.
         Assert.True(tc.m_modifiedPaint[Index(0, 2)]);
         Assert.True(tc.m_levelDelta[Index(0, 3)] < tc.m_levelDelta[Index(0, 2)] - 0.5f);
     }

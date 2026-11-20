@@ -72,16 +72,22 @@ public static class StructurePlacement
     /// already generated, which is where a dedicated server's players actually
     /// are. A zone the world has not generated yet is left alone on purpose:
     /// it gets its pieces when it is generated. Returns (destroyed, zones).
+    /// With <paramref name="olderLayoutOnly"/>, only the crossing sites an older
+    /// layout solved (<see cref="BuiltBridges.OlderLayout"/>) are solved again
+    /// and their saved pieces replaced: the zones they stand in, or will, are
+    /// cleared and laid again, every other structure there from what it saved.
     /// </summary>
-    public static (int destroyed, int zones) RespawnFromPlans()
+    public static (int destroyed, int zones) RespawnFromPlans(bool olderLayoutOnly = false)
     {
         if (RoadLifecycleManager.WorkersOwnWorld) return (0, 0);
+        List<BuiltBridge>? sites = olderLayoutOnly ? BuiltBridges.OlderLayout() : null;
+        if (sites is { Count: 0 }) return (0, 0);
         // The ids come back because destruction is QUEUED: the old pieces are
         // still in ZDOMan's sector lookup while the replacements go in, and
         // without this the replacement pass would mistake them for pieces
         // already standing and skip every zone it was asked to rebuild.
         var condemned = new HashSet<ZDOID>();
-        int destroyed = ClearSpawnedPieces(condemned);
+        int destroyed = ClearSpawnedPieces(condemned, sites);
         int zones = SpawnInLoadedZones(condemned);
         zones += SpawnGhostsIntoGeneratedZones(condemned);
         return (destroyed, zones);
@@ -121,26 +127,55 @@ public static class StructurePlacement
         List<StructurePiece>? pieces = StructurePlans.BuildablePlanFor(zoneID);
         if (pieces == null)
             return 0;
+        // A bridge with pieces built keeps the kit they were built in: chosen with its first pieces, below, or here for a
+        // zone built already (a record that saved no kit) (RoadNetworkGenerator.ChooseKitsAsBuilt).
         if (StructurePlans.IsSpawned(zoneID))
+        {
+            RoadNetworkGenerator.ChooseKitsAsBuilt(pieces);
             return 0;
+        }
         // A zone whose pieces are already standing is recorded as spawned and
         // left alone; pieces condemned moments ago do not count as standing.
         if (StructurePlans.ZoneHasLivePieces(zoneID, condemned))
         {
+            RoadNetworkGenerator.ChooseKitsAsBuilt(pieces);
             StructurePlans.MarkSpawned(zoneID);
             return 0;
         }
 
-        StructurePlans.MarkSpawned(zoneID);
+        // A plan goes out whole: a zone waiting on a prefab not registered yet is not recorded as having its pieces,
+        // so it gets them on a later spawn once the prefab is there.
+        string? missing = MissingPrefab(pieces);
+        if (missing != null)
+        {
+            if (s_warnedPrefabs.Add(missing))
+                Log.LogWarning($"[BRIDGES] zone {zoneID}: pieces wait for missing prefab {missing}");
+            return 0;
+        }
+        // A bridge's pieces saved as its first zone is built, the kits chosen as they go out, among the kits installed now,
+        // and saved.
+        if (WorldGenerator.instance is WorldGenerator world) StructureSites.KeepFirstBuilt(pieces, world, condemned);
+        RoadNetworkGenerator.ChooseKitsAsBuilt(pieces);
         int spawned = SpawnPieces(pieces, ghost);
+        // Recorded only once the plan is out.
+        StructurePlans.MarkSpawned(zoneID);
         if (spawned > 0)
             Log.LogInfo($"[BRIDGES] zone {zoneID}: spawned {spawned} bridge pieces");
         return spawned;
     }
 
+    /// <summary>The first of these pieces' prefabs the scene does not have, or null when it has them all.</summary>
+    private static string? MissingPrefab(List<StructurePiece> pieces)
+    {
+        foreach (StructurePiece piece in pieces)
+            if (ZNetScene.instance.GetPrefab(piece.Prefab) == null)
+                return piece.Prefab;
+        return null;
+    }
+
     /// <summary>A piece's turn as spawned: pitch, yaw and roll in Unity's own Euler order, as the vanilla locations'
     /// children read: a vine hangs by its 180 degree roll. The roll was dropped here before
-    /// (the plain kit's toppled debris laid one too).</summary>
+    /// (the wooden kits' toppled debris laid one too).</summary>
     internal static Quaternion Rotation(StructurePiece piece) => Quaternion.Euler(piece.PitchDegrees, piece.YawDegrees, piece.RollDegrees);
 
     private static int SpawnPieces(List<StructurePiece> pieces, bool ghost, string? appendKey = null)
@@ -159,7 +194,7 @@ public static class StructurePlacement
             if (ghost)
                 ZNetView.StartGhostInit();
 
-            Quaternion rotation = Quaternion.Euler(piece.PitchDegrees, piece.YawDegrees, 0f);
+            Quaternion rotation = Rotation(piece);
             GameObject go = Object.Instantiate(prefab, piece.Position, rotation);
 
             ZNetView nview = go.GetComponent<ZNetView>();
@@ -169,7 +204,10 @@ public static class StructurePlacement
                 zdo.Set(MarkerHash, 1);
                 WearNTear wearNTear = go.GetComponent<WearNTear>();
                 if (wearNTear != null)
+                {
                     zdo.Set("health", wearNTear.m_health * piece.HealthFraction);
+                    ShowHealth(wearNTear, piece.HealthFraction);
+                }
             }
 
             if (ghost)
@@ -187,22 +225,47 @@ public static class StructurePlacement
     /// <summary>
     /// Destroy every piece this mod spawned, loaded or not, except in zones
     /// explored before the network, and forget which zones had them, so the
-    /// current plans can be spawned afresh. Server only.
+    /// current plans can be spawned afresh. Server only. With
+    /// <paramref name="sites"/>, only those saved crossing sites are forgotten,
+    /// and only the zones they stand in or are solved into now are cleared.
     /// </summary>
-    public static int ClearSpawnedPieces(ICollection<ZDOID>? condemned = null)
+    public static int ClearSpawnedPieces(ICollection<ZDOID>? condemned = null, List<BuiltBridge>? sites = null)
     {
         if (RoadLifecycleManager.WorkersOwnWorld) return 0;
         if (!IsServer || ZDOMan.instance == null || ZNetScene.instance == null)
             return 0;
         StructurePlans.InvalidatePlans();
-        StructurePlans.ForgetSpawned();
+        HashSet<Vector2s>? zones = null;
+        if (sites == null)
+        {
+            StructurePlans.ForgetSpawned();
+            // The pieces go, and the bridges and staircases are built again from the plans as their zones are, the held
+            // ground with them.
+            BuiltBridges.Reset();
+            BuiltStairs.Reset();
+        }
+        else
+        {
+            zones = new HashSet<Vector2s>();
+            foreach (BuiltBridge site in sites)
+                foreach (StructurePiece piece in site.Pieces)
+                    zones.Add(ZoneSystem.GetZone(piece.Position));
+            // The sites go, and are solved again as their first zone is built; the zones they are solved into now are
+            // cleared too, so no zone keeps a part of them.
+            BuiltBridges.Forget(sites);
+            foreach (Vector2s zone in StructurePlans.PlannedZones)
+                if (StructurePlans.PlanFor(zone)!.Exists(p => p.Crossing != null && BuiltBridges.IsOneOf(p.Crossing, sites)))
+                    zones.Add(zone);
+            StructurePlans.ForgetSpawned(zones);
+        }
 
         List<ZDO> tagged = new();
         foreach (var kv in ZDOMan.instance.m_objectsByID)
         {
             // A piece standing in a zone explored before this network stays, as everything there does
             // (NetworkCutoff); nothing could be built back there.
-            if (kv.Value.GetInt(MarkerHash) == 1 && !NetworkCutoff.Excludes(ZoneSystem.GetZone(kv.Value.GetPosition())))
+            Vector2s zone = ZoneSystem.GetZone(kv.Value.GetPosition());
+            if (kv.Value.GetInt(MarkerHash) == 1 && !NetworkCutoff.Excludes(zone) && (zones == null || zones.Contains(zone)))
                 tagged.Add(kv.Value);
         }
 

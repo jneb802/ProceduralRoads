@@ -17,8 +17,6 @@ public static class RoadConnectionPlanner
         { Name=name; Position=position; Radius=radius; }
     }
 
-    /// <param name="lastResort">Builds the location's last-resort road (one refused only for ending too far
-    /// under it) when nothing else connected it; null for none.</param>
     public static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority, Action<Location,string> report) =>
@@ -27,8 +25,7 @@ public static class RoadConnectionPlanner
     internal static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority,
-        Action<Location,string> report, Action<int>? settled = null, Action<int>? pricing = null, Action? pricedOne = null, Action? connecting = null,
-        Func<Location,bool>? lastResort = null)
+        Action<Location,string> report, Action<int>? settled = null, Action<int>? pricing = null, Action? pricedOne = null, Action? connecting = null)
     {
         if (locations.Count < 2) return;
         static (int,int) Key(int a,int b) => a<b ? (a,b) : (b,a);
@@ -118,14 +115,6 @@ public static class RoadConnectionPlanner
                             }
                             break;
                         }
-                }
-                // Every edge and the join tried: the road refused only for ending too far under the
-                // location, kept for it, rather than nothing.
-                if (!joined && lastResort != null && lastResort(locations[next]))
-                {
-                    report(locations[next],"connected by its last-resort road");
-                    tree.Add(next); remaining.Remove(next); settled?.Invoke(next);
-                    continue;
                 }
                 report(locations[next],joined ? "joined without a priced edge" : "new component; no priced connection to network");
                 tree.Add(next); remaining.Remove(next); settled?.Invoke(next);

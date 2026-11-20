@@ -51,10 +51,11 @@ public class FordTests
     private sealed class BandWorld : WorldGenerator
     {
         public Heightmap.Biome Land = Heightmap.Biome.Meadows;
+        public float HalfWidth = 14f;
         public override float GetHeight(float wx, float wy)
         {
             if (Mathf.Abs(wx) > 100f || Mathf.Abs(wy) > 100f) return 20f;
-            return Mathf.Abs(wx) < 14f ? 29.5f : 33f;
+            return Mathf.Abs(wx) < HalfWidth ? 29.5f : 33f;
         }
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
             GetHeight(wx, wy) < RoadConstants.SeaLevel - 2f ? Heightmap.Biome.Ocean : Land;
@@ -159,6 +160,37 @@ public class FordTests
         Assert.Null(Pathfinder(new BandWorld { Land = Heightmap.Biome.Meadows }, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
     }
 
+    /// <summary>
+    /// A ford walked cell by cell, its end not met, is banned as the search walked it (RoadNetworkGenerator.SearchedMoves):
+    /// banned by its two ends alone, which no step of the search spans, the search found the same ford again and the road
+    /// repeated the same search until its retries ran out. Banned by its moves, the search goes round.
+    /// </summary>
+    [Fact]
+    public void AWalkedFordIsBannedAsTheSearchWalkedIt()
+    {
+        var swamp = new BandWorld { Land = Heightmap.Biome.Swamp, HalfWidth = 30f };
+        var finder = Pathfinder(swamp, true);
+        var path = finder.FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f))!;
+        Assert.NotNull(path);
+        var c = Assert.Single(RoadCrossingDetector.Detect(path, swamp));
+        Assert.True(c.ToIndex - c.FromIndex >= 3, $"the ford is walked cell by cell ({c.FromIndex} -> {c.ToIndex})");
+
+        finder.BanJump(path[c.FromIndex], path[c.ToIndex]);
+        var again = finder.FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f))!;
+        Assert.Equal(path, again);
+
+        finder.ClearNoStairs();
+        var moves = RoadNetworkGenerator.SearchedMoves(path, c);
+        Assert.Equal(c.ToIndex - c.FromIndex, moves.Count);
+        foreach (var (from, to) in moves) finder.BanJump(from, to);
+        var round = finder.FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f));
+        Assert.NotNull(round);
+        Assert.NotEqual(path, round);
+        for (int i = 1; i < round!.Count; i++)
+            Assert.DoesNotContain(moves, m => (Vector2.Distance(m.from, round[i - 1]) <= RoadPathfinder.CellSize && Vector2.Distance(m.to, round[i]) <= RoadPathfinder.CellSize)
+                || (Vector2.Distance(m.from, round[i]) <= RoadPathfinder.CellSize && Vector2.Distance(m.to, round[i - 1]) <= RoadPathfinder.CellSize));
+    }
+
     // ---- detection and painting ----
 
     [Fact]
@@ -227,7 +259,7 @@ public class FordTests
         Assert.InRange(heading, BridgeLayout.SnapHeadingDegrees(bearing) - 0.01f, BridgeLayout.SnapHeadingDegrees(bearing) + 0.01f);
 
         // Every piece it lays out inherits that heading.
-        foreach (var piece in BridgeLayout.SolveComplete(bridge, world, 11)
+        foreach (var piece in BridgeStructures.SolveComplete(bridge, world, 11)
                      .Where(x => x.Kind != StructurePieceKind.Debris))
             Assert.True(BridgeLayout.HeadingIsPlaceable(piece.YawDegrees, 0.06f),
                 $"{piece.Prefab} at yaw {piece.YawDegrees:F2}");
@@ -254,7 +286,7 @@ public class FordTests
             if (style == FordStyle.Wade)
                 Assert.All(middle, p => Assert.InRange(p.h, world.Bed - 0.01f, world.Bed + 0.01f));
             else
-                Assert.All(middle, p => Assert.True(p.h >= RoadPathfinder.LandingFloor - 0.01f, $"raised ford point at {p.h:F2}"));
+                Assert.All(middle, p => Assert.True(p.h >= RoadWater.LandingFloor - 0.01f, $"raised ford point at {p.h:F2}"));
 
             // Both banks are served by road on the land side too.
             foreach (Vector2 bank in new[] { crossing.FromBank, crossing.ToBank })
@@ -314,19 +346,17 @@ public class FordTests
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, 0f), 0f, new Vector2(80f, 0f), 0f, 4f, "first"));
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, 40f), 0f, new Vector2(80f, 40f), 0f, 4f, "second"));
 
+            // The second road crosses on the first's ford: one crossing, the first road's (RoadRide: a road riding another
+            // builds no crossing of its own there), and none of its own anywhere else.
             var crossings = RoadNetworkGenerator.GetRoadCrossings();
-            Assert.Equal(2, crossings.Count);
+            Assert.Single(crossings);
             Assert.True(Mathf.Abs(aloneJump.a.y - crossings[0].FromBank.y) > RoadCrossing.SharedBankRadius,
                 $"the lone second road already crossed where the first does (y={aloneJump.a.y:F0})");
-            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[1]),
-                $"second road crossed at {crossings[1].FromBank}-{crossings[1].ToBank}, the first at {crossings[0].FromBank}-{crossings[0].ToBank}");
 
             // Sharing saves half the crossing price: a third road from twice as
             // far away still comes to the first crossing rather than pay for its own.
             Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, -80f), 0f, new Vector2(80f, -80f), 0f, 4f, "third"));
-            Assert.Equal(3, crossings.Count);
-            Assert.True(RoadCrossing.SameBanks(crossings[0], crossings[2]),
-                $"third road crossed at {crossings[2].FromBank}-{crossings[2].ToBank} instead of the shared crossing");
+            Assert.Single(crossings);
         }
         finally { TearDownGeneration(); }
     }

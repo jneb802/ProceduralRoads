@@ -66,13 +66,36 @@ public static class StairFiller
     /// <paramref name="pivot"/>, the inside corner of the old edge.
     /// <paramref name="belowIsFloor"/>: the piece below is a floor, level with
     /// the fillers, so a filler lying on it does not show. <paramref name="kinds"/>:
-    /// the kit's filler pieces (stone's when none are given).
+    /// the kit's filler pieces (stone's when none are given). The choice is the same wherever the pivot is: worked out once
+    /// round the origin for each heading, turn, width and kit (the search asks whether every turn it tries is held, see
+    /// StairLayout.Route.WedgeHeld, and solving afresh each time made it many times slower) and moved to the pivot.
     /// </summary>
     public static List<FillerPiece> Choose(Vector2 pivot, float oldHeading, int turnSteps, float width, bool belowIsFloor, FillerKind[]? kinds = null)
     {
+        FillerPiece[] around = Around(oldHeading, turnSteps, width, belowIsFloor, kinds);
+        var placed = new List<FillerPiece>(around.Length);
+        foreach (FillerPiece f in around) placed.Add(At(f, pivot));
+        return placed;
+    }
+
+    /// <summary>The fillers <see cref="Choose"/> chooses, round the origin: the one shared answer, never changed, which a
+    /// reader moves to its pivot (<see cref="At"/>). The search reads a turn's wedge so for every turn it tries
+    /// (StairLayout.Route.WedgeFits, WedgeHeld), with nothing allocated.</summary>
+    internal static FillerPiece[] Around(float oldHeading, int turnSteps, float width, bool belowIsFloor, FillerKind[]? kinds = null) =>
+        s_chosen.GetOrAdd((oldHeading, turnSteps, width, belowIsFloor, kinds ?? StairKit.Stone.Fillers),
+            k => Solve(new Vector2(0f, 0f), k.heading, k.turn, k.width, k.floor, k.kinds).ToArray());
+
+    /// <summary>A filler of <see cref="Around"/> moved to <paramref name="pivot"/>.</summary>
+    internal static FillerPiece At(FillerPiece around, Vector2 pivot) =>
+        new(around.Prefab, pivot + around.Back, around.Heading, around.Across, around.Depth);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(float heading, int turn, float width, bool floor, FillerKind[] kinds), FillerPiece[]> s_chosen = new();
+
+    private static List<FillerPiece> Solve(Vector2 pivot, float oldHeading, int turnSteps, float width, bool belowIsFloor, FillerKind[] kinds)
+    {
         var wedge = new Wedge(pivot, oldHeading, turnSteps, width, belowIsFloor);
         var pool = new List<(FillerPiece piece, ulong[] covers, float shows)>();
-        foreach (FillerPiece piece in Candidates(wedge, kinds ?? StairKit.Stone.Fillers))
+        foreach (FillerPiece piece in Candidates(wedge, kinds))
         {
             ulong[] covers = wedge.Covers(piece);
             if (System.Array.Exists(covers, w => w != 0)) pool.Add((piece, covers, wedge.Shows(piece)));

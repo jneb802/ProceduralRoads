@@ -123,96 +123,15 @@ public class BuriedPiecesTests : IDisposable
         {
             Assert.True(BuriedPieces.Known(kit.Stair));
             Assert.True(BuriedPieces.Known(kit.Floor));
-            Assert.True(BuriedPieces.Known(kit.Support));
             foreach (FillerKind f in kit.Fillers) Assert.True(BuriedPieces.Known(f.Prefab));
-            if (kit.Cantilever is CantileverKit ck)
-            {
-                Assert.True(BuriedPieces.Known(ck.Pillar));
-                Assert.True(BuriedPieces.Known(ck.Arch));
-                Assert.True(BuriedPieces.Known(ck.Beside));
-            }
         }
+        // And every piece StairSupport lays.
+        foreach (string support in new[] { "stone_wall_2x1", "stone_wall_1x1", "stone_arch", "blackmarble_2x1x1", "blackmarble_out_1", "blackmarble_outcorner" })
+            Assert.True(BuriedPieces.Known(support));
     }
 
     private sealed class SlopeWorld : WorldGenerator
     {
         public override float GetHeight(float wx, float wy) => 30f + 0.25f * wy;
-    }
-
-
-    private sealed class FlatWorld : WorldGenerator
-    {
-        public override float GetHeight(float wx, float wy) => 30f;
-    }
-
-
-    /// <summary>
-    /// A column with a corner on ground that is not known (NaN) is not carried down, whichever corner that is: Mathf.Min
-    /// drops a NaN read before a number, so a NaN at the first corner read was ignored and the column carried down by the
-    /// three corners known, while one at the last corner left it.
-    /// </summary>
-    [Theory]
-    [InlineData(-1, -1)] // only the first corner read, (-0.5, -0.5), stands on this vertex
-    [InlineData(0, 1)]   // only the last, (0.5, 0.5)
-    public void AColumnWithACornerOnUnknownGroundIsNotCarriedDown(int nanX, int nanZ)
-    {
-        StairRun run = Pillar(10f); // 9..11 over ground at 7.5: one pillar more where the ground is known
-        Assert.Equal(0, BuriedPieces.CarryColumns(run, (x, z) => x == nanX && z == nanZ ? float.NaN : 7.5f));
-        Assert.Single(run.Pieces);
-    }
-
-    private static StairRun Pillar(float y, bool cantilevered = false)
-    {
-        var run = new StairRun { From = new Vector2(0f, 0f), To = new Vector2(0f, 4f), Width = 2f };
-        run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairSupport, Prefab = "stone_pillar", Position = new Vector3(0f, y, 0f), Cantilevered = cantilevered });
-        return run;
-    }
-
-    /// <summary>
-    /// A 186-piece black marble staircase on a test world, from (-3848,-5016) to
-    /// (-3864,-5024): at -3850,-5020 a stair support was not all the way supported (the road earthwork lowered the earth and
-    /// the whole column collapsed). Black marble stacks 1 m columns; the finished-ground pass carried
-    /// a column at most 4 pillars, 4 m, so a road cut 6 m under it left it hanging. Carried to the finished ground, as deep
-    /// as the terrain writer lowers ground (8 m), whatever the kit's pillar.
-    /// </summary>
-    [Fact]
-    public void AMarbleColumnIsCarriedToTheFinishedGroundUnderADeepRoadCut()
-    {
-        var run = new StairRun { From = new Vector2(-3848f, -5016f), To = new Vector2(-3864f, -5024f), Width = 2f };
-        // Its bottom column piece's base on the ground the layout read, 57 m; the road's cut leaves it at 51 m.
-        run.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairSupport, Prefab = StairKit.BlackMarble.Support, Position = new Vector3(-3850f, 57.5f, -5020f) });
-        int added = BuriedPieces.CarryColumns(run, (x, z) => 51f);
-        float bottom = run.Pieces.Min(p => p.Position.y) - StairKit.BlackMarble.SupportHeight / 2f;
-        Assert.True(bottom <= 51f - StairLayout.SupportBury + 1e-3f, $"the column ends at {bottom:F2} over the 51 m finished ground ({added} carried)");
-        Assert.Equal(7, added);
-        // Stone stacks 2 m pillars: the same 8 m most.
-        Assert.Equal(4, BuriedPieces.CarryColumns(Pillar(10f), (x, z) => -20f));
-        var marble = new StairRun { From = new Vector2(0f, 0f), To = new Vector2(0f, 4f), Width = 2f };
-        marble.Pieces.Add(new StructurePiece { Kind = StructurePieceKind.StairSupport, Prefab = StairKit.BlackMarble.Support, Position = new Vector3(0f, 10f, 0f) });
-        Assert.Equal(8, BuriedPieces.CarryColumns(marble, (x, z) => -20f));
-    }
-
-    /// <summary>
-    /// The one column rule on the finished ground: a column whose base the network's earthwork left in the air is carried
-    /// on down until its base is SupportBury under the lowest ground at its corners (a road's cut 1.5 m under it: one
-    /// pillar more), but never by a pillar that would lie wholly under the ground; a cantilever's clipped pillars are left.
-    /// Before, a road's cut was guessed at the staircase's end (RoadCutAllowance 1.5 m) and the column sunk that far
-    /// whether the road cut there or not; where it filled instead, those pillars lay buried and broke.
-    /// </summary>
-    [Fact]
-    public void AColumnIsCarriedDownToTheFinishedGroundButNoPillarWhollyUnderIt()
-    {
-        StairRun cut = Pillar(10f); // 9..11, the road's cut leaves the ground at 7.5
-        Assert.Equal(1, BuriedPieces.CarryColumns(cut, (x, z) => 7.5f));
-        Assert.True(cut.Pieces.Min(p => p.Position.y) - 1f <= 7.5f - StairLayout.SupportBury);
-        Assert.Equal(0, BuriedPieces.CarryColumns(Pillar(10f), (x, z) => 10f));
-        // Ground 0.1 m over its base everywhere: the next pillar would lie wholly under it, so none.
-        StairRun sunk = Pillar(10f);
-        Assert.Equal(0, BuriedPieces.CarryColumns(sunk, (x, z) => 9.1f));
-        Assert.Equal(0, BuriedPieces.Drop(sunk, (x, z) => 9.1f));
-        Assert.Equal(0, BuriedPieces.CarryColumns(Pillar(10f, cantilevered: true), (x, z) => 0f));
-        // The same rule decides in the layout and on the finished ground.
-        Assert.True(BuriedPieces.ColumnGoesOn(9f, 7.5f, "stone_pillar", 2f, new Vector2(0f, 0f), 0f, (x, z) => 7.5f));
-        Assert.False(BuriedPieces.ColumnGoesOn(9f, 9.1f, "stone_pillar", 2f, new Vector2(0f, 0f), 0f, (x, z) => 9.1f));
     }
 }

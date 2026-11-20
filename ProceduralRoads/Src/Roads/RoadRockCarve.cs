@@ -35,6 +35,7 @@ public readonly struct RockClearance
 /// chunks are zeroed and saved directly. A chunk does not fall when the one
 /// under it goes, so what the carve cuts off would hang over the road: every
 /// chunk left touching neither the ground nor a chunk of the rock that stays
+/// (sharing a corner with it: <see cref="RoadRockPolicy.TouchingFragments"/>)
 /// is removed with the road's, quietly (<see cref="RoadRockPolicy.CutOff"/>).
 /// </summary>
 public static class RoadRockCarve
@@ -44,9 +45,10 @@ public static class RoadRockCarve
     /// <summary>The widest road's half-width: how far past a rock's footprint a road can touch it.</summary>
     internal const float WidestRoadHalfWidth = 4f;
 
-    /// <summary>Strips across the clearance the allowance
-    /// (<see cref="RoadRockPolicy.EdgeAllowance(float)"/>) is counted in.</summary>
-    public const int Strips = 10;
+    /// <summary>Strips across the clearance the way
+    /// (<see cref="RoadRockPolicy.WayStrips"/>) is counted in: 0.17 m each on a
+    /// 4 m road, whose way is then 10 of them (1.7 m).</summary>
+    public const int Strips = 20;
     /// <summary>Chunks hanging over the road up to this height are taken too:
     /// the game calls a chunk supported if its bounding box meets a neighbour's,
     /// so a carve left pieces floating at head height.</summary>
@@ -152,12 +154,25 @@ public static class RoadRockCarve
         result.chunkSize = result.onRoad > 0 ? size / result.onRoad : 0f;
         if (removed.Count == 0 && original != null)
         {
-            // Nothing of the copy is in the road: a swapped rock would only
+            // Nothing of the copy is in the way: a swapped rock would only
             // turn a whole rock into a fractured one (it looked the same, but
-            // mined differently and was not the rock the world placed).
-            UndoSwap(rock.gameObject, original, result);
-            result.outcome = Outcome.Untouched;
-            result.note = "no chunk in the road: left whole";
+            // mined differently and was not the rock the world placed) --
+            // unless the whole rock's own collider stands in the way.
+            original.SetActive(true);
+            Physics.SyncTransforms();
+            if (RoadRockPolicy.RestoresWholeRock(removed.Count, InTheWay(original.transform, near)))
+            {
+                UndoSwap(rock.gameObject, original, result);
+                result.outcome = Outcome.Untouched;
+                result.note = "no chunk in the road: left whole";
+                return result;
+            }
+            original.SetActive(false);
+            Physics.SyncTransforms();
+            ZNetScene.instance.Destroy(original);
+            result.rock = rock;
+            result.outcome = Outcome.Carved;
+            result.note = "the whole rock stood in the way, none of its chunks does: every chunk kept";
             return result;
         }
         if (original != null) ZNetScene.instance.Destroy(original);
@@ -189,6 +204,24 @@ public static class RoadRockCarve
         return result;
     }
 
+    /// <summary>Whether any collider of <paramref name="whole"/> stands in the way
+    /// (<see cref="RoadRockPolicy.WayStrips"/>) of any of these clearances.</summary>
+    private static bool InTheWay(Transform whole, List<RockClearance> near)
+    {
+        foreach (var box in near)
+        {
+            var (first, last) = RoadRockPolicy.WayStrips(Strips, 2f * box.Half.x);
+            if (last < first) continue;
+            float strip = box.Half.x / Strips;   // half a strip's width
+            float from = -box.Half.x + 2 * first * strip, to = -box.Half.x + 2 * (last + 1) * strip;
+            var at = box.Centre + box.Turn * Vector3.right * ((from + to) * 0.5f);
+            var half = new Vector3((to - from) * 0.5f, box.Half.y, box.Half.z);
+            foreach (var c in Physics.OverlapBox(at, half, box.Turn, ~0, QueryTriggerInteraction.Ignore))
+                if (c != null && c.transform.IsChildOf(whole)) return true;
+        }
+        return false;
+    }
+
     /// <summary>Put the whole rock back: the copy goes (and leaves the ghost list), the original is switched on again.</summary>
     private static void UndoSwap(GameObject copy, GameObject original, Result result)
     {
@@ -204,35 +237,43 @@ public static class RoadRockCarve
 
     /// <summary>
     /// The chunks taking <paramref name="taken"/> cuts off (<see cref="RoadRockPolicy.CutOff"/>),
-    /// read before any of them loses its collider. Two chunks touch when the real shape of
-    /// each comes within <see cref="RoadRockPolicy.FragmentTouch"/> of the other's bounds, as
-    /// two shapes that touch always do.
+    /// read before any of them loses its collider. Two chunks touch when they share a corner
+    /// (<see cref="RoadRockPolicy.TouchingFragments"/>), read from each chunk's own mesh. A chunk
+    /// whose shape cannot be read is not judged and stays, as one with no ground read under it does.
     /// </summary>
     private static List<int> CutOffChunks(MineRock5 rock, ICollection<int> taken)
     {
         var areas = rock.m_hitAreas;
         var standing = new List<int>();
-        var index = new Dictionary<Collider, int>();
         for (int i = 0; i < areas.Count; i++)
         {
             var c = areas[i].m_collider;
             if (c == null || !c.enabled || (areas[i].m_health <= 0f && !taken.Contains(i))) continue;
             standing.Add(i);
-            index[c] = i;
         }
-        var near = new Dictionary<int, HashSet<int>>();
+        var corners = new Dictionary<int, Vector3[]>();
         var ground = new Dictionary<int, bool>();
-        var grow = Vector3.one * RoadRockPolicy.FragmentTouch;
         foreach (int i in standing)
         {
-            Bounds b = areas[i].m_collider.bounds;
-            var mine = new HashSet<int>();
-            foreach (var c in Physics.OverlapBox(b.center, b.extents + grow, Quaternion.identity, ~0, QueryTriggerInteraction.Ignore))
-                if (c != null && index.TryGetValue(c, out int j) && j != i) mine.Add(j);
-            near[i] = mine;
-            ground[i] = OnGround(areas[i].m_collider);
+            var shape = Corners(areas[i].m_collider);
+            if (shape != null) corners[i] = shape;
+            ground[i] = shape == null || OnGround(areas[i].m_collider);
         }
-        return RoadRockPolicy.CutOff(standing, taken, i => ground[i], (i, j) => near[i].Contains(j) && near[j].Contains(i));
+        var touching = RoadRockPolicy.TouchingFragments(corners);
+        return RoadRockPolicy.CutOff(standing, taken, i => ground[i], (i, j) => touching.TryGetValue(i, out var t) && t.Contains(j));
+    }
+
+    /// <summary>A chunk's corners in world space: the vertices of its collider's mesh (every carvable rock's chunks
+    /// are readable mesh colliders, their render meshes, which the game itself combines), or null when they cannot be read.</summary>
+    private static Vector3[]? Corners(Collider chunk)
+    {
+        if (chunk is not MeshCollider mesh || mesh.sharedMesh == null || !mesh.sharedMesh.isReadable) return null;
+        var local = mesh.sharedMesh.vertices;
+        if (local.Length == 0) return null;
+        var toWorld = mesh.transform.localToWorldMatrix;
+        var world = new Vector3[local.Length];
+        for (int k = 0; k < local.Length; k++) world[k] = toWorld.MultiplyPoint3x4(local[k]);
+        return world;
     }
 
     /// <summary>
@@ -362,11 +403,11 @@ public static class RoadRockCarve
     }
 
     /// <summary>
-    /// The chunks to take: at every road point, the fewest that open a way a
-    /// player fits through (<see cref="RoadRockPolicy.ChunksToOpen"/>, strips
-    /// across the clearance, player height, <see cref="RoadRockPolicy.MinOpening"/>
-    /// wide), then those hanging over that way below the headroom.
-    /// <paramref name="hanging"/> is the second kind.
+    /// The chunks to take: at every road point, every chunk in the way
+    /// (<see cref="RoadRockPolicy.ChunksInTheWay"/>: strips across the
+    /// clearance, player height, <see cref="RoadRockPolicy.MinOpening"/> wide on
+    /// the road's centre line), then those hanging over the way below the
+    /// headroom. <paramref name="hanging"/> is the second kind.
     /// </summary>
     private static HashSet<int> ChooseChunks(MineRock5 rock, List<RockClearance> near, out HashSet<int> hanging)
     {
@@ -378,69 +419,55 @@ public static class RoadRockCarve
         }
         var removed = new HashSet<int>();
         hanging = new HashSet<int>();
-        var blockers = new List<IReadOnlyCollection<int>>(Strips);
-        var held = new List<bool>(Strips);
         foreach (var box in near)
         {
             Vector3 centre = box.Centre, half = box.Half;
             Quaternion turn = box.Turn;
-            float surface = box.Surface;
-            float allowance = RoadRockPolicy.EdgeAllowance(2f * half.x);
+            float surface = box.Surface, width = 2f * half.x;
             bool ours = false;
             foreach (var c in Physics.OverlapBox(centre, half, turn, ~0, QueryTriggerInteraction.Ignore))
                 if (c != null && index.TryGetValue(c, out int i) && !removed.Contains(i)) { ours = true; break; }
             if (ours)
-            {
-                blockers.Clear(); held.Clear();
-                var right = turn * Vector3.right;
-                var strip = new Vector3(half.x / Strips, half.y, half.z);
-                for (int s = 0; s < Strips; s++)
-                {
-                    var at = centre + right * (-half.x + (2 * s + 1) * strip.x);
-                    var mine = new List<int>(); bool other = false;
-                    foreach (var c in Physics.OverlapBox(at, strip, turn, ~0, QueryTriggerInteraction.Ignore))
-                    {
-                        if (c == null) continue;
-                        if (index.TryGetValue(c, out int i)) { mine.Add(i); continue; }
-                        if (c.GetComponentInParent<Heightmap>() != null || c.GetComponentInParent<Character>() != null ||
-                            c.GetComponentInParent<ItemDrop>() != null) continue;
-                        if (c.transform.IsChildOf(rock.transform)) continue;   // a chunk already switched off
-                        other = true;
-                    }
-                    blockers.Add(mine); held.Add(other);
-                }
-                RoadRockPolicy.ChunksToOpen(blockers, held, allowance, removed);
-            }
-            // Headroom: what of this rock hangs over the road above the
-            // clearance and below the headroom, with the same edge allowance
-            // as the road itself: the band is cut into the same strips and
-            // pieces go centre-first only until one open run is long enough.
-            // Without it a rock whose top leaned over the road's edge lost
-            // its top while its base stayed at the edge.
+                RoadRockPolicy.ChunksInTheWay(StripBlockers(centre, half, turn, width, index, removed, float.NegativeInfinity), width, removed);
+            // Headroom: what of this rock hangs over the way above the
+            // clearance and below the headroom, in the same strips. Without it
+            // a rock whose top leaned over the road lost its base and kept a
+            // top floating at head height; beside the way its top stays, as
+            // its base does.
             float from = surface + RoadRockProbe.ClearanceLift + 2f * half.y;
             if (Headroom > from - surface)
             {
                 var roofHalf = (surface + Headroom - from) * 0.5f;
-                var right = turn * Vector3.right;
-                var strip = new Vector3(half.x / Strips, roofHalf, half.z);
-                var roofBlockers = new List<IReadOnlyCollection<int>>(Strips);
-                var roofHeld = new List<bool>(Strips);
-                bool any = false;
-                for (int s = 0; s < Strips; s++)
-                {
-                    var at = new Vector3(centre.x, from + roofHalf, centre.z) + right * (-half.x + (2 * s + 1) * strip.x);
-                    var mine = new List<int>();
-                    foreach (var c in Physics.OverlapBox(at, strip, turn, ~0, QueryTriggerInteraction.Ignore))
-                        if (c != null && index.TryGetValue(c, out int i) && !removed.Contains(i) && c.bounds.min.y > surface + HangsAbove)
-                        { mine.Add(i); any = true; }
-                    roofBlockers.Add(mine); roofHeld.Add(false);
-                }
-                if (any)
-                    foreach (int i in RoadRockPolicy.ChunksToOpen(roofBlockers, roofHeld, allowance, removed))
-                        hanging.Add(i);
+                var roof = StripBlockers(new Vector3(centre.x, from + roofHalf, centre.z), new Vector3(half.x, roofHalf, half.z), turn, width,
+                    index, removed, surface + HangsAbove);
+                foreach (int i in RoadRockPolicy.ChunksInTheWay(roof, width, removed))
+                    hanging.Add(i);
             }
         }
         return removed;
+    }
+
+    /// <summary>Per strip across a box, this rock's chunks in it not yet taken whose lowest
+    /// point is over <paramref name="above"/>; only the way's strips are asked, the rest are empty.</summary>
+    private static List<IReadOnlyCollection<int>> StripBlockers(Vector3 centre, Vector3 half, Quaternion turn, float width,
+        Dictionary<Collider, int> index, HashSet<int> removed, float above)
+    {
+        var blockers = new List<IReadOnlyCollection<int>>(Strips);
+        var (first, last) = RoadRockPolicy.WayStrips(Strips, width);
+        var right = turn * Vector3.right;
+        var strip = new Vector3(half.x / Strips, half.y, half.z);
+        for (int s = 0; s < Strips; s++)
+        {
+            var mine = new List<int>();
+            if (s >= first && s <= last)
+            {
+                var at = centre + right * (-half.x + (2 * s + 1) * strip.x);
+                foreach (var c in Physics.OverlapBox(at, strip, turn, ~0, QueryTriggerInteraction.Ignore))
+                    if (c != null && index.TryGetValue(c, out int i) && !removed.Contains(i) && c.bounds.min.y > above) mine.Add(i);
+            }
+            blockers.Add(mine);
+        }
+        return blockers;
     }
 
     /// <summary>Item drops within <paramref name="radius"/> of a point: the

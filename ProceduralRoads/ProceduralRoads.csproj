@@ -29,6 +29,15 @@
         <DefineConstants>TRACE</DefineConstants>
     </PropertyGroup>
 
+    <!-- One owner per ground (docs/OWNERS.md "Ground readers"): the world's raw height readers are banned at compile
+         time (BannedSymbols.txt). Only NaturalGround (Src/Roads/NaturalGround*.cs), the blend and RoadBiome.At read them; RS0030 is an error in every build, not only -warnaserror. -->
+    <PropertyGroup>
+        <WarningsAsErrors>$(WarningsAsErrors);RS0030</WarningsAsErrors>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="3.3.4" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+        <AdditionalFiles Include="BannedSymbols.txt" />
+    </ItemGroup>
 
     <!-- Additional Content Files to Include in Project -->
     <ItemGroup>

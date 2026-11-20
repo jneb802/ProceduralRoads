@@ -1,0 +1,209 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using UnityEngine;
+using Xunit;
+using Valheim.Testing;
+using Valheim.Testing.Doubles;
+
+namespace ProceduralRoads.Tests;
+
+/// <summary>
+/// A road arriving at a staircase's foot is held to the foot's height, and the grade limiter keeps it on the line climbing
+/// to it at the cap. Where its ground climbs to the foot faster than that, the road stood on an embankment at the bottom of
+/// the climb, the ground lower on both sides (a road to a staircase's foot at -4764.9,1737.7 stood 6 m over a gully on a
+/// slope falling sideways). The staircase starts lower instead, where the road can climb to it following its ground
+/// (RoadStairRuns.StartLower): more stairs, no ridge.
+/// </summary>
+public sealed class StairFootApproachTests : IDisposable
+{
+    private readonly ValheimWorldScope _scope = new();
+    private readonly IDisposable _cap = StaticOverride.Keep(() => RoadNetworkGenerator.EarthworkCap);
+
+    public StairFootApproachTests() => RoadNetworkGenerator.Reset();
+
+    public void Dispose()
+    {
+        _cap.Dispose();
+        SetPathfinder(null);
+        RoadNetworkGenerator.Reset();
+        _scope.Dispose();
+    }
+
+    private static void SetPathfinder(RoadPathfinder? pathfinder) =>
+        typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!
+            .SetValue(null, pathfinder);
+
+    /// <summary>A slope falling 0.6 east (to +x), a shallow gully 1.5 m deep and 8 m wide along x = 0, running out over its last 30 m to z = 0, its floor
+    /// level at 150 south of z = -60 and climbing <see cref="Climb"/> from there to the foot of a face of 1 at z = 0, which
+    /// climbs 24 m to a flat top; sea past 200 m.</summary>
+    private sealed class GullyClimbWorld : WorldGenerator
+    {
+        public float Climb = 0.45f;
+
+        public override float GetHeight(float wx, float wy)
+        {
+            if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
+            float foot = 150f + 60f * Climb;
+            float along = wy <= -60f ? 150f : wy <= 0f ? 150f + Climb * (wy + 60f) : wy <= 24f ? foot + wy : foot + 24f;
+            float gully = Mathf.Abs(wx) < 4f ? 0.75f * (1f + Mathf.Cos(Mathf.PI * wx / 4f)) * Mathf.Clamp01(-wy / 30f) : 0f;
+            return along - 0.6f * Mathf.Clamp(wx, -40f, 40f) - gully;
+        }
+
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
+        public override int GetSeed() => 77;
+    }
+
+    /// <summary>The road north along the gully's floor (x = 0) from z = -120 to 48, the search's stair steps up the face from
+    /// z = 0 to 24 (the climb to the face's foot within the search's own grade), planned through the one pipeline.</summary>
+    private RoadNetworkGenerator.RoadPlan PlanUpTheGully(GullyClimbWorld world)
+    {
+        RoadNetworkGenerator.Reset();
+        _scope.WithWorld(world);
+        // The mod's earthwork cap (the suite runs with it off, PlainRoads).
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
+        var finder = new RoadPathfinder(world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f };
+        SetPathfinder(finder);
+        var path = new List<Vector2>();
+        for (float z = -120f; z <= 48f; z += RoadPathfinder.CellSize) path.Add(new Vector2(0f, z));
+        for (float z = 0f; z < 24f; z += RoadPathfinder.CellSize) finder.LastStairSteps.Add((new Vector2(0f, z), new Vector2(0f, z + RoadPathfinder.CellSize)));
+        return RoadNetworkGenerator.PlanFromPath(finder, path, path[0], 0f, path[path.Count - 1], 0f, false, false, true, true, 4f);
+    }
+
+    /// <summary>How far a road stands over the natural ground beside both its edges before it is on a ridge.</summary>
+    private const float OverBothSides = 1f;
+
+    /// <summary>The longest stretch, metres, of <paramref name="plans"/> standing more than <see cref="OverBothSides"/> over
+    /// the natural ground a metre out from both its edges, and where it is worst.</summary>
+    private static (float length, Vector2 at, float over) LongestRidge(List<RoadSpatialGrid.PlannedPath> plans, WorldGenerator world)
+    {
+        float Ground(Vector2 p) => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+        float side = RoadNetworkGenerator.RoadWidth / 2f + 1f;
+        (float length, Vector2 at, float over) longest = (0f, default, 0f);
+        foreach (RoadSpatialGrid.PlannedPath plan in plans)
+        {
+            if (plan.FollowTerrain) continue;
+            float run = 0f, worst = 0f;
+            Vector2 worstAt = default;
+            for (int i = 0; i < plan.Points.Count; i++)
+            {
+                Vector2 p = plan.Points[i];
+                Vector2 along = (plan.Points[Mathf.Min(i + 1, plan.Points.Count - 1)] - plan.Points[Mathf.Max(0, i - 1)]).normalized;
+                Vector2 across = new(-along.y, along.x);
+                float over = Mathf.Min(plan.Heights[i] - Ground(p + across * side), plan.Heights[i] - Ground(p - across * side));
+                if (over <= OverBothSides) { run = 0f; worst = 0f; continue; }
+                if (i > 0) run += Vector2.Distance(plan.Points[i - 1], p);
+                if (over > worst) (worst, worstAt) = (over, p);
+                if (run > longest.length) longest = (run, worstAt, worst);
+            }
+        }
+        return longest;
+    }
+
+    /// <summary>The gully's floor climbing 0.45 for 60 m to the face's foot, within the search's grade but over the road's cap:
+    /// held to the foot, the road stood on the line climbing to it at the cap, up to 6 m over the floor at the bottom of the
+    /// climb and over the ground on both sides for 25 m. The staircase starts at the bottom of the climb instead, and the road
+    /// runs on the gully's floor to it: on no ridge.</summary>
+    /// <summary>The road's ground falling 0.25 m per metre back from a staircase's foot (at -4376,1368 the road to a foot read
+    /// 0 m under the cap line stood on 1.1 m of fill): under the line climbing at the cap, it is never under the road; but the
+    /// road ends at the foot on its level landing (6 m at 5 %, RoadPitches.ClimbToFoot), and 6 m back that stands 1.2 m over
+    /// the ground, past ApproachFill. On plain roads (no landing) the cap line is the road's.</summary>
+    [Fact]
+    public void TheApproachToAFootIsReadOnItsRoadsLanding()
+    {
+        var path = new List<Vector2>();
+        for (int x = 0; x <= 40; x += 2) path.Add(new Vector2(x, 0f));
+        float Falling(Vector2 p) => 100f - 0.25f * p.x;
+        Assert.Equal(0f, RoadStairRuns.ApproachUnder(path, 0, 1, path.Count - 1, Falling, 0.35f), 3);
+        using var landing = StaticOverride.Keep(() => RoadPitches.JunctionLanding);
+        RoadPitches.JunctionLanding = (float)PlainRoads.ModDefaults["junction landing"];
+        float under = RoadStairRuns.ApproachUnder(path, 0, 1, path.Count - 1, Falling, 0.35f);
+        Assert.Equal(1.2f, under, 2);
+        Assert.True(under > RoadStairRuns.ApproachFill);
+    }
+
+    [Fact]
+    public void AStaircaseStartsLowerThanARoadOnAnEmbankmentToItsFoot()
+    {
+        var world = new GullyClimbWorld();
+        var planned = PlanUpTheGully(world);
+        Assert.Equal(RoadNetworkGenerator.PlanStop.Planned, planned.Stop);
+        Assert.NotNull(planned.Plans);
+        var ridge = LongestRidge(planned.Plans!, world);
+        Assert.True(ridge.length < 2f, FormattableString.Invariant(
+            $"the road to the staircase's foot stands over the ground on both sides for {ridge.length:F1} m, {ridge.over:F1} m at ({ridge.at.x:F1}, {ridge.at.y:F1})"));
+        RoadStairSpan stairs = Assert.Single(planned.Stairs);
+        Assert.Equal(1, RoadStairRuns.FeetStartedLower);
+        // Its foot at the bottom of the climb, on the ground the road arrives on.
+        Assert.True(stairs.FromHeight < 150f + 0.45f * 10f, FormattableString.Invariant($"the staircase's foot stands at {stairs.FromHeight:F1}"));
+        Assert.True(Mathf.Abs(stairs.FromHeight - BiomeBlendedHeight.GetBlendedHeight(stairs.FromPoint.x, stairs.FromPoint.y, world)) < 0.5f);
+    }
+
+    /// <summary>The floor climbing 0.3, within the road's cap: the road climbs to the face's foot on its ground, and the
+    /// staircase starts where the search put it.</summary>
+    [Fact]
+    public void AStaircaseItsRoadClimbsToStartsWhereTheSearchPutIt()
+    {
+        var world = new GullyClimbWorld { Climb = 0.3f };
+        var planned = PlanUpTheGully(world);
+        Assert.NotNull(planned.Plans);
+        RoadStairSpan stairs = Assert.Single(planned.Stairs);
+        Assert.Equal(0, RoadStairRuns.FeetStartedLower);
+        Assert.True(stairs.FromPoint.y > -RoadPathfinder.CellSize, $"the staircase starts at {stairs.FromPoint}");
+        Assert.True(LongestRidge(planned.Plans!, world).length < 2f);
+    }
+
+    /// <summary>
+    /// The ground along a road climbing south (to -z) from a bank at x = 3672 to a staircase up a face, as read in game around a
+    /// black marble staircase in the Mistlands: <paramref name="p"/>'s metres along the road from (3672,6800) are 6800 - z. The
+    /// bank falls 0.1 per metre back to the road's start; from the foot the staircase was started at (z 6784, 40 m) the ground
+    /// climbs 4.5 m over 44 m to the search's foot (z 6740, 44.5 m), crossed every 4 m by a runnel 2.5 m deep and narrower
+    /// than the road's points are apart (Mistlands ground), so the approach to every point of it but the bank's dips into one;
+    /// past it the face climbs 0.51 per metre.
+    /// </summary>
+    private static float RunnelledClimb(Vector2 p)
+    {
+        float s = 6800f - p.y;
+        if (s <= 16f) return 40f - 0.1f * (16f - s);
+        if (s >= 60f) return 44.5f + 0.51f * (s - 60f);
+        float runnel = Mathf.Abs(((s - 15f) % 4f + 4f) % 4f - 2f) < 0.25f ? 2.5f : 0f;
+        return 40f + 4.5f * (s - 16f) / 44f - runnel;
+    }
+
+    /// <summary>The road a point every 2 m from (3672,6800) to (3672,6700); the search's foot at z 6740 and top at z 6700.</summary>
+    private static (List<Vector2> path, int foot, int top) UpTheRunnels()
+    {
+        var path = new List<Vector2>();
+        for (int i = 0; i <= 50; i++) path.Add(new Vector2(3672f, 6800f - 2f * i));
+        return (path, 30, 50);
+    }
+
+    /// <summary>The road arriving at a staircase's foot cannot climb to it on its ground (a runnel under the line to the foot,
+    /// ApproachUnder past ApproachFill), nor to any point of the 44 m of ground climbing 4.5 m behind it; it can to the bank
+    /// there. Started lower on the bank (as in game: a foot moved 43 m down its road), the staircase took no height a road
+    /// could not over those 44 m: it was laid as 18 level floors over 28 m and three short rests, a road's ground. A foot
+    /// moves back along its road only to ground lower than its road could climb to the foot from (RoadPitches.ClimbToFoot at
+    /// the cap): here none, and the staircase starts where the search put it.</summary>
+    [Fact]
+    public void AStaircaseDoesNotStartLowerOverGroundItsRoadCouldClimb()
+    {
+        var (path, foot, top) = UpTheRunnels();
+        Assert.True(RoadStairRuns.ApproachUnder(path, foot, -1, 0, RunnelledClimb, RoadGrade.Configured) > RoadStairRuns.ApproachFill);
+        var stretch = RoadStairRuns.StartLower(path, (foot, top), -1, path.Count, Array.Empty<RoadCrossing>(), RunnelledClimb);
+        Assert.True(stretch == (foot, top), FormattableString.Invariant(
+            $"the foot at ({path[foot].x:F1}, {path[foot].y:F1}) ground {RunnelledClimb(path[foot]):F1} started lower at ({path[stretch.from].x:F1}, {path[stretch.from].y:F1}) ground {RunnelledClimb(path[stretch.from]):F1}, {RoadStairRuns.Along(path, stretch.from, foot):F0} m back"));
+    }
+
+    /// <summary>The same road with the ground under the search's foot's approach 15 m lower than the bank's (a face's foot
+    /// over a gorge): the staircase still starts lower, at the first point its road climbs to.</summary>
+    [Fact]
+    public void AStaircaseStillStartsLowerOverGroundItsRoadCouldNotClimb()
+    {
+        var (path, foot, top) = UpTheRunnels();
+        float Deep(Vector2 p) => RunnelledClimb(p) + (6800f - p.y >= 18f ? 15f : 0f);
+        var stretch = RoadStairRuns.StartLower(path, (foot, top), -1, path.Count, Array.Empty<RoadCrossing>(), Deep);
+        Assert.Equal((8, top), stretch);
+    }
+}

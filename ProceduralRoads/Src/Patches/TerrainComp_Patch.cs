@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using HarmonyLib;
 
 namespace ProceduralRoads;
@@ -19,6 +20,26 @@ public static class TerrainComp_Patch
             if (!RoadNetworkGenerator.RoadsAvailable)
                 return;
             RoadTerrainModifier.OnTerrainCompilerReady(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(TerrainComp), nameof(TerrainComp.ApplyToHeightmap))]
+    public static class TerrainComp_ApplyToHeightmap_Patch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(TerrainComp __instance, List<float> heights, Heightmap hm)
+        {
+            RoadTerrainModifier.ApplyPendingTerrain(__instance, hm, heights);
+        }
+    }
+
+    [HarmonyPatch(typeof(TerrainComp), nameof(TerrainComp.OnDestroy))]
+    public static class TerrainComp_OnDestroy_Patch
+    {
+        [HarmonyPrefix]
+        public static void Prefix(TerrainComp __instance)
+        {
+            RoadTerrainModifier.OnTerrainCompilerDestroyed(__instance);
         }
     }
 }

@@ -31,7 +31,10 @@ namespace ProceduralRoads
     {
         private static bool Prefix(ZRpc rpc, ZPackage pkg, ref ZNet __instance)
         {
-            if (!__instance.IsServer() || RpcHandlers.ValidatedPeers.Contains(rpc)) return true;
+            if (!__instance.IsServer()) return true;
+            // While the road network is being generated, every joining peer, modded or not, waits.
+            if (JoinHold.Refuse(rpc)) return false;
+            if (RpcHandlers.ValidatedPeers.Contains(rpc)) return true;
             // A modded client's version answer is queued on its socket before
             // its PeerInfo, so by now the server has recorded a match, another
             // version, or nothing. Nothing means no ProceduralRoads on the

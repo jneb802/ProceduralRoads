@@ -48,7 +48,84 @@ public class RoadEdgesAndVegetationTests
         return hm.m_terrainComp!;
     }
 
+    [Fact]
+    public void ANarrowRoadBesideABorderGivesBothZonesTheSameBorderHeights()
+    {
+        var world = new SlopeWorld();
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        try
+        {
+            RoadSpatialGrid.Clear();
+            // A 2 m road 2.5 m east of x = 32, the border between zones (0,0)
+            // and (1,0). It levels terrain out to 1 + 2 = 3 m, so it reaches
+            // the border vertices, which both zones hold.
+            RoadNorthSouth(34.5f, 2f, world);
+            TerrainComp west = Write(new Vector2s(0, 0));
+            TerrainComp east = Write(new Vector2s(1, 0));
 
+            const int pitch = 65;
+            bool reached = false;
+            for (int vz = 0; vz < pitch; vz++)
+            {
+                float fromEast = east.m_levelDelta[vz * pitch + 0];  // x = 32 in zone (1,0)
+                float fromWest = west.m_levelDelta[vz * pitch + 64]; // x = 32 in zone (0,0)
+                Assert.Equal(fromEast, fromWest, 4);
+                if (Mathf.Abs(fromEast) > 0.01f)
+                    reached = true;
+            }
+            Assert.True(reached, "the road did not reach the border, so this shows nothing");
+        }
+        finally
+        {
+            RoadSpatialGrid.Clear();
+        }
+    }
+
+    [Theory]
+    [InlineData(2f, 3f)]
+    [InlineData(3f, 3.5f)]
+    [InlineData(4f, 4f)]
+    [InlineData(10f, 10f)]
+    public void AZoneSeesPointsAsFarAsTheyReachAndFromFourMetresUpAsBefore(float width, float reach)
+    {
+        // The plain cross-section's reach; the earthworks widen it (below).
+        using (PlainEarthworks.Apply().And(() => RoadTerrainModifier.BatterPerMetre, 0f))
+            Assert.Equal(reach, RoadSpatialGrid.ZoneReach(width), 5);
+        // With the earthworks a zone sees as far as they can reach.
+        Assert.Equal(Mathf.Max(width, RoadTerrainModifier.GatherRadius(width)), RoadSpatialGrid.ZoneReach(width), 5);
+        Assert.True(RoadSpatialGrid.ZoneReach(width) >= reach);
+    }
+
+    [Fact]
+    public void AZoneARoadOnlyBrushesHasNothingToWriteAndIsNotStamped()
+    {
+        // The plain cross-section (60 % flat core, no earthwork widening),
+        // whose reach the 3.9 m below is set against.
+        var world = new SlopeWorld();
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        using var plain = PlainEarthworks.Apply()
+            .And(() => RoadTerrainModifier.BatterPerMetre, 0f)
+            .And(() => RoadProfile.FlatCoreRatio, RoadConstants.RoadFlatCoreRatio);
+        try
+        {
+            RoadSpatialGrid.Clear();
+            // A 4 m road 3.9 m east of the border: zone (0,0) sees its points
+            // (within 4 m), but at 3.9 m the level blend is all but gone and
+            // its paint does not reach.
+            RoadNorthSouth(35.9f, 4f, world);
+            Assert.NotEmpty(RoadSpatialGrid.GetRoadPointsInZone(new Vector2s(0, 0)));
+
+            TerrainComp west = Write(new Vector2s(0, 0));
+            Assert.Equal(RoadTerrainModifier.WriteOutcome.NothingToWrite, RoadTerrainModifier.LastWriteOutcome);
+            Assert.Equal(0, west.SaveCount);
+            Assert.False(RoadTerrainModifier.CarriesCurrentRoads(west));
+
+            TerrainComp east = Write(new Vector2s(1, 0));
+            Assert.Equal(RoadTerrainModifier.WriteOutcome.Written, RoadTerrainModifier.LastWriteOutcome);
+            Assert.Equal(1, east.SaveCount);
+        }
+        finally { RoadSpatialGrid.Clear(); }
+    }
 
     private static readonly int Tree = "Beech1".GetStableHashCode();
     private static readonly int Wall = "stone_wall_1x1".GetStableHashCode();
@@ -184,7 +261,7 @@ public class RoadEdgesAndVegetationTests
         RoadClearAreaManager.ClearCache();
         try
         {
-            RoadSpatialGrid.AddRoadPath(path, width, world);
+            Assert.True(RoadSpatialGrid.AddRoadPath(path, width, world));
             RoadSpatialGrid.FinalizeRoadNetwork();
             body();
         }
@@ -231,15 +308,212 @@ public class RoadEdgesAndVegetationTests
     }
 
     /// <summary>
-    /// The whole width of the road is inside its clear areas, at every point
-    /// and at any heading: straight along an axis off the old 4 m grid, and
-    /// on the diagonal, where squares have the least reach across the road.
+    /// Vegetation may creep onto the outer 10 % of the road: on a 4 m road
+    /// along an axis the clear areas reach 1.8 m from its centre line. A bush
+    /// on the outer edge stays; one in the middle goes, in a zone generated
+    /// with the road (the game's own square test of the same areas) and in
+    /// one the server clears afterwards alike.
+    /// </summary>
+    [Fact]
+    public void VegetationMayCreepOntoTheOuterEdgeOfTheRoad()
+    {
+        const float x = 121.85f, width = 4f;
+        var path = new List<Vector2>();
+        for (float z = -104f; z <= -24f; z += 8f)
+            path.Add(new Vector2(x, z));
+        WithRoad(path, width, () =>
+        {
+            List<VegetationClearing.Area> areas = RoadAreas(new Vector2s(2, -1));
+            var vegetation = new HashSet<int> { SmallBeech };
+            foreach (float side in new[] { -1f, 1f })
+            {
+                var middle = new Vector2(x + side * 0.43f * width, -65f);
+                var edge = new Vector2(x + side * 0.48f * width, -65f);
+                Assert.True(VegetationClearing.InsideClearArea(areas, middle));
+                Assert.True(VegetationClearing.ShouldRemove(SmallBeech, middle, false, vegetation, areas, NoLocations, NoPlayerGround));
+                Assert.False(VegetationClearing.InsideClearArea(areas, edge));
+                Assert.False(VegetationClearing.ShouldRemove(SmallBeech, edge, false, vegetation, areas, NoLocations, NoPlayerGround));
+            }
+        });
+    }
+
+    private static readonly int SwampTree = "SwampTree1".GetStableHashCode();
+    private static readonly int BigSwampTree = "SwampTree2".GetStableHashCode();
+    private static readonly int Pine = "Pinetree_01".GetStableHashCode();
+    private static readonly int Bush = "Bush01_0".GetStableHashCode();
+
+    /// <summary>The zone's road points as the grown-tree rule reads them (ServerTerrainBake.RoadCentresFor).</summary>
+    private static List<VegetationClearing.RoadCentre> RoadCentres(Vector2s zone) => RoadClearAreaManager.GetOrCreateRoadCentres(zone);
+
+    /// <summary>Generation's test of one candidate (ZoneSystem_PlaceVegetation_Patch: the road's clear areas after none of
+    /// the game's, the zone's road centres, the drawn scale).</summary>
+    private static bool PlacedOffTheRoad(Vector2s zone, Vector2 at, string prefab, float scale) =>
+        !RoadClearAreaManager.OnRoad(RoadClearAreaManager.GetOrCreateClearAreas(zone), 0, int.MaxValue, RoadCentres(zone),
+            new Vector3(at.x, 40f, at.y), prefab, scale, RockClearingMode.Carve, _ => Heightmap.Biome.Meadows);
+
+    /// <summary>The server's test of one saved object.</summary>
+    private static bool Cleared(Vector2s zone, Vector2 at, int prefab, float scale) =>
+        VegetationClearing.ShouldRemove(prefab, at, false, new HashSet<int> { prefab }, RoadAreas(zone), NoLocations, NoPlayerGround,
+            RoadCentres(zone), scale);
+
+    /// <summary>
+    /// Seen in a swamp: a SwampTree1 2.68 m from the centre of a 4 m road, its origin just past the clear areas (1.8 m),
+    /// its trunk -- 2.41 m from the origin at scale 1 -- over the road. A grown tree whose trunk reaches the road goes, in a
+    /// zone generated with the road and in one the server clears alike; a bush on the same spot is creep and stays; a grown
+    /// tree whose trunk ends short of the road stays, and how far that is follows the tree's scale and trunk.
+    /// </summary>
+    [Fact]
+    public void AGrownTreeWhoseTrunkReachesTheRoadGoesAndABushThereMayStay()
+    {
+        const float x = 121.85f, width = 4f;
+        var path = new List<Vector2>();
+        for (float z = -104f; z <= -24f; z += 8f)
+            path.Add(new Vector2(x, z));
+        WithRoad(path, width, () =>
+        {
+            var zone = new Vector2s(2, -1);
+            foreach (float side in new[] { -1f, 1f })
+            {
+                var edge = new Vector2(x + side * 2.68f, -65f);
+                Assert.False(VegetationClearing.InsideClearArea(RoadAreas(zone), edge));
+
+                // 2 + 2.41 + 0.25 = 4.66 m: the swamp tree's trunk reaches the road.
+                Assert.False(PlacedOffTheRoad(zone, edge, "SwampTree1", 1f));
+                Assert.True(Cleared(zone, edge, SwampTree, 1f));
+                // A bush there is creep.
+                Assert.True(PlacedOffTheRoad(zone, edge, "Bush01_0", 1f));
+                Assert.False(Cleared(zone, edge, Bush, 1f));
+                Assert.True(PlacedOffTheRoad(zone, edge, "Beech_small1", 1.5f));
+                Assert.False(Cleared(zone, edge, SmallBeech, 1.5f));
+                // A pine's trunk is 0.33 m: at 2.68 m it ends short of the road (2 + 0.33 + 0.25 = 2.58 m).
+                Assert.True(PlacedOffTheRoad(zone, edge, "Pinetree_01", 1f));
+                Assert.False(Cleared(zone, edge, Pine, 1f));
+
+                // Well clear: 5 m off, past the swamp tree's 4.66 m at scale 1; at scale 1.3 it reaches 5.38 m.
+                var clear = new Vector2(x + side * 5f, -65f);
+                Assert.True(PlacedOffTheRoad(zone, clear, "SwampTree1", 1f));
+                Assert.False(Cleared(zone, clear, SwampTree, 1f));
+                Assert.False(PlacedOffTheRoad(zone, clear, "SwampTree1", 1.3f));
+                Assert.True(Cleared(zone, clear, SwampTree, 1.3f));
+                var farOff = new Vector2(x + side * 9f, -65f);
+                Assert.True(PlacedOffTheRoad(zone, farOff, "SwampTree2", 2f));
+                Assert.False(Cleared(zone, farOff, BigSwampTree, 2f));
+            }
+        });
+    }
+
+    /// <summary>
+    /// A grown tree may reach a road outside its zone: an AshlandsTree6 at scale 2.5 inside the zone, 10.5 m from a
+    /// road beyond the zone's border, has its trunk on that road. The zone's road centres reach as far as the widest
+    /// trunk at the largest scale.
+    /// </summary>
+    [Fact]
+    public void AGrownTreeIsTestedAgainstARoadBeyondItsZone()
+    {
+        const float x = 170f;
+        var path = new List<Vector2>();
+        for (float z = -104f; z <= -24f; z += 8f)
+            path.Add(new Vector2(x, z));
+        WithRoad(path, 4f, () =>
+        {
+            var zone = new Vector2s(2, -1);
+            var tree = new Vector2(159.5f, -65f);
+            Assert.Equal(zone, ZoneSystem.GetZone(new Vector3(tree.x, 0f, tree.y)));
+            Assert.NotEqual(zone, ZoneSystem.GetZone(new Vector3(x, 0f, tree.y)));
+            Assert.False(VegetationClearing.InsideClearArea(RoadAreas(zone), tree));
+            // 2 + 4.32 x 2.5 + 0.25 = 13.05 m.
+            Assert.False(PlacedOffTheRoad(zone, tree, "AshlandsTree6", 2.5f));
+            Assert.True(Cleared(zone, tree, "AshlandsTree6".GetStableHashCode(), 2.5f));
+            Assert.True(VegetationClearing.TreeReach >= 4.32f * VegetationClearing.LargestTreeScale);
+        });
+    }
+
+    /// <summary>
+    /// Creep is the small vegetation: saplings, small trees, bushes, stumps, logs and small stones are not grown trees,
+    /// nor are the large rocks, which are the rock clearing's.
+    /// </summary>
+    [Fact]
+    public void OnlyFullSizeTreesAreGrownTrees()
+    {
+        foreach (string tree in new[] { "Beech1", "Birch1", "Birch2_aut", "Oak1", "FirTree", "Pinetree_01", "SwampTree1", "SwampTree2", "YggaShoot1", "AshlandsTree6" })
+        {
+            Assert.True(VegetationClearing.IsGrownTree(tree, out float reach), tree);
+            Assert.True(reach > 0f, tree);
+            Assert.True(VegetationClearing.IsGrownTree(tree.GetStableHashCode(), out float byHash) && byHash == reach, tree);
+        }
+        foreach (string creep in new[] { "Beech_small1", "Beech_small2", "FirTree_small", "FirTree_small_dead", "YggaShoot_small1", "Bush01_0",
+                     "shrub_2", "stubbe_0", "FirTree_oldLog", "SwampTree2_log", "Pickable_Stone", "Pickable_Branch" })
+            Assert.False(VegetationClearing.IsGrownTree(creep, out _), creep);
+        foreach (string rock in RoadRockPolicy.KnownRocks)
+            Assert.False(VegetationClearing.IsGrownTree(rock, out _), rock);
+    }
+
+    private static readonly int Stone = "Pickable_Stone".GetStableHashCode();
+    private static readonly int Boulder = "rock1_mountain".GetStableHashCode();
+    private static readonly int MistlandsCliff = "cliff_mistlands1".GetStableHashCode();
+
+    /// <summary>
+    /// The game's vegetation list holds stones and boulders alike. A small stone in the middle of the road goes with the
+    /// vegetation; a boulder there that the rock clearing takes is the rock clearing's alone (Carve carves it), so the
+    /// vegetation pass never takes it. A boulder the rock clearing would leave -- clearing Off, a biome it does not clear --
+    /// goes with the vegetation, as generation keeps it off the road.
+    /// </summary>
+    [Fact]
+    public void ASmallStoneGoesWithTheVegetationAndALargeRockIsLeftToTheRockClearing()
+    {
+        var vegetation = new HashSet<int> { Tree, Stone, Boulder, MistlandsCliff };
+        var centre = new Vector2(10f, 10f);
+        System.Func<Vector2, Heightmap.Biome> In(Heightmap.Biome b) => _ => b;
+        Assert.True(VegetationClearing.ShouldRemove(Stone, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.Mountain)));
+        Assert.False(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.Mountain)));
+        Assert.False(VegetationClearing.ShouldRemove(MistlandsCliff, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.Mistlands)));
+        Assert.True(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            rockClearing: RockClearingMode.Off, biomeAt: In(Heightmap.Biome.Mountain)));
+        Assert.True(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.AshLands)));
+        Assert.True(VegetationClearing.ShouldRemove(Boulder, centre, false, vegetation, Areas, NoLocations, NoPlayerGround,
+            rockClearing: RockClearingMode.Carve, biomeAt: In(Heightmap.Biome.DeepNorth)));
+        foreach (string rock in RoadRockPolicy.KnownRocks)
+        {
+            Assert.True(VegetationClearing.IsRock(rock.GetStableHashCode()), rock);
+            Assert.False(VegetationClearing.LeftToRockClearing(rock.GetStableHashCode(), Heightmap.Biome.Mountain, RockClearingMode.Off), rock);
+        }
+        Assert.False(VegetationClearing.IsRock(Stone));
+        Assert.False(VegetationClearing.IsRock(Tree));
+    }
+
+    /// <summary>A structure's clear area (a staircase, a bridge) takes every rock off on the server, whatever the rock
+    /// clearing would do with it on a road; a player's own rock still stays.</summary>
+    [Fact]
+    public void AStructuresClearAreaTakesEveryRockOnTheServer()
+    {
+        var vegetation = new HashSet<int> { Boulder, MistlandsCliff };
+        var onStair = new Vector2(40f, 0f);
+        var stair = new List<VegetationClearing.Area> { new VegetationClearing.Area(onStair, 3f) };
+        foreach (var mode in new[] { RockClearingMode.Carve, RockClearingMode.Remove, RockClearingMode.Off })
+        {
+            Assert.True(VegetationClearing.ShouldRemove(Boulder, onStair, false, vegetation, Areas, NoLocations, NoPlayerGround,
+                structureAreas: stair, rockClearing: mode, biomeAt: _ => Heightmap.Biome.Mountain));
+            Assert.True(VegetationClearing.ShouldRemove(MistlandsCliff, onStair, false, vegetation, Areas, NoLocations, NoPlayerGround,
+                structureAreas: stair, rockClearing: mode, biomeAt: _ => Heightmap.Biome.Mistlands));
+        }
+        Assert.False(VegetationClearing.ShouldRemove(Boulder, onStair, true, vegetation, Areas, NoLocations, NoPlayerGround,
+            structureAreas: stair, rockClearing: RockClearingMode.Carve, biomeAt: _ => Heightmap.Biome.Mountain));
+    }
+
+    /// <summary>
+    /// The middle 90 % of the road is inside its clear areas, at every point
+    /// and at any heading: straight along an axis off the old 4 m grid, where
+    /// squares have the least reach across the road, and on the diagonal.
     /// </summary>
     [Theory]
     [InlineData(121.85f, -104f, 121.85f, -24f, 4f)]
     [InlineData(97f, -95f, 159f, -33f, 4f)]
     [InlineData(97f, -95f, 159f, -33f, 2f)]
-    public void TheWholeWidthOfTheRoadIsInsideItsClearAreas(float x0, float z0, float x1, float z1, float width)
+    public void TheMiddleOfTheRoadIsInsideItsClearAreas(float x0, float z0, float x1, float z1, float width)
     {
         var from = new Vector2(x0, z0);
         var to = new Vector2(x1, z1);
@@ -260,7 +534,7 @@ public class RoadEdgesAndVegetationTests
                 Vector2 onRoad = from + along * t;
                 if (Mathf.Abs(onRoad.x - centre.x) > 28f || Mathf.Abs(onRoad.y - centre.z) > 28f)
                     continue;
-                for (float side = -0.45f; side <= 0.451f; side += 0.15f)
+                for (float side = -0.44f; side <= 0.441f; side += 0.11f)
                 {
                     Vector2 point = onRoad + across * (side * width);
                     Assert.True(VegetationClearing.InsideClearArea(areas, point), $"({point.x:F2}, {point.y:F2}) on the road is outside its clear areas");
@@ -309,7 +583,7 @@ public class RoadEdgesAndVegetationTests
             RoadNorthSouth(10f, 4f, world);
             int version = RoadSpatialGrid.RoadNetworkVersion;
             RoadNetworkPersistence.EnsureMetadataInstance();
-            typeof(RoadNetworkGenerator).GetField("m_roadsGenerated", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, true);
+            typeof(RoadNetworkGenerator).GetField("m_roadsGenerated", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, true); typeof(RoadNetworkGenerator).GetField("m_networkDirty", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, true);
             RoadNetworkGenerator.SaveGlobalRoadData();
             var zone = new Vector2s(0, 0);
             VegetationClearing.MarkCleared(zone, version);

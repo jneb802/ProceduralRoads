@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -14,9 +16,15 @@ namespace ProceduralRoads;
 /// removes, once per zone and network, exactly what generation would have left
 /// out: objects of the game's own vegetation prefabs, inside the same clear
 /// areas, tested the way the game tests them (ZoneSystem.InsideClearArea, an
-/// axis-aligned square). Anything that is not a vegetation prefab -- player
+/// axis-aligned square), and the grown trees whose trunks reach the road
+/// (<see cref="TrunkReachesRoad"/>). Anything that is not a vegetation prefab -- player
 /// builds, containers, bridge pieces -- is never touched, and objects within a
-/// location's exterior radius are left to the location.
+/// location's exterior radius are left to the location. The game's vegetation
+/// list also holds the large rocks; on a road those the rock clearing takes
+/// there belong to it (<see cref="LeftToRockClearing"/>), so the
+/// Roads/RockClearing setting decides what happens to them, and a structure's
+/// clear areas keep every rock out. Small stones (the pickable ones) are
+/// vegetation and go with the trees.
 ///
 /// Pure logic; ServerTerrainBake finds and removes the objects.
 /// </summary>
@@ -57,6 +65,126 @@ public static class VegetationClearing
     /// </summary>
     public const float PlayerGroundRadius = 8f;
 
+    /// <summary>A road point as the grown-tree rule reads it: its centre and half its width.</summary>
+    public readonly struct RoadCentre
+    {
+        public readonly Vector2 Centre;
+        public readonly float HalfWidth;
+
+        public RoadCentre(Vector2 centre, float halfWidth)
+        {
+            Centre = centre;
+            HalfWidth = halfWidth;
+        }
+    }
+
+    // ---- grown trees ----
+    //
+    // The clear areas test an object's origin and keep the middle 90 % of the road clear
+    // (RoadConstants.VegetationClearMultiplier): bushes, saplings, small trees and small stones may stand on the outer
+    // edge. A grown tree is wider than that edge: one whose origin stands just past the clear area keeps a metre or more
+    // of trunk over the road. So a grown tree goes when its trunk reaches the road: its origin is nearer a road point
+    // than half the road's width, plus the trunk's reach at the tree's scale, plus TrunkMargin.
+    //
+    // A grown tree is a vegetation entry that grows to full height: every TreeBase prefab in the game's vegetation lists
+    // (chopped, it falls as a log), and the swamp's indestructible SwampTree2. The small ones -- Beech_small*,
+    // FirTree_small*, YggaShoot_small1, the bushes and stumps -- are Destructibles and stay creep.
+    //
+    // Trunk reach: the furthest a solid collider of the prefab (viewblock meshes left out) stands from its origin across
+    // the ground, between 0.25 m and 2 m up -- the height a player walks into -- at scale 1, measured on the game's
+    // prefabs. A placed tree's scale replaces the prefab's own (ZoneSystem.PlaceVegetation), so the reach is multiplied
+    // by the tree's scale. It is the reach in the trunk's widest direction, roots and flare included, whichever way the
+    // road lies. The lean the game gives a tree (up to its entry's m_randTilt) and the canopy are not counted: a leaning
+    // trunk may still overhang the road above head height.
+    private static readonly Dictionary<string, float> s_trunkReach = new()
+    {
+        ["Beech1"] = 0.72f,
+        ["Birch1"] = 0.76f,
+        ["Birch1_aut"] = 0.76f,
+        ["Birch2"] = 0.84f,
+        ["Birch2_aut"] = 0.84f,
+        ["Oak1"] = 2.06f,
+        ["FirTree"] = 0.4f,
+        ["Pinetree_01"] = 0.33f,
+        ["Pinetree_Snow"] = 0.33f,
+        ["Pinetree_Snow_dead"] = 0.33f,
+        ["SnowFirTree"] = 1f,
+        ["SnowFirTree 2"] = 1f,
+        ["SwampTree1"] = 2.41f,
+        ["SwampTree2"] = 3.04f,
+        ["SwampTree2_darkland"] = 3.04f,
+        ["YggaShoot1"] = 1.41f,
+        ["YggaShoot2"] = 1.41f,
+        ["YggaShoot3"] = 1.41f,
+        ["AshlandsTree1_0"] = 0.75f,
+        ["AshlandsTree3"] = 0.5f,
+        ["AshlandsTree6"] = 4.32f,
+    };
+
+    private static readonly Dictionary<int, float> s_trunkReachByHash =
+        s_trunkReach.ToDictionary(tree => tree.Key.GetStableHashCode(), tree => tree.Value);
+
+    /// <summary>How far past the road's edge a grown tree's trunk is kept.</summary>
+    public const float TrunkMargin = 0.25f;
+
+    /// <summary>The largest scale the game's vegetation lists give a grown tree (SwampTree2_darkland, 3 to 5).</summary>
+    public const float LargestTreeScale = 5f;
+
+    /// <summary>How far past a road point's half-width a grown tree can stand and still reach it: the widest trunk at
+    /// the largest scale. A zone's trees are tested against the road points this far beyond it too.</summary>
+    public static readonly float TreeReach = s_trunkReach.Values.Max() * LargestTreeScale + TrunkMargin;
+
+    /// <summary>A grown tree, and its trunk reach at scale 1; false for everything else, which keeps to the clear areas.</summary>
+    public static bool IsGrownTree(string prefab, out float trunkReach) => s_trunkReach.TryGetValue(prefab, out trunkReach);
+
+    /// <inheritdoc cref="IsGrownTree(string, out float)"/>
+    public static bool IsGrownTree(int prefab, out float trunkReach) => s_trunkReachByHash.TryGetValue(prefab, out trunkReach);
+
+    /// <summary>
+    /// Whether a grown tree's trunk, <paramref name="trunkReach"/> at scale 1, reaches the road: the tree stands nearer
+    /// a road point than half its width plus the trunk's reach at <paramref name="scale"/> plus TrunkMargin.
+    /// </summary>
+    public static bool TrunkReachesRoad(IReadOnlyList<RoadCentre> road, Vector2 position, float trunkReach, float scale)
+    {
+        float reach = trunkReach * scale + TrunkMargin;
+        foreach (RoadCentre point in road)
+        {
+            float within = point.HalfWidth + reach;
+            if ((position - point.Centre).sqrMagnitude < within * within)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// What both clearings take off the road: an object inside a clear area, and a grown tree whose trunk reaches the
+    /// road. Generation asks with the scale it drew for the tree, the server with the scale the tree was saved at.
+    /// </summary>
+    public static bool OnRoad(bool insideClearArea, int prefab, float scale, IReadOnlyList<RoadCentre> road, Vector2 position) =>
+        insideClearArea || IsGrownTree(prefab, out float trunkReach) && TrunkReachesRoad(road, position, trunkReach, scale);
+
+    /// <inheritdoc cref="OnRoad(bool, int, float, IReadOnlyList{RoadCentre}, Vector2)"/>
+    public static bool OnRoad(bool insideClearArea, string prefab, float scale, IReadOnlyList<RoadCentre> road, Vector2 position) =>
+        insideClearArea || IsGrownTree(prefab, out float trunkReach) && TrunkReachesRoad(road, position, trunkReach, scale);
+
+    private static readonly Dictionary<int, string> s_rockClearingRocks =
+        RoadRockPolicy.KnownRocks.ToDictionary(name => name.GetStableHashCode(), name => name);
+
+    /// <summary>
+    /// A large rock the rock clearing judges (<see cref="RoadRockPolicy.KnownRocks"/>: boulders, Mistlands rocks and
+    /// cliffs, Destructibles a pickaxe breaks into a MineRock5). Small stones are Pickables picked up by hand
+    /// (Pickable_Stone, Pickable_Flint) and stay vegetation.
+    /// </summary>
+    public static bool IsRock(int prefab) => s_rockClearingRocks.ContainsKey(prefab);
+
+    /// <summary>
+    /// A large rock the rock clearing, set to <paramref name="mode"/>, takes off a road in <paramref name="biome"/>
+    /// (<see cref="RoadRockPolicy.ClearingTakes"/>): never removed with the vegetation from a road's clear areas. A rock
+    /// it would leave goes with the vegetation, as generation keeps it off the road.
+    /// </summary>
+    public static bool LeftToRockClearing(int prefab, Heightmap.Biome biome, RockClearingMode mode) =>
+        s_rockClearingRocks.TryGetValue(prefab, out string? name) && RoadRockPolicy.ClearingTakes(name, biome, mode);
+
     /// <summary>ZoneSystem.InsideClearArea, the test PlaceVegetation uses: strict, and square.</summary>
     public static bool InsideClearArea(IReadOnlyList<Area> areas, Vector2 point)
     {
@@ -85,14 +213,24 @@ public static class VegetationClearing
     /// built on is treated as theirs (PlayerGroundRadius). A grown tree alone
     /// on the road in a zone that predates the network is still taken.
     /// </summary>
+    /// <param name="road">the road points near the object, for a grown tree (<see cref="TrunkReachesRoad"/>)</param>
+    /// <param name="scale">the object's scale</param>
+    /// <param name="structureAreas">the structures' clear areas (bridges, staircases), which keep every rock out as well</param>
+    /// <param name="rockClearing">the Roads/RockClearing setting; Off leaves no rock to the rock clearing</param>
+    /// <param name="biomeAt">the biome at a position, asked for a large rock only (<see cref="LeftToRockClearing"/>)</param>
     public static bool ShouldRemove(int prefab, Vector2 position, bool playerCreated,
         ICollection<int> vegetationPrefabs, IReadOnlyList<Area> clearAreas,
-        IReadOnlyList<Footprint> locations, IReadOnlyList<Footprint> playerGround)
+        IReadOnlyList<Footprint> locations, IReadOnlyList<Footprint> playerGround,
+        IReadOnlyList<RoadCentre>? road = null, float scale = 1f, IReadOnlyList<Area>? structureAreas = null,
+        RockClearingMode rockClearing = RockClearingMode.Off, Func<Vector2, Heightmap.Biome>? biomeAt = null)
     {
         // Somebody's own object, whatever it is: never ours to take.
-        if (playerCreated)
+        if (playerCreated || !vegetationPrefabs.Contains(prefab))
             return false;
-        if (!vegetationPrefabs.Contains(prefab) || !InsideClearArea(clearAreas, position))
+        bool inside = structureAreas != null && InsideClearArea(structureAreas, position) ||
+            InsideClearArea(clearAreas, position) &&
+            !(IsRock(prefab) && LeftToRockClearing(prefab, biomeAt?.Invoke(position) ?? Heightmap.Biome.None, rockClearing));
+        if (!OnRoad(inside, prefab, scale, road ?? Array.Empty<RoadCentre>(), position))
             return false;
         // Left to the location, and left to the player who built there.
         return !Inside(locations, position) && !Inside(playerGround, position);

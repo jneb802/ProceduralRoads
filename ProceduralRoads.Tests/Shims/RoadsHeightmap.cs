@@ -8,5 +8,5 @@ public partial class Heightmap
         height = ProceduralRoads.BiomeBlendedHeight.GetBlendedHeight(wx, wz, WorldGenerator.instance);
     // No compiler deltas have been added to these location-shaped heights yet.
     partial void ModTerrainPass(List<float> heights) =>
-        heights.ToString();
+        ProceduralRoads.RoadTerrainModifier.ApplyPendingTerrain(m_terrainComp!, this, heights);
 }

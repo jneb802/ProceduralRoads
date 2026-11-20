@@ -126,16 +126,16 @@ public static class ServerBakePlanner
         generated && !cleared && !generatedBeforeNetwork;
 
     /// <summary>
-    /// Where players stand, for "is anyone near this zone?": every connected
-    /// peer and, on a listen host or in single player, the host's own player,
-    /// whom ZNet's peer list leaves out. A dedicated server has no local player.
+    /// Whether a zone owed its vegetation pass also has its saved rocks
+    /// cleared: only when rocks are cleared at all, and only where the server
+    /// does not have the zone loaded (a loaded zone's rocks are live objects,
+    /// which the half-second pass of RoadRockClearing clears).
     /// </summary>
-    public static List<UnityEngine.Vector3> VegetationWitnesses(IEnumerable<UnityEngine.Vector3> peers, UnityEngine.Vector3? localPlayer)
-    {
-        var witnesses = new List<UnityEngine.Vector3>(peers);
-        if (localPlayer.HasValue) witnesses.Add(localPlayer.Value);
-        return witnesses;
-    }
+    public static bool SavedRocksOwed(bool loadedHere, bool clearsRocks) => clearsRocks && !loadedHere;
+
+    /// <summary>Which saved objects the rock pass brings alive: the clearable rocks, never a player's.</summary>
+    public static bool BringsRockAlive(string prefab, bool playerCreated) =>
+        !playerCreated && RoadRockPolicy.IsClearableRock(prefab);
 
     /// <summary>What the server knows about one saved compiler ZDO.</summary>
     public readonly struct Compiler

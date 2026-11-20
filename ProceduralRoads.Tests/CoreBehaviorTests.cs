@@ -33,6 +33,49 @@ public class CoreBehaviorTests
         return path;
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PointDebugRecordsAreKeptOnlyWhenAsked(bool record)
+    {
+        // The records outlive generation, one per point with an array of
+        // window heights, so an ordinary session must not keep them.
+        var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
+        bool before = RoadSpatialGrid.RecordPointDebugInfo;
+        RoadSpatialGrid.RecordPointDebugInfo = record;
+        try
+        {
+            WithWorld(world, () =>
+            {
+                Assert.True(RoadSpatialGrid.AddRoadPath(StraightPath(-200f, 200f, 10f), 4f, world), "Setup produced no road");
+                List<RoadSpatialGrid.RoadPoint> points = RoadSpatialGrid.SnapshotAllRoadPoints();
+                Assert.NotEmpty(points);
+
+                int kept = 0;
+                foreach (RoadSpatialGrid.RoadPoint point in points)
+                {
+                    if (!RoadSpatialGrid.TryGetDebugInfo(point.p, out RoadPointDebugInfo info))
+                        continue;
+                    kept++;
+                    Assert.NotNull(info.WindowHeights);
+                    Assert.Equal(info.ActualWindowSize, info.WindowHeights.Length);
+                    // The window is the unsmoothed heights around the point,
+                    // so the point's own height sits at its offset in it.
+                    Assert.Equal(info.OriginalHeight, info.WindowHeights[info.PointIndex - info.WindowStart]);
+                }
+
+                if (record)
+                    Assert.Equal(points.Count, kept);
+                else
+                    Assert.Equal(0, kept);
+            });
+        }
+        finally
+        {
+            RoadSpatialGrid.RecordPointDebugInfo = before;
+        }
+    }
+
     [Fact]
     public void RoadPointsSurviveSerializationRoundTrip()
     {

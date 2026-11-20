@@ -173,8 +173,18 @@ public class RegenerateAfterLoadTests : System.IDisposable
             RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
             SetPrivateFlag("m_roadsGenerated", false);
             int loaded = RoadSpatialGrid.TotalRoadPoints;
-
-            RoadNetworkGenerator.GenerateRoads();
+            byte[] before = RoadSpatialGrid.SerializeAllRoadPoints()!;
+            int hashBefore = RoadSpatialGrid.RoadNetworkVersion;
+            using (StaticOverride.Keep(() => RoadNetworkGenerator.NetworkOptions))
+            {
+                RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions
+                {
+                    ExcludedBiomes = Heightmap.Biome.Meadows
+                };
+                RoadNetworkGenerator.GenerateRoads();
+                Assert.Equal(before, RoadSpatialGrid.SerializeAllRoadPoints());
+                Assert.Equal(hashBefore, RoadSpatialGrid.RoadNetworkVersion);
+            }
 
             Assert.False(RoadNetworkGenerator.RoadsGenerated,
                 "generation ran in a world that had already loaded its roads");

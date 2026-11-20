@@ -96,6 +96,28 @@ public sealed class DvergrViaductRoadTests : IDisposable
         Assert.True(finder.LastPathCost < stairsOnly.LastPathCost, $"viaduct route {finder.LastPathCost:F0} against stairs {stairsOnly.LastPathCost:F0}");
     }
 
+    [Fact]
+    public void AGeneratedRoadLaysTheViaductAndNoStaircases()
+    {
+        var world = new MistValley();
+        _scope.WithWorld(world);
+        SetPathfinder(Finder(world, viaducts: true));
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-100f, 0f, 0f), 0f, new Vector3(100f, 0f, 0f), 0f, 4f, "valley"));
+        RoadCrossing viaduct = Assert.Single(RoadNetworkGenerator.GetRoadCrossings());
+        Assert.True(viaduct.ValleyJump);
+        Assert.Empty(StairStructures.Runs);
+        Assert.True(DvergrViaduct.Applies(viaduct, world));
+        List<StructurePiece> pieces = BridgeStructures.Solve(viaduct, world, world.GetSeed());
+        Assert.All(pieces, p => Assert.True(IsDvergr(p), p.Prefab));
+        // Nothing of the road is built between the banks: the deck carries it.
+        for (float x = -16f; x <= 16f; x += 2f)
+            Assert.False(RoadSpatialGrid.TryGetRoadWithin(new Vector2(x, 0f), 1f, out _), $"road under the deck at x = {x}");
+        // And it survives a save: a crossing of the saved format, the same viaduct planned again.
+        var loaded = new List<RoadCrossing>();
+        Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(RoadNetworkPersistence.SerializeRoadCrossings(new[] { viaduct }), loaded));
+        Assert.True(DvergrViaduct.Applies(loaded[0], world));
+        Assert.Equal(pieces.Count, BridgeStructures.Solve(loaded[0], world, world.GetSeed()).Count);
+    }
 
     [Fact]
     public void AClimbOneWayStillGetsStairs()

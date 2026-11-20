@@ -112,6 +112,79 @@ public sealed class LegacyWorldTests : IDisposable
         compiler.Save();
     }
 
+    /// <summary>Every automatic writer that can reach a loaded zone, as the game calls them.</summary>
+    private static void RunEveryAutomaticWriter(Heightmap old, Heightmap later)
+    {
+        foreach (var hm in new[] { old, later })
+        {
+            Vector2s zone = ZoneSystem.GetZone(hm.transform.position);
+            // ZoneSystem.SpawnZone postfix, Client mode (a zone generated in an earlier session).
+            RoadTerrainModifier.OnZoneSpawned(zone, RoadSpatialGrid.GetRoadPointsInZone(zone));
+            // TerrainComp.Awake postfix.
+            if (hm.m_terrainComp != null) RoadTerrainModifier.OnTerrainCompilerReady(hm.m_terrainComp);
+        }
+        // Plugin.Update, every 3 s.
+        for (int i = 0; i < 10; i++) RoadTerrainModifier.SweepUnstamped();
+        // A manual-road snapshot's application, and the load-time application to loaded zones.
+        RoadTerrainModifier.ApplyAdditionsToLoadedZones();
+        RoadTerrainModifier.ApplyToLoadedZones();
+        foreach (var hm in new[] { old, later }) hm.Regenerate();
+    }
+
+    [Fact]
+    public void AZoneGeneratedBefore144UpgradeIsNeverWritten()
+    {
+        SaveAsReleased144();
+        var old = _world.RegisterHeightmap(OldZone);
+        var later = _world.RegisterHeightmap(LaterZone, withCompiler: false);
+        TerrainComp compiler = old.m_terrainComp!;
+        PlayerTerrain(compiler);
+        compiler.m_nview.GetZDO().SetOwner(0); // released by the game: anyone's to claim
+        var before = TerrainSnapshot.Of(compiler);
+        byte[] tcData = (byte[])compiler.m_nview.GetZDO().GetByteArray(ZDOVars.s_TCData)!.Clone();
+        int saves = compiler.SaveCount;
+
+        OpenWorld();
+
+        Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO, "the 1.4.4 network must load");
+        Assert.False(RoadNetworkGenerator.RoadsGenerated, "a network was generated over the 1.4.4 one");
+        Assert.NotEmpty(RoadSpatialGrid.GetRoadPointsInZone(OldZone));
+        Assert.True(NetworkCutoff.Excludes(OldZone));
+        Assert.True(NetworkCutoff.Excludes(LaterZone));
+
+        RunEveryAutomaticWriter(old, later);
+
+        TerrainAssert.Unchanged(before, compiler, "the 1.4.4 zone");
+        Assert.Equal(tcData, compiler.m_nview.GetZDO().GetByteArray(ZDOVars.s_TCData));
+        Assert.Equal(saves, compiler.SaveCount);
+        Assert.Equal(0, compiler.m_nview.GetZDO().GetInt(RoadTerrainModifier.AppliedVersionHash));
+        Assert.Equal(0, compiler.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
+        Assert.Equal(0L, compiler.m_nview.GetZDO().GetOwner());
+        Assert.Null(later.m_terrainComp);
+        int compilerHash = TerrainComp.PrefabName.GetStableHashCode();
+        Assert.Equal(1, ZDOMan.instance.Zdos.Count(z => z.GetPrefab() == compilerHash)); // no compiler made for the later zone
+        Assert.Equal(0, RoadTerrainModifier.PendingWriteCount);
+
+        // The server bake, for both zones, whatever their compilers say.
+        long me = ZDOMan.GetSessionID();
+        foreach (var zone in new[] { OldZone, LaterZone })
+            foreach (var facts in new[]
+                     {
+                         new List<ServerBakePlanner.Compiler>(),
+                         new List<ServerBakePlanner.Compiler> { new(0, 0, false) },
+                         new List<ServerBakePlanner.Compiler> { new(RoadSpatialGrid.RoadNetworkVersion - 1, me, false) },
+                     })
+                foreach (bool loaded in new[] { false, true })
+                    Assert.Equal(ServerBakePlanner.Action.GeneratedBeforeNetwork,
+                        ServerBakePlanner.Decide(RoadSpatialGrid.RoadNetworkVersion, true, NetworkCutoff.Excludes(zone), loaded, facts, me));
+
+        // And the save leaves 1.4.4's blob as 1.4.4 wrote it.
+        RoadLifecycleManager.OnPrepareSave();
+        Assert.Equal(Blob, Metadata().GetByteArray(GlobalDataHash));
+        // And writes no record 1.4.4 did not have: a released network saves no built bridges or staircases.
+        Assert.Null(Metadata().GetByteArray("ProceduralRoads_BuiltBridges".GetStableHashCode()));
+        Assert.Null(Metadata().GetByteArray("ProceduralRoads_BuiltStairs".GetStableHashCode()));
+    }
 
     [Fact]
     public void AZoneGeneratedAfterTheUpgradeGetsTheNewRoad()
@@ -127,6 +200,8 @@ public sealed class LegacyWorldTests : IDisposable
         RoadTerrainModifier.OnZoneSpawned(NewZone, RoadSpatialGrid.GetRoadPointsInZone(NewZone));
         Assert.NotNull(fresh.m_terrainComp);
         Assert.True(RoadTerrainModifier.CarriesCurrentRoads(fresh.m_terrainComp!), "the new zone must carry the road");
+        // A released network's zones get no writer stamp.
+        Assert.Equal(0, fresh.m_terrainComp!.m_nview.GetZDO().GetInt(RoadTerrainModifier.WriterVersionHash));
 
         // The next session: the new zone stays the network's, the old ones stay excluded.
         RoadLifecycleManager.OnPrepareSave();
@@ -140,4 +215,39 @@ public sealed class LegacyWorldTests : IDisposable
         Assert.True(NetworkCutoff.Excludes(LaterZone));
     }
 
+    /// <summary>
+    /// 1.4.4 reads format 1 only; any other blob it throws away and generates a new network over the world. So a
+    /// network it saved takes no additions here, and nothing this build does at save time rewrites it.
+    /// </summary>
+    [Fact]
+    public void AppendOnA144NetworkLeavesItsBlobReadableBy144()
+    {
+        SaveAsReleased144();
+        OpenWorld();
+        Assert.True(RoadNetworkGenerator.RoadsLoadedFromZDO);
+        Assert.True(RoadSpatialGrid.LoadedFromReleasedFormat);
+        int points = RoadSpatialGrid.StoredPointRecords;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ManualRoads.Prepare(new[] { new Vector2(-20f, 100f), new Vector2(60f, 100f) }, false));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoadNetworkGenerator.AppendManualRoad(new List<RoadSpatialGrid.PlannedPath>(), new List<RoadCrossing>(),
+                new List<RoadStairSpan>(), new Vector2(0f, 0f), RoadSpatialGrid.RoadNetworkVersion));
+        // A road through an explored zone is refused before it can make that zone the network's.
+        var through = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { new(-20f, 10f), new(20f, 10f) }, 4f, WorldGenerator.instance!)!;
+        Assert.Throws<InvalidOperationException>(() =>
+            RoadNetworkGenerator.AppendManualRoad(new List<RoadSpatialGrid.PlannedPath> { through }, new List<RoadCrossing>(),
+                new List<RoadStairSpan>(), new Vector2(-20f, 10f), RoadSpatialGrid.RoadNetworkVersion));
+        Assert.True(NetworkCutoff.Excludes(OldZone));
+        RoadLifecycleManager.OnPrepareSave();
+        Assert.Equal(Blob, Metadata().GetByteArray(GlobalDataHash));
+
+        // Even a network marked for a full save (as an append would mark it) is not written over 1.4.4's.
+        typeof(RoadNetworkGenerator).GetField("m_networkDirty", BindingFlags.NonPublic | BindingFlags.Static)!.SetValue(null, true);
+        RoadLifecycleManager.OnPrepareSave();
+        byte[] after = Metadata().GetByteArray(GlobalDataHash)!;
+        Assert.Equal(Blob, after);
+        Assert.True(Released144.Reads(after, out int read), "1.4.4 must still read the world's network");
+        Assert.Equal(points, read);
+    }
 }

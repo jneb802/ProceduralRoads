@@ -18,7 +18,7 @@ namespace ProceduralRoads
     public class ProceduralRoadsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "ProceduralRoads";
-        internal const string ModVersion = "1.8.0";
+        internal const string ModVersion = "1.10.0";
         internal const string Author = "warpalicious";
         private const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
@@ -135,8 +135,8 @@ namespace ProceduralRoads
                 "IncludeExplored recommended; a dedicated server, which has no screen, takes IncludeExplored. Skip builds no roads and leaves the world as it is " +
                 "(road_generate can still build them). NewZonesOnly builds the network but writes it only into land " +
                 "explored from now on. IncludeExplored backs the world up, then builds roads through the explored land " +
-                "too, going round every zone with player buildings or terrain edits, which stays as it is. " +
-                "Read once, on that first load.");
+                "too, going round every zone with player buildings or terrain edits, which stays as it is; road_connect " +
+                "joins your own builds to the network. Read once, on that first load.");
             ExistingWorldFirstLoad.Setting = ExistingWorldFirstLoadRoads.Value;
             ExistingWorldFirstLoadRoads.SettingChanged += (_, _) => ExistingWorldFirstLoad.Setting = ExistingWorldFirstLoadRoads.Value;
             ExistingWorldFirstLoad.CanAsk = () => ZNet.instance != null && !ZNet.instance.IsDedicated();

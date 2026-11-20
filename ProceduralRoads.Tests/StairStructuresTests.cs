@@ -80,10 +80,9 @@ public class StairStructuresTests : IDisposable
         List<StructurePiece> laid = StairStructures.PiecesOf(run, WorldGenerator.instance!);
         Assert.Equal(laid.Count, StructurePlans.TotalPlannedPieces);
         foreach (StructurePiece piece in laid)
-            Assert.Contains(StructurePlans.PlanFor(ZoneSystem.GetZone(piece.Position))!,
-                q => q.Prefab == piece.Prefab && q.Position.Equals(piece.Position) && q.YawDegrees == piece.YawDegrees);
+            Assert.Contains(StructureAppendQueue.Key(piece), StructurePlans.PlanFor(ZoneSystem.GetZone(piece.Position))!.Select(StructureAppendQueue.Key));
         foreach (StructurePiece piece in run.Pieces)
-            Assert.Contains(laid, q => q.Prefab == piece.Prefab && q.Position.Equals(piece.Position) && q.YawDegrees == piece.YawDegrees);
+            Assert.Contains(StructureAppendQueue.Key(piece), laid.Select(StructureAppendQueue.Key));
         Assert.Contains(laid, p => p.Kind == StructurePieceKind.StairStep && p.Prefab == StairKit.Stone.Stair);
         Assert.DoesNotContain(run.Pieces, p => p.Kind == StructurePieceKind.StairSupport);
         Assert.Contains(laid, p => p.Kind == StructurePieceKind.StairSupport && p.Prefab.StartsWith("stone_wall_"));

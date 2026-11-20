@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Threading;
@@ -151,7 +152,7 @@ public static partial class RoadLifecycleManager
 
     private static Generation? Start(GenerationRequest request)
     {
-        if (IsGenerating || WorldGenerator.instance == null || ZoneSystem.instance == null) return null;
+        if (IsGenerating || ManualRoads.Busy || WorldGenerator.instance == null || ZoneSystem.instance == null) return null;
         m_generation = new Generation(WorldGenerator.instance, ZoneSystem.instance, request);
         m_nextRun++;
         m_generation.Preparation=RoadNetworkGenerator.BeginPreparation(request.Force, request.Island);
@@ -170,12 +171,22 @@ public static partial class RoadLifecycleManager
     /// pieces are replaced. <paramref name="tell"/> hears how it goes, each line logged too (a dedicated server's operator
     /// reads the log). Returns why it did not start, or null.
     /// </summary>
-    internal static string? BeginForOperator(Vector3? island, Action<string> tell, Action<RoadNetworkGenerator.GenerationWork>? published = null)
+    internal static string? BeginForOperator(Vector3? island, Action<string> tell, Action<RoadNetworkGenerator.GenerationWork>? published = null,
+        string? command = null, bool force = false, DateTime? now = null)
     {
         if (!HoldsTheNetwork) return "Roads are generated only on the server; this peer holds no road network";
         if (ChoicePending) return "The host is still asked what this world's first road network does";
-        if (IsGenerating) return Busy;
+        if (IsGenerating || ManualRoads.Busy) return Busy;
         if (WorldCannotHold?.Invoke() is string held) return held;
+        // A command (road_generate, road_regen_island) over a network asks first, as a manual road asks about zones players
+        // changed (ManualRoads.ConfirmAgain): the same command again within the window, or force. road_regen_island is the
+        // same command again on the same island, wherever on it the operator stands (ManualRoads.IslandAt); off any island, in
+        // the same zone.
+        // A saved network this build could not read is asked about too: the run would replace it, unread, for good.
+        bool unread = !RoadNetworkGenerator.NetworkInMemory && RoadNetworkPersistence.LastLoadUnreadable;
+        if (command != null && !force && (RoadNetworkGenerator.NetworkInMemory || unread)
+            && !ManualRoads.ConfirmAgain($"operator|{command}|{(island is Vector3 at ? "island " + (ManualRoads.IslandAt(at)?.Id.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "none " + ZoneSystem.GetZone(at).x.ToString(System.Globalization.CultureInfo.InvariantCulture) + "," + ZoneSystem.GetZone(at).y.ToString(System.Globalization.CultureInfo.InvariantCulture)) : "world")}", now ?? DateTime.UtcNow))
+            return unread ? UnreadWarning(command) : ReplaceWarning(command);
         void Tell(string line) { ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(line); tell(line); }
         // What a save would write, written now: the network this replaces comes back from it if none is published.
         bool keep = RoadNetworkGenerator.NetworkInMemory;
@@ -218,6 +229,22 @@ public static partial class RoadLifecycleManager
         run.KeptCutoff = cutoff;
         return null;
     }
+
+    /// <summary>What road_generate's and road_regen_island's help say of the confirm (<see cref="BeginForOperator"/>), for the
+    /// window it keeps (ManualRoads.RepeatHint).</summary>
+    internal static string AsksFirstHelp => " Over a generated network it asks first:" + ManualRoads.RepeatHint("run it");
+
+    /// <summary>What a command is told when it would replace the network that stands: roads, length, staircases, bridges.</summary>
+    internal static string ReplaceWarning(string command) =>
+        $"Not run yet: {command} would replace the generated road network: {RoadNetworkGenerator.GetRoadStartPoints().Count} road(s), "
+        + $"{RoadSpatialGrid.Statistics.LengthText("F1", 1000f, " km")}, {StairStructures.Runs.Count} staircase(s), "
+        + $"{RoadNetworkGenerator.GetRoadCrossings().Count(c => c.Kind == CrossingKind.Bridge)} bridge(s), and the structures laid with it."
+        + ManualRoads.RepeatHint("run it");
+
+    /// <summary>What a command is told when it would replace a saved network this build could not read.</summary>
+    internal static string UnreadWarning(string command) =>
+        $"Not run yet: {command} would replace this world's saved road network, which this build could not read (it is "
+        + "left as it is until then; a build that reads it keeps it)." + ManualRoads.RepeatHint("run it");
 
     /// <summary>An operator's run that published nothing: the network it was to replace back as it was written into the
     /// world at its start (<see cref="BeginForOperator"/>), as a load reads it, and the zones it left alone as they were

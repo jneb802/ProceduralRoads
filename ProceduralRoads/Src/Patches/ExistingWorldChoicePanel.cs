@@ -27,7 +27,7 @@ internal static class ExistingWorldChoicePanel
         ("Build roads through explored land too (recommended)",
             "Roads are built everywhere except the zones with your buildings or terrain edits, which they go round. " +
             "The world is backed up first. Use road_connect afterwards to join your builds to the network.",
-            () => RoadLifecycleManager.Answer(ExistingWorldRoads.IncludeExplored)),
+            () => RoadLifecycleManager.Answer(ExistingWorldFirstLoad.Recommended)),
         ("Build roads in new land only",
             "Roads are built, but only in land explored from now on. Everything explored so far stays as it is.",
             () => RoadLifecycleManager.Answer(ExistingWorldRoads.NewZonesOnly)),

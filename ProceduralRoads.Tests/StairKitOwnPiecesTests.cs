@@ -67,7 +67,7 @@ public class StairKitOwnPiecesTests : IDisposable
         RoadStairSpan span = Assert.Single(spans!);
         var walked = span.Plan.Pieces.Where(p => p.Kind != StairPieceKind.Support).ToList();
         int offTheRoad = walked.Count(p => Mathf.Abs(p.Position.z) >= 1f);
-        Assert.True(offTheRoad >= StairKit.MistlandsShare * walked.Count && walked.Count - offTheRoad < StairKit.MistlandsShare * walked.Count,
+        Assert.True(offTheRoad >= StairKit.BiomeShare * walked.Count && walked.Count - offTheRoad < StairKit.BiomeShare * walked.Count,
             $"{offTheRoad} of {walked.Count} walked pieces off the road's strip: the case needs the staircase mostly off it");
         Assert.Equal(kit, span.Kit.Name);
         // Laid in it, not only named so.

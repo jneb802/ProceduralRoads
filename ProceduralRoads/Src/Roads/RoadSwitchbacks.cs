@@ -29,14 +29,12 @@ public static class RoadSwitchbacks
     /// turns: "turns too close to fit their curves" was the largest single
     /// refusal (291 measured, 588 once roads could contour). A staircase turn
     /// is tight (<see cref="StairRadius"/>, a 4 m landing) and FLAT: the
-    /// landing runs <see cref="StairLanding"/> metres along both legs at
-    /// <see cref="StairLandingGrade"/>, so where the legs are close they are at
+    /// landing is the road's one landing (<see cref="RoadPitches.JunctionLanding"/> metres along both legs at
+    /// <see cref="RoadPitches.JunctionLandingGrade"/>), so where the legs are close they are at
     /// nearly the same height. Settable for tests.
     /// </summary>
     internal static bool StairTurns = true;
-    internal static float StairRadius = 2f;
-    internal static float StairLanding = 6f;
-    internal static float StairLandingGrade = 0.05f;
+    internal static float StairRadius = StairLayout.PieceRun;
 
     /// <summary>
     /// Smallest radius a switchback turn tightens to when its curve and the
@@ -56,8 +54,12 @@ public static class RoadSwitchbacks
     /// 45% of the legs beside it. Without it a contouring road reads as a
     /// series of 8 m straights with corners. Settable for tests; 0 is no
     /// rounding.
+    /// The one owner of tight turns and bend radius (docs/OWNERS.md).
     /// </summary>
     internal static float BendRadius = 24f;
+
+    /// <summary>The least radius of a bend, as <see cref="MinBendRadius"/> starts; a junction fill's radius starts as tight.</summary>
+    internal const float DefaultMinBendRadius = 4f;
 
     /// <summary>
     /// No ordinary bend is rounded tighter than this. The 45% share of each leg
@@ -73,7 +75,7 @@ public static class RoadSwitchbacks
     /// Switchbacks keep their own turns. Applies with bend rounding; 0 is off.
     /// Settable for tests.
     /// </summary>
-    internal static float MinBendRadius = 4f;
+    internal static float MinBendRadius = DefaultMinBendRadius;
 
     /// <summary>The most road (in road widths) whose short legs may become one
     /// arc: a hook or a kink of a few metres, never a reshaped stretch.</summary>
@@ -140,7 +142,7 @@ public static class RoadSwitchbacks
 
 
     /// <summary>The landing grade in force: the staircase's when stair turns are on.</summary>
-    public static float EffectiveLandingGrade(bool? stair = null) => (stair ?? StairTurns) ? StairLandingGrade : LandingGrade;
+    public static float EffectiveLandingGrade(bool? stair = null) => (stair ?? StairTurns) ? RoadPitches.JunctionLandingGrade : LandingGrade;
 
     /// <summary>Why the last Shape on this thread refused, for the refusal
     /// counts in the generation summary.</summary>
@@ -150,6 +152,7 @@ public static class RoadSwitchbacks
     /// generator searches that stretch again with stairs open.</summary>
     [ThreadStatic] public static Vector2? LastRefusalAt;
 
+    /// <summary>The one owner of tight turns and bend radius (docs/OWNERS.md).</summary>
     public static bool Shape(List<Vector2> input, float width,
         out List<Vector2>? shaped, out List<bool>? landing, Func<Vector2, float>? heightAt = null, bool? stair = null, float? bend = null, bool? tight = null,
         Func<Vector2, bool>? held = null, Func<Vector2, bool>? onRoad = null, float? minRadius = null,
@@ -446,17 +449,17 @@ public static class RoadSwitchbacks
             Add(p[i]+outgoing*trim[i],flat,true);
         }
         Line(p[n-1]);
-        if (stairs && StairLanding > 0f)
+        if (stairs && RoadPitches.JunctionLanding > 0f)
         {
-            // Carry each turn's landing StairLanding metres along both legs.
+            // Carry each turn's landing RoadPitches.JunctionLanding metres along both legs.
             var along=new float[output.Count];
             for(int k=1;k<output.Count;k++) along[k]=along[k-1]+Vector2.Distance(output[k-1],output[k]);
             var extended=new List<bool>(flags);
             for(int k=0;k<output.Count;k++)
             {
                 if(!flags[k]) continue;
-                for(int m=k-1;m>=0 && along[k]-along[m]<=StairLanding;m--) extended[m]=true;
-                for(int m=k+1;m<output.Count && along[m]-along[k]<=StairLanding;m++) extended[m]=true;
+                for(int m=k-1;m>=0 && along[k]-along[m]<=RoadPitches.JunctionLanding;m--) extended[m]=true;
+                for(int m=k+1;m<output.Count && along[m]-along[k]<=RoadPitches.JunctionLanding;m++) extended[m]=true;
             }
             flags=extended;
         }

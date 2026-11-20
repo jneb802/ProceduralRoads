@@ -42,7 +42,7 @@ public sealed class LegacyWorldTests : IDisposable
         SetWorldDataLoaded(false);
         RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld();
         NetworkCutoff.Forget();
-        RoadNetworkGenerator.RoadWidth = 4;
+        RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
     }
 
     public void Dispose()

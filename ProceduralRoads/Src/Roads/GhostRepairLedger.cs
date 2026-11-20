@@ -71,7 +71,7 @@ public sealed class GhostRepairLedger
     /// <summary>How many writes have actually failed for this zone.</summary>
     public int FailedWrites(Vector2s zone) => m_zones.TryGetValue(zone, out Entry entry) ? entry.FailedWrites : 0;
 
-    /// <summary>When it may next be handed over (only meaningful while it is not in the queue).</summary>
+    /// <summary>When it may next be handed over (only meaningful while it is not in the queue). The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).</summary>
     public float DueAt(Vector2s zone) => m_zones.TryGetValue(zone, out Entry entry) ? entry.DueAt : 0f;
 
     /// <summary>

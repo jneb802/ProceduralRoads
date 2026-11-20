@@ -34,7 +34,7 @@ public class BridgeSupportTests
     [InlineData(8.35f, false)]
     public void TheMeasuredHeldFlagsBracketMinSupport(float support, bool held)
     {
-        Assert.Equal(held, support >= BridgeSupport.MinSupport);
+        Assert.Equal(held, support >= SupportGraph.Wood.Min);
     }
 
     /// <summary>Support decays geometrically, so the ceiling is a height and
@@ -44,8 +44,8 @@ public class BridgeSupportTests
     public void AColumnOfTwoMetrePolesRunsOutAtEight()
     {
         Assert.Equal(8, BridgeSupport.MaxPoles(BridgeLayout.PostSegment));
-        Assert.True(BridgeSupport.ColumnSupport(8, BridgeLayout.PostSegment) >= BridgeSupport.MinSupport);
-        Assert.True(BridgeSupport.ColumnSupport(9, BridgeLayout.PostSegment) < BridgeSupport.MinSupport);
+        Assert.True(BridgeSupport.ColumnSupport(8, BridgeLayout.PostSegment) >= SupportGraph.Wood.Min);
+        Assert.True(BridgeSupport.ColumnSupport(9, BridgeLayout.PostSegment) < SupportGraph.Wood.Min);
     }
 
     /// <summary>
@@ -83,7 +83,7 @@ public class BridgeSupportTests
         float freeColumn = 0f;
         for (int n = 1; n <= 20; n++)
         {
-            if (BridgeSupport.ColumnSupport(n, BridgeLayout.PostSegment) >= BridgeSupport.MinSupport)
+            if (BridgeSupport.ColumnSupport(n, BridgeLayout.PostSegment) >= SupportGraph.Wood.Min)
                 freeColumn = BridgeLayout.PostSegment * n;
         }
         // 18 m measured against 16 m for a bare column that carries nothing,

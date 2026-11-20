@@ -133,7 +133,7 @@ public sealed class DvergrViaductParapetTests : IDisposable
         var end = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(1f, 0f), 13f, 3);
         float Ground(int x, int z) => x <= -4 ? roadAtTheFoot : x <= -2 ? Mathf.Max(11f, roadAtTheFoot - 0.2f) : 12f;
         List<StructurePiece> parapet = StairRailing.LayParapet(end, 4f, Ground);
-        int Step(Vector3 p) => Mathf.FloorToInt(-p.x / BridgeLayout.StairRun);   // 0 the top step, its middle at x -1
+        int Step(Vector3 p) => Mathf.FloorToInt(-p.x / StairLayout.PieceRun);   // 0 the top step, its middle at x -1
         var railed = parapet.Where(p => p.Prefab == StairRailing.ParapetPrefab).Select(p => Step(p.Position)).ToList();
         Assert.Equal(Enumerable.Range(0, 3 - bare).SelectMany(k => new[] { k, k }).OrderBy(k => k), railed.OrderBy(k => k));
         Assert.All(parapet.Where(p => p.Prefab == StairRailing.ParapetPrefab), p => Assert.Equal(2.5f, Mathf.Abs(p.Position.z), 3));
@@ -182,12 +182,12 @@ public sealed class DvergrViaductParapetTests : IDisposable
                 for (int k = 0; k < steps; k++)
                 foreach (int s in new[] { -1, 1 })
                 {
-                    Vector2 at = end.Edge - end.Up * (BridgeLayout.StairRun * k + 1f) + side * (s * 2.5f);
-                    float foot = end.Height - BridgeLayout.StairRise * (k + 1);
+                    Vector2 at = end.Edge - end.Up * (StairLayout.PieceRun * k + 1f) + side * (s * 2.5f);
+                    float foot = end.Height - StairLayout.PieceRise * (k + 1);
                     Assert.Contains(bases, p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), at) < 0.01f
                         && Mathf.Abs(p.Position.y - (foot + 1f)) < 0.01f && Apart(p.YawDegrees, yaw) < 0.1f
                         && p.Kind == StructurePieceKind.ViaductParapet);
-                    Vector2 cap = end.Edge - end.Up * (BridgeLayout.StairRun * k - 0.5f) + side * (s * 2.5f);
+                    Vector2 cap = end.Edge - end.Up * (StairLayout.PieceRun * k - 0.5f) + side * (s * 2.5f);
                     Assert.Contains(pieces, p => p.Prefab == StairRailing.ParapetCapPrefab && Vector2.Distance(new Vector2(p.Position.x, p.Position.z), cap) < 0.01f
                         && Mathf.Abs(p.Position.y - (foot + 1.5f)) < 0.01f);
                 }
@@ -238,7 +238,7 @@ public sealed class DvergrViaductParapetTests : IDisposable
         Assert.Equal((0, 2), (near.Steps, far.Steps));
         List<StructurePiece> bases = DvergrViaduct.SolveComplete(c, world, world.GetSeed()).FindAll(p => p.Prefab == StairRailing.ParapetPrefab);
         Assert.Equal(6, bases.Count);
-        Assert.Equal(4, bases.Count(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), far.Edge) < 2f * BridgeLayout.StairRun + 2.6f));
+        Assert.Equal(4, bases.Count(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), far.Edge) < 2f * StairLayout.PieceRun + 2.6f));
         Vector2 nearSide = new(-near.Up.y, near.Up.x);
         foreach (int s in new[] { -1, 1 })
             Assert.Contains(bases, p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), near.Edge - near.Up * 3f + nearSide * (s * 2.5f)) < 0.01f);

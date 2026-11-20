@@ -65,7 +65,7 @@ public static partial class BridgeLayout
     /// <summary>The arch: 2 m along its local x, 1 m deep, its tall end (+x) 1 m high, snaps there top and bottom
     /// (1, +-0.5, +-0.5), its crown (-x) thin, snaps on top (-1, 0.5, +-0.5); origin at the centre of its bounds.</summary>
     public const string StoneArchPrefab = "stone_arch";
-    /// <summary>The steps: the shared stair's geometry (<see cref="StairRun"/>, <see cref="StairRise"/>), origin at the
+    /// <summary>The steps: the shared stair's geometry (<see cref="StairLayout.PieceRun"/>, <see cref="StairLayout.PieceRise"/>), origin at the
     /// foot, rising toward its local -z; snaps HIGH (+-1, 1, -1), LOW (+-1, 0, 1) and under its top edge (+-1, 0, -1).</summary>
     public const string StoneStairPrefab = "stone_stair";
     /// <summary>The stairs' footing: 1 x 2 x 1 m, origin at its centre, snaps at its eight corners (+-0.5, +-1, +-0.5).</summary>
@@ -293,7 +293,7 @@ public static partial class BridgeLayout
         foreach (StructureEnds.End end in new[] { f.Near, f.Far })
             for (int k = 0; k < end.Steps; k++)
                 foreach (Vector2 p in StoneFooting(end, f.Side, k))
-                    if (f.FootingPillars(p, end.Height - StairRise * (k + 1)) > BridgeSupport.StoneMaxFootingPillars()) return false;
+                    if (f.FootingPillars(p, StructureEnds.StepBase(end.Height, k)) > BridgeSupport.StoneMaxFootingPillars()) return false;
         return true;
     }
 
@@ -562,7 +562,7 @@ public static partial class BridgeLayout
         int steps = LayEndStairs(pieces, f.Ground, end, f.Side, r, bayKey, StoneStairPrefab, carry: false);
         for (int k = 0; k < steps; k++)
         {
-            float foot = end.Height - StairRise * (k + 1);
+            float foot = StructureEnds.StepBase(end.Height, k);
             int n = 0;
             foreach (Vector2 p in StoneFooting(end, f.Side, k))
             {
@@ -573,7 +573,7 @@ public static partial class BridgeLayout
                         r.Health(bayKey, n, Ruin.RolePostHealth, k * 16 + m));
                 n++;
             }
-            Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairRun);
+            Vector2 c = StructureEnds.StepCentre(end.Edge, end.Up, k);
             foreach (int s in new[] { Ruin.Left, Ruin.Right })
                 f.LayAt(pieces, StructurePieceKind.Beam, StonePierBlock, c + f.Side * (s * DeckHalfWidth), foot + 0.5f, f.AlongYaw,
                     r.Health(bayKey, s, RoleRailHealth, k + 2));
@@ -585,7 +585,7 @@ public static partial class BridgeLayout
     /// each a metre square.</summary>
     private static IEnumerable<Vector2> StoneFooting(StructureEnds.End end, Vector2 side, int k)
     {
-        Vector2 c = end.Edge - end.Up * (StairHalfRun + k * StairRun);
+        Vector2 c = StructureEnds.StepCentre(end.Edge, end.Up, k);
         foreach (float along in new[] { -0.5f, 0.5f })
             foreach (float across in new[] { -1.5f, -0.5f, 0.5f, 1.5f })
                 yield return c + end.Up * along + side * across;
@@ -623,7 +623,7 @@ public static partial class BridgeLayout
         public Vector2 At(float along, float across) => From + Dir * along + Side * across;
 
         /// <summary>The courses a pier bay stands: from the top one, level with the arches, down to the first whose foot is
-        /// in the lowest ground under the bay's 2 x 4 m.</summary>
+        /// sunk <see cref="StairSupport.Bury"/> under the lowest ground under the bay's 2 x 4 m, as a staircase's wall is.</summary>
         public int PierCourses(int bay)
         {
             float low = float.PositiveInfinity;
@@ -632,17 +632,17 @@ public static partial class BridgeLayout
                     low = Mathf.Min(low, m_ground(At(bay * DeckSpan + a, s * DeckHalfWidth)));
             float top = DeckH - StoneFloorDepth;
             int courses = 1;
-            while (top - courses > low + BuriedPieces.Growth && courses < 256) courses++;
+            while (top - courses > low - StairSupport.Bury && courses < 256) courses++;
             return courses;
         }
 
         /// <summary>The pillars of a step's footing at <paramref name="p"/>: from the step's <paramref name="foot"/> down to
-        /// the first whose foot is in the ground.</summary>
+        /// the first whose foot is sunk <see cref="StairSupport.Bury"/> under the ground, as a staircase's wall is.</summary>
         public int FootingPillars(Vector2 p, float foot)
         {
             float ground = m_ground(p);
             int pillars = 1;
-            while (foot - StonePillarHeight * pillars > ground + BuriedPieces.Growth && pillars < 256) pillars++;
+            while (foot - StonePillarHeight * pillars > ground - StairSupport.Bury && pillars < 256) pillars++;
             return pillars;
         }
 

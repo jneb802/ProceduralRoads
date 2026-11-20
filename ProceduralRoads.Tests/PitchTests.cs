@@ -120,7 +120,7 @@ public class PitchTests
         Assert.NotNull(pitched);
         Assert.True(RoadGrade.Limit(p, h, RoadPitches.LimitCap(0.35f, pitched), pitched));
         for (int i = 1; i < p.Count; i++)
-            if (p[i].x > 114.5f) Assert.True((h[i] - h[i - 1]) / (p[i].x - p[i - 1].x) <= 0.0501f, $"landing step at {p[i].x} is {(h[i] - h[i - 1]):F3}");
+            if (p[i].x > 114.5f) Assert.True((h[i] - h[i - 1]) / (p[i].x - p[i - 1].x) <= RoadPitches.JunctionLandingGrade + 1e-4f, $"landing step at {p[i].x} is {(h[i] - h[i - 1]):F3}");
     }
     [Theory]
     [InlineData(0.28f)]

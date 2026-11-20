@@ -48,7 +48,7 @@ public class StairEndFloorTests : IDisposable
     private static void WithTheCap(Action body)
     {
         float cap = RoadNetworkGenerator.EarthworkCap;
-        RoadNetworkGenerator.EarthworkCap = 8f;
+        RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
         try { body(); }
         finally { RoadNetworkGenerator.EarthworkCap = cap; }
     }
@@ -530,7 +530,7 @@ public class StairEndFloorTests : IDisposable
         Assert.True(RoadSpatialGrid.AddRoadPath(across, 4f, world));
         RoadSpatialGrid.FinalizeRoadNetwork();
         Assert.True(RoadSpatialGrid.TryGetRoadHeightWithin(new Vector2(0f, start), 1f, out float held));
-        Assert.True(44f - held > RoadNetworkGenerator.ArrivalLevel, $"the road across at {held:F2}");
+        Assert.True(44f - held > StairLayout.StairFitsFrom, $"the road across at {held:F2}");
 
         StairPlan carried = CarryOn(world, plan.Copy(), path, foot: false, top: true);
         Assert.Empty(RoadStairRuns.EndFloorsKept);
@@ -547,35 +547,6 @@ public class StairEndFloorTests : IDisposable
         Assert.Equal(1, RoadStairRuns.EndsCarried);
     }
 
-    /// <summary>The timing switch (PROCEDURALROADS_CARRY_MIN_ROWS): an end with no more floor rows than it is left as laid and
-    /// counted so; 0, the default, tries every end. Each end is counted by its floor rows either way.</summary>
-    [Fact]
-    public void TheMinRowsSwitchLeavesEndsAtOrBelowItAsLaid()
-    {
-        Assert.Equal(0, RoadStairRuns.CarryMinRows);
-        int was = RoadStairRuns.CarryMinRows;
-        try
-        {
-            var (plan, path) = Straight();
-            RoadStairRuns.CarryMinRows = 3;
-            Assert.Same(plan, Carry(plan, path, 3, 5, foot: true, top: true, StraightGround()));
-            Assert.Equal(new[] { 0, 0, 2, 0 }, RoadStairRuns.EndsByFloorRows);
-            Assert.Equal(2, RoadStairRuns.EndsSkippedByRows);
-            Assert.Equal(0, RoadStairRuns.EndsTried);
-            Assert.Equal(0, RoadStairRuns.RoadOntoCalls);
-            Assert.Empty(RoadStairRuns.EndFloorsKept);
-
-            RoadNetworkGenerator.Reset();
-            RoadStairRuns.CarryMinRows = 2;
-            StairPlan carried = Carry(plan, path, 3, 5, foot: true, top: true, StraightGround());
-            Assert.Equal(2, carried.FootFloorsTrimmed);
-            Assert.Equal(2, carried.TopFloorsTrimmed);
-            Assert.Equal(0, RoadStairRuns.EndsSkippedByRows);
-            Assert.Equal(2, RoadStairRuns.EndsTried);
-            Assert.Equal(2, RoadStairRuns.EndsCarried);
-        }
-        finally { RoadStairRuns.CarryMinRows = was; }
-    }
     /// <summary>One world for every lay of a road, as a generation's: <see cref="Carry"/> makes a new one each call.</summary>
     private StairPlan CarryOn(World world, StairPlan plan, List<Vector2> path, bool foot, bool top) =>
         RoadStairRuns.CarryRoadOntoStairs(plan, path, 3, 5, foot, top, new List<RoadStairSpan>(), new List<RoadCrossing>(), null, world, world.Height);

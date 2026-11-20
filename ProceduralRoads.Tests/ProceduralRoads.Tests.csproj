@@ -148,8 +148,6 @@
                  Condition="!Exists('../ProceduralRoads/Src/Roads/RoadEndReport.cs')"/>
         <Compile Include="../ProceduralRoads/Src/Roads/LocationLevelling.cs" Link="ModSrc/LocationLevelling.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/LocationLevelling.cs')"/>
-        <Compile Remove="LocationLevellingTests.cs"
-                 Condition="!Exists('../ProceduralRoads/Src/Roads/LocationLevelling.cs')"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadGrade.cs" Link="ModSrc/RoadGrade.cs"
                  Condition="Exists('../ProceduralRoads/Src/Roads/RoadGrade.cs')"/>
         <Compile Remove="RoadGradeTests.cs"

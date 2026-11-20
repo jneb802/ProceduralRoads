@@ -37,6 +37,18 @@ public static class ManualRoadCommands
         return ManualRoadDraft.ParsePoint(words[0], words[1]);
     }
 
+    /// <summary>The point a command is given as its first two words, "&lt;x&gt; &lt;z&gt;", read as every typed coordinate is
+    /// (<see cref="ManualRoadDraft.ParsePoint"/>: invariant culture, finite, inside the world), or null where it is given
+    /// fewer words (the command then acts where the player stands). False, with the reason printed after
+    /// <paramref name="usage"/>, where the two words are no such point.</summary>
+    internal static bool TryTypedPoint(Terminal.ConsoleEventArgs args, string usage, out Vector2? point)
+    {
+        point = null;
+        if (args.Length < 3) return true;
+        try { point = ManualRoadDraft.ParsePoint(args[1], args[2]); return true; }
+        catch (ArgumentException e) { args.Context.AddString($"{usage}: {e.Message}"); return false; }
+    }
+
     /// <summary>
     /// Runs an action a frame or two later, so the console has drawn what was printed before a long search freezes the
     /// game. Set by the plugin (a BepInEx coroutine); unset, the action runs at once.
@@ -66,7 +78,7 @@ public static class ManualRoadCommands
         int versionBefore = RoadSpatialGrid.RoadNetworkVersion;
         try
         {
-            if (ZNet.instance == null || !ZNet.instance.IsServer()) throw new InvalidOperationException("Run this command on the host or dedicated-server console.");
+            if (!RoadLifecycleManager.HoldsTheNetwork) throw new InvalidOperationException("Run this command on the host or dedicated-server console.");
             if (ZDOMan.instance == null || ZNetScene.instance == null) throw new InvalidOperationException("The world is not ready.");
             string actor = Player.m_localPlayer == null ? "console" : "host";
             var draft = ManualRoads.Draft(actor);

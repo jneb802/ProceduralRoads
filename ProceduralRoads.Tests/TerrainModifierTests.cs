@@ -15,7 +15,7 @@ namespace ProceduralRoads.Tests;
 public class TerrainModifierTests : System.IDisposable
 {
     private const int Width = 64;                 // vanilla zone: 64 vertices per side, 1 m apart
-    private const float RoadWidth = 4f;
+    private const float RoadWidth = RoadConstants.DefaultRoadWidth;
     private const float Lift = 1.5f;              // road height above natural terrain
 
     private readonly ValheimWorldScope _world = new ValheimWorldScope();

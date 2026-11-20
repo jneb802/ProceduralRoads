@@ -19,7 +19,7 @@ public static class ManualRoadApplication
     {
         private static void Postfix()
         {
-            if (RoadLifecycleManager.IsGenerating || ZNet.instance == null || !ZNet.instance.IsServer()) return;
+            if (RoadLifecycleManager.IsGenerating || !RoadLifecycleManager.HoldsTheNetwork) return;
             if (StructureAppendQueue.Count == 0 || Time.realtimeSinceStartup < nextRetry) return;
             nextRetry = Time.realtimeSinceStartup + 2f;
             try { StructurePlacement.ApplyPendingAppends(); }

@@ -73,7 +73,7 @@ public static class NetworkCutoff
 
     private static bool Current => s_world != null && ReferenceEquals(s_world, ZoneSystem.instance);
 
-    /// <summary>Whether automatic writers must leave this zone exactly as it is.</summary>
+    /// <summary>Whether automatic writers must leave this zone exactly as it is. The one owner of which zones the mod may write (docs/OWNERS.md).</summary>
     public static bool Excludes(Vector2s zone) => Current && s_excluded.Contains(zone);
 
     /// <summary>How many zones are excluded (logs and tests).</summary>
@@ -82,6 +82,7 @@ public static class NetworkCutoff
     /// <summary>
     /// Whether the network being planned goes round this zone rather than through it: an explored zone players built
     /// in or dug, when the network includes the explored land. Safe from the search's workers.
+    /// The one owner of which zones the mod may write (docs/OWNERS.md).
     /// </summary>
     public static bool Avoids(Vector2s zone)
     {
@@ -444,7 +445,7 @@ public static class NetworkCutoff
             if (reader.ReadInt32() != RecordFormat) return false;
             int version = reader.ReadInt32();
             int count = reader.ReadInt32();
-            if (count < 0 || count > 1_000_000) return false;
+            if (count < 0 || count > RoadNetworkPersistence.MaxSavedZones) return false;
             for (int i = 0; i < count; i++)
                 zones.Add(new Vector2s(reader.ReadInt16(), reader.ReadInt16()));
             if (ms.Position != ms.Length) { zones.Clear(); return false; }

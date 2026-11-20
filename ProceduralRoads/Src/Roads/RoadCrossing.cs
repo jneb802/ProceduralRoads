@@ -305,7 +305,7 @@ public static class RoadCrossingDetector
     /// (DvergrViaduct.ValleyCrossing, "ground over the deck") for every crossing that carries a deck. Measured against
     /// the walking surface, not the underside: a deck stands at its higher bank's ground by construction, so that
     /// bank's own ground is already in the planks' depth, and the ground in under each end is cut below the deck when
-    /// it is built (RoadNetworkGenerator.CrossingGround.UnderDecks). Ground over the walking surface is ground a player walks
+    /// it is built (BridgeStructures.GroundUnderDeck). Ground over the walking surface is ground a player walks
     /// into, and no earthwork under the deck is planned to remove it.
     /// </summary>
     internal static Vector2? GroundThroughDeck(Vector2 from, Vector2 to, float deck, WorldGenerator world)
@@ -344,7 +344,7 @@ public static class RoadCrossingDetector
         if ((from != crossing.FromBank || to != crossing.ToBank) && Vector2.Distance(from, to) >= 1f)
         {
             (float bed, Vector2 fairwayCenter, float fairwayWidth) = Profile(from, to, world);
-            if (bed < RoadConstants.SeaLevel)
+            if (RoadWater.Wet(bed))
             {
                 RoadCrossing walked = RoadCrossing.Between(from, to, bed, fairwayCenter, fairwayWidth, crossing.Kind, crossing.Style);
                 walked.FromIndex = crossing.FromIndex;
@@ -486,9 +486,9 @@ public static class RoadCrossingDetector
     public const float ShallowMinLength = 6f;
     /// <summary>One rule for every style (a wade, a raised ford and a deck take the same water;
     /// water no style may take is no crossing at all): a road may cross
-    /// shallow water as far as a river ford reaches and no deeper than a ford is waded. A run past
+    /// shallow water as far as a river ford reaches and no deeper than <see cref="ShallowMaxDepth"/>. A run past
     /// either is an INVALID crossing; the caller re-routes round it or refuses the road.</summary>
-    public const float ShallowMaxLength = RoadConstants.MaxRiverCrossingCells * 8f;
+    public const float ShallowMaxLength = RoadConstants.MaxFordSpan;
     /// <summary>Deeper than this no style is built. A wade is a ford BUILT up to
     /// <see cref="ShallowWadeCover"/> under the water line (a submerged causeway), so every style
     /// takes the same water; 3 m of fill is well inside the 8 m earthwork cap. Measured on a
@@ -511,7 +511,7 @@ public static class RoadCrossingDetector
             for (float d = 1f; d <= length + 12f; d += 1f)
             {
                 Vector2 p = from + dir * d;
-                bool wet = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world) < RoadConstants.SeaLevel;
+                bool wet = RoadWater.Wet(BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world));
                 if (wet) { sawWater = true; continue; }
                 if (!sawWater) continue;
                 if (Vector2.Distance(p, to) <= 8f && d <= ShallowMaxLength) return p;
@@ -595,7 +595,7 @@ public static class RoadCrossingDetector
             {
                 Vector2 p = Vector2.Lerp(a, b, (float)k / n);
                 float h = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
-                bool wet = h < RoadConstants.SeaLevel;
+                bool wet = RoadWater.Wet(h);
                 if (wet)
                 {
                     if (runSeg < 0) { runSeg = i - 1; runStart = last; }
@@ -634,7 +634,7 @@ public static class RoadCrossingDetector
             float y = a.y + (b.y - a.y) * t;
             world.GetRiverWeight(x, y, out float weight, out _);
             if (RoadWater.River(weight)
-                && BiomeBlendedHeight.GetBlendedHeight(x, y, world) < RoadConstants.SeaLevel)
+                && RoadWater.Wet(BiomeBlendedHeight.GetBlendedHeight(x, y, world)))
                 return true;
         }
         return false;
@@ -676,7 +676,7 @@ public static class RoadCrossingDetector
             float toH = BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world);
             (Vector2 topFrom, int topFromIndex, float topFromH) = BankTop(path, from, fromIndex, -1, world);
             (Vector2 topTo, int topToIndex, float topToH) = BankTop(path, to, toIndex, +1, world);
-            float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+            float cap = RoadConstants.MaxBridgeSpan;
             bool bothRise = topFromH >= fromH + RoadConstants.HighBankRise
                          && topToH >= toH + RoadConstants.HighBankRise;
             if (bothRise
@@ -698,7 +698,7 @@ public static class RoadCrossingDetector
         (float riverbed, Vector2 fairwayCenter, float fairwayWidth) = Profile(from, to, world);
 
         // A crossing needs water under it; a dry river valley is ordinary road.
-        if (riverbed >= RoadConstants.SeaLevel)
+        if (RoadWater.AtOrOverSea(riverbed))
             return null;
 
         Vector2 center = (from + to) * 0.5f;
@@ -712,12 +712,10 @@ public static class RoadCrossingDetector
         // is a ford in the same style mix, unless a stretch of it is sailable
         // for at least a boat's length, which keeps it a bridge. Without
         // bridges every crossing is a ford.
-        // The class the pathfinder accepted is kept: a jump beyond the ford
-        // cap was a bridge whatever its depth, and a feature that is off
-        // never produces its kind.
-        bool ford = jumpLength <= RoadConstants.MaxRiverCrossingCells * RoadPathfinder.CellSize + 0.5f && (swamp
-            ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
-            : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
+        // The class the pathfinder accepted is kept: the search classes the
+        // jump by the same rule (IsFord), and a feature that is off never
+        // produces its kind.
+        bool ford = IsFord(jumpLength, swamp, riverbed, fairwayWidth);
         if (!fords) ford = false;
         // Without bridges, water a ford may not cross is not a crossing: a
         // segment dipping into a deeper channel is left as it is today.
@@ -815,7 +813,7 @@ public static class RoadCrossingDetector
                 && Vector2.Distance(edgeFrom, edgeTo) >= 1f)
             {
                 (float edgeBed, Vector2 edgeCentre, float edgeFairway) = Profile(edgeFrom, edgeTo, world);
-                if (edgeBed < RoadConstants.SeaLevel)
+                if (RoadWater.Wet(edgeBed))
                 {
                     from = edgeFrom;
                     to = edgeTo;
@@ -906,6 +904,40 @@ public static class RoadCrossingDetector
         return crossing;
     }
 
+    /// <summary>
+    /// Ford or bridge: the one rule, for the search pricing a jump (<see cref="IsFordJump"/>) and the detector building it.
+    /// A FORD is a jump within the ford cap (half a metre over it for the snapped path) over water a ford may cross: in a
+    /// swamp, a bed down to the deep line with no sailable stretch a boat's length long; elsewhere, a bed at wading depth
+    /// with nothing sailable. Anything else is a bridge. <paramref name="riverbed"/> and <paramref name="fairwayWidth"/>
+    /// are the <see cref="Profile"/> of the bank-to-bank line, <paramref name="swamp"/> the biome at its middle.
+    /// The one owner of ford or bridge (docs/OWNERS.md).
+    /// </summary>
+    internal static bool IsFord(float jumpLength, bool swamp, float riverbed, float fairwayWidth) =>
+        WithinFordCap(jumpLength) && (swamp
+            ? fairwayWidth < RoadConstants.SwampFordMaxFairway && riverbed >= RoadConstants.DeepWaterHeight
+            : fairwayWidth <= 0f && riverbed >= RoadConstants.SeaLevel - RoadConstants.FordWadeDepth);
+
+    /// <summary>
+    /// <see cref="IsFord"/> for the jump between <paramref name="a"/> and <paramref name="b"/>, measured as
+    /// <see cref="Build"/> measures a path segment: the water's edge on each side (<see cref="Shore"/>), the river along
+    /// the line between them at 1 m (<see cref="Profile"/>), the biome at its middle. A jump past the ford cap is a bridge
+    /// without reading the water.
+    /// The one owner of ford or bridge (docs/OWNERS.md).
+    /// </summary>
+    internal static bool IsFordJump(Vector2 a, Vector2 b, WorldGenerator world)
+    {
+        float jumpLength = Vector2.Distance(a, b);
+        if (!WithinFordCap(jumpLength))
+            return false;
+        Vector2 from = Shore(a, b, world);
+        Vector2 to = Shore(b, a, world);
+        (float riverbed, _, float fairwayWidth) = Profile(from, to, world);
+        Vector2 center = (from + to) * 0.5f;
+        return IsFord(jumpLength, world.GetBiome(center.x, center.y) == Heightmap.Biome.Swamp, riverbed, fairwayWidth);
+    }
+
+    private static bool WithinFordCap(float jumpLength) => jumpLength <= RoadConstants.MaxFordSpan + 0.5f;
+
     /// <summary>The river along the bank-to-bank line at about 1 m spacing:
     /// the lowest bed, and the longest sailable stretch.</summary>
     private static (float riverbed, Vector2 fairwayCenter, float fairwayWidth) Profile(Vector2 from, Vector2 to, WorldGenerator world)
@@ -994,13 +1026,8 @@ public static class RoadCrossingDetector
     /// loads and worlds regenerate identically.</summary>
     private static int SiteHash(Vector2 center)
     {
-        unchecked
-        {
-            int x = Mathf.RoundToInt(center.x), y = Mathf.RoundToInt(center.y);
-            uint h = (uint)(x * 374761393 + y * 668265263);
-            h = (h ^ (h >> 13)) * 1274126177u;
-            return (int)((h ^ (h >> 16)) & 0x7FFFFFFF);
-        }
+        int x = Mathf.RoundToInt(center.x), y = Mathf.RoundToInt(center.y);
+        return (int)(RoadPathfinder.HashCell(x, y) & 0x7FFFFFFF);
     }
 
     /// <summary>
@@ -1061,7 +1088,7 @@ public static class RoadCrossingDetector
     /// </summary>
     private static bool SnapToPlaceableHeading(ref Vector2 from, ref Vector2 to, WorldGenerator world)
     {
-        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        float cap = RoadConstants.MaxBridgeSpan;
         Vector2 centre = (from + to) * 0.5f;
         float bearing = BridgeLayout.YawDegrees((to - from).normalized);
 
@@ -1098,7 +1125,7 @@ public static class RoadCrossingDetector
         (riverbed, fairwayCenter, fairwayWidth) = Profile(turnedFrom, turnedTo, world);
 
         // Still a crossing at all.
-        if (riverbed >= RoadConstants.SeaLevel)
+        if (RoadWater.AtOrOverSea(riverbed))
             return false;
         // Still the crossing the router priced: neither bridgehead has walked
         // further than the cell size the route was chosen at. Either end may
@@ -1115,7 +1142,7 @@ public static class RoadCrossingDetector
             return false;
         // Still inside the limits the router applies to a bridge.
         float span = Vector2.Distance(turnedFrom, turnedTo);
-        if (span < 1f || span > RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize)
+        if (span < 1f || span > RoadConstants.MaxBridgeSpan)
             return false;
         float bankDelta = Mathf.Abs(
             BiomeBlendedHeight.GetBlendedHeight(turnedTo.x, turnedTo.y, world)
@@ -1139,7 +1166,7 @@ public static class RoadCrossingDetector
         float toH = BiomeBlendedHeight.GetBlendedHeight(to.x, to.y, world);
         (Vector2 topFrom, float topFromH) = HighestAlong(from, -d, world);
         (Vector2 topTo, float topToH) = HighestAlong(to, d, world);
-        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        float cap = RoadConstants.MaxBridgeSpan;
         if (topFromH >= fromH + RoadConstants.HighBankRise && topToH >= toH + RoadConstants.HighBankRise
             && Mathf.Abs(topFromH - topToH) <= RoadConstants.MaxBridgeBankDelta
             && Vector2.Distance(topFrom, topTo) <= cap)
@@ -1254,7 +1281,7 @@ public static class RoadCrossingDetector
         Vector2 edgeFrom, Vector2 edgeTo, int edgeFromIndex, int edgeToIndex)
     {
         float ceiling = RoadConstants.MaxBridgePierHeight;
-        float cap = RoadConstants.MaxBridgeCrossingCells * RoadPathfinder.CellSize;
+        float cap = RoadConstants.MaxBridgeSpan;
 
         // Deck, bed and profile for a candidate pair of banks, or null if it is
         // not a crossing this mod would build. A piece-carrying crossing on an
@@ -1266,7 +1293,7 @@ public static class RoadCrossingDetector
             if (carriesPieces && !BridgeLayout.HeadingIsPlaceable(BridgeLayout.YawDegrees((b - a).normalized)))
                 return null;
             (float bed, Vector2 centre, float fairway) = Profile(a, b, world);
-            if (bed >= RoadConstants.SeaLevel) return null;
+            if (RoadWater.AtOrOverSea(bed)) return null;
             RoadCrossing c = RoadCrossing.Between(a, b, bed, centre, fairway, CrossingKind.Bridge, FordStyle.None);
             return (BridgeLayout.DeckHeight(c, world), bed, centre, fairway);
         }

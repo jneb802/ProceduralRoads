@@ -45,9 +45,8 @@ public static class RoadWiggle
     /// <summary>Times a refused or earth-moving swayed plan is planned again with more of its sway held.</summary>
     public const int HoldRounds = 3;
     /// <summary>Ground grade along the road up to which the sway is at full strength; above it
-    /// the sway eases down to <see cref="SlopeFloor"/> at the grade cap. Validation switch
-    /// WIGGLE_FLAT.</summary>
-    public static readonly float Flat = DebugSwitches.Number("WIGGLE_FLAT", 0.12f, 0.02f, 1f);
+    /// the sway eases down to <see cref="SlopeFloor"/> at the grade cap.</summary>
+    public const float Flat = 0.12f;
 
     /// <summary>The share of the sway kept at the road's grade cap, and beyond it: a reduced
     /// sway on slopes instead of switching it off.
@@ -73,7 +72,7 @@ public static class RoadWiggle
 
     private static readonly (float wave, float weight)[] Octaves = { (97f, 0.5f), (41f, 0.33f), (17f, 0.17f) };
 
-    /// <summary>The sway in [-1,1] at a distance along a road with this phase.</summary>
+    /// <summary>The sway in [-1,1] at a distance along a road with this phase. The one owner of sway and meander (docs/OWNERS.md).</summary>
     internal static float Sway(float along, float phase)
     {
         float sum = 0f;
@@ -93,6 +92,7 @@ public static class RoadWiggle
     /// sideways; the ends stay where they are, and so do the waypoints in
     /// <paramref name="keep"/> (a structure end's stair foot and apron), the
     /// sway held round each as round a point in <see cref="HeldAt"/>.
+    /// The one owner of sway and meander (docs/OWNERS.md).
     /// </summary>
     public static List<Vector2> Apply(List<Vector2> path, Func<Vector2, float> ground, Func<Vector2, bool> wet,
         Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad = null, List<Vector2>? keep = null)
@@ -324,12 +324,10 @@ public static class RoadWiggle
 
     /// <summary>Earthwork a swayed plan may add to its deepest cut or fill, metres.</summary>
     public const float EarthSlack = 0.5f;
-    /// <summary>The game's terrain edit limit: a level delta is clamped to +/-8 m.</summary>
-    public const float TerrainLimit = 8f;
 
     /// <summary>
     /// The points of a swayed plan that move more earth than the plain plan allows (past its deepest cut or fill
-    /// by more than <see cref="EarthSlack"/>, or past the terrain limit where the plain one is not), at least
+    /// by more than <see cref="EarthSlack"/>, or past the earthwork cap (<see cref="RoadNetworkGenerator.ShapedLimit"/>) where the plain one is not), at least
     /// <see cref="HoldRadius"/> apart: where its sway is to be held.
     /// </summary>
     public static List<Vector2> MoreEarthAt(IList<Vector2> swayed, IList<float> swayedHeights,
@@ -337,7 +335,7 @@ public static class RoadWiggle
     {
         float deepest = 0f;
         for (int i = 0; i < plain.Count; i++) deepest = Mathf.Max(deepest, Mathf.Abs(plainHeights[i] - ground(plain[i])));
-        float allowed = Mathf.Min(deepest + EarthSlack, Mathf.Max(deepest, TerrainLimit));
+        float allowed = Mathf.Min(deepest + EarthSlack, Mathf.Max(deepest, RoadNetworkGenerator.ShapedLimit));
         var spots = new List<Vector2>();
         for (int i = 0; i < swayed.Count; i++)
         {
@@ -362,7 +360,7 @@ public static class RoadWiggle
     /// <summary>
     /// The swayed road moves no more earth than the plain one: its deepest cut
     /// or fill is within <see cref="EarthSlack"/> of the plain one's, and it
-    /// has no more points past the terrain limit.
+    /// has no more points past the earthwork cap.
     /// </summary>
     public static bool NoMoreEarth(IList<Vector2> swayed, IList<float> swayedHeights,
         IList<Vector2> plain, IList<float> plainHeights, Func<Vector2, float> ground)
@@ -374,7 +372,7 @@ public static class RoadWiggle
             {
                 float d = Mathf.Abs(hs[i] - ground(pts[i]));
                 deepest = Mathf.Max(deepest, d);
-                if (d > TerrainLimit) past++;
+                if (d > RoadNetworkGenerator.ShapedLimit) past++;
             }
             return (deepest, past);
         }

@@ -26,8 +26,8 @@ public static class RoadRockCarve
 {
     public enum Outcome { Carved, Removed, Untouched, NotCarvable }
 
-    /// <summary>The widest road's half-width: how far past a rock's footprint a road can touch it.</summary>
-    internal const float WidestRoadHalfWidth = 4f;
+    /// <summary>How far past a rock's footprint a road or structure can touch it (<see cref="RoadRockPolicy.CarveReach"/>). The one owner of road width, and every rule that follows it (docs/OWNERS.md).</summary>
+    internal static float WidestRoadHalfWidth => RoadRockPolicy.CarveReach;
 
     /// <summary>Strips across the clearance the way
     /// (<see cref="RoadRockPolicy.WayStrips"/>) is counted in: 0.17 m each on a
@@ -59,6 +59,7 @@ public static class RoadRockCarve
     /// game destroys once the zone is populated, leaving only their data.</summary>
     internal static List<GameObject>? GhostSpawned;
 
+    /// <summary>The one owner of which rocks a road clears or carves (docs/OWNERS.md).</summary>
     public static Result Carve(GameObject root)
     {
         var result = new Result { outcome = Outcome.NotCarvable, note = "" };
@@ -297,16 +298,15 @@ public static class RoadRockCarve
             return RoadRockPolicy.FragmentGround(ready, read, terrain, finished, out ground);
         }
 
-        /// <summary>Whether a zone's loaded terrain is the ground the players will have: a full heightmap is built there,
-        /// with no rebuild queued, and its road terrain is written (<see cref="RoadTerrainModifier.TerrainSettled"/>), or it
-        /// has no road for the writer to write.</summary>
+        /// <summary>Whether a zone's loaded terrain is the ground the players will have: a full heightmap is built there
+        /// and its road terrain is written, or it has no road for the writer to write
+        /// (<see cref="RoadRockClearing.TerrainWritten"/>).</summary>
         private static bool TerrainReady(Vector2s zone)
         {
             Vector3 centre = ZoneSystem.GetZonePos(zone);
             foreach (var map in Heightmap.GetAllHeightmaps())
                 if (map != null && !map.IsDistantLod && map.IsPointInside(centre))
-                    return !map.HaveQueuedRebuild() &&
-                        (RoadTerrainModifier.TerrainSettled(centre) || RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
+                    return RoadRockClearing.TerrainWritten(map, centre, zone, orRoadless: true);
             return false;
         }
     }
@@ -329,7 +329,7 @@ public static class RoadRockCarve
     {
         if (RockBounds(rock) is not Bounds bounds) return new List<RockClearance>();
         float reach = new Vector2(bounds.extents.x, bounds.extents.z).magnitude + WidestRoadHalfWidth;
-        return RockClearances.Near(bounds.center, reach, GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out _, out _, out _);
+        return RockClearances.Near(bounds.center, reach, GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out _, out _);
     }
 
     /// <summary>The bounds of a rock's live chunks, or null when none are left.</summary>

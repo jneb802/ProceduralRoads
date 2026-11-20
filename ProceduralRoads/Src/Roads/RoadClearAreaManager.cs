@@ -58,22 +58,37 @@ public static class RoadClearAreaManager
     public static List<VegetationClearing.RoadCentre> RoadCentresSince(Vector2s zoneID, int sinceAppend) => CreateRoadCentres(zoneID, sinceAppend);
 
     /// <summary>
-    /// PlaceVegetation's test for one vegetation entry, with the scale it drew for this one: inside a clear area
-    /// (<see cref="InsideClearArea"/>), or a grown tree whose trunk reaches one of <paramref name="road"/>
-    /// (VegetationClearing.OnRoad, the rule the server clearing applies too). <paramref name="lean"/> is the tilt it drew and
-    /// the height its origin will stand at, for armour a road may run through.
+    /// Adds to <paramref name="areas"/> (the game's own, a location's, already in it) the clear areas the roads hand
+    /// PlaceVegetation for a zone, in its order: the roads' (those added after <paramref name="sinceAppend"/> appends; -1:
+    /// every road's), the staircases', then the bridges'; and says where each kind starts. Generation adds them to the
+    /// game's list as it generates the zone; the server builds the same list for a zone generated before its roads, so
+    /// both judge alike (VegetationClearing.Judge).
     /// </summary>
-    public static bool OnRoad(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea,
-        IReadOnlyList<VegetationClearing.RoadCentre> road, Vector3 point, string prefab, float scale,
-        RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt, ref float yaw, VegetationClearing.Lean? lean = null,
-        bool turns = true, int? firstRockKeepingArea = null)
+    public static VegetationClearing.ZoneAreas AddRoadAreas(Vector2s zoneID, List<ZoneSystem.ClearArea> areas, int sinceAppend = -1)
     {
-        int hash = prefab.GetStableHashCode();
+        int firstRoad = areas.Count;
+        areas.AddRange(sinceAppend >= 0 ? ClearAreasSince(zoneID, sinceAppend) : GetOrCreateClearAreas(zoneID));
+        int firstStructure = areas.Count;
+        areas.AddRange(StructurePlacement.GetClearAreas(zoneID, staircases: true));
+        int firstRockKeeping = areas.Count;
+        areas.AddRange(StructurePlacement.GetClearAreas(zoneID, staircases: false));
+        return new VegetationClearing.ZoneAreas(areas, firstRoad, firstStructure, firstRockKeeping);
+    }
+
+    /// <summary>
+    /// PlaceVegetation's test for one vegetation entry, with the scale it drew for this one: inside one of the game's own
+    /// clear areas (a location's, VegetationClearing.InGameArea), as the game tests it without the mod, or what the road
+    /// takes (VegetationClearing.Judge, the rule the server clearing applies too). <paramref name="lean"/> is the tilt it drew
+    /// and the height its origin will stand at, for armour a road may run through.
+    /// </summary>
+    public static bool OnRoad(VegetationClearing.ZoneAreas areas, IReadOnlyList<VegetationClearing.RoadCentre> road, Vector3 point,
+        string prefab, float scale, System.Func<Vector3, Heightmap.Biome> biomeAt, ref float yaw, VegetationClearing.Lean? lean = null,
+        bool turns = true)
+    {
         var at = new Vector2(point.x, point.z);
-        VegetationClearing.Lying lying = VegetationClearing.OnRoad(InsideClearArea(areas, firstRoadArea, firstStructureArea, point, prefab, rockClearing, biomeAt,
-                firstRockKeepingArea),
-            hash, scale, road, at, yaw, out float turned, VegetationClearing.IsLying(hash) ? KeptBy(areas, firstRoadArea, firstStructureArea) : null,
-            lean);
+        if (VegetationClearing.InGameArea(areas, at)) return true;
+        int hash = prefab.GetStableHashCode();
+        VegetationClearing.Lying lying = VegetationClearing.Judge(hash, point, scale, yaw, lean, areas, road, biomeAt, out float turned);
         VegetationClearing.Note(hash, at, lying, yaw, turned);
         // One lying along the ground, turned so the road passes beside it, or through it (VegetationClearing.Lie). Where
         // the candidate's yaw cannot be turned (<paramref name="turns"/> false), one that would be is removed instead.
@@ -81,52 +96,6 @@ public static class RoadClearAreaManager
         if (turn && !turns) return true;
         if (turn) yaw = turned;
         return lying == VegetationClearing.Lying.Remove;
-    }
-
-    /// <summary>Generation's kept ground for a turn: a location's or structure's clear area (the game's areas before the roads',
-    /// the structures' after them).</summary>
-    private static System.Func<Vector2, bool> KeptBy(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea) => p =>
-    {
-        int roadStart = Mathf.Min(firstRoadArea, areas.Count), structureStart = Mathf.Clamp(firstStructureArea, roadStart, areas.Count);
-        for (int i = 0; i < areas.Count; i++)
-        {
-            if (i >= roadStart && i < structureStart) continue;
-            ZoneSystem.ClearArea area = areas[i];
-            if (Mathf.Abs(p.x - area.m_center.x) < area.m_radius && Mathf.Abs(p.y - area.m_center.z) < area.m_radius) return true;
-        }
-        return false;
-    };
-
-    /// <summary>
-    /// PlaceVegetation's clear-area test (ZoneSystem.InsideClearArea: strict, and square), asked for one vegetation entry.
-    /// The areas before <paramref name="firstRoadArea"/> are the game's own (locations), from there to
-    /// <paramref name="firstStructureArea"/> the roads', and from there on the structures'. The game's and the structures'
-    /// apply to every entry. The roads' keep vegetation out, but not a large rock the rock clearing takes there
-    /// (<see cref="RoadRockPolicy.ClearingTakes"/>, in the biome <paramref name="biomeAt"/> gives): that one is placed as
-    /// in a world without roads and Roads/RockClearing carves or removes it. A rock the rock clearing would leave is kept
-    /// off the road as vegetation is. The structures' from <paramref name="firstStructureArea"/> to
-    /// <paramref name="firstRockKeepingArea"/> (the staircases', none when it is not given) leave such a rock to the rock
-    /// clearing as the roads' do: it clears a staircase's walking box (StairLayout.AddClearance), and a rock its supports or
-    /// handrails stand in stays.
-    /// </summary>
-    public static bool InsideClearArea(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea, Vector3 point,
-        string prefab, RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt, int? firstRockKeepingArea = null)
-    {
-        int roadStart = Mathf.Min(firstRoadArea, areas.Count);
-        int roadEnd = Mathf.Clamp(firstStructureArea, roadStart, areas.Count);
-        int leftEnd = Mathf.Clamp(firstRockKeepingArea ?? roadEnd, roadEnd, areas.Count);
-        bool rockKeepsRoad = RoadRockPolicy.IsClearableRock(prefab) && roadStart < leftEnd &&
-            RoadRockPolicy.ClearingTakes(prefab, biomeAt(point), rockClearing);
-        for (int i = 0; i < areas.Count; i++)
-        {
-            if (rockKeepsRoad && i >= roadStart && i < leftEnd)
-                continue;
-            ZoneSystem.ClearArea area = areas[i];
-            if (point.x > area.m_center.x - area.m_radius && point.x < area.m_center.x + area.m_radius &&
-                point.z > area.m_center.z - area.m_radius && point.z < area.m_center.z + area.m_radius)
-                return true;
-        }
-        return false;
     }
 
     private static List<VegetationClearing.RoadCentre> CreateRoadCentres(Vector2s zoneID, int sinceAppend = -1)

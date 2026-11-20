@@ -27,7 +27,7 @@ public class EndpointTerrainTests : System.IDisposable
     }
 
     private const int Width = 64;
-    private const float RoadWidth = 4f;
+    private const float RoadWidth = RoadConstants.DefaultRoadWidth;
     private const float EastEnd = 200f;
     private const float WestEnd = -200f;
 

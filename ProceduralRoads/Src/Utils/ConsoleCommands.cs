@@ -765,8 +765,9 @@ public static class ConsoleCommands
         }
 
         Vector2 at;
-        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
-            at = new Vector2(x, z);
+        if (!ManualRoadCommands.TryTypedPoint(args, "Usage: road_bridge_repairs <x> <z>", out Vector2? typed)) return;
+        if (typed is Vector2 point)
+            at = point;
         else if (Player.m_localPlayer != null)
             at = new Vector2(Player.m_localPlayer.transform.position.x, Player.m_localPlayer.transform.position.z);
         else
@@ -854,9 +855,10 @@ public static class ConsoleCommands
     private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
     {
         Vector3 pos;
-        if (args.Length >= 3 && float.TryParse(args[1], out float x) && float.TryParse(args[2], out float z))
+        if (!ManualRoadCommands.TryTypedPoint(args, "Usage: road_regen_island [<x> <z>] [force]", out Vector2? typed)) return;
+        if (typed is Vector2 point)
         {
-            pos = new Vector3(x, 0f, z);
+            pos = new Vector3(point.x, 0f, point.y);
         }
         else if (Player.m_localPlayer != null)
         {
@@ -1010,9 +1012,12 @@ public static class ConsoleCommands
         }
 
         float radius = 15f;
-        if (args.Length > 1 && float.TryParse(args[1], out float parsedRadius))
+        // Read as road_ends reads its ring: invariant culture, a finite positive number.
+        if (args.Length > 1 && (!float.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out radius) ||
+            !ManualRoadDraft.IsFinite(radius) || radius <= 0f))
         {
-            radius = parsedRadius;
+            args.Context.AddString("Usage: road_debug_log [positive radius in metres=15]");
+            return;
         }
 
         Vector3 playerPos = player.transform.position;

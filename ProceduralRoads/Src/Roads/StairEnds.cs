@@ -60,14 +60,14 @@ public static class StairEnds
 
     /// <summary>The rule's case for one drop (walking height less the ground).</summary>
     public static Case CaseOf(float drop) =>
-        drop < -StairLayout.StepUp ? Case.Short
-        : drop <= StairLayout.StepUp ? Case.Floor
+        StairLayout.Walkable(drop, 0f) ? Case.Floor
+        : drop < 0f ? Case.Short
         : drop <= StairRailing.LedgeDrop ? Case.Reverse
         : Case.StepBack;
 
     /// <summary>The two far corners of the floor an exit edge at <paramref name="edge"/> (walked out on <paramref name="dir"/>,
     /// <paramref name="width"/> wide) would take: a floor's size out, at either side of its width (a piece's at least).
-    /// The one place the ground off an exit edge is read.</summary>
+    /// The one place the ground off an exit edge is read. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static (Vector2 left, Vector2 right) Corners(Vector2 edge, Vector2 dir, float width)
     {
         Vector2 right = new Vector2(dir.y, -dir.x), far = edge + dir * StairLayout.PieceRun;
@@ -75,7 +75,7 @@ public static class StairEnds
         return (far - right * half, far + right * half);
     }
 
-    /// <summary>The drops at the two far corners (<see cref="Corners"/>) off an exit edge at <paramref name="height"/>: left, right.</summary>
+    /// <summary>The drops at the two far corners (<see cref="Corners"/>) off an exit edge at <paramref name="height"/>: left, right. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static (float left, float right) Drops(Vector2 edge, Vector2 dir, float height, float width, Func<float, float, float> ground)
     {
         var (l, r) = Corners(edge, dir, width);
@@ -83,7 +83,7 @@ public static class StairEnds
     }
 
     /// <summary>The case for two corners' drops (<see cref="Drops"/>): the same case, else a floor where either is within
-    /// a step, else the gentler; <paramref name="disagree"/> where they differ. NaN corners (no ground read) are left out.</summary>
+    /// a step, else the gentler; <paramref name="disagree"/> where they differ. NaN corners (no ground read) are left out. The one owner of staircase ends (docs/OWNERS.md).</summary>
     public static Case Choose(float left, float right, out bool disagree)
     {
         disagree = false;
@@ -92,8 +92,24 @@ public static class StairEnds
         Case a = CaseOf(left), b = CaseOf(right);
         if (a == b) return a;
         disagree = true;
-        if (Mathf.Abs(left) <= StairLayout.StepUp || Mathf.Abs(right) <= StairLayout.StepUp) return Case.Floor;
-        return Mathf.Abs(left) <= Mathf.Abs(right) ? a : b;
+        if (StairLayout.Walkable(left, 0f) || StairLayout.Walkable(right, 0f)) return Case.Floor;
+        return CaseOf(Gentler(left, right));
+    }
+
+    /// <summary>Of two corners' drops (<see cref="Drops"/>) the gentler: the one nearer level (the first where they are as near),
+    /// the other where one is NaN (no ground read), NaN where both are. The one combine of two corners: the rule's case where they
+    /// differ (<see cref="Choose"/>), and the ground ahead of a top that gates its finish (<see cref="OverAhead"/>).</summary>
+    public static float Gentler(float left, float right) =>
+        float.IsNaN(left) ? right : float.IsNaN(right) ? left : Mathf.Abs(left) <= Mathf.Abs(right) ? left : right;
+
+    /// <summary>How far the ground ahead of an exit edge at <paramref name="edge"/> stands over its walking height
+    /// <paramref name="height"/>: read at the two far corners of the floor it would take (<see cref="Corners"/>, a floor out),
+    /// the gentler of the two (<see cref="Gentler"/>). The one reading of the ground ahead of a top, for the search's arrival
+    /// and a road top's finish; each keeps its own band. The one owner of staircase ends (docs/OWNERS.md).</summary>
+    public static float OverAhead(Vector2 edge, Vector2 dir, float height, float width, Func<float, float, float> ground)
+    {
+        var (l, r) = Drops(edge, dir, height, width, ground);
+        return -Gentler(l, r);
     }
 
     /// <summary>The rule's case off an exit edge at <paramref name="edge"/> (<see cref="Drops"/>, <see cref="Choose"/>).</summary>
@@ -132,6 +148,20 @@ public static class StairEnds
 
     private static bool IsWalked(StructurePieceKind k) => k is StructurePieceKind.StairStep or StructurePieceKind.StairFloor or StructurePieceKind.StairFiller;
 
+    /// <summary>Whether a walk at <paramref name="height"/> carries on onto a walked piece at <paramref name="q"/>: the one
+    /// test of it, for the walk graph (<see cref="Foot.Meets"/>) and for the railing's open edges. The piece is a footprint
+    /// (<paramref name="back"/> edge's middle, <paramref name="dir"/>, <paramref name="right"/>, <paramref name="depth"/> along,
+    /// <paramref name="across"/>), <paramref name="margin"/> off it at most, and its walking SURFACE at <paramref name="q"/> (a
+    /// stair's rises over its run from <paramref name="surfaceAtBack"/>) stands within <see cref="StairLayout.TopFloorBand"/>
+    /// of <paramref name="height"/>. The one owner of is this edge walked across (rails, stair ends) (docs/OWNERS.md).</summary>
+    internal static bool Walks(Vector2 back, Vector2 dir, Vector2 right, float depth, float across, float surfaceAtBack, bool stair,
+        Vector2 q, float height, float margin)
+    {
+        float along = Vector2.Dot(q - back, dir);
+        float surface = surfaceAtBack + (stair ? StairLayout.PieceRise * along / depth : 0f);
+        return StairLayout.OnFootprint(back, dir, right, depth, across, q, margin) && Mathf.Abs(surface - height) <= StairLayout.TopFloorBand;
+    }
+
     /// <summary>A walked piece's footprint and its walking height along it.</summary>
     private sealed class Foot
     {
@@ -150,11 +180,7 @@ public static class StairEnds
         public Vector2 At(float along, float side) => Back + Dir * along + Right * side;
         public float Walk(float along) => Height + (Stair ? StairLayout.PieceRise * along / Depth : 0f);
         public (float along, float side) Local(Vector2 q) { Vector2 d = q - Back; return (Vector2.Dot(d, Dir), Vector2.Dot(d, Right)); }
-        public bool Covers(Vector2 q, float height)
-        {
-            var (a, s) = Local(q);
-            return a >= 0f && a <= Depth && Mathf.Abs(s) <= Across / 2f && Mathf.Abs(Walk(a) - height) <= StairLayout.TopFloorBand;
-        }
+        public bool Covers(Vector2 q, float height) => Walks(Back, Dir, Right, Depth, Across, Height, Stair, q, height, 0f);
         /// <summary>Three points along an edge (0 front, 1 back, 2 left, 3 right), its way out, the walking heights there and
         /// its length.</summary>
         public (Vector2[] at, Vector2 outward, float[] heights, float length) Edge(int e)
@@ -361,8 +387,7 @@ public static class StairEnds
     /// <summary>Whether a road's surface stands at <paramref name="at"/> (within its half width) within a step of
     /// <paramref name="height"/>.</summary>
     private static bool OnRoadLevel(Vector2 at, float height) =>
-        RoadSpatialGrid.TryGetRoadHeightWithin(at, RoadNetworkGenerator.RoadWidth, out float road, out float distance, out float width)
-        && distance <= width / 2f && Mathf.Abs(road - height) <= StairLayout.StepUp;
+        RoadAt(at, out float road) && StairLayout.Walkable(road, height);
 
     /// <summary>
     /// The steepest grade a walker stepping onto a road's surface at <paramref name="at"/> climbs or falls at along it over a
@@ -403,8 +428,7 @@ public static class StairEnds
     public static Func<float, float, float> WithRoads(Func<float, float, float> ground) => (x, z) =>
     {
         float g = ground(x, z);
-        return RoadSpatialGrid.TryGetRoadHeightWithin(new Vector2(x, z), RoadNetworkGenerator.RoadWidth, out float road, out float distance, out float width)
-            && distance <= width / 2f && !(road <= g) ? road : g;
+        return RoadAt(new Vector2(x, z), out float road) && !(road <= g) ? road : g;
     };
 
     /// <summary>Every end of every staircase in the network (StairStructures.Runs), each on <paramref name="groundOf"/>'s ground

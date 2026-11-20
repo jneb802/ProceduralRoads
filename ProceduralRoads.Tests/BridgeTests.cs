@@ -912,7 +912,7 @@ public class BridgeTests
                 {
                     Assert.True(c.WholeOnly);
                     Assert.Equal(c.Point.h - BridgeStructures.DeckBelow, c.Surface, 3);
-                    Assert.Equal(BridgeStructures.DeckBelow + RoadRockPolicy.ClearanceHeight, c.Height, 3);
+                    Assert.Equal(RockClearances.Top(c.Point.h), c.Surface + c.Height, 3); // a road's box over the deck: 2.1 m
                 });
                 Assert.Empty(StructurePlans.ClearancesNear(new Vector3(mid.x + 2000f, 0f, mid.y), 10f));
             }

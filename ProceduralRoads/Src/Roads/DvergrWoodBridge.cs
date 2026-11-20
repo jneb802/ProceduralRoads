@@ -117,11 +117,6 @@ public static class DvergrWoodBridge
     /// <summary>Whether the crossing is laid in this kit's shape at all: a bridge, or a ford's spanned footbridge.</summary>
     private static bool IsSpanFord(RoadCrossing crossing) => crossing.Kind == CrossingKind.Ford && crossing.Style == FordStyle.Span;
 
-    /// <summary>The planks' walking surface: the wooden kits' deck for the same crossing (a bridge's
-    /// <see cref="BridgeLayout.DeckHeight"/>, a ford span's <see cref="BridgeLayout.SpanDeckHeight"/>), so the ends do not move.</summary>
-    public static float DeckHeight(RoadCrossing crossing, WorldGenerator world) =>
-        IsSpanFord(crossing) ? BridgeLayout.SpanDeckHeight(crossing, world) : BridgeLayout.DeckHeight(crossing, world);
-
     /// <summary>The bents along the deck, from the near deck end (0) to the far one (<see cref="BridgeLayout.BuiltLength"/>):
     /// as many equal bays as keep each at most <see cref="BentSpacing"/>. The same over a river: the navigation gap opens
     /// whole bays of it (<see cref="NavigationBays"/>), so the complete bridge is one regular structure.</summary>
@@ -149,7 +144,7 @@ public static class DvergrWoodBridge
     {
         if (crossing == null || world == null || crossing.Kind != CrossingKind.Bridge || BridgeLayout.IsFreeSpan(crossing, world))
             return null;
-        float deckH = DeckHeight(crossing, world);
+        float deckH = BridgeLayout.WoodDeckHeight(crossing, world);
         if (BridgeLayout.NavigationChannel(crossing, world, deckH - DeckDepth, deckH, BridgeStructures.Kit.DvergrWood) is not BridgeLayout.ShipWay way)
             return null;
         float[] bents = BentAlongs(BridgeLayout.BuiltLength(crossing.Width));
@@ -192,7 +187,7 @@ public static class DvergrWoodBridge
         Vector2 from = crossing.FromBank, dir = crossing.Direction, side = new(-dir.y, dir.x);
         float yaw = BridgeLayout.YawDegrees(dir);              // a beam's length (local x) across the deck
         float alongYaw = yaw + 90f;                            // ... and along it
-        float deckH = DeckHeight(crossing, world);            // the wooden kit's, so the ends are its own
+        float deckH = BridgeLayout.WoodDeckHeight(crossing, world);            // the wooden kit's, so the ends are its own
         float length = BridgeLayout.BuiltLength(crossing.Width);
         bool freeSpan = crossing.Kind == CrossingKind.Bridge && BridgeLayout.IsFreeSpan(crossing, world);
         (int first, int count, bool deck)? gap = IsSpanFord(crossing) ? null : NavigationBays(crossing, world);
@@ -202,7 +197,7 @@ public static class DvergrWoodBridge
         BridgeLayout.RuinProfile profile = Profile;
         // The finished ground (StructureGround): the piles stand on it, and the end stairs' columns are carried down to it.
         var (nearEnd, farEnd) = StructureEnds.Of(crossing, world);
-        System.Func<Vector2, float> groundAt = StructureGround.Of(world, nearEnd, farEnd, BeamLength * 0.5f + BuriedPieces.Growth);
+        System.Func<Vector2, float> groundAt = StructureGround.Of(world, nearEnd, farEnd, BeamLength * 0.5f + SupportGraph.Reach);
 
         float[] bents = BentAlongs(length);
         int n = bents.Length;
@@ -380,5 +375,5 @@ public static class DvergrWoodBridge
     /// <summary>One line for road_bridge_repairs and road_crossings.</summary>
     public static string Describe(RoadCrossing crossing, WorldGenerator world) =>
         System.FormattableString.Invariant(
-            $"{(IsSpanFord(crossing) ? "ford span, " : "")}deck {DeckHeight(crossing, world):F1} m, {BentAlongs(BridgeLayout.BuiltLength(crossing.Width)).Length} bents over {BridgeLayout.BuiltLength(crossing.Width):F0} m{(BridgeLayout.IsFreeSpan(crossing, world) ? ", free span" : "")}");
+            $"{(IsSpanFord(crossing) ? "ford span, " : "")}deck {BridgeLayout.WoodDeckHeight(crossing, world):F1} m, {BentAlongs(BridgeLayout.BuiltLength(crossing.Width)).Length} bents over {BridgeLayout.BuiltLength(crossing.Width):F0} m{(BridgeLayout.IsFreeSpan(crossing, world) ? ", free span" : "")}");
 }

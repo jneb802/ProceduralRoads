@@ -106,12 +106,13 @@ public static partial class RoadLifecycleManager
     private static long m_nextRun;
     private static RoadGenerationProgress m_progress = new(0, "Idle", 0, 0, 0);
     public static RoadGenerationProgress Progress => Volatile.Read(ref m_progress);
-    public static bool IsGenerating => m_generation != null;
     /// <summary>A generation is running (the load's, the spawn fallback's, or an operator's): the world is held for it.</summary>
-    public static bool GenerationRunning => m_generation != null;
+    /// <summary>How often the panel's progress is republished while the run goes on.</summary>
+    private const double PublishEveryMs = 250;
+    public static bool IsGenerating => m_generation != null;
     /// <summary>The running generation is an operator's (road_generate, road_regen_island): Cancel keeps the old roads.</summary>
     public static bool OperatorRunActive => m_generation?.Request.Operator == true;
-    internal static bool WorkersOwnWorld => GenerationRunning && Progress.Phase != "Finalizing";
+    internal static bool WorkersOwnWorld => IsGenerating && Progress.Phase != "Finalizing";
     internal static void ThrowIfCancellationRequested() => m_generation?.Cancellation.Token.ThrowIfCancellationRequested();
     private static void SetProgress(string phase, int completed, int total, string? failure = null)
     {
@@ -126,7 +127,7 @@ public static partial class RoadLifecycleManager
     /// a host whose load went past it, when its player spawns.</summary>
     private static void BeginInitialGeneration()
     {
-        if (IsGenerating || m_initialAttempted || ZNet.instance == null || !ZNet.instance.IsServer()) return;
+        if (IsGenerating || m_initialAttempted || !RoadLifecycleManager.HoldsTheNetwork) return;
         if (!RoadNetworkGenerator.GenerateOnLoad)
         {
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo("PROCEDURALROADS_GENERATE_ROADS_ON_LOAD is off: " +
@@ -174,7 +175,7 @@ public static partial class RoadLifecycleManager
     internal static string? BeginForOperator(Vector3? island, Action<string> tell, Action<RoadNetworkGenerator.GenerationWork>? published = null,
         string? command = null, bool force = false, DateTime? now = null)
     {
-        if (!HoldsTheNetwork) return "Roads are generated only on the server; this peer holds no road network";
+        if (!HoldsTheNetwork) return NotTheServer;
         if (ChoicePending) return "The host is still asked what this world's first road network does";
         if (IsGenerating || ManualRoads.Busy) return Busy;
         if (WorldCannotHold?.Invoke() is string held) return held;
@@ -304,7 +305,7 @@ public static partial class RoadLifecycleManager
                         SetProgress("Preparing",0,0);
                         if(previousStage!=preparation.Stage)
                             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(Progress.PreparationText);
-                        run.NextPublicationMs=run.Clock.Elapsed.TotalMilliseconds+250;
+                        run.NextPublicationMs=run.Clock.Elapsed.TotalMilliseconds+PublishEveryMs;
                     }
                     return;
                 }
@@ -329,7 +330,7 @@ public static partial class RoadLifecycleManager
             if (!run.Worker.IsCompleted)
             {
                 if(run.Clock.Elapsed.TotalMilliseconds >= run.NextPublicationMs)
-                { SetProgress("Generating", Progress.Completed, Progress.Total); run.NextPublicationMs=run.Clock.Elapsed.TotalMilliseconds+250; }
+                { SetProgress("Generating", Progress.Completed, Progress.Total); run.NextPublicationMs=run.Clock.Elapsed.TotalMilliseconds+PublishEveryMs; }
                 return;
             }
             run.Worker.GetAwaiter().GetResult();
@@ -408,7 +409,7 @@ public static partial class RoadLifecycleManager
         if(run.Worker!=null && !run.Worker.IsCompleted)
         {
             if(run.Clock.Elapsed.TotalMilliseconds>=run.NextPublicationMs)
-            { SetProgress("Stopping",Progress.Completed,Progress.Total); run.NextPublicationMs=run.Clock.Elapsed.TotalMilliseconds+250; }
+            { SetProgress("Stopping",Progress.Completed,Progress.Total); run.NextPublicationMs=run.Clock.Elapsed.TotalMilliseconds+PublishEveryMs; }
             return;
         }
         Drain(run, true); // IsCompleted above proves this observes results without waiting on live workers.

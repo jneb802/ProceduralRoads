@@ -15,7 +15,7 @@ namespace ProceduralRoads.Tests;
 public sealed class SeamFadeTests : IDisposable
 {
     private const int Width = 64;
-    private const float RoadWidth = 4f;
+    private const float RoadWidth = RoadConstants.DefaultRoadWidth;
     private const float Lift = 1.5f;
 
     private static readonly Vector2s Writable = new(0, 0);

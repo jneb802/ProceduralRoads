@@ -166,7 +166,7 @@ public sealed class StructureGroundTests : IDisposable
         float Foot(List<StructurePiece> plan) => plan.Where(p => p.Prefab == BridgeLayout.PostPrefab && Mathf.Abs(p.Position.x) < 0.01f)
             .Min(p => p.Position.y) - BridgeLayout.PostSegment * 0.5f;
         var before = BridgeLayout.SolveRailedComplete(c, w, 1, BridgeLayout.Rail);
-        Assert.InRange(Foot(before), 28.9f - BridgeLayout.PostSegment, 28.9f + BuriedPieces.Growth);
+        Assert.InRange(Foot(before), 28.9f - BridgeLayout.PostSegment, 28.9f + SupportGraph.Reach);
 
         var cuts = new List<Vector3>();
         for (float x = -3f; x <= 3f; x += 1f)
@@ -176,7 +176,7 @@ public sealed class StructureGroundTests : IDisposable
         RoadSpatialGrid.FinalizeRoadNetwork();
         Assert.Equal(27.4f, StructureGround.At(w)(new Vector2(0f, BridgeLayout.DeckHalfWidth)), 2);
         var after = BridgeLayout.SolveRailedComplete(c, w, 1, BridgeLayout.Rail);
-        Assert.InRange(Foot(after), 27.4f - BridgeLayout.PostSegment, 27.4f + BuriedPieces.Growth);
+        Assert.InRange(Foot(after), 27.4f - BridgeLayout.PostSegment, 27.4f + SupportGraph.Reach);
         Assert.True(Foot(after) < Foot(before) - 1f, $"the column's foot {Foot(after):F2}, on the generator's ground {Foot(before):F2}");
         AssertNothingWhollyBuried(after, w);
     }
@@ -232,7 +232,7 @@ public sealed class StructureGroundTests : IDisposable
                     {
                         stubs++;
                         Assert.All(stub, p => Assert.True(p.Position.y + BridgeLayout.PostSegment * 0.5f <= brk + 1e-3f, $"a stub at {p.Position} stands over the break"));
-                        Assert.InRange(stub.Min(p => p.Position.y) - BridgeLayout.PostSegment * 0.5f, ground - BridgeLayout.PostSegment, ground + BuriedPieces.Growth);
+                        Assert.InRange(stub.Min(p => p.Position.y) - BridgeLayout.PostSegment * 0.5f, ground - BridgeLayout.PostSegment, ground + SupportGraph.Reach);
                     }
                 }
                 // Debris lies on the ground, not under it.

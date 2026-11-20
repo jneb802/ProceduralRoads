@@ -22,16 +22,13 @@ namespace ProceduralRoads;
 /// its top 1.5 m under the ground broke about 30 s on and left its Stone on the pillar above; one on a slope,
 /// its top 0.3 m under the ground at its middle but out of it downhill, stood.
 ///
-/// A piece is dropped here where the ground over its whole footprint grown by <see cref="Growth"/> stands at or
+/// A piece is dropped here where the ground over its whole footprint grown by <see cref="SupportGraph.Reach"/> stands at or
 /// above its top: wholly under the surface, so out of sight, and the game's own test with a margin of the growth
 /// for ground that comes out lower than it was modelled. Nothing it held is lost: a piece standing on it stands
 /// on its top, which is in the ground, so it is grounded itself.
 /// </summary>
 public static class BuriedPieces
 {
-    /// <summary>How far WearNTear grows each collider box on every side for its overlap.</summary>
-    public const float Growth = 0.15f;
-
     /// <summary>Each stair kit piece's collider bounds about its origin (cli_piece_geometry, Valheim 1.0.x).</summary>
     private static readonly Dictionary<string, (Vector3 min, Vector3 max)> s_bounds = new()
     {
@@ -72,8 +69,9 @@ public static class BuriedPieces
     /// <summary>
     /// Whether the piece, turned <paramref name="yawDegrees"/> about its origin at <paramref name="position"/>, lies
     /// wholly under the ground: the lowest of the game's terrain mesh over its footprint grown by
-    /// <see cref="Growth"/> at or above its top. <paramref name="vertex"/>: the ground at a whole-metre vertex
+    /// <see cref="SupportGraph.Reach"/> at or above its top. <paramref name="vertex"/>: the ground at a whole-metre vertex
     /// (NaN where not known: then never). A piece tipped off level or of unknown bounds is never buried.
+    /// The one owner of Supports, foundations and burial (docs/OWNERS.md).
     /// </summary>
     public static bool Buried(string prefab, Vector3 position, float yawDegrees, Func<int, int, float> vertex, float pitchDegrees = 0f)
     {
@@ -84,7 +82,7 @@ public static class BuriedPieces
         Vector2 middle = at + right * ((b.min.x + b.max.x) / 2f) + forward * ((b.min.z + b.max.z) / 2f);
         float h = MeshHeight(middle.x, middle.y, vertex);
         if (!(h >= top)) return false;
-        float x0 = b.min.x - Growth, x1 = b.max.x + Growth, z0 = b.min.z - Growth, z1 = b.max.z + Growth;
+        float x0 = b.min.x - SupportGraph.Reach, x1 = b.max.x + SupportGraph.Reach, z0 = b.min.z - SupportGraph.Reach, z1 = b.max.z + SupportGraph.Reach;
         var corners = new[]
         {
             at + right * x0 + forward * z0, at + right * x1 + forward * z0,
@@ -101,14 +99,20 @@ public static class BuriedPieces
     public static float MeshHeight(float x, float z, Func<int, int, float> vertex)
     {
         int i = Mathf.FloorToInt(x), k = Mathf.FloorToInt(z);
-        float fx = x - i, fz = z - k;
-        if (fx + fz <= 1f)
-        {
-            float h00 = vertex(i, k);
-            return h00 + fx * (vertex(i + 1, k) - h00) + fz * (vertex(i, k + 1) - h00);
-        }
-        float h11 = vertex(i + 1, k + 1);
-        return h11 + (1f - fx) * (vertex(i, k + 1) - h11) + (1f - fz) * (vertex(i + 1, k) - h11);
+        return BetweenVertices(x - i, z - k, vertex(i, k), vertex(i + 1, k), vertex(i, k + 1), vertex(i + 1, k + 1));
+    }
+
+    /// <summary>
+    /// The one owner of the ground between four vertices of a 1 m cell: the game's two triangles, split on the diagonal from
+    /// (x, z+1) to (x+1, z). (<paramref name="fx"/>, <paramref name="fz"/>) is the point inside the cell, 0 to 1 from
+    /// (<paramref name="h00"/>) at (x, z); h10 is at (x+1, z), h01 at (x, z+1), h11 at (x+1, z+1). The corner a point's
+    /// triangle does not use is not read, so it may be NaN. Every reader of a heightmap-style lattice between its vertices
+    /// calls this. Each branch is one whole float expression.
+    /// </summary>
+    public static float BetweenVertices(float fx, float fz, float h00, float h10, float h01, float h11)
+    {
+        if (fx + fz <= 1f) return h00 + fx * (h10 - h00) + fz * (h01 - h00);
+        return h11 + (1f - fx) * (h01 - h11) + (1f - fz) * (h10 - h11);
     }
 
     /// <summary>

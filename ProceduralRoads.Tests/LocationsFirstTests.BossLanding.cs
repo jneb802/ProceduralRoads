@@ -25,10 +25,10 @@ public partial class LocationsFirstTests
 
         Assert.True(RoadNetworkGenerator.LandingReached(cave));
         Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-        Assert.False(RoadNetworkGenerator.LocationServed(cave.Record.Prefab, Vector3.zero, 10f));
+        Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f, cave.Record.Prefab));
         PlacedLocations.MarkLanded(cave.Centre);
         Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-        Assert.True(RoadNetworkGenerator.LocationServed(cave.Record.Prefab, Vector3.zero, 10f));
+        Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f, cave.Record.Prefab));
         RoadSpatialGrid.Clear();
     }
 
@@ -42,7 +42,7 @@ public partial class LocationsFirstTests
         const string boss = "Mistlands_DvergrBossEntrance1";
         Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f), "an ordinary location there is reached");
         Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f, boss));
-        Assert.False(RoadNetworkGenerator.LocationServed(boss, Vector3.zero, 10f));
+        Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f, boss));
         // Nor is its road's own stub dropped where it merges into that road: the stub drop asks the same rule.
         _scope.WithZoneSystem();
         TestLocations.Add(ZoneSystem.instance!, new ZoneSystem.LocationInstance

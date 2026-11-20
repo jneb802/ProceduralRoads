@@ -19,9 +19,13 @@ public class Island
     
     private HashSet<Vector2Int>? _cellSet;
     
+    /// <summary>Whether the point is in one of the island's cells: the cell nearest it, half a cell either side of the
+    /// cell's centre. <see cref="Min"/> and <see cref="Max"/> are the outermost cells' centres, so the quick box test
+    /// reaches half a cell past them, as far as those cells do.</summary>
     public bool ContainsPoint(float worldX, float worldZ)
     {
-        if (worldX < Min.x || worldX > Max.x || worldZ < Min.y || worldZ > Max.y)
+        float half = CellSize * 0.5f;
+        if (worldX < Min.x - half || worldX > Max.x + half || worldZ < Min.y - half || worldZ > Max.y + half)
             return false;
         
         _cellSet ??= new HashSet<Vector2Int>(Cells);

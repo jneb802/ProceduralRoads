@@ -59,16 +59,20 @@ public class Island
         return CellToWorld(edgeCell);
     }
     
+    internal IEnumerable<bool> PrepareMembership(RoadPreparation preparation)
+    {
+        if(_cellSet!=null) yield break;
+        var copied=new HashSet<Vector2Int>();
+        foreach(var cell in Cells) { copied.Add(cell); if(preparation.Checkpoint()) yield return true; }
+        _cellSet=copied;
+    }
+
     public Vector2 CellToWorld(Vector2Int cell) => IslandDetector.CellToWorld(cell, CellSize, WorldOffset);
 }
 
 public static class IslandDetector
 {
     private static ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
-    
-    private const float WaterThreshold = 0.05f;
-    private const float DefaultCellSize = 128f;
-    private const int MinIslandCells = 10;
     
     public static Vector2 CellToWorld(Vector2Int cell, float cellSize, float worldOffset)
     {
@@ -78,144 +82,23 @@ public static class IslandDetector
         );
     }
     
-    public static List<Island> DetectIslands(float cellSize = DefaultCellSize, int minCells = MinIslandCells)
+    /// <summary>The grouping used by road generation, also exposed by road_islands.</summary>
+    public static List<Island> DetectRoadIslands()
     {
-        var wg = WorldGenerator.instance;
-        if (wg == null)
-        {
-            Log.LogWarning("IslandDetector: WorldGenerator not available");
-            return new List<Island>();
-        }
-        
-        float worldRadius = 10000f;
-        float worldSize = worldRadius * 2;
-        int gridSize = Mathf.CeilToInt(worldSize / cellSize);
-        float worldOffset = worldRadius;
-        
-        Log.LogDebug($"IslandDetector: Scanning {gridSize}x{gridSize} grid (cellSize={cellSize}m)");
-        
-        bool[,] isLand = new bool[gridSize, gridSize];
-        int landCells = 0;
-        
-        for (int x = 0; x < gridSize; x++)
-        {
-            for (int y = 0; y < gridSize; y++)
-            {
-                float worldX = x * cellSize - worldOffset;
-                float worldY = y * cellSize - worldOffset;
-                
-                float distFromCenter = Mathf.Sqrt(worldX * worldX + worldY * worldY);
-                if (distFromCenter > worldRadius)
-                {
-                    isLand[x, y] = false;
-                    continue;
-                }
-                
-                float baseHeight = wg.GetBaseHeight(worldX, worldY, false);
-                isLand[x, y] = baseHeight >= WaterThreshold;
-                if (isLand[x, y]) landCells++;
-            }
-        }
-        
-        Log.LogDebug($"IslandDetector: Found {landCells} land cells out of {gridSize * gridSize} total");
-        
-        bool[,] visited = new bool[gridSize, gridSize];
-        var islands = new List<Island>();
-        int islandId = 0;
-        
-        for (int x = 0; x < gridSize; x++)
-        {
-            for (int y = 0; y < gridSize; y++)
-            {
-                if (isLand[x, y] && !visited[x, y])
-                {
-                    var island = FloodFill(isLand, visited, x, y, gridSize, cellSize, worldOffset);
-                    if (island.CellCount >= minCells)
-                    {
-                        island.Id = islandId++;
-                        islands.Add(island);
-                    }
-                }
-            }
-        }
-        
-        islands.Sort((a, b) => b.CellCount.CompareTo(a.CellCount));
-        
-        Log.LogDebug($"IslandDetector: Detected {islands.Count} islands (min {minCells} cells)");
-        
-        return islands;
+        List<Island>? result=null;
+        using var preparation=new RoadPreparation(p=>DetectRoadIslandsSteps(WorldGenerator.instance,RoadNetworkGenerator.NetworkOptions,p,value=>result=value));
+        preparation.Drain(); return result!;
     }
-    
-    private static Island FloodFill(bool[,] isLand, bool[,] visited, int startX, int startY, 
-        int gridSize, float cellSize, float worldOffset)
+    internal static IEnumerable<bool> DetectRoadIslandsSteps(WorldGenerator world,RoadNetworkOptions options,
+        RoadPreparation preparation,System.Action<List<Island>> complete)
     {
-        var island = new Island();
-        var queue = new Queue<Vector2Int>();
-        queue.Enqueue(new Vector2Int(startX, startY));
-        visited[startX, startY] = true;
-        
-        float minX = float.MaxValue, minY = float.MaxValue;
-        float maxX = float.MinValue, maxY = float.MinValue;
-        float sumX = 0, sumY = 0;
-        
-        int[] dx = { 0, 1, 0, -1 };
-        int[] dy = { 1, 0, -1, 0 };
-        
-        while (queue.Count > 0)
-        {
-            var cell = queue.Dequeue();
-            island.Cells.Add(cell);
-            island.CellCount++;
-            
-            Vector2 worldPos = CellToWorld(cell, cellSize, worldOffset);
-            sumX += worldPos.x;
-            sumY += worldPos.y;
-            
-            if (worldPos.x < minX) minX = worldPos.x;
-            if (worldPos.x > maxX) maxX = worldPos.x;
-            if (worldPos.y < minY) minY = worldPos.y;
-            if (worldPos.y > maxY) maxY = worldPos.y;
-            
-            for (int i = 0; i < 4; i++)
-            {
-                int nx = cell.x + dx[i];
-                int ny = cell.y + dy[i];
-                
-                if (nx >= 0 && nx < gridSize && ny >= 0 && ny < gridSize &&
-                    isLand[nx, ny] && !visited[nx, ny])
-                {
-                    visited[nx, ny] = true;
-                    queue.Enqueue(new Vector2Int(nx, ny));
-                }
-            }
-        }
-        
-        Vector2 centroid = new Vector2(sumX / island.CellCount, sumY / island.CellCount);
-        
-        float minDistToCentroid = float.MaxValue;
-        Vector2 closestCell = centroid;
-        foreach (var cell in island.Cells)
-        {
-            Vector2 cellWorld = CellToWorld(cell, cellSize, worldOffset);
-            float dist = (cellWorld.x - centroid.x) * (cellWorld.x - centroid.x) + 
-                         (cellWorld.y - centroid.y) * (cellWorld.y - centroid.y);
-            if (dist < minDistToCentroid)
-            {
-                minDistToCentroid = dist;
-                closestCell = cellWorld;
-            }
-        }
-        
-        island.Center = closestCell;
-        island.Min = new Vector2(minX, minY);
-        island.Max = new Vector2(maxX, maxY);
-        island.ApproxArea = island.CellCount * cellSize * cellSize;
-        island.CellSize = cellSize;
-        island.WorldOffset = worldOffset;
-        
-        return island;
+        var clock=System.Diagnostics.Stopwatch.StartNew();
+        List<Island>? islands=null;
+        foreach(var step in RoadIslandDetector.DetectSteps(world,preparation,value=>islands=value,options:options)) yield return step;
+        Log.LogInfo($"Road island detection: {islands!.Count} groups at {RoadIslandDetector.SampleSpacing} m in {clock.Elapsed.TotalSeconds:F1}s");
+        complete(islands);
     }
-    
+
     public static string GetIslandSummary(Island island)
     {
         float width = island.Max.x - island.Min.x;

@@ -21,8 +21,14 @@ public static class RoadConnectionPlanner
     /// under it) when nothing else connected it; null for none.</param>
     public static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
+        Func<Location,bool> joinNetwork, Func<string,int> priority, Action<Location,string> report) =>
+        Connect(locations,price,build,joinNetwork,priority,report,null,null,null,null);
+
+    internal static void Connect(IReadOnlyList<Location> locations,
+        Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority,
-        Action<Location,string> report)
+        Action<Location,string> report, Action<int>? settled = null, Action<int>? pricing = null, Action? pricedOne = null, Action? connecting = null,
+        Func<Location,bool>? lastResort = null)
     {
         if (locations.Count < 2) return;
         static (int,int) Key(int a,int b) => a<b ? (a,b) : (b,a);
@@ -44,14 +50,17 @@ public static class RoadConnectionPlanner
         // grows, and reordering them would change the roads.
         var ordered = pairs.OrderBy(p=>p.Item1).ThenBy(p=>p.Item2).ToList();
         var priced = new float?[ordered.Count];
+        pricing?.Invoke(ordered.Count);
+        float? PriceOne(int i) { try { return price(locations[ordered[i].Item1],locations[ordered[i].Item2]); } finally { pricedOne?.Invoke(); } }
         int workers = RoadParallel.PricingWorkers;
         if (workers > 1 && ordered.Count > 1)
             System.Threading.Tasks.Parallel.For(0, ordered.Count,
                 new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = workers },
-                i => priced[i] = price(locations[ordered[i].Item1],locations[ordered[i].Item2]));
+                i => priced[i] = PriceOne(i));
         else
-            for (int i=0;i<ordered.Count;i++) priced[i] = price(locations[ordered[i].Item1],locations[ordered[i].Item2]);
+            for (int i=0;i<ordered.Count;i++) priced[i] = PriceOne(i);
 
+        connecting?.Invoke();
         var costs = new Dictionary<(int,int),float>();
         for (int i=0;i<ordered.Count;i++)
         {
@@ -78,6 +87,7 @@ public static class RoadConnectionPlanner
             .ToList();
         while (remaining.Count>0)
         {
+            RoadLifecycleManager.ThrowIfCancellationRequested();
             int from=-1,to=-1; float best=float.MaxValue;
             foreach (int a in tree)
                 foreach (int b in remaining)
@@ -102,6 +112,7 @@ public static class RoadConnectionPlanner
                             // schedule the waiting partner to build it again.
                             if (remaining.Remove(other))
                             {
+                                settled?.Invoke(other);
                                 tree.Add(other);
                                 report(locations[other],"connected by an unpriced candidate edge");
                             }
@@ -117,12 +128,12 @@ public static class RoadConnectionPlanner
                     continue;
                 }
                 report(locations[next],joined ? "joined without a priced edge" : "new component; no priced connection to network");
-                tree.Add(next); remaining.Remove(next);
+                tree.Add(next); remaining.Remove(next); settled?.Invoke(next);
                 continue;
             }
             if (joinNetwork(locations[to]) || BuildOnce(from,to))
             {
-                tree.Add(to); remaining.Remove(to);
+                tree.Add(to); remaining.Remove(to); settled?.Invoke(to);
                 report(locations[to],"connected");
             }
             else

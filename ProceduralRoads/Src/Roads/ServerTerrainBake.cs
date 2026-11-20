@@ -33,12 +33,11 @@ public static class ServerTerrainBake
     private const double FrameBudgetMs = 8.0;
     /// <summary>Zones whose terrain the game is still building that one frame may pass over.</summary>
     private const int NotReadyPerFrame = 8;
-    /// <summary>A zone whose terrain has not been built after this many tries is given up.</summary>
+    /// <summary>A zone whose terrain has not been built after this many tries is given up (which also bounds how long
+    /// the loading screen holds the first spawn for the bake, ServerBakeLoadScreen).</summary>
     private const int MaxNotReadyTries = 2000;
     /// <summary>How long a zone waits before it is tried again: for its compiler's owner, for a player to move off, after a failed write.</summary>
     private const float RetryDelaySeconds = 10f;
-    /// <summary>From a zone's centre to its corners (half the 64 m diagonal, rounded up).</summary>
-    private const float ZoneCornerReach = 46f;
     private const float ProgressEverySeconds = 10f;
     private const float ProbeEverySeconds = 5f;
     private const float GhostLogEverySeconds = 30f;
@@ -47,6 +46,14 @@ public static class ServerTerrainBake
     private static bool? s_probe;
     private static bool Enabled => s_enabled ??= DebugSwitches.Flag("SERVER_BAKE", true);
     private static bool Probe => s_probe ??= DebugSwitches.Flag("PEER_PROBE", false);
+    private static bool? s_holdSpawn;
+    /// <summary>PROCEDURALROADS_BAKE_LOADSCREEN (default on): the host's first spawn waits for the bake, behind the loading screen.</summary>
+    private static bool HoldSpawnEnabled => s_holdSpawn ??= DebugSwitches.Flag("BAKE_LOADSCREEN", true);
+    private static readonly ServerBakeLoadScreen s_loadScreen = new();
+    /// <summary>Frame time the bake used behind the loading screen; at the host's first spawn, frame time used so far (-1 before).</summary>
+    private static double s_heldMs, s_busyAtSpawn = -1;
+    /// <summary>The most generated zones the queue has held still to write, for the loading screen's bar.</summary>
+    private static int s_loadScreenTotal;
 
     private static int s_version;
     private static readonly List<Vector2s> s_queue = new();
@@ -103,6 +110,60 @@ public static class ServerTerrainBake
         s_vegetationPrefabs = null;
         s_ghostRepair.Clear();
         s_faults.Clear();
+        s_loadScreen.Clear();
+        s_heldMs = 0;
+        s_loadScreenTotal = 0;
+        s_busyAtSpawn = Player.m_localPlayer != null ? 0 : -1;
+    }
+
+    /// <summary>
+    /// Whether the host's first spawn waits for the bake (RoadGeneration_Patch holds respawn for it): a host with a
+    /// player of its own (a dedicated server has no loading screen), the game still waiting to spawn it for the first
+    /// time (Game.m_firstSpawn), and the bake owing work it can still do (ServerBakeLoadScreen says when it lets go).
+    /// </summary>
+    internal static bool HoldsFirstSpawn => s_loadScreen.Holds(BeforeFirstSpawn(), WorkOwed());
+
+    private static bool BeforeFirstSpawn() =>
+        HoldSpawnEnabled && IsServer && !ZNet.instance.IsDedicated() && Game.instance != null &&
+        Player.m_localPlayer == null && Game.instance.m_firstSpawn && Game.instance.WaitingForRespawn();
+
+    // A network whose queue is not built yet (its first Tick is still to come) is owed work too.
+    private static bool WorkOwed()
+    {
+        if (!Enabled || s_faults.IsPaused || !RoadNetworkGenerator.RoadsAvailable) return false;
+        int version = RoadSpatialGrid.RoadNetworkVersion;
+        return version != 0 && (version != s_version || s_next < s_queue.Count);
+    }
+
+    /// <summary>
+    /// For the loading screen while the bake holds the first spawn: zones written, of those that take writing. Only the
+    /// generated zones take time (the rest are left to their generation and pass in a moment), so they alone are counted:
+    /// the bar would otherwise race to the end and wait there. A zone put back to wait on its terrain is counted again.
+    /// </summary>
+    internal static (int written, int total) LoadScreenProgress()
+    {
+        int left = 0;
+        ZoneSystem zones = ZoneSystem.instance;
+        if (zones != null)
+            for (int i = s_next; i < s_queue.Count; i++)
+                if (zones.IsZoneGenerated(s_queue[i])) left++;
+        if (left > s_loadScreenTotal) s_loadScreenTotal = left;
+        return (s_loadScreenTotal - left, s_loadScreenTotal);
+    }
+
+    /// <summary>The host's player has spawned (Game.SpawnPlayer; the game clears m_firstSpawn after it): on the first
+    /// spawn, what the loading screen took and what the in-world slices have left.</summary>
+    public static void OnSpawn(Game game)
+    {
+        if (!IsServer || !game.m_firstSpawn) return;
+        s_loadScreen.Release();
+        if (s_version == 0) return;
+        s_busyAtSpawn = s_busyMs;
+        int pending = Math.Max(0, s_queue.Count - s_next);
+        // Wall time: game time crawls through a frame the bake holds long (Unity caps each frame's step).
+        Log.LogInfo($"[BAKE] first spawn {s_wall.Elapsed.TotalSeconds:F1} s after the bake started: {s_busyMs:F0} ms of bake before it " +
+                    $"({s_heldMs:F0} ms of it holding the spawn); {pending} zone(s) pending for the in-world slices" +
+                    (HoldSpawnEnabled ? "" : " (loading-screen hold off by startup setting)"));
     }
 
     /// <summary>
@@ -299,7 +360,8 @@ public static class ServerTerrainBake
         // Do not change s_enabled: an operator's startup opt-out still holds.
     }
 
-    /// <summary>Every frame (ZoneSystem.Update postfix): work the queue for a slice of the frame.</summary>
+    /// <summary>Every frame (ZoneSystem.Update postfix): work the queue for a slice of the frame (a larger one while the
+    /// host's first spawn waits for it, <see cref="ServerBakeLoadScreen"/>).</summary>
     public static void Tick()
     {
         try
@@ -485,7 +547,7 @@ public static class ServerTerrainBake
         }
     }
 
-    /// <summary>How far round the zone's centre its clearable rocks reach, road width included (never under ZoneCornerReach).</summary>
+    /// <summary>How far round the zone's centre its clearable rocks reach, road width included (never under RoadRockPolicy.ZoneCornerReach).</summary>
     private static float GhostRockReach(Vector3 centre) => OwnRockReach(centre, ZoneSystem.instance.m_tempSpawnedObjects);
 
     private static float OwnRockReach(Vector3 centre, List<GameObject> objects)
@@ -497,7 +559,7 @@ public static class ServerTerrainBake
             foreach (var c in go.GetComponentsInChildren<Collider>())
                 bounds.Add((new Vector2(c.bounds.min.x, c.bounds.min.z), new Vector2(c.bounds.max.x, c.bounds.max.z)));
         }
-        return RoadRockPolicy.OwnObjectsReach(new Vector2(centre.x, centre.z), bounds, ZoneCornerReach, RoadRockCarve.WidestRoadHalfWidth);
+        return RoadRockPolicy.OwnObjectsReach(new Vector2(centre.x, centre.z), bounds, RoadRockPolicy.ZoneCornerReach, RoadRockCarve.WidestRoadHalfWidth);
     }
 
     /// <summary>
@@ -608,9 +670,11 @@ public static class ServerTerrainBake
 
         if (s_next < s_queue.Count)
         {
+            bool held = HoldsFirstSpawn;
+            double budgetMs = ServerBakeLoadScreen.SliceBudgetMs(held, FrameBudgetMs);
             var slice = Stopwatch.StartNew();
             int notReady = 0;
-            while (s_next < s_queue.Count && slice.Elapsed.TotalMilliseconds < FrameBudgetMs)
+            while (s_next < s_queue.Count && slice.Elapsed.TotalMilliseconds < budgetMs)
             {
                 Vector2s zone = s_queue[s_next++];
                 if (!s_faults.TryProcessZone(zone, () => ProcessZone(zone), s_ghostRepair,
@@ -630,6 +694,8 @@ public static class ServerTerrainBake
                 }
             }
             s_busyMs += slice.Elapsed.TotalMilliseconds;
+            if (held)
+                s_heldMs += slice.Elapsed.TotalMilliseconds;
             if (s_next > 4096 && s_next * 2 > s_queue.Count)
             {
                 s_queue.RemoveRange(0, s_next);
@@ -647,6 +713,8 @@ public static class ServerTerrainBake
                 s_finished = true;
                 s_wall.Stop();
                 Log.LogInfo((s_faults.Count == 0 ? "[BAKE] done: " : "[BAKE] incomplete: ") + StatusLine());
+                Log.LogInfo($"[BAKE] frame time: {s_heldMs:F0} ms behind the loading screen, " +
+                            (s_busyAtSpawn < 0 ? "no spawn yet" : $"{s_busyMs - s_busyAtSpawn:F0} ms after the first spawn"));
             }
         }
         else if (now >= s_nextProgress)

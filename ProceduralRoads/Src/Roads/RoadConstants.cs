@@ -19,7 +19,7 @@ public static class RoadConstants
     public const float TerrainDeltaMax = 8f;
     
     public const float PathfindingCellSize = 8f;
-    public const int PathfindingMaxIterations = 10000;
+    public const int PathfindingMaxIterations = 30000;
     public const float TerrainVarianceSampleRadius = 16f;
     public const int TerrainVarianceSampleCount = 8;
     public const float MountainSlopeThreshold = 0.4f;
@@ -43,7 +43,8 @@ public static class RoadConstants
     // pays BankDeltaPenalty * delta^2 on top, so near-level banks are
     // preferred. The ford is WADED (painted at ground height, only where
     // the water is at most FordWadeMaxDepth deep, always in a swamp) or
-    // RAISED (leveled up to the bank clearance), by the Fords/* weights.
+    // RAISED (leveled up to the bank clearance), drawn evenly among the
+    // styles a site allows (DefaultFordStyleWeight each).
     // Banks, landings and a raised ford's surface stand BankClearance above
     // the shallow-water line. Swamp roads wade their shallows down to
     // DeepWaterHeight at SwampShallowWaterPenalty per cell. A jump whose
@@ -69,8 +70,8 @@ public static class RoadConstants
     // Bridges. A jump
     // longer than a ford or over water deeper than wading is a BRIDGE, up
     // to MaxBridgeCrossingCells (measured in metres), at BridgeCostFixed +
-    // BridgeCostPerMeter per metre (config Bridges/CostFixed and
-    // Bridges/CostPerMeter), between banks within MaxBridgeBankDelta of
+    // BridgeCostPerMeter per metre (DefaultBridgeCostFixed and
+    // DefaultBridgeCostPerMeter), between banks within MaxBridgeBankDelta of
     // each other. For scale in this cost model: easy ground costs about 1
     // per metre of road, rough or steep ground 1000-2000 per cell, so the
     // defaults make a 100 m bridge worth roughly 1 km of rough detour; a
@@ -97,10 +98,10 @@ public static class RoadConstants
     /// cheapest site) plus 10 per metre climbed down and up, so 820 and up at the 6 m least.
     /// <para>The viaduct's own price, this plus <see cref="DefaultViaductCostPerMeter"/> per
     /// metre of span, is what it costs on piers 10 m tall (DvergrViaduct.PriceHeight); lower it
-    /// goes in inverse to the height, higher it falls steeply to a tenth at the 20 m ceiling
+    /// goes in inverse to the height, higher it falls steeply to a tenth at the 26 m ceiling
     /// (DvergrViaduct.HeightFactor: the price falls as the piers get taller,
     /// up to the pier ceiling, so a deep valley crossed high beats a shallow one crossed low).
-    /// 250 + 4 x 64 = 506 for a 64 m valley at 10 m, 843 at the 6 m least, 201 at 14 m, 51 at
+    /// 250 + 4 x 64 = 506 for a 64 m valley at 10 m, 843 at the 6 m least, 285 at 14 m, 51 at
     /// the ceiling: a tall viaduct is priced low, so a high crossing wins where it fits. On top come the end stairs
     /// (<see cref="DefaultViaductEndStairCostPerMeter"/>) and the road's own 1 per metre. Easy
     /// road (about 1 per metre) keeps a valley the road can walk through.</para>
@@ -116,7 +117,7 @@ public static class RoadConstants
     /// bought over a stepped one wherever there is a choice.</summary>
     public const float DefaultViaductEndStairCostPerMeter = 100f;
 
-    // A ford may also be SPANNED (Fords/SpanWeight): a short low footbridge
+    // A ford may also be SPANNED: a short low footbridge
     // with a step at each end, where the crossing is at least
     // FordSpanMinWidth wide; its deck stands FordSpanDeckClearance above
     // the water and FordSpanDeckRise above the higher bank. A swamp BRIDGE
@@ -206,5 +207,7 @@ public static class RoadConstants
     public const float MinHeightDeltaThreshold = 0.01f;
     public const float MinBlendForModification = 0.5f;
     
-    public const float VegetationClearMultiplier = 0.6f;
+    /// <summary>Half-size of a road point's vegetation clear area per metre of road width: the middle 90 % of the road is
+    /// kept clear, and vegetation and small stones may stand on its outer edge, so the road reads as worn into the ground.</summary>
+    public const float VegetationClearMultiplier = 0.45f;
 }

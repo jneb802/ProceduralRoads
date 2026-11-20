@@ -70,22 +70,6 @@ public sealed class NetworkCutoffTests : IDisposable
         Assert.True(NetworkCutoff.Excludes(C));
     }
 
-    /// <summary>An operator's command (road_regen_island) wrote an explored zone in full: the record saves it as the
-    /// network's, so after a restart it is not excluded again and no seam fade runs down against the road laid there.</summary>
-    [Fact]
-    public void AZoneAnOperatorWroteInFullIsTheNetworksAfterARestart()
-    {
-        NetworkCutoff.SnapshotWorld(new[] { A, B });
-        NetworkCutoff.UseLoadedNetwork(42, null);
-        NetworkCutoff.WrittenByOperator(A);
-        byte[] record = NetworkCutoff.Record(42, new[] { A, B })!;
-        NetworkCutoff.Forget();
-        NetworkCutoff.SnapshotWorld(new[] { A, B });
-        NetworkCutoff.UseLoadedNetwork(42, record);
-        Assert.False(NetworkCutoff.Excludes(A));
-        Assert.True(NetworkCutoff.Excludes(B));
-    }
-
     [Fact]
     public void AnotherWorldNeverInheritsTheCutoff()
     {

@@ -153,6 +153,34 @@ public class BiomeBlendedHeightTests
                 Assert.Equal(BiomeBlendedHeight.GetBlendedHeight(x, z, world), BiomeBlendedHeight.GetBlendedHeight(x, z, world, last));
     }
 
+    /// <summary>
+    /// The island scan's walk (down whole columns of 8 m cells) reads each heightmap corner's biome once with the column
+    /// memo, against four reads per cell without it; the one-heightmap memo, a search's, saves most of them too. A
+    /// focused measure of the island detector's terrain pass (its biome reads are what the blended ground added to it).
+    /// </summary>
+    [Fact]
+    public void AColumnScanReadsEachCornerBiomeOnce()
+    {
+        const float radius = 512f, cell = RoadIslandDetector.SampleSpacing;
+        int grid = Mathf.CeilToInt(radius * 2f / cell);
+        long Scan(BiomeBlendedHeight.Corners? corners)
+        {
+            var world = new PatchWorld();
+            for (int x = 0; x < grid; x++)
+                for (int y = 0; y < grid; y++)
+                    BiomeBlendedHeight.GetBlendedHeight(x * cell - radius, y * cell - radius, world, corners);
+            return world.BiomeReads;
+        }
+        long plain = Scan(null), column = Scan(BiomeBlendedHeight.Corners.ForColumnScan(radius)), last = Scan(new BiomeBlendedHeight.Corners());
+        Assert.Equal(4L * grid * grid, plain);
+        // The heightmaps the cells fall in (each centred on a zone, 32 m either side), and one corner more than them a side.
+        int Heightmap(float w) => Mathf.FloorToInt((w + RoadConstants.HalfZoneSize) / RoadConstants.ZoneSize);
+        int corners = Heightmap((grid - 1) * cell - radius) - Heightmap(-radius) + 2;
+        Assert.Equal((long)corners * corners, column);
+        // Eight cells a heightmap down a column: its corners read once per column of cells, not once per cell.
+        Assert.True(last <= plain / 8 + 4L * grid, $"{last} reads with the one-heightmap memo against {plain}");
+    }
+
     /// <summary>A memo asked about another world forgets the first's corners.</summary>
     [Fact]
     public void TheCornerMemoForgetsAnotherWorldsCorners()

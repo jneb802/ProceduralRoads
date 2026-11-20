@@ -7,7 +7,7 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// Console commands for looking at the network's staircases in a world: road_stairs_scan (highest and lowest ground
-/// round a point, from the world generator) and road_stairs_list (the staircases, tallest first). Registered only with
+/// round a point, the natural ground the game renders) and road_stairs_list (the staircases, tallest first). Registered only with
 /// PROCEDURALROADS_DEV_COMMANDS on; off by default. Read-only.
 /// </summary>
 public static class StairCommands
@@ -21,7 +21,7 @@ public static class StairCommands
             "The network's staircases, tallest first: road_stairs_list [count, default 20] [kit stone|wood|blackmarble]. Each row: its foot (lowest step) and top, its kit, how far it climbs, how many pieces it has and the share of its walked pieces in each biome.",
             List, isCheat: true);
         new Terminal.ConsoleCommand("road_stairs_scan",
-            "Highest and lowest ground round a point, from the world generator (works where nothing is loaded): road_stairs_scan <x> <z> <radius> [step, default 16].",
+            "Highest and lowest ground round a point, the natural ground the game renders (works where nothing is loaded): road_stairs_scan <x> <z> <radius> [step, default 16].",
             Scan, isCheat: true);
     }
 
@@ -85,9 +85,9 @@ public static class StairCommands
             for (float x = cx - radius; x <= cx + radius; x += step)
                 for (float z = cz - radius; z <= cz + radius; z += step)
                     if ((x - cx) * (x - cx) + (z - cz) * (z - cz) <= radius * radius)
-                        all.Add((WorldGenerator.instance.GetHeight(x, z), x, z));
+                        all.Add((BiomeBlendedHeight.GetBlendedHeight(x, z, WorldGenerator.instance), x, z));
             all.Sort((a, b) => b.h.CompareTo(a.h));
-            args.Context.AddString($"SCAN centre=({cx:F0},{cz:F0}) radius={radius:F0} step={step:F0} points={all.Count} (generator heights; no roads or edits)");
+            args.Context.AddString($"SCAN centre=({cx:F0},{cz:F0}) radius={radius:F0} step={step:F0} points={all.Count} (rendered natural ground; no roads or edits)");
             for (int i = 0; i < Math.Min(5, all.Count); i++) args.Context.AddString($"  HIGH {all[i].h:F1} at ({all[i].x:F0},{all[i].z:F0})");
             for (int i = Math.Max(0, all.Count - 5); i < all.Count; i++) args.Context.AddString($"  LOW  {all[i].h:F1} at ({all[i].x:F0},{all[i].z:F0})");
         }

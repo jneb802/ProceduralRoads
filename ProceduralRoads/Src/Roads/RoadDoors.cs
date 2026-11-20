@@ -44,23 +44,28 @@ public static partial class RoadNetworkGenerator
         return s_doors.GetOrAdd(key, _ => BuildDoors(centre, radius, width));
     }
 
-    /// <summary>PROCEDURALROADS_DOOR_WEIGHT: what a metre of a door's price (<see cref="RoadDoor.Price"/>) costs the search
-    /// against a metre of road, 1 to 20; 3 by default (at 1 a road to a placed location came in round from behind its
+    /// <summary>What a metre of a door's price (<see cref="RoadDoor.Price"/>) costs the search
+    /// against a metre of road: 3 (at 1 a road to a placed location came in round from behind its
     /// landing, as aimed at its centre it did).</summary>
-    internal static readonly int DoorWeight = DebugSwitches.Count("DOOR_WEIGHT", 3, 1, 20);
+    internal static readonly int DoorWeight = 3;
+
+    /// <summary>The ring a location's doors stand on: where the road's trim leaves it (<see cref="KeepOutEdge(Vector2, float, float, bool)"/>),
+    /// out by <see cref="PlacedLocations.AimOut"/>. The record of a location placed first covers it (LocationsFirstLoad.Read). The one owner of A location's ring, doors and keep-out edge (docs/OWNERS.md).</summary>
+    internal static float DoorRing(Vector2 centre, float radius, float width, bool placed) =>
+        KeepOutEdge(centre, radius, width, placed) + PlacedLocations.AimOut;
 
     private static RoadDoor[] BuildDoors(Vector2 centre, float radius, float width)
     {
         var world = GenerationWorld!;
         bool placed = PlacedLocations.TryGetReady(centre, out PlacedLocation placedLocation);
-        float ring = KeepOutEdge(centre, radius, width, placed) + PlacedLocations.AimOut;
+        float ring = DoorRing(centre, radius, width, placed);
         float bearing = 0f, level;
         if (placed)
         {
             Vector2 toward = placedLocation.Shape.Landing - placedLocation.Centre;
             if (toward.sqrMagnitude < 1e-4f) toward = placedLocation.Shape.Front;
             bearing = Mathf.Atan2(toward.x, toward.y) * Mathf.Rad2Deg;
-            level = placedLocation.Ground(placedLocation.Shape.Landing.x, placedLocation.Shape.Landing.y);
+            level = placedLocation.LandingHeight;
         }
         else level = float.NaN;
         int count = Mathf.RoundToInt(360f / PlacedLocations.AimStep);
@@ -143,10 +148,10 @@ public static partial class RoadNetworkGenerator
     /// <summary>The refusal a road to a location with no door level with it is counted under (<see cref="NoLevelDoor"/>).</summary>
     internal const string NoLevelDoorRefusal = "no door level with its location";
 
-    /// <summary>PROCEDURALROADS_DOOR_TRIES: how many times a road is searched to its doors before its last resort
-    /// (<see cref="GenerateRoadByDoors"/>), 1 to 8; 2 by default (3 found a few more destinations for a fifth more
+    /// <summary>How many times a road is searched to its doors before its last resort
+    /// (<see cref="GenerateRoadByDoors"/>): 2 (3 found a few more destinations for a fifth more
     /// generation).</summary>
-    internal static readonly int DoorTries = DebugSwitches.Count("DOOR_TRIES", 2, 1, 8);
+    internal static readonly int DoorTries = 2;
     /// <summary>One road's doors tried so far (<see cref="GenerateRoadByDoors"/>): null outside it.</summary>
     private sealed class DoorTrial
     {

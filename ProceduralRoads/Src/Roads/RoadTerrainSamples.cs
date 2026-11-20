@@ -90,7 +90,6 @@ internal sealed class RoadTerrainSamples
         }
         return ref sample;
     }
-    private static Vector2 World(Vector2i p) => new(p.x * RoadPathfinder.CellSize, p.y * RoadPathfinder.CellSize);
 
     /// <summary>The natural ground the search prices its grades on: the terrain the game renders
     /// (<see cref="BiomeBlendedHeight"/>), not WorldGenerator.GetHeight, whose point biome reads a cliff wherever it changes
@@ -104,7 +103,7 @@ internal sealed class RoadTerrainSamples
             if (!SharedTerrain.TryHeight(world, position, out sample.Height))
             {
                 TerrainCalls++;
-                var p = World(position);
+                var p = RoadPathfinder.CellCentre(position);
                 long began = Now;
                 sample.Height = BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world, corners);
                 TerrainTicks += Now - began;
@@ -124,7 +123,7 @@ internal sealed class RoadTerrainSamples
             if (!SharedTerrain.TryRiver(world, position, out sample.River))
             {
                 TerrainCalls++;
-                var p = World(position);
+                var p = RoadPathfinder.CellCentre(position);
                 long began = Now;
                 world.GetRiverWeight(p.x, p.y, out sample.River, out _);
                 TerrainTicks += Now - began;
@@ -147,7 +146,7 @@ internal sealed class RoadTerrainSamples
             sample = ref At(position);
             Misses++;
             long began = Now;
-            sample.Ground = RoadWater.Ground(World(position), natural);
+            sample.Ground = RoadWater.Ground(RoadPathfinder.CellCentre(position), natural);
             TerrainTicks += Now - began;
             sample.Flags |= 16;
         }
@@ -163,7 +162,7 @@ internal sealed class RoadTerrainSamples
             if (!SharedTerrain.TryBiome(world, position, out sample.Biome))
             {
                 TerrainCalls++;
-                var p = World(position);
+                var p = RoadPathfinder.CellCentre(position);
                 long began = Now;
                 sample.Biome = world.GetBiome(p.x, p.y);
                 TerrainTicks += Now - began;
@@ -327,7 +326,7 @@ internal sealed class RoadTerrainSamples
         else if ((sample.Flags & 8) == 0)
         {
             Misses++; TerrainCalls += RoadConstants.TerrainVarianceSampleCount;
-            var p = World(position);
+            var p = RoadPathfinder.CellCentre(position);
             int n = RoadConstants.TerrainVarianceSampleCount;
             float radius = RoadConstants.TerrainVarianceSampleRadius;
             float min = centerHeight, max = centerHeight;
@@ -366,6 +365,9 @@ internal sealed class RoadTerrainSamples
 internal static class SharedTerrain
 {
     private const int TileCells = 64;
+
+    /// <summary>The tile a cell index falls in: <paramref name="i"/> over <paramref name="size"/>, rounded down. The one owner of Zone, grid and cell arithmetic (docs/OWNERS.md).</summary>
+    internal static int FloorDiv(int i, int size) => i >= 0 ? i / size : (i + 1) / size - 1;
     private sealed class Tile
     {
         public readonly float[] Height = new float[TileCells * TileCells];
@@ -391,8 +393,8 @@ internal static class SharedTerrain
 
     private static Tile? Find(WorldGenerator world, Vector2i cell, bool create, out int index)
     {
-        int tx = cell.x >= 0 ? cell.x / TileCells : (cell.x + 1) / TileCells - 1;
-        int tz = cell.y >= 0 ? cell.y / TileCells : (cell.y + 1) / TileCells - 1;
+        int tx = FloorDiv(cell.x, TileCells);
+        int tz = FloorDiv(cell.y, TileCells);
         index = (cell.y - tz * TileCells) * TileCells + (cell.x - tx * TileCells);
         if (!ReferenceEquals(s_world, world))
         {

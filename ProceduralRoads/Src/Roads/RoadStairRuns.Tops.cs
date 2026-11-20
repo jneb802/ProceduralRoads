@@ -16,7 +16,7 @@ public static partial class RoadStairRuns
     public static int RoadTopsCrested;
 
     /// <summary>
-    /// A road staircase whose top stops under the ground it leads onto (more than a step-up under it 2.5 m on, the
+    /// A road staircase whose top stops under the ground it leads onto (more than a step-up under it at the end reader's corners, the
     /// way the road carries on) is carried out over the lip, up to <see cref="StairLayout.MostClimbedOn"/> stairs, and
     /// finished with the back-to-back crest pair landing on the surface; the road then starts on the surface past the
     /// crest (at 6468.3,-1522.5 the top is better a bit out, doing the double stair ridge to land on the
@@ -36,8 +36,7 @@ public static partial class RoadStairRuns
             Vector2 top = new Vector2(plan.End.x, plan.End.z), dir = StairLayout.Forward(plan.EndHeading);
             Vector2 toRoad = path[next] - top;
             if (toRoad.sqrMagnitude < 1e-4f || Vector2.Dot(dir, toRoad.normalized) < 0.5f) return false; // more than 60 degrees off
-            Vector2 ahead = top + dir * StairLayout.TopAhead;
-            if (ground(ahead.x, ahead.y) - plan.End.y <= StairLayout.TopFloorBand) return false;
+            if (StairEnds.OverAhead(top, dir, plan.End.y, Width, ground) <= StairLayout.TopFloorBand) return false;
             int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
             Vector3 end = plan.End;
             int stairs = plan.Stairs;

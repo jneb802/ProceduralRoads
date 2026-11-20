@@ -28,12 +28,12 @@ public sealed class BridgeLayoutTests
             RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2 position, string label)>(), new List<RoadCrossing>(),
                 new HashSet<Vector2s>());
 
-            // The record an older build wrote: format 1, the narrow single-lane layout, one zone with its pieces.
+            // The record an older bridge layout wrote: layout 1, the narrow single-lane bridges, one zone with its pieces.
             var zone = new Vector2s(3, 4);
             using (var ms = new MemoryStream())
             using (var w = new BinaryWriter(ms))
             {
-                w.Write(1); w.Write(1); w.Write((int)zone.x); w.Write((int)zone.y);
+                w.Write(2); w.Write(1); w.Write(1); w.Write((int)zone.x); w.Write((int)zone.y);
                 LegacyWorldTests.Metadata().Set("ProceduralRoads_BridgeZones".GetStableHashCode(), ms.ToArray());
             }
             ZDO piece = ZDOMan.instance.CreateNewZDO(ZoneSystem.GetZonePos(zone), "wood_beam".GetStableHashCode());
@@ -52,6 +52,22 @@ public sealed class BridgeLayoutTests
         {
             RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); RoadNetworkGenerator.Reset();
         }
+    }
+
+    /// <summary>The bridge-zones record reads only its current format: an older version number is refused, so its zones
+    /// are recorded afresh.</summary>
+    [Fact]
+    public void ABridgeZonesRecordOfAnotherVersionIsRefused()
+    {
+        var zone = new Vector2s(3, 4);
+        using var ms = new MemoryStream();
+        using (var w = new BinaryWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true))
+        { w.Write(1); w.Write(1); w.Write((int)zone.x); w.Write((int)zone.y); }
+        var read = typeof(RoadNetworkPersistence).GetMethod("ReadBridgeZones", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var zones = new HashSet<Vector2s>();
+        var thrown = Assert.Throws<TargetInvocationException>(() => read.Invoke(null, new object?[] { ms.ToArray(), zones }));
+        Assert.IsType<InvalidDataException>(thrown.InnerException);
+        Assert.Empty(zones);
     }
 
     private static void SetPathfinder(RoadPathfinder? pathfinder) =>

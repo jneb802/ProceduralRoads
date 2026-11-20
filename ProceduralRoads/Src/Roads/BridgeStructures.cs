@@ -128,6 +128,62 @@ public sealed class BridgeStructures : IStructureSource
         _ => 0f,
     };
 
+    /// <summary>How far a kit's deck reaches under its walking surface, to its underside, as the ship's way measures it
+    /// (<see cref="BridgeLayout.NavigationChannel"/>): the railed kits' beams (<see cref="BridgeLayout.DeckDepth"/>), the stone
+    /// kit's floor and its arches' tall ends (<see cref="BridgeLayout.StoneDeckDepth"/>), the Dvergr wood kit's planks and
+    /// stringers (<see cref="DvergrWoodBridge.DeckDepth"/>), the viaduct's course down to its floors
+    /// (<see cref="DvergrViaduct.FloorDrop"/>). The one owner of the ground under a deck (docs/OWNERS.md).</summary>
+    public static float DeckDepth(Kit kit) => kit switch
+    {
+        Kit.WoodRail or Kit.WoodBraced => BridgeLayout.DeckDepth,
+        Kit.Stone => BridgeLayout.StoneDeckDepth,
+        Kit.DvergrWood => DvergrWoodBridge.DeckDepth,
+        Kit.DvergrViaduct => DvergrViaduct.FloorDrop,
+        _ => 0f,
+    };
+
+    /// <summary>The deepest deck a crossing may be built in, the envelope every kit lays its deck within (as
+    /// <see cref="DeckHalfWidth"/>), asked without choosing a kit: its saved kit's, a viaduct's, else the deepest of the kits
+    /// that fit it (<see cref="KitsThatFit"/>). 0 where none does. The one owner of the ground under a deck (docs/OWNERS.md).</summary>
+    public static float DeckDepth(RoadCrossing crossing, WorldGenerator world)
+    {
+        if (Chosen(crossing.Kit)) return DeckDepth(crossing.Kit!.Value);
+        if (IsViaduct(crossing, world)) return DeckDepth(Kit.DvergrViaduct);
+        float depth = 0f;
+        foreach (Kit kit in KitsThatFit(crossing, world)) depth = Mathf.Max(depth, DeckDepth(kit));
+        return depth;
+    }
+
+    /// <summary>
+    /// The ground under a crossing's deck, as cuts of <paramref name="reach"/> (RoadNetworkGenerator.CrossingGround.Cuts):
+    /// from each end's edge in to the deck's middle, one every <see cref="RoadCrossingDetector.DeckLineStep"/>, at the deck's
+    /// underside (the end's walking surface less <see cref="DeckDepth(RoadCrossing, WorldGenerator)"/>), and nearer the
+    /// edge no lower than the cut's batter (<see cref="RoadTerrainModifier.CutBatterSlope"/>) climbs back to the walking
+    /// surface at the edge. So no ground stands over a deck's underside but the wedge its batter leaves inside the deck's
+    /// first metre or so, under its walking surface, and the road before the edge keeps its height. A cut only lowers:
+    /// over water, or where the ground already lies lower, it changes nothing. The road run on under an end met level, at
+    /// its walking surface (StructureEnds.JoinOverlap), is cut down here too. The one owner of the ground under a deck
+    /// (docs/OWNERS.md), every kit's and the viaduct's.
+    /// </summary>
+    public static List<Vector3> GroundUnderDeck(RoadCrossing crossing, WorldGenerator world, float reach)
+    {
+        var cuts = new List<Vector3>();
+        if (!HasDeck(crossing)) return cuts;
+        var (near, far) = Ends(crossing, world);
+        if (!near.IsStructure || !far.IsStructure) return cuts;
+        float depth = DeckDepth(crossing, world);
+        float half = Vector2.Distance(near.Edge, far.Edge) * 0.5f;
+        foreach (StructureEnds.End end in new[] { near, far })
+            for (float along = RoadCrossingDetector.DeckLineStep; along <= half + 1e-3f; along += RoadCrossingDetector.DeckLineStep)
+            {
+                float down = Mathf.Min(depth, (along - reach) * RoadTerrainModifier.CutBatterSlope);
+                if (down <= 0f) continue;
+                Vector2 at = end.Edge + end.Up * along;
+                cuts.Add(new Vector3(at.x, end.Height - down, at.y));
+            }
+        return cuts;
+    }
+
     /// <summary>Whether a crossing's saved kit is one it is built in: not none, not <see cref="Kit.Undecided"/>.</summary>
     public static bool Chosen(Kit? kit) => kit is Kit k && k != Kit.Undecided;
 
@@ -194,21 +250,32 @@ public sealed class BridgeStructures : IStructureSource
     /// Meadows and the Mistlands) where it fits (<see cref="BridgeLayout.StoneFits"/>).</summary>
     public static bool Fits(Kit kit, RoadCrossing crossing, WorldGenerator world)
     {
-        Heightmap.Biome biome = world.GetBiome(crossing.Center.x, crossing.Center.y);
+        bool mistlands = InMistlands(crossing, world);
         return kit switch
         {
-            Kit.DvergrWood => biome == Heightmap.Biome.Mistlands,
-            Kit.WoodRail or Kit.WoodBraced => biome != Heightmap.Biome.Mistlands,
-            Kit.Stone => biome != Heightmap.Biome.Mistlands && biome != Heightmap.Biome.Meadows && BridgeLayout.StoneFits(crossing, world),
+            Kit.DvergrWood => mistlands,
+            Kit.WoodRail or Kit.WoodBraced => !mistlands,
+            // Stone over wood wherever at least the share stands outside the Meadows (a boundary leans to the stone).
+            Kit.Stone => !mistlands && LeansTo(crossing, world, StairKit.StoneOverWoodBelongs) && BridgeLayout.StoneFits(crossing, world),
             _ => false,
         };
     }
+
+    /// <summary>Whether a crossing is a Mistlands one, as a staircase is (<see cref="StairKit.InMistlands"/>: at least
+    /// <see cref="StairKit.BiomeShare"/> of it in the Mistlands), over its length from bank to bank (its pieces are chosen
+    /// by the answer, so they cannot be what it counts). The one owner for the kit, the viaduct's refusal and the deck's width. The one owner of structure kit by biome (docs/OWNERS.md).</summary>
+    public static bool InMistlands(RoadCrossing crossing, WorldGenerator world) => LeansTo(crossing, world, StairKit.MistlandsKitBelongs);
+
+    /// <summary>Whether a crossing leans to the more advanced kit (<see cref="StairKit.LeansTo"/>) over its length from bank to bank.</summary>
+    public static bool LeansTo(RoadCrossing crossing, WorldGenerator world, System.Func<Heightmap.Biome, bool> advanced) =>
+        StairKit.LeansTo(StairKit.Samples(new[] { crossing.FromBank, crossing.ToBank }), (x, z) => world.GetBiome(x, z), advanced);
 
     /// <summary>
     /// The pieces of one crossing, in its kit (<see cref="KitFor"/>), none without one. The one place the pieces are chosen:
     /// the plan, the append queue and the counts all come through here.
     /// Every piece carries its crossing and the kit it was solved in (<see cref="StructurePiece.Kit"/>): the kit saved when
     /// the first is built (<see cref="ChooseKits"/>), whatever the kits that fit by then.
+    /// The one owner of bridge and viaduct structure (docs/OWNERS.md).
     /// </summary>
     public static List<StructurePiece> Solve(RoadCrossing crossing, WorldGenerator world, int seed) =>
         Solve(crossing, world, seed, StructureWear.Bridges);
@@ -333,7 +400,7 @@ public sealed class BridgeStructures : IStructureSource
     /// <see cref="DvergrWoodBridge.BeamLength"/> beams laid across the deck); else the railed and stone kits'.</summary>
     public static float DeckHalfWidth(RoadCrossing crossing, WorldGenerator world) =>
         IsViaduct(crossing, world) ? DvergrViaduct.HalfWidth
-        : world != null && world.GetBiome(crossing.Center.x, crossing.Center.y) == Heightmap.Biome.Mistlands ? DvergrWoodBridge.BeamLength * 0.5f
+        : world != null && Fits(Kit.DvergrWood, crossing, world) ? DvergrWoodBridge.BeamLength * 0.5f
         : BridgeLayout.DeckHalfWidth;
 
     /// <summary>Both ends of a crossing structure as they meet the road, near (from-bank) end first: the one owner's
@@ -409,10 +476,11 @@ public sealed class BridgeStructures : IStructureSource
                 : RoadSpatialGrid.TryGetRoadHeightWithin(a, 4f, out float road) ? road : BridgeLayout.MinDeck(RoadConstants.SeaLevel);
             int n = Mathf.CeilToInt(length);
             for (int i = 0; i <= n; i++)
-                deck.Add(new RoadSpatialGrid.RoadPoint(a + (b - a) * (i / (float)n), RoadSpatialGrid.DefaultRoadWidth, height));
+                deck.Add(new RoadSpatialGrid.RoadPoint(a + (b - a) * (i / (float)n), BridgeLayout.EndStairsWidth, height)); // the deck's own width, not the road setting
         }
         // Headings come from every deck point in reach.
         foreach (var point in deck)
-            clearances.Add(new StructureClearance(point, deck, point.h - DeckBelow, DeckBelow + RoadRockPolicy.ClearanceHeight, wholeOnly: true));
+            // From under the deck to the top of a walker's box over it (RockClearances.Top), as over a road.
+            clearances.Add(new StructureClearance(point, deck, point.h - DeckBelow, RockClearances.Top(point.h) - (point.h - DeckBelow), wholeOnly: true));
     }
 }

@@ -45,11 +45,11 @@ public sealed class ServerBakeKeptBuild<TData> where TData : class
         m_data = null;
     }
 
-    /// <summary>The kept data, for <paramref name="zone"/> only and only when <paramref name="enabled"/>; null
+    /// <summary>The kept data, for <paramref name="zone"/> only; null
     /// otherwise. Forgets it either way: the data is handed back at most once.</summary>
-    public TData? Take(Vector2s zone, bool enabled)
+    public TData? Take(Vector2s zone)
     {
-        TData? data = m_has && enabled && m_zone.Equals(zone) ? m_data : null;
+        TData? data = m_has && m_zone.Equals(zone) ? m_data : null;
         Drop();
         return data;
     }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -13,8 +14,8 @@ namespace ProceduralRoads.Tests;
 /// </summary>
 public sealed class PlacedLocationLandingEdgeTests
 {
-    private static readonly Vector2 Centre = new(1649.6f, -6338.7f);
-    private const float Yaw = 315f, Root = 59.99f, Wall = 14.7f, Width = 4f;
+    private static readonly Vector2 Centre = new(1650f, -6339f);
+    private const float Yaw = 270f, Root = 59.99f, Wall = 14.7f, Width = 4f;
 
     /// <summary>Mistlands_Excavation3's levelling (its placed record): the 17 m flat smoothed out to 25 m, its sinks.</summary>
     private static readonly IReadOnlyList<LevelOp> Ops = new[]
@@ -28,8 +29,19 @@ public sealed class PlacedLocationLandingEdgeTests
 
     /// <summary>The camp's placed ground: its flat, blended out to the natural ground 3 m over its root round it (the road
     /// stands at 63.1 at x 1625.7, 24 m out on the west).</summary>
-    private static float Ground(float x, float z) =>
-        LocationLevelling.PlacedGroundAt(new Vector2(x, z), Centre, Root, Ops, Root + 3f);
+    private static readonly Func<float, float, float> Placed = Built();
+
+    private static float Ground(float x, float z) => Placed(x, z);
+
+    /// <summary>The ground the game makes (<see cref="PlacedLocationGround.Build"/>) from that natural ground, its sinks included.
+    /// The camp stands on a whole metre and faces west, so its flat's edge falls on a vertex as the game's mesh has it.</summary>
+    private static Func<float, float, float> Built()
+    {
+        const int x0 = 1580, z0 = -6400, size = 140;
+        float[] heights = PlacedLocationGround.Build(x0, z0, size, size, Centre, Root, Yaw, Ops, (_, _) => Root + 3f);
+        Func<float, float, float> grid = PlacedLocationGround.Sampler(heights, x0, z0, size, size);
+        return (x, z) => grid(x, z) is float h && h < PlacedLocationGround.OffGrid ? h : Root + 3f;
+    }
 
     private static PlacedLocationShape Shape() =>
         PlacedLocationShape.Of(Centre, Yaw, RoadStairRuns.FlatOf(Ops)!.Value, 17f, null, Ground, root: Root, prefab: "Mistlands_Excavation3");
@@ -45,6 +57,27 @@ public sealed class PlacedLocationLandingEdgeTests
         foreach (var (at, _) in landings)
             Assert.True(Vector2.Distance(at, Centre) >= Wall,
                 $"a landing at ({at.x:F0}, {at.y:F0}) is {Vector2.Distance(at, Centre):F1} m from the camp's centre, inside its {Wall} m wall");
+    }
+
+    /// <summary>The camp as it stood in game (1649.6, -6338.7, turned 315), on the game's own vertex-exact ground: the game
+    /// centres the flat on the nearest vertex, half a metre behind the camp's front, so no point past the inner bound has a
+    /// landing's level ground. The road then aims at the flat's edge on its front axis (<see cref="PlacedLocationShape.LandingFor"/>),
+    /// 17 m out, still outside the wall, never inside it.</summary>
+    [Fact]
+    public void TheCampAsItStoodInGameIsMetOutsideItsWall()
+    {
+        var centre = new Vector2(1649.6f, -6338.7f);
+        const int x0 = 1580, z0 = -6400, size = 140;
+        float[] heights = PlacedLocationGround.Build(x0, z0, size, size, centre, Root, 315f, Ops, (_, _) => Root + 3f);
+        Func<float, float, float> grid = PlacedLocationGround.Sampler(heights, x0, z0, size, size);
+        float Ground(float x, float z) => grid(x, z) is float h && h < PlacedLocationGround.OffGrid ? h : Root + 3f;
+        var shape = PlacedLocationShape.Of(centre, 315f, RoadStairRuns.FlatOf(Ops)!.Value, 17f, null, Ground, root: Root, prefab: "Mistlands_Excavation3");
+        float reach = RoadLocationEntry.InsideReach(Width);
+        var landings = shape.Landings(Ground, reach + RoadLocationEntry.EndSlack, RoadLocationEntry.RoadLandingTries,
+            Width * 0.5f + PlacedLocationShape.BodyGap);
+        Assert.Empty(landings);
+        Assert.True(Vector2.Distance(shape.LandingFor(reach + RoadLocationEntry.EndSlack), centre) >= Wall,
+            "the fallback aim lies inside the camp's wall");
     }
 
     /// <summary>With no level ground past the flat's edge less <see cref="PlacedLocationShape.LevelRadius"/>, the road aims at the

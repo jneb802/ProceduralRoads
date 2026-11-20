@@ -114,7 +114,7 @@ public static class PlacedLocationReader
             && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.Name);
     }
 
-    /// <summary>The location's exterior radius: its rock, for leading a staircase round it.</summary>
+    /// <summary>The location's exterior radius: its rock, for leading a staircase round it. The one owner of which rocks a location keeps (docs/OWNERS.md).</summary>
     internal static float RockRadius(Vector2 centre)
     {
         Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
@@ -164,9 +164,7 @@ public static class PlacedLocationReader
             if (!RoadLocationProtection.Contains(at)) continue;
             GameObject? prefab = ZNetScene.instance.GetPrefab(zdo.GetPrefab());
             if (prefab == null) continue;
-            bool rock = false;
-            foreach (string name in RoadRockPolicy.PolicyNames(prefab.name, RoadRockCarve.FracturedFrom()))
-                rock |= RoadRockPolicy.IsClearableRock(name);
+            bool rock = RoadRockPolicy.IsClearableRock(prefab.name, RoadRockCarve.FracturedFrom());
             // The location's own rocks of kinds no road clears, its ice above all (Hildir's cave:
             // ice_rock1, rock3_ice, caverock_ice_*): kept and kept clear of, as its large rocks
             // are. Left out, a staircase ran up beside and behind its great ice block.
@@ -177,23 +175,33 @@ public static class PlacedLocationReader
             if (piece)
             {
                 Vector3 pieceScale = zdo.GetVec3(ZDOVars.s_scaleHash, Vector3.zero);
-                rocks.Add(Box(p, zdo.GetRotation(), pieceScale != Vector3.zero ? pieceScale : Vector3.one, LocalBox(prefab), prefab.name));
+                rocks.Add(LocationRock.Of(p, zdo.GetRotation(), pieceScale != Vector3.zero ? pieceScale : Vector3.one, LocalBox(prefab), prefab.name));
                 continue;
             }
             if (!rock && !ownRock) continue;
             if (!ownRock && locationPrefab != null && LocationPrefabLevelling.IsPart(locationPrefab, rootAt, turn, p) == false) { world++; continue; }
-            Vector3 saved = zdo.GetVec3(ZDOVars.s_scaleHash, Vector3.zero);
-            float scalar = zdo.GetFloat(ZDOVars.s_scaleScalarHash, 0f);
-            Vector3? setScale = saved != Vector3.zero ? saved : scalar > 0f ? Vector3.one * scalar : (Vector3?)null;
-            Vector3 scale = setScale ?? Vector3.one;
-            LocationRock box = Box(p, zdo.GetRotation(), scale, LocalBox(prefab), prefab.name);
+            Vector3? setScale = SavedScale(zdo);
+            LocationRock box = BoxOf(zdo, prefab);
             // Its real top where it counts: a rock an approach keeps clear of (large, round the
             // mouth, or at a place keeping every rock); a small one elsewhere is cleared anyway.
-            bool kept = ownRock || box.Large || keepSmall || (rockRadius > 0f && Vector2.Distance(box.At, centre) <= rockRadius);
+            bool kept = ownRock || box.KeptAt(centre, rockRadius, keepSmall, out _);
             rocks.Add(kept ? WithTop(box, prefab, p, zdo.GetRotation(), setScale) : box);
         }
         return rocks;
     }
+
+    /// <summary>The scale a ZDO's object was saved with (a vector, or a scalar), none when it has none.</summary>
+    internal static Vector3? SavedScale(ZDO zdo)
+    {
+        Vector3 saved = zdo.GetVec3(ZDOVars.s_scaleHash, Vector3.zero);
+        float scalar = zdo.GetFloat(ZDOVars.s_scaleScalarHash, 0f);
+        return saved != Vector3.zero ? saved : scalar > 0f ? Vector3.one * scalar : (Vector3?)null;
+    }
+
+    /// <summary>A saved rock's box (<see cref="LocationRock.Of"/>) as planning reads it: its prefab's colliders' box at the saved
+    /// scale and turn. The rock clearing's probe reads a live rock through this too.</summary>
+    internal static LocationRock BoxOf(ZDO zdo, GameObject prefab) =>
+        LocationRock.Of(zdo.GetPosition(), zdo.GetRotation(), SavedScale(zdo) ?? Vector3.one, LocalBox(prefab), prefab.name);
 
     /// <summary>Most cells a rock's top is read over: past it, its box stands for it.</summary>
     private const int MaxTopCells = 6400;
@@ -261,29 +269,8 @@ public static class PlacedLocationReader
         return new LocationRock(box.At, box.HalfX, box.HalfZ, box.Yaw, box.MinY, box.MaxY, box.Name, top, x0, z0, w);
     }
 
-    /// <summary>A rock's box seen from above: the corners of its colliders' box, scaled and turned
-    /// as saved, measured along and across its turn about the vertical.</summary>
-    private static LocationRock Box(Vector3 position, Quaternion rotation, Vector3 scale, Bounds local, string name)
-    {
-        float yaw = rotation.eulerAngles.y;
-        float minX = float.PositiveInfinity, maxX = float.NegativeInfinity, minZ = float.PositiveInfinity, maxZ = float.NegativeInfinity;
-        float minY = float.PositiveInfinity, maxY = float.NegativeInfinity;
-        for (int i = 0; i < 8; i++)
-        {
-            Vector3 corner = local.center + Vector3.Scale(local.extents,
-                new Vector3((i & 1) == 0 ? -1f : 1f, (i & 2) == 0 ? -1f : 1f, (i & 4) == 0 ? -1f : 1f));
-            Vector3 w = rotation * Vector3.Scale(corner, scale);
-            Vector2 q = LocationRock.Local(new Vector2(w.x, w.z), yaw);
-            minX = Mathf.Min(minX, q.x); maxX = Mathf.Max(maxX, q.x);
-            minZ = Mathf.Min(minZ, q.y); maxZ = Mathf.Max(maxZ, q.y);
-            minY = Mathf.Min(minY, position.y + w.y); maxY = Mathf.Max(maxY, position.y + w.y);
-        }
-        Vector2 middle = new Vector2(position.x, position.z) + LocationRock.World(new Vector2((minX + maxX) * 0.5f, (minZ + maxZ) * 0.5f), yaw);
-        return new LocationRock(middle, (maxX - minX) * 0.5f, (maxZ - minZ) * 0.5f, yaw, minY, maxY, name);
-    }
-
     /// <summary>A prefab's solid colliders' box in its root's frame.</summary>
-    private static Bounds LocalBox(GameObject prefab)
+    internal static Bounds LocalBox(GameObject prefab)
     {
         int key = prefab.name.GetStableHashCode();
         if (s_rockBox.TryGetValue(key, out Bounds known)) return known;

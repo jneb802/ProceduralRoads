@@ -140,6 +140,28 @@ public class StairVineTests
         Assert.DoesNotContain(hung, v => Vector3.Distance(v.Position, top.Position) < 0.001f);
     }
 
+    /// <summary>A stair's headroom is a road's (RockClearances.Top: the walker's box from its lift to 2.1 m over the walk), not
+    /// 2 m over it. The same hand-laid floor past the stair's end, set so the top vine's lowest leaves (1.17 m under its origin)
+    /// hang <paramref name="over"/> its walk: 2.05 m over is in its headroom (the vine is left out), 2.15 m is over it (hung).</summary>
+    [Theory]
+    [InlineData(2.05f, false)]
+    [InlineData(2.15f, true)]
+    public void AStairsHeadroomIsARoadsBox(float over, bool hangs)
+    {
+        List<StructurePiece> walking = Flight(40);
+        List<StructurePiece> vines = Vines(walking, out _);
+        StructurePiece top = vines.OrderByDescending(v => v.Position.y).First();
+        StructurePiece stair = walking.Single(s => Mathf.Abs(top.Position.z - s.Position.z) <= 1f);
+        var floor = new StructurePiece
+        {
+            Kind = StructurePieceKind.StairFloor, Prefab = Marble.Floor, YawDegrees = 0f,
+            Position = new Vector3(0f, top.Position.y - 1.17f - over - Marble.FloorTop, stair.Position.z + 2f),
+        };
+        var with = new List<StructurePiece>(walking.Where(s => s.Position.z < stair.Position.z + 1.5f)) { floor };
+        List<StructurePiece> hung = Vines(with, out _);
+        Assert.Equal(hangs, hung.Any(v => Vector3.Distance(v.Position, top.Position) < 0.001f));
+    }
+
     [Fact]
     public void AStaircaseClimbingOutOfTheMistlandsIntoTheMountainsIsBareUpThere()
     {

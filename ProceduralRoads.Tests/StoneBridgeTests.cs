@@ -128,6 +128,16 @@ public sealed class StoneBridgeTests : IDisposable
         "stone_pillar 11.50 1.50 32.83 0.0",
     };
 
+    /// <summary>The course the kit sinks under each bank pier that the hand build did not lay: a pier's lowest course ends sunk
+    /// 0.25 m under its lowest ground (StairSupport.Bury), as a staircase's wall does, not within 0.15 m above it. On the
+    /// reference's ground the bank piers' fourth course (the ground is 31 m, the third course's foot 30.83 m) is laid.</summary>
+    private static readonly string[] SunkUnderTheBank =
+    {
+        "stone_wall_2x1 8.50 -1.00 30.33 0.0",
+        "stone_wall_2x1 9.00 0.50 30.33 90.0",
+        "stone_wall_2x1 9.00 1.50 30.33 90.0",
+    };
+
     // ------------------------------------------------------------- the worlds
 
     /// <summary>
@@ -309,7 +319,7 @@ public sealed class StoneBridgeTests : IDisposable
 
     /// <summary>
     /// The hand-built half and its mirror (one top course block over the middle, shared), with the three blocks the hand
-    /// build left out of its lowest courses, is the stone kit on the reference's ground, piece for piece but for the floors:
+    /// build left out of its lowest courses and the bank piers' course sunk under the ground (<see cref="SunkUnderTheBank"/>), is the stone kit on the reference's ground, piece for piece but for the floors:
     /// ten bays (a pier, two arches, a pier, ...), the walking surface the network's deck, one step down at each end on its
     /// footing. The hand build laid its floors on the bays; the kit lays them a metre along, on the joints between bays
     /// (<see cref="BridgeLayout.StoneFloorOffset"/>), so a floor can rest half on each of two crowns over a 6 m opening:
@@ -319,12 +329,12 @@ public sealed class StoneBridgeTests : IDisposable
     public void TheStoneKitIsTheHandBuiltHalfMirrored()
     {
         var (c, w) = Reference();
-        var half = ReferenceHalf.Concat(HandLeftOut).Select(Parse).ToList();
-        Assert.Equal(92, half.Count);
+        var half = ReferenceHalf.Concat(HandLeftOut).Concat(SunkUnderTheBank).Select(Parse).ToList();
+        Assert.Equal(95, half.Count);
         var whole = new List<FramePiece>(half);
         foreach (FramePiece p in half.Select(Mirror))
             if (!whole.Any(q => q.Prefab == p.Prefab && Vector3.Distance(q.At, p.At) < 0.1f)) whole.Add(p);
-        Assert.Equal(2 * 92 - 2, whole.Count);
+        Assert.Equal(2 * 95 - 2, whole.Count);
         Assert.Equal(20, whole.Count(p => p.Prefab == BridgeLayout.StoneFloorPrefab));
 
         Assert.True(BridgeLayout.StoneFits(c, w));
@@ -377,7 +387,7 @@ public sealed class StoneBridgeTests : IDisposable
         {
             var (rc, rw) = Reference();
             if (ground != "reference" && ground != "high deck") rw.Bank = TallBank;
-            if (ground == "high deck") rw.Drop = 3f;
+            if (ground == "high deck") rw.Drop = 2.5f;
             if (ground == "met level, landed") MetEnds.Set(rc, rw, fromLevel: true, toRow: 2);
             c = rc;
             w = rw;
@@ -497,8 +507,8 @@ public sealed class StoneBridgeTests : IDisposable
     // ------------------------------------------------------ the support limit
 
     /// <summary>
-    /// The derived limits (BridgeSupport): nine pier courses, seven footing pillars. With the bed 3 m lower the inner piers
-    /// stand nine courses, each on the one under it to a foot in the ground, and the kit fits; a metre lower they would
+    /// The derived limits (BridgeSupport): nine pier courses, seven footing pillars. With the bed 2.5 m lower the inner piers
+    /// stand nine courses, each on the one under it to a foot sunk under the ground, and the kit fits; at 3 m lower they would
     /// need ten, and the stone kit does not fit: the crossing draws a railed kit, whatever the seed.
     /// </summary>
     [Fact]
@@ -509,7 +519,7 @@ public sealed class StoneBridgeTests : IDisposable
         Assert.True(BridgeSupport.StoneOnCrownFactor > BridgeSupport.StoneOnArchFactor * BridgeSupport.StoneRailOnRailFactor);
         Assert.Equal(7, BridgeSupport.StoneMaxFootingPillars());
         var (c, w) = Reference();
-        w.Drop = 3f;
+        w.Drop = 2.5f;
         Assert.True(BridgeLayout.StoneFits(c, w));
         var plan = BridgeLayout.SolveStoneComplete(c, w, 1).Where(IsPierBlock).Select(Frame).ToList();
         foreach (float along in new[] { -3f, 3f })
@@ -520,13 +530,13 @@ public sealed class StoneBridgeTests : IDisposable
             Assert.Equal(36, pier.Count);
             Assert.Equal(Deck - 1.5f, heights[0], 3);
             float foot = heights[heights.Count - 1] - 0.5f;
-            Assert.True(foot <= w.GetHeight(along, 0f) + BuriedPieces.Growth && foot + 1f > w.GetHeight(along, 0f));
+            Assert.True(foot <= w.GetHeight(along, 0f) - StairSupport.Bury && foot + 1f > w.GetHeight(along, 0f) - StairSupport.Bury);
         }
         bool drawn = false;
         for (int seed = 1; seed <= 30 && !drawn; seed++) { w.Seed = seed; drawn = BridgeStructures.KitFor(c, w) == BridgeStructures.Kit.Stone; }
         Assert.True(drawn, "the stone kit is never drawn where it fits");
 
-        w.Drop = 4f;
+        w.Drop = 3f;
         Assert.False(BridgeLayout.StoneFits(c, w));
         for (int seed = 1; seed <= 60; seed++)
         {
@@ -543,13 +553,13 @@ public sealed class StoneBridgeTests : IDisposable
     public void TheKitSavedAtTheFirstBuildIsTheOneThePiecesWereSolvedIn()
     {
         var (c, w) = Reference();
-        w.Drop = 3f;
+        w.Drop = 2.5f;
         BridgeStructures.DecideKind(c, w);
         for (w.Seed = 1; BridgeStructures.KitFor(c, w) != BridgeStructures.Kit.Stone; w.Seed++) Assert.True(w.Seed < 60);
         List<StructurePiece> pieces = BridgeStructures.Solve(c, w, w.Seed);
         Assert.All(pieces, p => Assert.Equal(BridgeStructures.Kit.Stone, p.Kit));
         Assert.All(pieces, p => Assert.Same(c, p.Crossing));
-        w.Drop = 4f;
+        w.Drop = 3f;
         Assert.NotEqual(BridgeStructures.Kit.Stone, BridgeStructures.KitFor(c, w));
         Assert.True(BridgeStructures.ChooseKits(pieces, w, new[] { c }));
         Assert.Equal(BridgeStructures.Kit.Stone, c.Kit);
@@ -617,7 +627,7 @@ public sealed class StoneBridgeTests : IDisposable
                         }
                         for (int m = 0; m < column.Count; m++)
                             Assert.Equal(foot - 1f - 2f * m, column[m].At.z, 2);
-                        Assert.True(column[column.Count - 1].At.z - 1f <= TallBank(Mathf.Abs(along + da)) + BuriedPieces.Growth);
+                        Assert.True(column[column.Count - 1].At.z - 1f <= TallBank(Mathf.Abs(along + da)) + SupportGraph.Reach);
                     }
             }
             Assert.Equal(2 * far.Steps, plan.Count(p => p.Prefab == BridgeLayout.StoneStairPrefab && p.At.x * end > 10f));

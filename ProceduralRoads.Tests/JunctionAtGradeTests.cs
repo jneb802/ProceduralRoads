@@ -24,11 +24,11 @@ public class JunctionAtGradeTests : System.IDisposable
         var near = new Vector2(0f, 3f);
         Assert.True(RoadSpatialGrid.TryGetRoadHeightWithin(near, 6f, out float surface));
         // Arriving on ground at the road's height: a junction.
-        Assert.True(RoadSpatialGrid.TryGetRoadAtGradeWithin(near, 6f, surface + 1f, 1.5f, out Vector2 at));
+        Assert.True(RoadSpatialGrid.TryGetRoadAtGradeWithin(near, 6f, surface + 1f, RoadPathfinder.DefaultJunctionStep, out Vector2 at));
         Assert.True(Vector2.Distance(at, near) <= 6f);
         // Arriving 3 m above or below it (the road on a fill or in a cut beside here): none.
-        Assert.False(RoadSpatialGrid.TryGetRoadAtGradeWithin(near, 6f, surface + 3f, 1.5f, out _));
-        Assert.False(RoadSpatialGrid.TryGetRoadAtGradeWithin(near, 6f, surface - 3f, 1.5f, out _));
+        Assert.False(RoadSpatialGrid.TryGetRoadAtGradeWithin(near, 6f, surface + 3f, RoadPathfinder.DefaultJunctionStep, out _));
+        Assert.False(RoadSpatialGrid.TryGetRoadAtGradeWithin(near, 6f, surface - 3f, RoadPathfinder.DefaultJunctionStep, out _));
     }
 
     /// <summary>A Meadows world at 40 m with a Black Forest patch inside the heightmap of zone (0, 0) touching none of its
@@ -67,7 +67,7 @@ public class JunctionAtGradeTests : System.IDisposable
             Assert.Equal(44f, world.GetHeight(0f, 0f));
             Assert.Equal(40f, RoadSpatialGrid.JunctionGround(new Vector2(0f, 0f), world), 3);
             var finder = new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f };
-            finder.FindPathToNetwork(new Vector2(0f, 0f), 8f);
+            finder.FindPathToNetwork(new Vector2(0f, 0f), RoadPathfinder.CellSize);
             Assert.True(finder.AlreadyOnNetwork, "the road 6 m off is at grade with the ground the game renders here");
         }
         finally { RoadPathfinder.JunctionStep = step; }

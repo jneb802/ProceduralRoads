@@ -10,9 +10,9 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// The paint stops at a bridge end's stairs' foot. Past it, under the stairs and under the deck's end, the road is
-/// levelled (the stairs stand on level ground, no terrain pokes through the deck) but not painted
-/// (RoadSpatialGrid.RoadPoint.unpainted, StructureEnds.Unpainted). An end met level stops its paint at the deck's edge.
+/// The paint stops at a bridge end's stairs' foot. Past it, under the stairs, the road is levelled (the stairs stand on
+/// level ground) but not painted (RoadSpatialGrid.RoadPoint.unpainted, StructureEnds.Unpainted). An end met level paints its
+/// road on under the deck's end, as any road.
 /// </summary>
 public sealed class BridgeEndPaintTests : IDisposable
 {
@@ -78,9 +78,9 @@ public sealed class BridgeEndPaintTests : IDisposable
     /// <summary>
     /// A wooden bridge over a wide river, its east bank 1 m over the west, so both its ends are low over the road
     /// (StructureEnds.Low) and each has its one step: past each stairs' foot the stored road (under the bottom
-    /// step at the foot's height, and the ground under the deck's end where it is land) is all unpainted, and every point
-    /// before the foot is painted. Written to the terrain, the ground under the stairs and the deck's end is levelled and
-    /// unpainted beyond the paint blend of the foot, and the road before the foot is painted.
+    /// step at the foot's height) is all unpainted, and every point before the foot is painted; the ground under the deck is
+    /// cut to its underside (BridgeStructures.GroundUnderDeck). Written to the terrain, the ground under the stairs is levelled
+    /// and unpainted beyond the paint blend of the foot, and the road before the foot is painted.
     /// </summary>
     [Fact]
     public void PaintStopsAtAWoodenBridgesStairsFoot()
@@ -97,15 +97,15 @@ public sealed class BridgeEndPaintTests : IDisposable
         RoadCrossing c = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.Kind == CrossingKind.Bridge);
         Assert.False(DvergrViaduct.Applies(c, world));
         var (near, far) = BridgeStructures.Ends(c, world);
-        int deckEnds = 0, stepped = 0;
+        int stepped = 0;
+        float depth = BridgeStructures.DeckDepth(c, world);
         foreach (var (end, which) in new[] { (near, "near"), (far, "far") })
         {
             if (end.Steps == 0) continue;
             stepped++;
             Vector2 across = new(-end.Up.y, end.Up.x);
-            float stairs = BridgeLayout.StairRun * end.Steps;
+            float stairs = StairLayout.PieceRun * end.Steps;
             int underStairs = 0, before = 0;
-            bool underDeck = false;
             foreach (var rp in RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(end.Meet.x, 0f, end.Meet.y), stairs + 12f))
             {
                 if (!rp.IsRoad) continue;
@@ -115,7 +115,6 @@ public sealed class BridgeEndPaintTests : IDisposable
                 {
                     Assert.True(rp.unpainted, $"{which} end: painted road at {rp.p}, {along:F2} m past the stairs' foot {end.Meet}");
                     if (along <= StructureEnds.JoinOverlap + 0.25f && Mathf.Abs(rp.h - end.MeetHeight) <= 0.1f) underStairs++;
-                    underDeck |= along > stairs;
                 }
                 else if (along > -StructureEnds.ApronLength)
                 {
@@ -124,7 +123,10 @@ public sealed class BridgeEndPaintTests : IDisposable
                 }
             }
             Assert.True(underStairs > 0, $"{which} end: no levelled road under the bottom step");
-            if (underDeck) deckEnds++;
+            // The ground under the deck, past the cuts' batter from its edge, cut to the deck's underside.
+            Vector2 inDeck = end.Edge + end.Up * (RoadNetworkGenerator.CrossingGround.CutWidth * 0.5f + depth + 1f);
+            Assert.Contains(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(inDeck.x, 0f, inDeck.y), 1.1f),
+                rp => rp.cutOnly && Mathf.Abs(rp.h - (end.Height - depth)) < 1e-3f);
             Assert.True(before > 0, $"{which} end: no road before the stairs' foot");
 
             // The terrain writer on the zone of the foot: unpainted past the foot's paint blend, painted before it.
@@ -152,35 +154,74 @@ public sealed class BridgeEndPaintTests : IDisposable
                 Assert.True(tc.m_modifiedPaint[foot], $"{which} end: the road 3 m before the stairs' foot is not painted");
         }
         Assert.True(stepped > 0, "neither end has stairs");
-        // Ground under a deck's end is levelled only over land: the west bank's (the east bank's shelf is under the waterline).
-        Assert.True(deckEnds > 0, "no levelled ground under either deck's end");
     }
 
     /// <summary>
-    /// An end met level (no stairs): its road runs on under the deck's end module at the deck's height,
-    /// levelled there but unpainted, the paint stopping at the deck's edge as it stops at a stairs' foot: at every end, no
-    /// painted road point inside the deck's edge or past the foot, and the road before it painted.
+    /// An end met level (no stairs): its road runs on under the deck's end at the deck's height, levelled and painted like
+    /// any road (StructureEnds.Unpainted: only the road under an end's stairs is unpainted), and the road before it painted.
+    /// A viaduct between banks at its deck's height is met level at both ends.
     /// </summary>
     [Fact]
-    public void AnEndMetLevelStopsItsPaintAtTheDecksEdge()
+    public void AnEndMetLevelPaintsItsRoadOnUnderTheDecksEnd()
     {
-        var world = new StructureEndTests.BankRisingBeside();
-        _scope.WithWorld(world);
-        SetPathfinder(new RoadPathfinder(world) { Stairs = true, Viaducts = true, Bridges = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
-        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-45f, 0f, -40f), 0f, new Vector3(70f, 0f, 0f), 0f, 4f, "from the side"), RoadSpatialGrid.LastRefusal);
-        RoadCrossing c = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.Kind == CrossingKind.Bridge);
-        var (near, far) = BridgeStructures.Ends(c, world);
-        Assert.Equal(0, near.Steps);
-        foreach (var (end, which) in new[] { (near, "near"), (far, "far") })
+        var level = new DvergrViaductEndStairTests.StepValley { Depth = _ => 18f };
+        _scope.WithWorld(level);
+        SetPathfinder(new RoadPathfinder(level) { Stairs = true, Viaducts = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector3(-110f, 0f, -50f), 0f, new Vector3(110f, 0f, 50f), 0f, 4f, "level"), RoadSpatialGrid.LastRefusal);
+        RoadCrossing viaduct = Assert.Single(RoadNetworkGenerator.GetRoadCrossings(), x => x.ValleyJump);
+        var (vn, vf) = BridgeStructures.Ends(viaduct, level);
+        Assert.Equal((0, 0), (vn.Steps, vf.Steps));
+        foreach (var (end, which) in new[] { (vn, "near"), (vf, "far") })
         {
             var around = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(end.Meet.x, 0f, end.Meet.y), 6f).Where(rp => rp.IsRoad).ToList();
-            var under = around.Where(rp => end.UnderTheStructure(rp.p, 2f)).ToList();
-            Assert.True(under.Count > 0, $"{which} end: no road run on under the structure");
-            Assert.All(under, rp => Assert.True(rp.unpainted, $"{which} end ({end.Steps} steps): the road at {rp.p}, under the structure, is painted"));
-            Assert.All(under, rp => Assert.True(Mathf.Abs(rp.h - end.MeetHeight) <= 0.1f, $"{which} end: the road under the structure at {rp.p} stands {rp.h:F2}, the end {end.MeetHeight:F2}"));
+            Vector2 across = new(-end.Up.y, end.Up.x);
+            bool Under(Vector2 p)
+            {
+                float along = Vector2.Dot(p - end.Meet, end.Up);
+                return along > 0.25f && along <= StructureEnds.JoinOverlap + 0.25f && Mathf.Abs(Vector2.Dot(p - end.Meet, across)) <= 2f;
+            }
+            var under = around.Where(rp => Under(rp.p)).ToList();
+            Assert.True(under.Count > 0, $"{which} end: no road run on under the deck's end");
+            Assert.All(under, rp => Assert.False(rp.unpainted, $"{which} end: the road at {rp.p}, under the deck's end, is unpainted"));
+            Assert.All(under, rp => Assert.True(Mathf.Abs(rp.h - end.MeetHeight) <= 0.1f, $"{which} end: the road under the deck's end at {rp.p} stands {rp.h:F2}, the end {end.MeetHeight:F2}"));
             var before = around.Where(rp => Vector2.Dot(rp.p - end.Meet, end.Up) < -1f).ToList();
             Assert.NotEmpty(before);
             Assert.All(before, rp => Assert.False(rp.unpainted, $"{which} end: the road before it at {rp.p} is unpainted"));
+        }
+    }
+
+    /// <summary>
+    /// A road arriving at a deck met level, its points in the order it was laid (towards the deck, every 0.5 m, as the
+    /// paint pass meets them), run on under the deck's end at its height: the ground is painted (cleared of grass, paved
+    /// over half) at the deck's edge and on under its end. Before, the road under the deck's end was unpainted and the
+    /// paint pass, which paints one point of every 1.5 m it reaches (RoadConstants.PaintDedupeInterval), left the edge
+    /// painted only by a point up to 1.5 m before it: at one bridge the paint faded out 1-2 m short of the planks, grass
+    /// over the road's end and up through the deck.
+    /// </summary>
+    [Fact]
+    public void ARoadArrivingAtADeckMetLevelIsPaintedToAndUnderItsEnd()
+    {
+        using var scope = new ValheimWorldScope();
+        using var plain = PlainEarthworks.Apply();
+        scope.WithWorld(new SyntheticWorld { HasRiver = false, HasMountain = false });
+        var zone = new Vector2s(0, 0);
+        Heightmap hm = scope.RegisterHeightmap(zone, Width);
+        TerrainComp tc = hm.m_terrainComp!;
+        float natural = BiomeBlendedHeight.GetBlendedHeight(0f, 0f, WorldGenerator.instance);
+        // The deck's edge at the origin, the deck to the west; the road comes from the east.
+        var end = new StructureEnds.End(new Vector2(0f, 0f), new Vector2(-1f, 0f), natural + 1f, 0);
+        var line = new List<Vector2>();
+        for (float x = 30f; x >= -StructureEnds.JoinOverlap - 0.01f; x -= 0.5f) line.Add(new Vector2(x, 0f));
+        List<bool>? unpainted = StructureEnds.Unpainted(line, new[] { end }, 2f);
+        var points = new List<RoadSpatialGrid.RoadPoint>();
+        for (int i = 0; i < line.Count; i++)
+            points.Add(new RoadSpatialGrid.RoadPoint(line[i], 4f, end.MeetHeight, unpainted: unpainted?[i] ?? false));
+        RoadTerrainModifier.ApplyRoadTerrainModsWithContext(zone, points, hm, tc);
+        foreach (var (x, z) in new[] { (1, 0), (0, -1), (0, 0), (0, 1), (-1, 0), (-2, 0) })
+        {
+            int i = Index(x, z);
+            float paved = tc.m_modifiedPaint[i] ? tc.m_paintMask[i].b : 0f;
+            Assert.True(paved >= 0.5f, $"paved {paved:F2} at ({x}, {z}), {-x} m past the deck's edge");
         }
     }
 }

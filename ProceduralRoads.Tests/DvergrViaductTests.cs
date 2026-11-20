@@ -48,7 +48,8 @@ public sealed class DvergrViaductTests : IDisposable
         public Heightmap.Biome Biome = Heightmap.Biome.Mistlands;
         public override float GetHeight(float wx, float wy) =>
             Mathf.Abs(wx) <= Half ? Bed : wx < -Half - 1f ? Bank - Mathf.Min(NearFall * (-Half - 1f - wx), 6f) : Bank;
-        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Biome;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
+            Biome;
         public override void GetRiverWeight(float wx, float wy, out float weight, out float width)
         {
             weight = Mathf.Abs(wx) < Half ? 1f : 0f;
@@ -485,9 +486,9 @@ public sealed class DvergrViaductTests : IDisposable
             {
                 List<float> g = GroundUnder(boxes[i], c, world);
                 // Never wholly under the ground: the game would break it.
-                Assert.False(g.All(h => h >= boxes[i].Y1 + BuriedPieces.Growth), $"{boxes[i].Piece.Prefab} at {boxes[i].Piece.Position} is wholly buried");
+                Assert.False(g.All(h => h >= boxes[i].Y1 + SupportGraph.Reach), $"{boxes[i].Piece.Prefab} at {boxes[i].Piece.Position} is wholly buried");
                 // Grounded: the ground's surface passes through it somewhere.
-                if (g.Max() >= boxes[i].Y0 - 0.05f && g.Min() <= boxes[i].Y1 + BuriedPieces.Growth) { supported[i] = true; queue.Enqueue(i); }
+                if (g.Max() >= boxes[i].Y0 - 0.05f && g.Min() <= boxes[i].Y1 + SupportGraph.Reach) { supported[i] = true; queue.Enqueue(i); }
             }
             while (queue.Count > 0)
             {

@@ -29,7 +29,7 @@ public static class StructureAppendQueue
         p.Position.x, p.Position.y, p.Position.z, p.PitchDegrees, p.YawDegrees, p.RollDegrees }.Select(x => x.ToString("R", CultureInfo.InvariantCulture)));
 
     /// <summary>A manual road's bridges, built now through the queue: each site's pieces saved as its first zone is built
-    /// (<see cref="BridgeStructures.Build"/>).</summary>
+    /// (<see cref="BridgeStructures.Build"/>). The one owner of placing pieces into zones, and whether a zone's structure is started (docs/OWNERS.md).</summary>
     internal static Dictionary<Vector2s, List<StructurePiece>> Prepare(IEnumerable<RoadCrossing> crossings) =>
         Prepare(BridgeLayout.DistinctSites(crossings.ToList())
             .SelectMany(crossing => BridgeStructures.Build(crossing, WorldGenerator.instance, WorldGenerator.instance.GetSeed())));
@@ -47,8 +47,9 @@ public static class StructureAppendQueue
             {
                 pieces = new List<StructurePiece>(); result.Add(zone, pieces);
                 // An unspawned zone must receive its old plans too, since we
-                // will mark the zone spawned when this operation completes.
-                if (!StructurePlans.IsSpawned(zone) && !StructurePlans.ZoneHasLivePieces(zone))
+                // will mark the zone spawned when this operation completes. One owed pieces by an earlier append
+                // has them queued already, and a piece a player destroyed since must not come back.
+                if (!StructurePlans.Started(zone))
                 {
                     // Not the pieces of a generated bridge withheld for reaching an explored zone.
                     var old = StructurePlans.BuildablePlanFor(zone);
@@ -73,10 +74,13 @@ public static class StructureAppendQueue
             foreach (var piece in entry.Value) if (keys.Add(Key(piece))) pieces.Add(piece);
         }
     }
+    /// <summary>The saved record's format.</summary>
+    private const int Format = 1;
+
     public static byte[] Serialize()
     {
         using var stream = new MemoryStream(); using var writer = new BinaryWriter(stream);
-        writer.Write(1); writer.Write(pending.Count);
+        writer.Write(Format); writer.Write(pending.Count);
         foreach (var entry in pending)
         {
             writer.Write((int)entry.Key.x); writer.Write((int)entry.Key.y); writer.Write(entry.Value.Count);
@@ -94,7 +98,7 @@ public static class StructureAppendQueue
         if (bytes != null && bytes.Length > 0)
         {
             using var stream = new MemoryStream(bytes); using var reader = new BinaryReader(stream);
-            if (reader.ReadInt32() != 1) throw new InvalidDataException("Unknown bridge append data version.");
+            if (reader.ReadInt32() != Format) throw new InvalidDataException("Unknown bridge append data version.");
             int zones = reader.ReadInt32();
             if (zones < 0 || zones > 10000) throw new InvalidDataException("Invalid bridge append zone count.");
             int total = 0;
@@ -109,7 +113,7 @@ public static class StructureAppendQueue
                     string prefab = reader.ReadString();
                     var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     float pitch = reader.ReadSingle(), yaw = reader.ReadSingle(), roll = reader.ReadSingle(), health = reader.ReadSingle();
-                    if (prefab.Length > 100 || !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) ||
+                    if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) ||
                         !ManualRoadDraft.IsFinite(pos.y) || !ManualRoadDraft.IsFinite(pitch) || !ManualRoadDraft.IsFinite(yaw) ||
                         !ManualRoadDraft.IsFinite(roll) || !ManualRoadDraft.IsFinite(health) || health < 0 || health > 1)
                         throw new InvalidDataException("Invalid pending bridge piece.");

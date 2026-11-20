@@ -77,6 +77,7 @@ public static class LocationWaysIn
     /// A way into <paramref name="location"/> along <paramref name="points"/> at <paramref name="heights"/>, in either order:
     /// its last <see cref="RoadStairRuns.LocationReach"/> along it to its end nearer the location, outer end first; the whole of it
     /// where it is <paramref name="whole"/> (a staircase). Null where it has no length.
+    /// The one owner of ways into a location, and twin ways (docs/OWNERS.md).
     /// </summary>
     public static Way? Of(IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, Vector2 location, bool whole = false, StairRun? approach = null,
         bool? locationEndIsLast = null)
@@ -116,7 +117,7 @@ public static class LocationWaysIn
             if (p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing)
             {
                 points.Add(new Vector2(p.Position.x, p.Position.z));
-                heights.Add(p.Kind == StairPieceKind.Stair ? p.Position.y + StairLayout.PieceRise / 2f : p.Position.y + StairKit.FloorTopOf(p.Prefab));
+                heights.Add(StairLayout.CentreSurface(p));
             }
         if (points.Count < 2) return null;
         var end = new Vector2(plan.End.x, plan.End.z);
@@ -145,7 +146,7 @@ public static class LocationWaysIn
     /// <see cref="SameSideAngle"/> of it toward the location, over its last stretch (outer end to inner) or
     /// as it steps onto the location (<see cref="Way.Arrival"/>), climbing, coming down or level as it does; not where one
     /// carries on from the other (the foot of one at the other's top, within <see cref="RoadStairRuns.MeetReach"/>). Judged by
-    /// the ways themselves, never by where their roads go on from their outer ends.</summary>
+    /// the ways themselves, never by where their roads go on from their outer ends. The one owner of ways into a location, and twin ways (docs/OWNERS.md).</summary>
     public static bool SameWay(Way mine, Way theirs)
     {
         if (mine.Rise != theirs.Rise) return false;
@@ -171,7 +172,7 @@ public static class LocationWaysIn
         int me = CrossIslandReads.Me;
         lock (s_roads)
             foreach (var (at, way, island) in s_roads)
-                if ((at - location).sqrMagnitude < 1f && CrossIslandReads.Sees(me, island)) ways.Add(way);
+                if ((RoadStairRuns.IntoTheLocation(at) - into).sqrMagnitude < 1f && CrossIslandReads.Sees(me, island)) ways.Add(way);
         return ways;
     }
 
@@ -209,6 +210,7 @@ public static class LocationWaysIn
     /// test), each pair once, with a line naming the location and both ways by their ends. Read over the network as it stands
     /// (its approach staircases, <see cref="RoadStairRuns.LocationOf"/>, and the roads recorded arriving as road), whether or
     /// not the rule was on: the invariant beside the staircase-end audit (StairEnds), which a gate holds at none.
+    /// The one owner of ways into a location, and twin ways (docs/OWNERS.md).
     /// </summary>
     public static List<(Vector2 location, Way first, Way second, string line)> Twins()
     {

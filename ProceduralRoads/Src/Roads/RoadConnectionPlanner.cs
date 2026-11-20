@@ -17,6 +17,7 @@ public static class RoadConnectionPlanner
         { Name=name; Position=position; Radius=radius; }
     }
 
+    /// <summary>The one owner of which places get a road and which connect (docs/OWNERS.md).</summary>
     public static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority, Action<Location,string> report) =>

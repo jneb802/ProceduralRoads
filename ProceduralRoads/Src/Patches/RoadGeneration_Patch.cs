@@ -45,7 +45,7 @@ internal static class RoadGeneration_Patch
 
     /// <summary>The local player while a generation holds the world: takes no movement or action input.</summary>
     private static bool Held(Character? character) =>
-        RoadLifecycleManager.GenerationRunning && character != null && ReferenceEquals(character, Player.m_localPlayer);
+        RoadLifecycleManager.IsGenerating && character != null && ReferenceEquals(character, Player.m_localPlayer);
 
     [HarmonyPatch(typeof(PlayerController), "TakeInput")]
     [HarmonyPostfix]
@@ -141,7 +141,7 @@ internal static class RoadGeneration_Patch
             return false;
         }
         ExistingWorldChoicePanel.Clear();
-        if (!RoadLifecycleManager.GenerationRunning)
+        if (!RoadLifecycleManager.IsGenerating)
         {
             RoadGenerationPanel.Clear();
             return !ServerTerrainBake.HoldsFirstSpawn || !ShowBake(__instance, ref ___m_progressIndicatorShown);
@@ -152,7 +152,7 @@ internal static class RoadGeneration_Patch
         ___m_progressIndicatorShown = true;
         RoadGenerationPanel.Show(__instance, progress);
         indicator.SetShowProgress(true);
-        indicator.SetProgress(progress.Total == 0 ? 0f : (float)progress.Completed / progress.Total);
+        indicator.SetProgress(ServerBakeLoadScreen.Fraction(progress.Completed, progress.Total));
         indicator.SetText(progress.Text, false);
         return false;
     }

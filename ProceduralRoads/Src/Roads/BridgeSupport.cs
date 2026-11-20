@@ -15,17 +15,17 @@ namespace ProceduralRoads;
 ///
 /// The rule, for one piece:
 ///
-/// * A piece whose bounds overlap the terrain layer gets <see cref="MaxSupport"/>
+/// * A piece whose bounds overlap the terrain layer gets <see cref="SupportGraph.Wood"/> Max
 ///   outright. The buried foot of a pier is therefore always at 100.
 /// * Otherwise it takes the BEST value offered by anything it touches. From a
 ///   neighbour with support <c>S</c> whose support point lies a distance
 ///   <c>d</c> away (centre of mass to centre of mass, plus
-///   <see cref="ComDistanceMargin"/>), the offer is <c>S - loss * d * S</c>.
-/// * <c>loss</c> is <see cref="HorizontalLoss"/> for a sideways neighbour and
-///   <see cref="VerticalLoss"/> for one directly underneath, interpolated by
+///   <see cref="SupportGraph.DistanceMargin"/>), the offer is <c>S - loss * d * S</c>.
+/// * <c>loss</c> is <see cref="SupportGraph.Wood"/> HorizontalLoss for a sideways neighbour and
+///   <see cref="SupportGraph.Wood"/> SupportGraph.Wood.VerticalLoss for one directly underneath, interpolated by
 ///   angle in between. Wood loses support far faster sideways than downwards,
 ///   which is why a bridge is piers and not a span.
-/// * A piece is standing iff its support is at least <see cref="MinSupport"/>.
+/// * A piece is standing iff its support is at least <see cref="SupportGraph.Wood"/> Min.
 ///   Below that it breaks, and everything it was holding up follows.
 ///
 /// The consequence for this mod: support decays GEOMETRICALLY up a pier, so
@@ -34,33 +34,23 @@ namespace ProceduralRoads;
 /// </summary>
 public static class BridgeSupport
 {
-    // --- WearNTear.GetMaterialProperties, case MaterialType.Wood ---
-    public const float MaxSupport = 100f;
-    public const float MinSupport = 10f;
-    public const float VerticalLoss = 0.125f;
-    public const float HorizontalLoss = 0.2f;
-
-    /// <summary>The constant 0.1 m WearNTear adds to every support distance,
-    /// so that a piece resting flush on another still pays something.</summary>
-    public const float ComDistanceMargin = 0.1f;
-
     /// <summary>What one pole keeps of the support of the pole directly
     /// beneath it. Directly beneath means the support point is straight down,
-    /// so the angle lerp lands on <see cref="VerticalLoss"/> exactly and no
+    /// so the angle lerp lands on its vertical loss exactly and no
     /// collider geometry enters into it.</summary>
     public static float ColumnStepFactor(float segment) =>
-        1f - VerticalLoss * (segment + ComDistanceMargin);
+        1f - SupportGraph.Wood.VerticalLoss * (segment + SupportGraph.DistanceMargin);
 
     /// <summary>Support at the top of a column of <paramref name="poles"/>
     /// poles whose foot is buried. One pole is the buried foot itself.</summary>
     public static float ColumnSupport(int poles, float segment)
     {
-        if (poles <= 1) return MaxSupport;
-        return MaxSupport * Mathf.Pow(ColumnStepFactor(segment), poles - 1);
+        if (poles <= 1) return SupportGraph.Wood.Max;
+        return SupportGraph.Wood.Max * Mathf.Pow(ColumnStepFactor(segment), poles - 1);
     }
 
     /// <summary>How many poles a column can carry before its top pole is
-    /// below <see cref="MinSupport"/> and falls. Exact: it is the largest
+    /// below <see cref="SupportGraph.Wood"/> Min and falls. Exact: it is the largest
     /// <c>n</c> with <c>100 * f^(n-1) &gt;= 10</c>.</summary>
     public static int MaxPoles(float segment)
     {
@@ -68,7 +58,7 @@ public static class BridgeSupport
         if (f <= 0f || f >= 1f) return int.MaxValue;
         // Guard the boundary against float error rather than trusting Log.
         int n = 1;
-        while (ColumnSupport(n + 1, segment) >= MinSupport) n++;
+        while (ColumnSupport(n + 1, segment) >= SupportGraph.Wood.Min) n++;
         return n;
     }
 
@@ -122,17 +112,9 @@ public static class BridgeSupport
     /// </summary>
     public const float MeasuredCeiling = 18f;
 
-    // --- WearNTear.GetMaterialProperties, case MaterialType.Stone (stone_wall_2x1, stone_floor_2x2, stone_arch,
-    //     stone_stair and stone_pillar are all MaterialType Stone, ValheimRIP prefabs) ---
-    public const float StoneMaxSupport = 1000f;
-    public const float StoneMinSupport = 100f;
-    public const float StoneVerticalLoss = 0.125f;
-    /// <summary>Stone loses all its support a metre sideways: nothing carries a stone piece but what stands under it.</summary>
-    public const float StoneHorizontalLoss = 1f;
-
     /// <summary>What one stone piece keeps of the support of one under it whose centre lies <paramref name="distance"/>
     /// from its own (centre or origin, whichever is nearer, as UpdateSupport takes it), the support point straight down.</summary>
-    public static float StoneStepFactor(float distance) => 1f - StoneVerticalLoss * (distance + ComDistanceMargin);
+    public static float StoneStepFactor(float distance) => 1f - SupportGraph.Stone.VerticalLoss * (distance + SupportGraph.DistanceMargin);
 
     /// <summary>
     /// A stone kit pier course (<see cref="BridgeLayout.StonePierBlock"/>, 2 x 1 x 1 m blocks) on the course under it:
@@ -179,17 +161,17 @@ public static class BridgeSupport
 
     /// <summary>
     /// The most courses a stone kit pier stands (its top course beside the arches, at the deck's underside, down to the one
-    /// on the ground). Derived, not measured: the ground course is at <see cref="StoneMaxSupport"/>, each course over it
+    /// on the ground). Derived, not measured: the ground course is at <see cref="SupportGraph.Stone"/> Max, each course over it
     /// keeps <see cref="StoneCourseFactor"/>, and the weakest piece the pier carries is the railing's top course over the
     /// crown of an arch (pier top course, arch <see cref="StoneArchOnPier"/>, the railing block on the arch
     /// <see cref="StoneOnArchFactor"/>, the top course on it <see cref="StoneRailOnRailFactor"/>), which has to keep
-    /// <see cref="StoneMinSupport"/>. Nine courses (that railing at 116); a tenth would leave it at 97.
+    /// <see cref="SupportGraph.Stone"/> Min. Nine courses (that railing at 116); a tenth would leave it at 97.
     /// </summary>
     public static int StoneMaxPierCourses()
     {
         float over = StoneArchOnPier * StoneOnArchFactor * StoneRailOnRailFactor;
         int n = 1;
-        while (StoneMaxSupport * Mathf.Pow(StoneCourseFactor, n) * over >= StoneMinSupport) n++;
+        while (SupportGraph.Stone.Max * Mathf.Pow(StoneCourseFactor, n) * over >= SupportGraph.Stone.Min) n++;
         return n;
     }
 
@@ -197,13 +179,13 @@ public static class BridgeSupport
     /// The most stone_pillars a stone kit stair's footing stacks (from the step down to the one on the ground). Derived:
     /// each 2 m pillar keeps <see cref="StoneStepFactor"/> of 2 m of the one under it, and the step and the side wall on the
     /// top pillar (their centres 1.5 m up and about 0.7 m off its own, sqrt 2.75 m) have to keep
-    /// <see cref="StoneMinSupport"/>. Seven pillars (the step at 126); an eighth would leave it at 93.
+    /// <see cref="SupportGraph.Stone"/> Min. Seven pillars (the step at 126); an eighth would leave it at 93.
     /// </summary>
     public static int StoneMaxFootingPillars()
     {
         float on = StoneStepFactor(Mathf.Sqrt(2.75f));
         int n = 1;
-        while (StoneMaxSupport * Mathf.Pow(StoneStepFactor(BridgeLayout.StonePillarHeight), n) * on >= StoneMinSupport) n++;
+        while (SupportGraph.Stone.Max * Mathf.Pow(StoneStepFactor(BridgeLayout.StonePillarHeight), n) * on >= SupportGraph.Stone.Min) n++;
         return n;
     }
 }

@@ -24,12 +24,12 @@ internal static partial class RoadGenerationPanel
     private static RectTransform? viewport, content;
     private static Vector2 layoutSize = new(-1,-1);
     internal static bool OwnsPointer => panel!=null && panel.activeInHierarchy && hud==Hud.instance
-        && RoadLifecycleManager.GenerationRunning && !VanillaModal;
+        && RoadLifecycleManager.IsGenerating && !VanillaModal;
     private static bool VanillaModal => Menu.IsActive() || Menu.IsVisible() || UnifiedPopup.IsVisible()
         || TextInput.IsVisible() || ZNet.IsPasswordDialogShowing();
     internal static void Synchronize()
     {
-        if(!RoadLifecycleManager.GenerationRunning || hud==null || hud!=Hud.instance) { Clear(); return; }
+        if(!RoadLifecycleManager.IsGenerating || hud==null || hud!=Hud.instance) { Clear(); return; }
         Relayout();
         if(interaction!=null) { interaction.alpha=VanillaModal?0:1; interaction.interactable=!VanillaModal; interaction.blocksRaycasts=!VanillaModal; }
         RefreshTooltip();

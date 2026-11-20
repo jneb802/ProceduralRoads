@@ -13,8 +13,11 @@ public static class RoadIslandDetector
 {
     private static BepInEx.Logging.ManualLogSource Log => ProceduralRoadsPlugin.ProceduralRoadsLogger;
     public const float SampleSpacing = 8f;
+    /// <summary>The smallest island, in square metres, that road generation counts.</summary>
+    public const float MinIslandArea = 163840;
 
-    public static List<Island> Detect(WorldGenerator wg, float minArea = 163840, float worldRadius = 10000,
+    /// <summary>The one owner of island detection (docs/OWNERS.md).</summary>
+    public static List<Island> Detect(WorldGenerator wg, float minArea = MinIslandArea, float worldRadius = RoadConstants.WorldRadius,
         RoadNetworkOptions? options = null)
     {
         List<Island>? result=null;
@@ -23,7 +26,7 @@ public static class RoadIslandDetector
     }
 
     internal static IEnumerable<bool> DetectSteps(WorldGenerator wg, RoadPreparation preparation, System.Action<List<Island>> complete,
-        float minArea=163840,float worldRadius=10000,RoadNetworkOptions? options=null)
+        float minArea=MinIslandArea,float worldRadius=RoadConstants.WorldRadius,RoadNetworkOptions? options=null)
     {
         if (wg == null)
         {
@@ -32,7 +35,7 @@ public static class RoadIslandDetector
         }
 
         const float cellSize = SampleSpacing;
-        if (float.IsNaN(worldRadius) || worldRadius <= 0 || worldRadius > 10000)
+        if (float.IsNaN(worldRadius) || worldRadius <= 0 || worldRadius > RoadConstants.WorldRadius)
             throw new System.ArgumentOutOfRangeException(nameof(worldRadius));
         int gridSize = Mathf.CeilToInt(worldRadius * 2f / cellSize);
         float worldOffset = worldRadius;

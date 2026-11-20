@@ -38,7 +38,7 @@ public sealed class IslandActivityTests
         var owner=new RoadIslandActivity(1,1); var token=owner.Claim(4,3);
         world.Steps=()=>owner.Snapshot()[0].SearchSteps;
         var finder=new RoadPathfinder(world) { Activity=token };
-        var search=Task.Run(()=>toNetwork ? finder.FindPathToNetwork(new Vector2(0,0),8) : finder.FindPath(new Vector2(0,0),new Vector2(20000,20000),1024));
+        var search=Task.Run(()=>toNetwork ? finder.FindPathToNetwork(new Vector2(0,0), RoadPathfinder.CellSize) : finder.FindPath(new Vector2(0,0),new Vector2(20000,20000),1024));
         try
         {
             Assert.True(world.First.Wait(3000)); var first=owner.Snapshot()[0];

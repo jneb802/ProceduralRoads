@@ -21,14 +21,10 @@ public static partial class RoadStairRuns
     public static int EndsCarried;
 
     /// <summary>Ends <see cref="CarryRoadOntoStairs"/> looked at, every lay tried: by the floor rows laid there (1, 2, 3, 4
-    /// or more; <see cref="StairLayout.EndFloorRows"/>), those left as laid by <see cref="CarryMinRows"/>, and those tried
+    /// or more; <see cref="StairLayout.EndFloorRows"/>), and those tried
     /// (at least one carry asked of <see cref="RoadOnto"/>'s owners).</summary>
     public static readonly int[] EndsByFloorRows = new int[4];
-    public static int EndsSkippedByRows, EndsTried;
-
-    /// <summary>For timing runs only (PROCEDURALROADS_CARRY_MIN_ROWS): an end with no more floor rows than this is not
-    /// tried and keeps its floors. 0, the default, tries every end. Settable for tests.</summary>
-    internal static int CarryMinRows = DebugSwitches.Count("CARRY_MIN_ROWS", 0, 0, 64);
+    public static int EndsTried;
 
     /// <summary>Roads tried onto a staircase's end (<see cref="RoadOnto"/>), every lay of every road tried, and of them those
     /// refused before their road was planned (<see cref="RefusedUnplanned"/>).</summary>
@@ -123,7 +119,6 @@ public static partial class RoadStairRuns
         int rows = StairLayout.EndFloorRows(plan, atTop, Width);
         if (rows == 0) return plan;
         System.Threading.Interlocked.Increment(ref EndsByFloorRows[Mathf.Min(rows, EndsByFloorRows.Length) - 1]);
-        if (rows <= CarryMinRows) { System.Threading.Interlocked.Increment(ref EndsSkippedByRows); return plan; }
         // Every floor row but the landing row the road meets: a single landing row has nothing to carry, and floors that
         // cannot be trimmed so (one off the end's level in the rows taken) stay as laid.
         if (StairLayout.TrimEndFloors(plan, atTop, TopLandings, Width) is not StairPlan trimmed) return plan;

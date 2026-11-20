@@ -82,6 +82,12 @@ public static partial class RoadLifecycleManager
         DecideOnce("world data loaded");
     }
 
+    /// <summary>Whether this peer has a screen of its own to ask on: not a dedicated server.</summary>
+    internal static bool HostHasScreen => ZNet.instance != null && !ZNet.instance.IsDedicated();
+
+    /// <summary>What a peer that does not hold the network is told when asked to make one.</summary>
+    internal const string NotTheServer = "Roads are generated only on the server; this peer holds no road network";
+
     /// <summary>Whether this peer may hold a road network: only the server (or the hosting player). A client, whatever it
     /// can see of the world, loads, generates and writes no road. The one check every way a network is made asks: the load
     /// decision, the spawn fallback, road_generate and road_regen_island.</summary>
@@ -155,8 +161,8 @@ public static partial class RoadLifecycleManager
 
     /// <summary>Whether the world is held (respawn, the server's zone streaming; in the world, the host's player): while a
     /// generation runs (at load, or in the world: the spawn fallback, road_generate, road_regen_island), or while the host
-    /// is asked about an explored world's first network.</summary>
-    internal static bool HoldsTheWorld => GenerationRunning || ChoicePending;
+    /// is asked about an explored world's first network. The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).</summary>
+    internal static bool HoldsTheWorld => IsGenerating || ChoicePending;
 
     /// <summary>What the players are told once a network over the explored land is built (ExistingWorldFirstLoad.KeptNote).</summary>
     private static string? m_includedNote;
@@ -167,12 +173,7 @@ public static partial class RoadLifecycleManager
         if (!ChoicePending || answer == ExistingWorldRoads.Ask) return false;
         ChoicePending = false;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"Existing world, first load: {answer} (chosen on screen)");
-        Carry(answer switch
-        {
-            ExistingWorldRoads.Skip => ExistingWorldFirstLoad.Decision.Skip,
-            ExistingWorldRoads.IncludeExplored => ExistingWorldFirstLoad.Decision.IncludeExplored,
-            _ => ExistingWorldFirstLoad.Decision.NewZonesOnly,
-        });
+        Carry(ExistingWorldFirstLoad.DecisionFor(answer));
         return true;
     }
 

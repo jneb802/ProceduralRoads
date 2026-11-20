@@ -66,7 +66,8 @@ public static class ExistingWorldFirstLoad
     public static string KeptNote(int kept) =>
         kept == 0
             ? "Roads were built through the explored land: no zone held player buildings or terrain edits."
-            : $"Roads go round the {kept} explored zone(s) with your buildings or terrain edits, which are left as they are.";
+            : $"Roads go round the {kept} explored zone(s) with your buildings or terrain edits, which are left as they are. " +
+              "Use road_connect where you want a road to your own builds.";
 
     private const int RecordFormat = 1;
 

@@ -28,6 +28,9 @@
 
     <ItemGroup>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadPreparation.cs" Link="ModSrc/RoadPreparation.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Utils/ManualRoadApplication.cs" Link="ModSrc/ManualRoadApplication.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Utils/ManualRoadCommands.cs" Link="ModSrc/ManualRoadCommands.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/StructureAppendQueue.cs" Link="ModSrc/StructureAppendQueue.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.cs" Link="ModSrc/StairLayout.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairEnds.cs" Link="ModSrc/StairEnds.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/StairLayout.Switchbacks.cs" Link="ModSrc/StairLayout.Switchbacks.cs"/>
@@ -65,6 +68,7 @@
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRidges.cs" Link="ModSrc/RoadRidges.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadJunctionFillet.cs" Link="ModSrc/RoadJunctionFillet.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ManualRoadDraft.cs" Link="ModSrc/ManualRoadDraft.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/ManualRoads.cs" Link="ModSrc/ManualRoads.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadSpatialGrid.Appends.cs" Link="ModSrc/RoadSpatialGrid.Appends.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadGridComparer.cs" Link="ModSrc/RoadGridComparer.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadTerrainSamples.cs" Link="ModSrc/RoadTerrainSamples.cs"/>

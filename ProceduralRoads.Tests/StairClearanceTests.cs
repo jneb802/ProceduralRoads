@@ -304,7 +304,7 @@ public class StairClearanceTests : IDisposable
     private void FlatNetwork()
     {
         _scope.WithWorld(new FlatWorld());
-        // A road far from the staircases: the cuts are stored into a network.
+        // A road far from the staircases: an append needs a network to append to.
         RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(300f, 300f), new(340f, 300f) }, 4f, WorldGenerator.instance);
         RoadSpatialGrid.FinalizeRoadNetwork();
     }
@@ -355,7 +355,7 @@ public class StairClearanceTests : IDisposable
         var high = new Vector2(StairLayout.PieceRun + 1f, 0f);
         OnePiece(low, lowWalk, stair: false);
         OnePiece(high, highWalk, stair: false);
-        RoadSpatialGrid.CommitCuts(CutsUnder(low, lowWalk, stair: false), StairLayout.CutRadius * 2f);
+        RoadSpatialGrid.CommitAppendCuts(CutsUnder(low, lowWalk, stair: false), StairLayout.CutRadius * 2f, RoadSpatialGrid.RoadNetworkVersion);
         // The batter does reach under the higher floor: without the floor the ground there went lower than the natural.
         float batterAtHigh = lowWalk - StairLayout.CutBelowSurface + (high.x - StairLayout.PieceRun / 2f - (StairLayout.PieceRun / 2f - StairLayout.CutSpacing / 2f) - StairLayout.CutRadius) * RoadTerrainModifier.CutBatterSlope;
         Assert.True(batterAtHigh < Flat, $"the batter reaches {batterAtHigh:F2} under the higher floor");
@@ -378,7 +378,7 @@ public class StairClearanceTests : IDisposable
         var back = new Vector2(0f, 0f);
         float walk = Flat - 1f;
         OnePiece(back, walk, stair: true);
-        RoadSpatialGrid.CommitCuts(CutsUnder(back, walk, stair: true), StairLayout.CutRadius * 2f);
+        RoadSpatialGrid.CommitAppendCuts(CutsUnder(back, walk, stair: true), StairLayout.CutRadius * 2f, RoadSpatialGrid.RoadNetworkVersion);
 
         Func<int, int, float> ground = Written();
         for (int x = -1; x <= 1; x++)

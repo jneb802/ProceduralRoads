@@ -17,7 +17,7 @@ A Valheim mod that generates procedural roads connecting locations across your w
 2. Install [Jotunn](https://valheim.thunderstore.io/package/ValheimModding/Jotunn/)
 3. Drop `ProceduralRoads.dll` into `BepInEx/plugins/`
 
-On a dedicated server, install it on the server only. Players do not need it, and players who have it are let in whatever version they run. With More World Locations (MWL), MWL must still be installed on the clients too.
+On a dedicated server, install it on the server only. Players do not need it, and players who have it are let in whatever version they run.
 
 ## Generation
 
@@ -25,7 +25,7 @@ A world's road network is generated once, the first time the world loads, behind
 
 Roads are best on a fresh world. A world explored before it had roads asks once, on its first load with the mod, what to do with the land explored so far:
 
-- **Build roads through explored land too** (recommended): the world is backed up first (`<world>_backup_<date>`, restored from Manage saves). Zones with your buildings or terrain edits are left exactly as they are, and the roads go round them.
+- **Build roads through explored land too** (recommended): the world is backed up first (`<world>_backup_<date>`, restored from Manage saves). Zones with your buildings or terrain edits are left exactly as they are, and the roads go round them; use `road_connect` to join your builds to the network.
 - **Build roads in new land only**: everything explored so far stays as it is.
 - **Skip road building**: no roads, and the world stays as it is. Not asked again; `road_generate` can still build them.
 - **Back to the menu**: nothing is decided; the next load asks again.
@@ -53,7 +53,7 @@ Settings apply when a network is generated, not to a saved one, except Weathered
 
 ### Custom Locations via Config
 
-Use the `CustomLocations` setting to add locations from other mods (e.g., Expand World Data). They are not found on their own: list each by its location name.
+Use the `CustomLocations` setting to add locations from other mods (e.g., Expand World Data):
 
 ```
 CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp
@@ -66,8 +66,9 @@ Host or admin only:
 | Command | Description |
 |---------|-------------|
 | `road_progress` | Generation phase and island count |
-| `road_generate` | Regenerate the whole network (back up first) |
-| `road_regen_island` | Clear all roads and regenerate only the island you are on (back up first) |
+| `road_connect`, `road_path`, `road_mark` | Add your own roads, round zones players changed unless asked; see [manual roads](docs/manual-roads.md) |
+| `road_generate [force]` | Regenerate the whole network (back up first). Over a generated network it first says what it would replace; run it again within 2 minutes, or add `force` |
+| `road_regen_island [x z] [force]` | Clear all roads and regenerate only the island you are on (back up first). Asks first like `road_generate`; the repeat may be anywhere on the same island |
 
 ## API for Mod Authors
 

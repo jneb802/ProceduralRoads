@@ -12,7 +12,7 @@ namespace ProceduralRoads.Tests;
 public sealed class BridgeBiomeShareTests : System.IDisposable
 {
     /// <summary>A structure across a biome edge leans to the more advanced kit: it takes it where at least the share
-    /// (StairKit.BiomeShare, 40 %) stands where that kit belongs. Half in the Meadows, a bridge may be stone; mostly Meadows,
+    /// (RoadBiome.Share, 40 %) stands where that kit belongs. Half in the Meadows, a bridge may be stone; mostly Meadows,
     /// it may not.</summary>
     [Theory]
     [InlineData(5, true)]
@@ -23,7 +23,7 @@ public sealed class BridgeBiomeShareTests : System.IDisposable
         var places = new System.Collections.Generic.List<Vector2>();
         for (int i = 0; i < 10; i++) places.Add(new Vector2(i, 0f));
         Heightmap.Biome At(float x, float z) => x < meadowsOfTen ? Heightmap.Biome.Meadows : Heightmap.Biome.BlackForest;
-        Assert.Equal(stone, StairKit.LeansTo(places, At, StairKit.StoneOverWoodBelongs));
+        Assert.Equal(stone, RoadBiome.Leans(places, At, StairKit.StoneOverWoodBelongs));
     }
 
     private readonly ValheimWorldScope _scope = new();
@@ -59,6 +59,6 @@ public sealed class BridgeBiomeShareTests : System.IDisposable
         Assert.Equal(mistlands, BridgeStructures.Fits(BridgeStructures.Kit.DvergrWood, c, world));
         Assert.Equal(!mistlands, BridgeStructures.Fits(BridgeStructures.Kit.WoodRail, c, world));
         Assert.Equal(!mistlands, BridgeStructures.Fits(BridgeStructures.Kit.WoodBraced, c, world));
-        Assert.Equal(mistlands, StairKit.InMistlands(StairKit.Samples(new[] { c.FromBank, c.ToBank }), (x, z) => world.GetBiome(x, z)));
+        Assert.Equal(mistlands, StairKit.InMistlands(RoadBiome.Samples(new[] { c.FromBank, c.ToBank }), (x, z) => world.GetBiome(x, z)));
     }
 }

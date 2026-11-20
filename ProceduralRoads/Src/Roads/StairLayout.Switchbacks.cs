@@ -79,10 +79,10 @@ public static partial class StairLayout
     internal static float Steepness(Vector2 p, Func<float, float, float> ground)
     {
         float h = ground(p.x, p.y), steepest = 0f;
-        steepest = Mathf.Max(steepest, Mathf.Abs(ground(p.x + TurnRoom, p.y) - h));
-        steepest = Mathf.Max(steepest, Mathf.Abs(ground(p.x - TurnRoom, p.y) - h));
-        steepest = Mathf.Max(steepest, Mathf.Abs(ground(p.x, p.y + TurnRoom) - h));
-        steepest = Mathf.Max(steepest, Mathf.Abs(ground(p.x, p.y - TurnRoom) - h));
+        steepest = Mathf.Max(steepest, FloatBits.Abs(ground(p.x + TurnRoom, p.y) - h));
+        steepest = Mathf.Max(steepest, FloatBits.Abs(ground(p.x - TurnRoom, p.y) - h));
+        steepest = Mathf.Max(steepest, FloatBits.Abs(ground(p.x, p.y + TurnRoom) - h));
+        steepest = Mathf.Max(steepest, FloatBits.Abs(ground(p.x, p.y - TurnRoom) - h));
         return steepest / TurnRoom;
     }
 

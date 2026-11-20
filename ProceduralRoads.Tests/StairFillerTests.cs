@@ -91,7 +91,7 @@ public class StairFillerTests
 
     public static IEnumerable<object[]> Turns()
     {
-        foreach (string kit in new[] { "stone", "wood", "blackmarble" })
+        foreach (string kit in StairKit.All.Select(k => k.Name))
             foreach (float width in new[] { 2f, 4f })
                 foreach (int steps in new[] { 1, 2, 3, 4, -1, -2, -3, -4 })
                     foreach (bool floor in new[] { false, true })
@@ -113,7 +113,7 @@ public class StairFillerTests
         Assert.All(chosen, f => Assert.Contains(f.Prefab, kit.Fillers.Select(k => k.Prefab)));
         // The fan of blocks the layout used before covers a 2 m wedge (not a 4 m one, whose
         // outer corner reaches past its 1 m blocks); what is chosen never shows more.
-        if (width == 2f && kit != StairKit.Wood)
+        if (width == 2f)
             Assert.True(Shows(chosen, h0, steps, width, belowIsFloor) <= Shows(Fan(h0, steps, width), h0, steps, width, belowIsFloor) + 0.02f);
     }
 
@@ -152,7 +152,7 @@ public class StairKitTests
     [InlineData(Heightmap.Biome.Plains, "stone")]
     [InlineData(Heightmap.Biome.Mistlands, "blackmarble")]
     public void StoneIsBuiltEverywhereButTheMistlands(Heightmap.Biome biome, string kit) =>
-        Assert.Equal(kit, StairKit.ForSite(biome).Name);
+        Assert.Equal(kit, StairKit.ForLine(new List<Vector2> { new(0f, 0f), new(20f, 0f) }, (x, z) => biome).Name);
 
     /// <summary>A staircase that starts in the Mistlands but is 90% in the mountains uses stone; black marble only if it is 50%+ in the
     /// Mistlands, then 40%.</summary>
@@ -169,15 +169,4 @@ public class StairKitTests
         Assert.Equal(kit, StairKit.ForLine(line, At).Name);
     }
 
-    [Fact]
-    public void AWoodStaircasesFloorsAreBoardsAtTheWalkingSurface()
-    {
-        StairPlan plan = StairLayout.Build(new Vector2(0, 0), new Vector2(0, 30), (x, z) => 0.3f * z, kit: StairKit.Wood);
-        Assert.True(plan.Reached, plan.Reason);
-        Assert.All(plan.Pieces, p => Assert.StartsWith("wood_", p.Prefab));
-        StairPiece floor = plan.Pieces.First(p => p.Kind == StairPieceKind.Landing);
-        StairPiece stairBelow = plan.Pieces.Last(p => p.Kind == StairPieceKind.Stair && plan.Pieces.IndexOf(p) < plan.Pieces.IndexOf(floor));
-        // A board's origin is its walking surface: level with the top of the stair below.
-        Assert.Equal(stairBelow.Position.y + StairLayout.PieceRise, floor.Position.y, 3);
-    }
 }

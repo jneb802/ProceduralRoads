@@ -37,10 +37,10 @@ public class SnappedLocationProtectionTests : IDisposable
         var oldRoad = Enumerable.Range(0, 51).Select(i => new Vector2(-200 + i * 8, 0)).ToList();
         Assert.True(RoadSpatialGrid.AddRoadPath(oldRoad, 4, world));
         var path = Enumerable.Range(0, 26).Select(i => new Vector2(-100 + i * 8, 12)).ToList();
-        var centre = new Vector2(-48, 6);
+        var centre = new Vector2(-48, 5); // 7 m from the route, 5 m from the old road: the location and its clearance reach 6 m
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, 2f) });
         for (int i = 1; i < path.Count; i++)
-            Assert.False(RoadLocationProtection.BlocksSegment(path[i - 1], path[i], 4, null, null));
+            Assert.False(RoadLocationProtection.BlocksSegment(path[i - 1], path[i], 4, default));
 
         PlainRoads.WithModDefaults(() =>
         {
@@ -87,7 +87,7 @@ public class SnappedLocationProtectionTests : IDisposable
         var path = Enumerable.Range(0, 26).Select(i => new Vector2(-100 + i * 8, 12)).ToList();
         PlainRoads.WithModDefaults(() =>
         {
-            var snapped = RoadNetworkGenerator.SnapToNetwork(path, 4)!;
+            var snapped = RoadNetworkGenerator.SnapToNetwork(path, 4, locations: new RoadLocationProtection.Targets(path[0], null))!;
             Assert.Contains(snapped, p => Math.Abs(p.y) < 1f);
             Assert.Equal(path[0], snapped[0]);
             Assert.Equal(path[path.Count - 1], snapped[snapped.Count - 1]);
@@ -108,7 +108,7 @@ public class SnappedLocationProtectionTests : IDisposable
     private static void AssertClear(RoadSpatialGrid.PlannedPath plan, float clearance)
     {
         for (int i = 1; i < plan.Points.Count; i++)
-            Assert.False(RoadLocationProtection.BlocksSegment(plan.Points[i - 1], plan.Points[i], clearance, null, null),
+            Assert.False(RoadLocationProtection.BlocksSegment(plan.Points[i - 1], plan.Points[i], clearance, default),
                 $"Final segment {plan.Points[i - 1]} -> {plan.Points[i]} crosses protected space");
     }
 

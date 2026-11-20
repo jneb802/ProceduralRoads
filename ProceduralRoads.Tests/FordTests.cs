@@ -31,10 +31,12 @@ public class FordTests
         /// <summary>Banks rising over this many metres (0: a wall).</summary>
         public float Ramp = 0f;
         public Heightmap.Biome Land = Heightmap.Biome.Meadows;
+        /// <summary>A ledge in the bed: this much higher east of BumpAt, rising over BumpHalf.</summary>
+        public float Bump = 0f, BumpAt = 0f, BumpHalf = 0.2f;
         public override float GetHeight(float wx, float wy)
         {
             if (Mathf.Abs(wx) > 100f || Mathf.Abs(wy) > 100f) return 20f;
-            if (Mathf.Abs(wx) < HalfWidth) return Bed;
+            if (Mathf.Abs(wx) < HalfWidth) return Bed + Bump * Mathf.Clamp01((wx - BumpAt) / BumpHalf + 0.5f);
             float top = wx > 0f ? 33f + EastRise : 33f;
             return Ramp > 0f ? Mathf.Lerp(Bed, top, Mathf.Clamp01((Mathf.Abs(wx) - HalfWidth) / Ramp)) : top;
         }
@@ -87,11 +89,26 @@ public class FordTests
         typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!
             .SetValue(null, pathfinder);
 
+    // Every ford style weight back to its default, the span's too: the two-weight overload keeps the span's, so a test that
+    // set it to 0 left the next class's generation picking among wade and raise only (a later network's wade raised).
     private static void TearDownGeneration()
     {
         SetPathfinder(null);
         RoadNetworkGenerator.Reset();
-        RoadCrossingDetector.SetFordStyleWeights(1f, 1f);
+        RoadCrossingDetector.SetFordStyleWeights(RoadConstants.DefaultFordStyleWeight, RoadConstants.DefaultFordStyleWeight,
+            RoadConstants.DefaultFordStyleWeight);
+    }
+
+    /// <summary>The teardown leaves every ford style weight at its default, the span's included: a later class's generation
+    /// picks its fords as the game does.</summary>
+    [Fact]
+    public void TheTeardownRestoresEveryFordStyleWeight()
+    {
+        RoadCrossingDetector.SetFordStyleWeights(1f, 0f, 0f);
+        TearDownGeneration();
+        Assert.Equal(RoadConstants.DefaultFordStyleWeight, RoadCrossingDetector.ConfiguredWadeWeight);
+        Assert.Equal(RoadConstants.DefaultFordStyleWeight, RoadCrossingDetector.ConfiguredRaiseWeight);
+        Assert.Equal(RoadConstants.DefaultFordStyleWeight, RoadCrossingDetector.ConfiguredSpanWeight);
     }
 
     // ---- pathfinder ----
@@ -140,8 +157,8 @@ public class FordTests
         Assert.Null(Pathfinder(new GullyWorld { Bed = 28.5f }, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
         // Wider than the ford cap.
         Assert.Null(Pathfinder(new GullyWorld { HalfWidth = 30f }, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
-        // Knee-deep water with no river under it (a pond) is not forded outside a swamp.
-        Assert.Null(Pathfinder(new BandWorld(), true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
+        // Standing water now reaches the crossing choice outside swamps too.
+        Assert.NotNull(Pathfinder(new BandWorld(), true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
     }
 
     [Fact]
@@ -152,36 +169,25 @@ public class FordTests
     }
 
     [Fact]
-    public void SwampShallowsAreWadedWithFordsOnAndOtherShallowsAreNot()
+    public void StandingWaterMayBeFordedInEveryBiomeWithFordsOn()
     {
         var swamp = new BandWorld { Land = Heightmap.Biome.Swamp };
         Assert.NotNull(Pathfinder(swamp, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
         Assert.Null(Pathfinder(swamp, false).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
-        Assert.Null(Pathfinder(new BandWorld { Land = Heightmap.Biome.Meadows }, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
+        Assert.NotNull(Pathfinder(new BandWorld { Land = Heightmap.Biome.Meadows }, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f)));
     }
 
-    /// <summary>
-    /// A ford walked cell by cell, its end not met, is banned as the search walked it (RoadNetworkGenerator.SearchedMoves):
-    /// banned by its two ends alone, which no step of the search spans, the search found the same ford again and the road
-    /// repeated the same search until its retries ran out. Banned by its moves, the search goes round.
-    /// </summary>
+    /// <summary>A standing-water crossing is bought as one jump and banned by that move, so retries go round it.</summary>
     [Fact]
-    public void AWalkedFordIsBannedAsTheSearchWalkedIt()
+    public void AStandingFordIsBannedAsTheSearchCrossedIt()
     {
-        var swamp = new BandWorld { Land = Heightmap.Biome.Swamp, HalfWidth = 30f };
+        var swamp = new BandWorld { Land = Heightmap.Biome.Swamp, HalfWidth = 14f };
         var finder = Pathfinder(swamp, true);
         var path = finder.FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f))!;
         Assert.NotNull(path);
         var c = Assert.Single(RoadCrossingDetector.Detect(path, swamp));
-        Assert.True(c.ToIndex - c.FromIndex >= 3, $"the ford is walked cell by cell ({c.FromIndex} -> {c.ToIndex})");
-
-        finder.BanJump(path[c.FromIndex], path[c.ToIndex]);
-        var again = finder.FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f))!;
-        Assert.Equal(path, again);
-
-        finder.ClearNoStairs();
         var moves = RoadNetworkGenerator.SearchedMoves(path, c);
-        Assert.Equal(c.ToIndex - c.FromIndex, moves.Count);
+        Assert.Single(moves);
         foreach (var (from, to) in moves) finder.BanJump(from, to);
         var round = finder.FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f));
         Assert.NotNull(round);
@@ -291,6 +297,64 @@ public class FordTests
             // Both banks are served by road on the land side too.
             foreach (Vector2 bank in new[] { crossing.FromBank, crossing.ToBank })
                 Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(bank.x, 0f, bank.y), 6f).Count > 0, $"No road within 6 m of the bank at {bank}");
+            // And the ford meets the road on land within a step at each bank (a raised ford stood 1 m above the road on land,
+            // held at its own floor; BRIEF-RULES 17): no two stored road points within 1.5 m rise more than a step
+            // (StairLayout.StepUp) past the grade cap over their run.
+            var road = RoadSpatialGrid.SnapshotAllRoadPoints().Where(q => q.IsRoad).ToList();
+            foreach (var a in road)
+                foreach (var b in road)
+                {
+                    float run = Vector2.Distance(a.p, b.p);
+                    if (run > 1.5f || b.h <= a.h) continue;
+                    Assert.True(b.h - a.h <= RoadGrade.Configured * run + StairLayout.StepUp + 1e-3f,
+                        $"a step of {b.h - a.h:F2} m over {run:F2} m at ({a.p.x:F1}, {a.p.y:F1})");
+                }
+        }
+        finally { TearDownGeneration(); }
+    }
+
+    /// <summary>A ford's end seam (RoadNetworkGenerator.PiecesMeet, PlanPieces) meets within the cap over its gap or within a
+    /// step, each rule on its own: a 1.1 m gap with a 0.585 m rise (a ramp at the cap and a 0.2 m step on top) is refused.
+    /// Before, the two allowances were summed and it passed.</summary>
+    [Fact]
+    public void AFordsEndSeamMeetsWithinTheCapOrAStepNeverTheTwoSummed()
+    {
+        float cap = RoadGrade.Configured;
+        Assert.False(RoadNetworkGenerator.PiecesMeet(cap * 1.1f + StairLayout.StepUp, 1.1f));
+        Assert.False(RoadNetworkGenerator.PiecesMeet(StairLayout.StepUp + 0.01f, 0.1f));
+        Assert.True(RoadNetworkGenerator.PiecesMeet(cap * 1.1f, 1.1f));
+        Assert.True(RoadNetworkGenerator.PiecesMeet(StairLayout.StepUp, 0.1f));
+    }
+
+    /// <summary>A waded ford's profile as planned, every route point between its banks, meets the cap through the one grade
+    /// judge (RoadSpatialGrid.WorstOverLimit), or it is not waded and the crossing gets its next treatment (BRIEF-RULES 17):
+    /// a ledge 0.48 m high in the bed, under the cap over the bank-to-bank chord's 2 m samples, is never painted as a road
+    /// climbing past the cap between the road's own points. Before, a waded piece skipped the grade check and only the chord
+    /// was judged.</summary>
+    [Theory]
+    [InlineData(0.3f)]
+    [InlineData(1.3f)]
+    [InlineData(-0.7f)]
+    public void AWadeWhoseBedClimbsPastTheCapBetweenTheChordsSamplesIsNotWaded(float bumpAt)
+    {
+        var world = new GullyWorld { HalfWidth = 9f, Ramp = 12f, Bump = 0.48f, BumpAt = bumpAt };
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        RoadNetworkGenerator.Reset();
+        SetPathfinder(Pathfinder(world, true));
+        RoadCrossingDetector.SetFordStyleWeights(1f, 0f, 0f);
+        try
+        {
+            RoadNetworkGenerator.GenerateRoad(new Vector2(-80f, 0f), 0f, new Vector2(80f, 0f), 0f, 4f, "ford");
+            var wade = RoadSpatialGrid.SnapshotAllRoadPoints().Where(q => q.paintOnly).OrderBy(q => q.p.x).ToList();
+            for (int i = 1; i < wade.Count; i++)
+            {
+                int j = i;
+                while (j > 0 && Vector2.Distance(wade[i].p, wade[j].p) < 1f) j--;
+                float run = Vector2.Distance(wade[i].p, wade[j].p);
+                if (run < 0.5f) continue;
+                Assert.True(Mathf.Abs(wade[i].h - wade[j].h) <= RoadGrade.Configured * run + 1e-3f,
+                    $"a wade climbs {Mathf.Abs(wade[i].h - wade[j].h) / run:P0} at x = {wade[i].p.x:F1}");
+            }
         }
         finally { TearDownGeneration(); }
     }
@@ -309,6 +373,36 @@ public class FordTests
         Assert.True(c.Kind == CrossingKind.Bridge || c.Style == FordStyle.Span, $"{c.Kind} {c.Style}");
         var gentle = new GullyWorld { HalfWidth = 9f, Ramp = 12f };
         Assert.True(RoadCrossingDetector.WadeBanksWithinGrade(new Vector2(-21f, 0f), new Vector2(21f, 0f), gentle));
+    }
+
+    /// <summary>A wade is met at each bank by the road on land as it is built there, no lower than the dry-land floor
+    /// (RoadConstants.DryRoadFloor): where the bed at the bank lies more than a step (StairLayout.StepUp) under that road,
+    /// the walked surface drops off the bank's road and it is not a wade (BRIEF-RULES 17); the pool takes the next
+    /// treatment. Read on a generated network: a waded bed 0.47 m and 0.91 m under the road at its bank.</summary>
+    [Fact]
+    public void AWadeWhoseBedDropsOffTheBanksRoadByMoreThanAStepIsNotAWade()
+    {
+        var gentle = new GullyWorld { HalfWidth = 9f, Ramp = 12f };
+        Assert.True(RoadConstants.DryRoadFloor - gentle.GetHeight(-9.5f, 0f) > StairLayout.StepUp);
+        Assert.False(RoadCrossingDetector.WadeBanksWithinGrade(new Vector2(-9.5f, 0f), new Vector2(9.5f, 0f), gentle));
+        Assert.Equal(WadeVerdict.BanksTooSteep, RoadCrossingDetector.WadeEligibility(RoadConstants.FordWadeMaxDepth, false, new Vector2(-9.5f, 0f), new Vector2(9.5f, 0f), gentle));
+        Assert.True(RoadConstants.DryRoadFloor - gentle.GetHeight(-12f, 0f) <= StairLayout.StepUp);
+        Assert.True(RoadCrossingDetector.WadeBanksWithinGrade(new Vector2(-12f, 0f), new Vector2(12f, 0f), gentle));
+    }
+
+    /// <summary>Every wade paints the natural bed; rivers retain their swamp depth allowance.</summary>
+    [Fact]
+    public void AWadeTakesItsNaturalBedAndWalkableBanks()
+    {
+        var steep = new GullyWorld { HalfWidth = 9f, Ramp = 2.3f };
+        Vector2 from = new(-11.3f, 0f), to = new(11.3f, 0f);
+        float knee = RoadConstants.FordWadeMaxDepth;
+        Assert.Equal(WadeVerdict.TooDeep, RoadCrossingDetector.WadeEligibility(1f, false, from, to, steep));
+        Assert.Equal(WadeVerdict.BanksTooSteep, RoadCrossingDetector.WadeEligibility(knee, false, from, to, steep));
+        Assert.Equal(WadeVerdict.BanksTooSteep, RoadCrossingDetector.WadeEligibility(1f, true, from, to, steep));
+        var gentle = new GullyWorld { HalfWidth = 9f, Ramp = 12f };
+        Assert.Equal(WadeVerdict.Eligible, RoadCrossingDetector.WadeEligibility(knee, false, new Vector2(-21f, 0f), new Vector2(21f, 0f), gentle));
+        Assert.Equal((true, float.NegativeInfinity), RoadCrossingDetector.WadeSurface());
     }
 
     [Fact]
@@ -333,7 +427,7 @@ public class FordTests
     [Fact]
     public void ALaterRoadJoinsTheFirstFordInsteadOfCrossingBesideIt()
     {
-        var world = new GullyWorld();
+        var world = new GullyWorld { Ramp = 12f };
         using var scope = new ValheimWorldScope().WithWorld(world);
         RoadNetworkGenerator.Reset();
         try
@@ -499,6 +593,87 @@ public class FordTests
     }
 
     /// <summary>
+    /// A jump from the search's first cell is judged from the point the road leaves from: the road begins at the exact start,
+    /// not that cell's centre (the reconstruction puts the start in its place), so the jump built is the start's. A start
+    /// 3.9 m behind its bank cell's centre, 48 m of river between the bank cells' centres: from the centre the jump is within
+    /// the ford cap, from the start it is 51.9 m, past it. Judged from the centre, the search forded it and the builder,
+    /// measuring the segment it was given, found a jump past the cap and, with bridges off, no crossing at all: a road
+    /// across the river with nothing under it. Through the search, its reconstruction and the crossings built on it, alone
+    /// and as generation builds a road.
+    /// </summary>
+    [Fact]
+    public void AJumpFromTheFirstCellIsJudgedFromTheStartTheRoadLeavesFrom()
+    {
+        var world = new GullyWorld { HalfWidth = 20f };
+        Vector2 start = new(-27.9f, 0f), end = new(80f, 0f);
+        Assert.True(RoadCrossingDetector.WithinFordCap(Vector2.Distance(new Vector2(-24f, 0f), new Vector2(24f, 0f))));
+        Assert.False(RoadCrossingDetector.WithinFordCap(Vector2.Distance(start, new Vector2(24f, 0f))));
+
+        var path = Pathfinder(world, true).FindPath(start, end);
+        Assert.NotNull(path);
+        Assert.Equal(start, path![0]);
+        var jump = FindJump(path, world);
+        Assert.NotNull(jump);
+        var crossing = Assert.Single(RoadCrossingDetector.Detect(path, world, bridges: false, fords: true));
+        Assert.Equal(CrossingKind.Ford, crossing.Kind);
+        Assert.True(RoadCrossingDetector.WithinFordCap(Vector2.Distance(jump!.Value.a, jump.Value.b)),
+            $"the search forded a jump the builder measures at {Vector2.Distance(jump.Value.a, jump.Value.b):F1} m");
+
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
+        RoadNetworkGenerator.Reset();
+        SetPathfinder(Pathfinder(world, true));
+        try
+        {
+            // Generation then refuses the road, as it does with an earthwork cap set (ridges are judged with or without one):
+            // across 40 m of bed 3.5 m under its wall banks the road stands over the bed on both sides for more than 10 m, a
+            // ridge (RoadNetworkGenerator.RidgeRoadRefusal), and there is no other way across this gully.
+            Assert.False(RoadNetworkGenerator.GenerateRoad(start, 0f, end, 0f, 4f, "ford from the first cell"));
+            Assert.Equal(RoadNetworkGenerator.RidgeRoadRefusal, RoadSpatialGrid.LastRefusal);
+            Assert.Empty(RoadNetworkGenerator.GetRoadCrossings());
+        }
+        finally { TearDownGeneration(); }
+    }
+
+    /// <summary>
+    /// The snap onto the network (RoadNetworkGenerator.SnapToNetwork) never lengthens a river jump the search priced, so the
+    /// ford cap (RoadCrossingDetector.WithinFordCap) needs no slack for it. A 40 m gully, its bank cells' centres 48 m apart
+    /// (the longest ford, RoadConstants.MaxFordSpan, priced as a ford by a fords-only search); a road built since runs along
+    /// the near bank 0.4 m behind the bank cell's centre. Snapped onto it, the near bank stood 48.4 m from the far one: past
+    /// the cap, so the builder (fords only) found no crossing on the road across the river. The jump keeps its priced banks.
+    /// </summary>
+    [Fact]
+    public void ASnapOntoTheNetworkNeverLengthensARiverJumpTheSearchPriced()
+    {
+        var world = new GullyWorld { HalfWidth = 20f };
+        using var overrides = StaticOverride.Keep(() => RoadNetworkGenerator.RoadSnap).AndKeep(() => RoadNetworkGenerator.CorridorSnap);
+        using var scope = new ValheimWorldScope().WithWorld(world);
+        RoadSpatialGrid.Clear();
+        try
+        {
+            RoadNetworkGenerator.RoadSnap = (float)PlainRoads.ModDefaults["road snap"];
+            RoadNetworkGenerator.CorridorSnap = (float)PlainRoads.ModDefaults["corridor snap"];
+            var path = Pathfinder(world, true).FindPath(new Vector2(-80f, 0f), new Vector2(80f, 0f));
+            Assert.NotNull(path);
+            var priced = FindJump(path!, world);
+            Assert.NotNull(priced);
+            float pricedLength = Vector2.Distance(priced!.Value.a, priced.Value.b);
+            Assert.Equal(RoadConstants.MaxFordSpan, pricedLength, 3);
+
+            float behind = priced.Value.a.x - 0.4f;
+            Assert.True(RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(behind, priced.Value.a.y - 10f), new(behind, priced.Value.a.y + 40f) }, 4f, world));
+            var snapped = RoadNetworkGenerator.SnapToNetwork(path)!;
+
+            var jump = FindJump(snapped, world);
+            Assert.NotNull(jump);
+            Assert.True(Vector2.Distance(jump!.Value.a, jump.Value.b) <= pricedLength + 1e-3f,
+                $"the snap made a {pricedLength:F2} m jump {Vector2.Distance(jump.Value.a, jump.Value.b):F2} m long");
+            var crossing = Assert.Single(RoadCrossingDetector.Detect(snapped, world, bridges: false, fords: true));
+            Assert.Equal(CrossingKind.Ford, crossing.Kind);
+        }
+        finally { RoadSpatialGrid.Clear(); }
+    }
+
+    /// <summary>
     /// Ford or bridge is one rule (RoadCrossingDetector.IsFordJump): the class the search gives a jump is the class the
     /// detector builds on it, in and out of a swamp, either side of each depth line, and for a jump past the ford cap.
     /// </summary>
@@ -524,8 +699,8 @@ public class FordTests
     [Fact]
     public void CrossingsSurviveASaveAndLoad()
     {
-        var world = new GullyWorld();
-        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos();
+        var world = new GullyWorld { Ramp = 12f };
+        using var scope = new ValheimWorldScope().WithWorld(world).WithZdos().WithNetwork(server: true);
         RoadNetworkGenerator.Reset();
         SetPathfinder(Pathfinder(world, true));
         try

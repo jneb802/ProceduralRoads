@@ -24,7 +24,7 @@ public readonly struct FillerPiece
         Vector2 local = p - Back;
         float along = Vector2.Dot(local, StairLayout.Forward(Heading));
         float across = Vector2.Dot(local, StairLayout.Right(Heading));
-        return along >= -tolerance && along <= Depth + tolerance && Mathf.Abs(across) <= Across / 2f + tolerance;
+        return along >= -tolerance && along <= Depth + tolerance && FloatBits.Abs(across) <= Across / 2f + tolerance;
     }
 }
 

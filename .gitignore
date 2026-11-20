@@ -19,3 +19,7 @@ ProceduralRoads/Thunderstore/ProceduralRoads_v*/
 
 # Local system-test runner packages and evidence
 /artifacts/
+
+# Local test and build output at the repo root
+/*.log
+/*.log.build

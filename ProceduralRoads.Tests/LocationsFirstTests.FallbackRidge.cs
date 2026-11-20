@@ -66,38 +66,56 @@ public partial class LocationsFirstTests
         Vector2 landing = cave.Shape.Landing, road = new(0f, 26f);
         Vector2 across = (road - landing).normalized, middle = Vector2.Lerp(road, landing, 0.5f);
         Func<float, float, float> ground = (x, z) => cave.Ground(x, z) + (Mathf.Abs(Vector2.Dot(new Vector2(x, z) - middle, across)) <= 2f ? ridge : 0f);
-        var placedLocation = new PlacedLocation { Record = cave.Record, Ground = ground, Shape = cave.Shape };
-        PlacedLocations.Ready(placedLocation);
+        var location = new PlacedLocation { Record = cave.Record, Ground = ground, Shape = cave.Shape };
+        PlacedLocations.Ready(location);
         LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
-        return placedLocation;
+        return location;
     }
 
-    /// <summary>A placed location whose network ends at its ring 8 m under its landing (no road arrives level with it): on the
-    /// fallback reached off level over open ground, and with that entrance's ridge (15.2 m) between them not reached, the location
-    /// unserved and counted behind a ridge; a rise of 7 m, as the highest of the other fallbacks measured (7.2 m), does not stop it.</summary>
+    /// <summary>A placed location whose network ends at its ring within two junction steps of its landing: in normal generation it is reached over open ground, and with that entrance's ridge (15.2 m) between them not reached, the location
+    /// unserved; a rise of 7 m, as the highest of the other fallbacks measured (7.2 m), does not stop it.</summary>
     [Theory]
     [InlineData(0f, true)]
     [InlineData(7f, true)]
     [InlineData(15.2f, false)]
     public void ALocationBehindARidgeFromItsNetworkIsNotReachedOnTheFallback(float ridge, bool reached)
     {
-        _world.Biome = Heightmap.Biome.Mistlands;
+        _world.Biome = Heightmap.Biome.BlackForest;
         PlacedLocation cave = BehindARidge(ridge);
         Vector2 landing = cave.Shape.Landing;
-        float under = cave.Ground(landing.x, landing.y) - 8f;
+        float under = cave.Ground(landing.x, landing.y) - 2f;
         var points = new List<Vector2> { new(-20f, 26f), new(0f, 26f), new(20f, 26f) };
         RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(points, points.ConvertAll(_ => under), points.ConvertAll(_ => default(RoadPointDebugInfo)), 4f, 40f, false));
         try
         {
             Assert.True(Vector2.Distance(landing, new Vector2(0f, 26f)) > RoadNetworkGenerator.LandingReach, "the road is on the landing");
-            Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
+            Assert.Equal(reached, RoadNetworkGenerator.Reached(Vector3.zero, 10f));
             bool attempted = false;
-            Assert.Equal(reached, RoadNetworkGenerator.ReachOffLevel("MountainCave02", Vector3.zero, 10f, () => attempted = true));
+            Assert.False(RoadNetworkGenerator.ReachOffLevel("MountainCave02", Vector3.zero, 10f, () => attempted = true));
             Assert.Equal(!reached, attempted);
             Assert.Equal(reached, RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-            Assert.Equal(reached ? 1 : 0, RoadNetworkGenerator.ReachedOffLevelCount);
+            Assert.Equal(0, RoadNetworkGenerator.ReachedOffLevelCount);
             Assert.Equal(reached ? 0 : 1, RoadNetworkGenerator.BehindRidgeCount);
+            Assert.Equal(!reached, RoadNetworkGenerator.BehindRidge(new Vector2(0f, 0f), 10f, new Vector2(0f, 26f), under));
         }
         finally { RoadSpatialGrid.Clear(); }
     }
+
+    [Theory]
+    [InlineData(0f, true)]
+    [InlineData(7f, true)]
+    [InlineData(15.2f, false)]
+    public void ANormalRingEndKeepsTheRidgeRefusal(float ridge, bool accepted)
+    {
+        _world.Biome = Heightmap.Biome.BlackForest;
+        PlacedLocation cave = BehindARidge(ridge);
+        float height = cave.LandingHeight - 2f;
+        var path = new List<Vector2> { new(0f, 120f), new(0f, 26f) };
+        var plan = new RoadSpatialGrid.PlannedPath(path, path.ConvertAll(_ => height),
+            path.ConvertAll(_ => default(RoadPointDebugInfo)), 4f, 94f, false);
+        var refusal = RoadNetworkGenerator.EndNotLevel(path, new List<RoadSpatialGrid.PlannedPath> { plan },
+            new List<RoadStairSpan>(), new List<RoadStairSpan>(), path[0], 0f, new Vector2(0f, 0f), 10f, false, true);
+        Assert.Equal(accepted ? null : RoadNetworkGenerator.RidgeRefusal, refusal?.refusal);
+    }
+
 }

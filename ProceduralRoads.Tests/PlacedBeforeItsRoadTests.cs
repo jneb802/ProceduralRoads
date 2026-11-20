@@ -147,6 +147,38 @@ public class PlacedBeforeItsRoadTests : IDisposable
         Assert.Equal(3, Counter("m_destinationsConnected"));
     }
 
+    /// <summary>A Mistlands destination on no preload list (the boss altar: no levelling off its centre) is placed first only to aim
+    /// its road at (PlacedLocations.PlacesFirst). Where its placing could not be read it is given no road, as a location on the preload list
+    /// is, and counted not reached, never routed on the ground predicted for it; placed and read, it is prepared to aim at and
+    /// reached. Through the generation's own preparation (FindNotPlaced) and routing.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMistlandsDestinationPlacedOnlyToAimAtGetsARoadOnlyWhereItsPlacingWasRead(bool read)
+    {
+        var world = SetUp(Heightmap.Biome.Mistlands);
+        var eikthyr = new Vector2(260f, 40f);
+        ZoneSystem.LocationInstance altar = ZoneSystem.instance!.m_locationInstances[ZoneSystem.GetZone(new Vector3(eikthyr.x, 0f, eikthyr.y))];
+        Assert.False(PlacedLocations.NeedsPlacing(altar, world));
+        Assert.True(PlacedLocations.PlacesFirst(altar, world));
+        PlacedLocations.Remember(PlacedCave(world));
+        PlaceTheOthers(world);
+        if (!read)
+        {
+            // As the load's placing leaves it (LocationsFirstLoad): placed, but no record written.
+            var others = PlacedLocations.All.Where(r => r.Centre != eikthyr).ToList();
+            PlacedLocations.Reset();
+            PlacedLocations.Load(others);
+            PlacedLocations.NoteWhyNotPlaced(eikthyr, "placed, but what its placing settled could not be read");
+        }
+
+        RoadNetworkGenerator.GenerateRoads(force: true);
+
+        Assert.Equal(read, PlacedLocations.TryGetAimed(eikthyr, out _));
+        Assert.Equal(read ? 0 : 1, Counter("m_destinationsNotPlaced"));
+        Assert.Equal(read, RoadNetworkGenerator.Reached(new Vector3(eikthyr.x, 0f, eikthyr.y), 10f, "Eikthyrnir"));
+    }
+
     /// <summary>The locations the load places first and the locations a road may go to with a landing are the same list: a location
     /// turned to face downhill with its floor off its centre waits for its placing, and so does a crypt turned at random in
     /// the Meadows (its door turns with it); a boss altar with no levelling off its centre does not.</summary>
@@ -224,14 +256,19 @@ public class PlacedBeforeItsRoadTests : IDisposable
     /// <summary>Every destination in the Mountains waits for its placing (the Mountains are too varied to
     /// guess): a cabin that only smooths round its centre and is turned at random (AbandonedLogCabin04: never placed before,
     /// its road ended 14 m out and 10 m under it), and a location that turns nowhere and levels nothing. Elsewhere such locations
-    /// do not; the rule for a turned landing stands.</summary>
+    /// do not; the rule for a turned landing stands. The cabin itself now has a measured entrance, which turns with it, so it is
+    /// placed first elsewhere too (roads aim at measured entrances, the owner's decision of 16 Nov 2026: "I think we should
+    /// explore trying to aim for the entrances. We can fall back if needed if we can't"; PlacedLocationShape.DoorLandings);
+    /// "elsewhere such locations do not" is held on the same cabin's levelling under a Location with no entrance (MountainWell1).</summary>
     [Fact]
     public void EveryMountainDestinationWaitsForItsPlacing()
     {
         var cabin = new[] { new LevelOp(0f, 0f, 0f, 0f, false, 9f, 5f) };
         Assert.True(PlacedLocations.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Mountain, cabin));
+        Assert.True(PlacedLocations.NeedsPlacing("MountainWell1", false, true, Heightmap.Biome.Mountain, cabin));
         Assert.True(PlacedLocations.NeedsPlacing("SomeLocation", false, false, Heightmap.Biome.Mountain, null));
-        Assert.False(PlacedLocations.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Meadows, cabin));
+        Assert.False(PlacedLocations.NeedsPlacing("MountainWell1", false, true, Heightmap.Biome.Meadows, cabin));
+        Assert.True(PlacedLocations.NeedsPlacing("AbandonedLogCabin04", false, true, Heightmap.Biome.Meadows, cabin));
         Assert.False(PlacedLocations.NeedsPlacing("SomeLocation", false, false, Heightmap.Biome.Mistlands, null));
         Assert.True(PlacedLocations.NeedsPlacing("MountainCave02", true, false, Heightmap.Biome.Meadows, CaveFloor));
     }

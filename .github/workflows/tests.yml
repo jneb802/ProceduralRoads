@@ -4,6 +4,11 @@ name: Tests
 # references Valheim, Unity and BepInEx assemblies that a hosted runner does not have, and those must not
 # be committed or uploaded. Uses no game, Steam account or secret. Packages restore from NuGet.org only.
 # Pushes to master and pull requests only: a branch with an open PR would otherwise run twice.
+#
+# The tests run one at a time (TestAssemblyInfo.cs), so each leg is split across runners by whole test class: the plan
+# job lists every test and deals the classes out (tools/ci-shards.py, weighed by tools/ci-shard-weights.tsv), each shard
+# runs its classes, and the jobs named test (net10.0) and net48 pass only when every shard passed and every planned
+# class ran in exactly one shard, so a new test is never skipped. The shard counts are set in the plan job only.
 on:
   push:
     branches: [master]
@@ -11,13 +16,21 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  PROJECT: ProceduralRoads.Tests/ProceduralRoads.Tests.csproj
 jobs:
-  test:
+  plan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
+      # About 10 minutes a shard on a hosted runner, setup included (Mono's install and the net48 build take about 4).
+      NET10_SHARDS: '2'
+      NET48_SHARDS: '4'
+    outputs:
+      net10: ${{ steps.plan.outputs.net10 }}
+      net48: ${{ steps.plan.outputs.net48 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,16 +38,62 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
-      # The unit tests also target net48; that leg runs in the net48 job below.
-      - run: dotnet test ProceduralRoads.Tests/ProceduralRoads.Tests.csproj -c Release -f net10.0
-  net48:
-    # The game runs the mod on Mono, a .NET Framework 4.x runtime: the net48 leg, built with dotnet and run by the
-    # xunit console runner under Mono (tools/test-runners, copied from ValheimTesting).
+      - run: dotnet build "$PROJECT" -c Release -f net10.0 -nologo
+      - run: dotnet test "$PROJECT" -c Release -f net10.0 --no-build --list-tests > list.txt
+      - id: plan
+        run: |
+          python3 tools/ci-shards.py plan list.txt tools/ci-shard-weights.tsv "$NET10_SHARDS" "$NET48_SHARDS" plan
+          echo "net10=$(seq -s, 1 "$NET10_SHARDS" | sed 's/.*/[&]/')" >> "$GITHUB_OUTPUT"
+          echo "net48=$(seq -s, 1 "$NET48_SHARDS" | sed 's/.*/[&]/')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plan
+          path: plan/
+          retention-days: 7
+  test-shard:
+    needs: plan
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-      DOTNET_NOLOGO: '1'
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.net10) }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: plan
+      # The unit tests also target net48; that leg runs in the net48 shards below.
+      - name: Test this shard's classes
+        run: |
+          filter=$(sed 's/.*/FullyQualifiedName~&./' "plan/net10-${{ matrix.shard }}.txt" | paste -sd '|')
+          dotnet test "$PROJECT" -c Release -f net10.0 --filter "$filter" \
+            --logger "trx;LogFileName=net10-${{ matrix.shard }}.trx" --results-directory results
+      - if: always()
+        run: python3 tools/ci-shards.py ran "results/net10-${{ matrix.shard }}.trx" "net10-${{ matrix.shard }}.tsv"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ran-net10-${{ matrix.shard }}
+          path: net10-${{ matrix.shard }}.tsv
+          retention-days: 7
+  net48-shard:
+    # The game runs the mod on Mono, a .NET Framework 4.x runtime: the net48 leg, built with dotnet and run by the
+    # xunit console runner under Mono, as tools/test-runners/run-tests.sh runs it. That script deletes the console's
+    # report, which the shard check reads, so the console is called here directly.
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.net48) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,4 +106,68 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends mono-complete
           mono --version
-      - run: bash tools/test-runners/run-tests.sh -c Release -f net48 ProceduralRoads.Tests/ProceduralRoads.Tests.csproj
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: plan
+      - run: dotnet build "$PROJECT" -c Release -f net48 -nologo -v quiet
+      - name: Test this shard's classes
+        run: |
+          dll=$(dotnet msbuild "$PROJECT" -nologo -getProperty:TargetPath -p:TargetFramework=net48 -p:Configuration=Release | tr -d '\r')
+          version=$(grep -o 'xunit.runner.console" Version="[^"]*' "$PROJECT" | cut -d'"' -f3)
+          console="$HOME/.nuget/packages/xunit.runner.console/$version/tools/net48/xunit.console.exe"
+          classes=()
+          while read -r cls; do classes+=(-class "$cls"); done < "plan/net48-${{ matrix.shard }}.txt"
+          mono "$console" "$dll" -xml "net48-${{ matrix.shard }}.xml" -nologo -parallel none "${classes[@]}"
+      - if: always()
+        run: python3 tools/ci-shards.py ran "net48-${{ matrix.shard }}.xml" "net48-${{ matrix.shard }}.tsv"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ran-net48-${{ matrix.shard }}
+          path: net48-${{ matrix.shard }}.tsv
+          retention-days: 7
+  test:
+    # The net10.0 leg's one check: every shard passed, and together they ran every listed test, each class once.
+    needs: [plan, test-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: '[ "${{ needs.plan.result }}" = success ] && [ "${{ needs.test-shard.result }}" = success ]'
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: tools
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: plan
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ran-net10-*
+          path: ran
+          merge-multiple: true
+      - run: python3 tools/ci-shards.py check net10 plan ran
+  net48:
+    # The net48 leg's one check, as test is net10.0's.
+    needs: [plan, net48-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: '[ "${{ needs.plan.result }}" = success ] && [ "${{ needs.net48-shard.result }}" = success ]'
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: tools
+      - uses: actions/download-artifact@v8
+        with:
+          name: plan
+          path: plan
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ran-net48-*
+          path: ran
+          merge-multiple: true
+      - run: python3 tools/ci-shards.py check net48 plan ran

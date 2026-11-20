@@ -32,7 +32,7 @@ public sealed class BackTrackTests
     private static float Under(float x, float z) => 38f;
 
     /// <summary>A plan of <paramref name="pieces"/> as laid: each walked piece's clearances, its end on its top row.</summary>
-    private static StairPlan Plan(IEnumerable<StairPiece> pieces, bool reversed)
+    internal static StairPlan Plan(IEnumerable<StairPiece> pieces, bool reversed)
     {
         StairKit kit = StairKit.BlackMarble;
         var plan = new StairPlan { Kit = kit.Name, Reached = true, Reversed = reversed };

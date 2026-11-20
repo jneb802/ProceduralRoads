@@ -59,8 +59,9 @@ public class SmoothLandingTests : IDisposable
         (2,4), (2,5), (2,6), (2,7), (2,8), (2,9), (3,2), (3,3), (3,4), (3,5), (3,6), (4,3), (4,4),
     };
 
+    // The tower's stones as the game reads them: built pieces (WearNTear parts, PlacedLocationReader.LocationRocks).
     private static List<LocationRock> Pieces() => Stones
-        .Select(s => new LocationRock(new Vector2(Mathf.Round(Centre.x) + s.dx, Mathf.Round(Centre.y) + s.dz), 0.5f, "stone")).ToList();
+        .Select(s => new LocationRock(new Vector2(Mathf.Round(Centre.x) + s.dx, Mathf.Round(Centre.y) + s.dz), 0.5f, 0.5f, 0f, float.NegativeInfinity, float.PositiveInfinity, "stone", built: true)).ToList();
 
     private static PlacedLocationRecord Tower(List<LevelOp> ops, List<LocationRock> rocks, string prefab = "StoneTowerRuins04") => new()
     {
@@ -68,8 +69,26 @@ public class SmoothLandingTests : IDisposable
         X0 = 5088, Z0 = -5660, W = 72, H = 72,
     };
 
-    public SmoothLandingTests() => PlacedLocations.Reset();
-    public void Dispose() => PlacedLocations.Reset();
+    /// <summary>The Mountain slope it stands on, as the world the preparation reads its biome from.</summary>
+    private sealed class MountainSlope : WorldGenerator
+    {
+        public override float GetHeight(float x, float z) => Natural(x, z);
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
+    }
+
+    private readonly Valheim.Testing.Doubles.ValheimWorldScope _scope = new();
+
+    public SmoothLandingTests()
+    {
+        PlacedLocations.Reset();
+        _scope.WithWorld(new MountainSlope());
+    }
+
+    public void Dispose()
+    {
+        PlacedLocations.Reset();
+        _scope.Dispose();
+    }
 
     /// <summary>The tower is made ready with its landing on the pad its raised smoothing leaves south-east of it, level with
     /// where the player stood, clear of its stones; not at its ring.</summary>
@@ -78,32 +97,42 @@ public class SmoothLandingTests : IDisposable
     {
         PlacedLocations.Load(new[] { Tower(TowerOps, Pieces()) });
         PlacedLocations.Prepare(Natural);
-        Assert.True(PlacedLocations.TryGetReady(Centre, out PlacedLocation placedLocation), "the tower has no landing: reached at its ring");
+        Assert.True(PlacedLocations.TryGetReady(Centre, out PlacedLocation location), "the tower has no landing: reached at its ring");
         Assert.False(PlacedLocations.FlatlessPlaced(Centre));
-        Vector2 landing = placedLocation.Shape.Landing;
+        Vector2 landing = location.Shape.Landing;
         Vector2 off = landing - Centre;
-        Assert.True(placedLocation.Shape.AllRound);
+        Assert.True(location.Shape.AllRound);
         Assert.InRange(off.magnitude, 3f, 8f);
         Assert.True(off.x > 0f && off.y < 0f, $"landing at ({landing.x:F1}, {landing.y:F1}), not south-east of the tower");
-        Assert.InRange(placedLocation.Ground(landing.x, landing.y), 192.3f, 193.1f);
+        Assert.InRange(location.Ground(landing.x, landing.y), 192.3f, 193.1f);
         // Clear of the tower's stones by the landing's clearance.
-        foreach (LocationRock stone in placedLocation.Shape.Body)
+        foreach (LocationRock stone in location.Shape.Body)
             Assert.True(stone.Distance(landing) >= PlacedLocationShape.LevelGroundClearance,
                 $"landing ({landing.x:F1}, {landing.y:F1}) {stone.Distance(landing):F1} m off a stone at ({stone.At.x}, {stone.At.y})");
         // The arrival height is the landing's ground: where the player stood (192.5).
         Assert.InRange(RoadNetworkGenerator.ArrivalHeight(Centre, Exterior, Centre + new Vector2(0f, -40f))!.Value, 192.3f, 193.1f);
     }
 
-    /// <summary>A location that only smooths, weakly, on the same steep slope leaves no level ground: still reached at its ring.</summary>
+    /// <summary>A location that only smooths, weakly, on the same steep slope leaves no level ground: still reached at its ring.
+    /// Held on a Location with no measured entrance: one with an entrance (the Mountain cabin this used) is landed at its entrance's
+    /// flat (PlacedLocations.FlatFor; roads aim at measured entrances, the owner's decision of 16 Nov 2026: "I think we should
+    /// explore trying to aim for the entrances. We can fall back if needed if we can't").</summary>
     [Fact]
     public void ASmoothOnlyLocationWithNoLevelGroundStaysReachedAtItsRing()
     {
+        const string NoEntrance = "MountainWell1";
         var weak = new List<LevelOp> { new(0f, 0f, 0f, 0f, false, 4f, 1f) };
-        PlacedLocations.Load(new[] { Tower(weak, Pieces(), "AbandonedLogCabin04") });
+        PlacedLocations.Load(new[] { Tower(weak, Pieces(), NoEntrance) });
         PlacedLocations.Prepare(Natural);
         Assert.False(PlacedLocations.TryGetReady(Centre, out _));
         Assert.True(PlacedLocations.FlatlessPlaced(Centre));
-        Assert.Null(PlacedLocationShape.OnLevelGround(Centre, Yaw, Exterior, Pieces(), (x, z) => Natural(x, z), false, Root, "AbandonedLogCabin04"));
+        Assert.Null(PlacedLocationShape.OnLevelGround(Centre, Yaw, Exterior, Pieces(), (x, z) => Natural(x, z), false, Root, NoEntrance));
+        // The cabin, with its entrance, on the same ground: landed at its entrance, not at its ring.
+        PlacedLocations.Reset();
+        PlacedLocations.Load(new[] { Tower(weak, Pieces(), "AbandonedLogCabin04") });
+        PlacedLocations.Prepare(Natural);
+        Assert.False(PlacedLocations.FlatlessPlaced(Centre));
+        Assert.True(PlacedLocations.TryGetReady(Centre, out PlacedLocation cabin) && cabin.Entrances.Count > 0);
     }
 
     /// <summary>A location entered only from its front keeps its front: never landed all round, and its flat's shape as before.</summary>

@@ -19,13 +19,13 @@ namespace ProceduralRoads.Tests;
 public class OneGroundSourceTests
 {
     /// <summary>The files allowed to read the raw point-biome height, and how many reads each has. BiomeBlendedHeight is the
-    /// owner; the others are dev and debug commands that show the raw height beside the rendered one on purpose, each
-    /// commented "Raw on purpose". A new raw read anywhere, these files included, fails until it is listed here.</summary>
+    /// owner; NaturalGround.PointBiomeFormula is the one door the dev and debug commands read the raw height through, to show it
+    /// beside the rendered one. Both are also banned at compile time elsewhere (BannedSymbols.txt). A new raw read anywhere, these
+    /// files included, fails until it is listed here.</summary>
     private static readonly Dictionary<string, (int getHeight, int getBiomeHeight)> Allowed = new()
     {
         ["Utils/BiomeBlendedHeight.cs"] = (1, 9),
-        ["Utils/ConsoleCommands.cs"] = (6, 0),
-        ["Debug/RoadPointDebugMarker.cs"] = (1, 0),
+        ["Roads/NaturalGround.cs"] = (1, 0),
     };
 
     // A call or method group named GetHeight, except Heightmap.GetHeight (the live heightmap the game renders).

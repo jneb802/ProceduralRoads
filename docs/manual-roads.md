@@ -30,7 +30,7 @@ road_mark build
 
 ## Saving
 
-A manual road is saved with the network and kept across save and reload. Regenerating the network (`road_generate`, `road_regen_island`) replaces it. Terrain changes only inside the new road's footprint; zones that are not loaded get the road when they load. There is no undo.
+A manual road is saved with the network and kept across save and reload. Regenerating the network (`road_generate`, `road_regen_island`) replaces it: where the new network does not run, its ground stays levelled and painted, but it is no longer part of the network. Terrain changes only inside the new road's footprint; zones that are not loaded get the road when they load. There is no undo.
 
 Manual roads are refused on a world whose saved network could not be read. Older builds of the mod cannot read a network with manual roads, so back up the world before downgrading.
 

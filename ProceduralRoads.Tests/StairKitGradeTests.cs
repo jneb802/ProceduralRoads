@@ -9,10 +9,7 @@ namespace ProceduralRoads.Tests;
 /// <summary>
 /// A staircase's grade limit follows its kit, not each step's biome: the search may buy a step up to 2:1 where the kit holds
 /// its flights out from the face (StairSupport). A mostly-Meadows climb is stone now, as every new staircase outside the
-/// Mistlands is, so a Mountain band's steeper step on it is within its kit's grade. Only wood, which older saves built and
-/// which cannot hold a flight out, would find such a step too steep: that names only the too-steep steps, so the road is
-/// searched again with those cells closed to stairs instead of the layout spending its allowance and failing the whole
-/// stretch.
+/// Mistlands is, so a Mountain band's steeper step on it is within its kit's grade.
 /// </summary>
 public class StairKitGradeTests : IDisposable
 {
@@ -50,13 +47,11 @@ public class StairKitGradeTests : IDisposable
         var steps = new List<(Vector2 from, Vector2 to)>();
         for (int i = 1; i < path.Count; i++)
             if (Mathf.Abs(world.GetHeight(path[i].x, 0f) - world.GetHeight(path[i - 1].x, 0f)) / 4f > RoadPathfinder.StairMinGrade) steps.Add((path[i - 1], path[i]));
-        int steep = path.FindIndex(p => Mathf.Abs(p.x - 12f) < 0.01f);
         Func<float, float, float> ground = (x, z) => world.GetHeight(x, z);
 
         // The kit RoadStairRuns.Lay builds the stretch of: stone, though most of it is Meadows.
         Assert.Same(StairKit.Stone, StairKit.ForLine(path, (x, z) => world.GetBiome(x, z)));
-        Assert.Null(RoadStairRuns.TooSteepFor(path, 0, path.Count - 1, steps, ground, StairKit.Stone));
-        // Wood's grade, for its older saves: only the Mountain band's step is too steep for it.
-        Assert.Equal((steep - 1, steep), RoadStairRuns.TooSteepFor(path, 0, path.Count - 1, steps, ground, StairKit.Wood));
+        Assert.All(steps, step => Assert.False(RoadPathfinder.StairStepTooSteep(
+            Mathf.Abs(ground(step.to.x, step.to.y) - ground(step.from.x, step.from.y)) / Vector2.Distance(step.from, step.to))));
     }
 }

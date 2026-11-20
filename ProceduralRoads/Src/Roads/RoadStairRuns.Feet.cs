@@ -38,9 +38,21 @@ public static partial class RoadStairRuns
     /// is built to climb there (RoadPitches.ClimbToFoot: its level landing, then <paramref name="cap"/>): the most fill the
     /// road held to the foot stands on. Read every metre up to <see cref="ApproachReach"/>.
     /// </summary>
-    internal static float ApproachUnder(List<Vector2> path, int foot, int step, int stop, Func<Vector2, float> ground, float cap)
+    internal static float ApproachUnder(List<Vector2> path, int foot, int step, int stop, Func<Vector2, float> ground, float cap) =>
+        Approach(path, foot, step, stop, ground, cap, leaving: false);
+
+    /// <summary>
+    /// As <see cref="ApproachUnder"/>, for the road leaving a staircase's top at path[<paramref name="top"/>], walked from it
+    /// by <paramref name="step"/>: how far its ground stands over the line climbing on from the top's ground as the road is
+    /// built to climb there (its level landing, then <paramref name="cap"/>), the deepest cut the road held to the top lies in.
+    /// </summary>
+    internal static float ApproachOver(List<Vector2> path, int top, int step, int stop, Func<Vector2, float> ground, float cap) =>
+        Approach(path, top, step, stop, ground, cap, leaving: true);
+
+    private static float Approach(List<Vector2> path, int end, int step, int stop, Func<Vector2, float> ground, float cap, bool leaving)
     {
-        float top = ground(path[foot]), walked = 0f, under = 0f;
+        float top = ground(path[end]), walked = 0f, under = 0f;
+        int foot = end;
         for (int i = foot + step; step < 0 ? i >= stop : i <= stop; i += step)
         {
             Vector2 a = path[i - step], b = path[i];
@@ -50,7 +62,8 @@ public static partial class RoadStairRuns
             {
                 float d = walked + run * k / samples;
                 if (d > ApproachReach) return under;
-                under = Mathf.Max(under, top - RoadPitches.ClimbToFoot(d, cap) - ground(Vector2.Lerp(a, b, (float)k / samples)));
+                float at = ground(Vector2.Lerp(a, b, (float)k / samples));
+                under = Mathf.Max(under, leaving ? at - (top + RoadPitches.ClimbToFoot(d, cap)) : top - RoadPitches.ClimbToFoot(d, cap) - at);
             }
             walked += run;
         }
@@ -62,7 +75,10 @@ public static partial class RoadStairRuns
     /// road arriving at its foot (its lower end) cannot climb to it following its ground as it is built to (its ground more
     /// than <see cref="ApproachFill"/> under the line to the foot, <see cref="ApproachUnder"/>), the foot moves back along the
     /// road to the nearest path point whose own approach is within it. More stairs and a lower foot instead of a road on an
-    /// embankment. Not onto the path's ends, past a crossing, nor within <see cref="StoneGap"/> of the stretch before
+    /// embankment. Only to ground lower than the road could climb to the foot from at the cap over the road between
+    /// (<see cref="RoadPitches.ClimbToFoot"/>): to ground it could, the staircase would take no height its road cannot, and lays
+    /// floors where a road could travel (a foot moved 43 m back over ground climbing 4.5 m was laid as 18 level floors over
+    /// 28 m). Not onto the path's ends, past a crossing, nor within <see cref="StoneGap"/> of the stretch before
     /// (<paramref name="before"/>, its last index, -1 for none) or after (<paramref name="after"/>, its first index, the path's
     /// count for none); nor for a run an earlier road laid between the stretch's ends, which is walked as it stands. The stretch
     /// as it was where no such point is.
@@ -70,7 +86,6 @@ public static partial class RoadStairRuns
     internal static (int from, int to) StartLower(List<Vector2> path, (int from, int to) stretch, int before, int after,
         IReadOnlyList<RoadCrossing> crossings, Func<Vector2, float> ground)
     {
-        if (!RoadGrade.Capped(RoadGrade.Configured)) return stretch;
         var (from, to) = stretch;
         if (StairStructures.Between(path[from], path[to], SameRunReach) != null || StairStructures.Carrying(path[from], path[to], OnStairReach).HasValue)
             return stretch;
@@ -86,9 +101,12 @@ public static partial class RoadStairRuns
             if (!up && c.FromIndex >= foot && c.FromIndex < stop) { stop = c.FromIndex; neighbour = true; }
         }
         if (ApproachUnder(path, foot, step, stop, ground, cap) <= ApproachFill) return stretch;
+        float height = ground(path[foot]), back = 0f;
         for (int j = foot + step; up ? j > stop && j >= 1 : j < stop && j <= path.Count - 2; j += step)
         {
             if (neighbour && Along(path, j, stop) < StoneGap) break;
+            back += Vector2.Distance(path[j - step], path[j]);
+            if (ground(path[j]) >= height - RoadPitches.ClimbToFoot(back, cap)) continue;
             if (ApproachUnder(path, j, step, stop, ground, cap) <= ApproachFill) return up ? (j, to) : (from, j);
         }
         return stretch;
@@ -164,7 +182,7 @@ public static partial class RoadStairRuns
     /// </summary>
     internal static int LowerEnd(List<Vector2> path, bool atStart, int structures, Func<Vector2, float> ground, float reach)
     {
-        if (!RoadGrade.Capped(RoadGrade.Configured) || path.Count < 3) return -1;
+        if (path.Count < 3) return -1;
         float cap = RoadGrade.Configured;
         int foot = atStart ? 0 : path.Count - 1, step = atStart ? 1 : -1;
         int stop = structures >= 0 ? structures : atStart ? path.Count - 1 : 0;
@@ -210,7 +228,7 @@ public static partial class RoadStairRuns
     internal static (int index, StructureEnds.End end)? EndUnderFoot(List<Vector2> path, Vector2 foot, int footIndex, int step,
         IReadOnlyList<RoadCrossing> crossings, WorldGenerator world, float footHeight)
     {
-        float cap = RoadGrade.CapOr(float.PositiveInfinity);
+        float cap = RoadGrade.Configured;
         // What the road between climbs past a walker's step (StairLayout.Walkable): none on a stub, the grade cap past its apron.
         float Climbs(float run) => run < StructureEnds.StubLength ? 0f : Mathf.Max(0f, cap * (run - StructureEnds.ApronLength));
         bool Over(float end, float run) => footHeight - end > Climbs(run) && footHeight > end && !StairLayout.Walkable(footHeight, end);
@@ -219,7 +237,7 @@ public static partial class RoadStairRuns
         {
             if (i != footIndex) run += Vector2.Distance(path[i - step], path[i]);
             // No end stands under the sea: past where the road could climb from there, none is too low.
-            if (!Over(RoadConstants.SeaLevel, run)) return null;
+            if (!Over(RoadWater.Surface, run)) return null;
             foreach (RoadCrossing c in crossings)
             {
                 if ((step < 0 ? c.ToIndex : c.FromIndex) != i) continue;
@@ -237,27 +255,55 @@ public static partial class RoadStairRuns
     /// end's foot and the staircase's (<paramref name="foot"/>, a road's width across): the flight starts at the road's
     /// height where it starts. Null where no such layout is usable.
     /// </summary>
-    private static StairPlan? FromTheEndsHeight(List<Vector2> path, int from, int to, StairKit kit, Func<float, float, float> ground,
+    private static StairPlan? FromTheEndsHeight(List<Vector2> path, int from, int to, StairKit kit,
         StructureEnds.End end, Vector2 foot, WorldGenerator world, List<RoadStairSpan> spans)
     {
         Vector2 a = path[from], b = path[to];
-        float Levelled(float x, float z)
-        {
-            float g = ground(x, z);
-            return DistanceToSegment(new Vector2(x, z), end.Meet, foot) <= RoadNetworkGenerator.RoadWidth / 2f ? Mathf.Min(g, end.MeetHeight) : g;
-        }
+        LayoutGround levelled = LayoutGround.Levelled(world, end.Meet, foot, end.MeetHeight);
+        Func<float, float, float> Levelled = levelled.Read;
         var corridor = new List<Vector2> { a };
         corridor.AddRange(path.GetRange(from, to - from + 1));
         corridor.Add(b);
         float arriving = StairLayout.Bearing(from > 0 ? path[from - 1] : a, from > 0 ? a : path[from + 1]);
         float leaving = StairLayout.Bearing(to + 1 < path.Count ? b : path[to - 1], to + 1 < path.Count ? path[to + 1] : b);
         RoadEndRing? ring = FootRingOf(path, from, to, a, b, Levelled, end.MeetHeight);
-        StairPlan plan = Plan(a, b, kit, Levelled, arriving, leaving, corridor, footHeight: end.MeetHeight,
+        StairPlan plan = Plan(a, b, kit, levelled, arriving, leaving, corridor, footHeight: end.MeetHeight,
             facing: FootFacing(path, from, to, Levelled), topFacing: TopFacing(path, from, to, Levelled), ring: ring);
         if (!Usable(plan, path, from, to, world, spans, null, Levelled))
-            plan = Plan(a, b, kit, Levelled, null, null, corridor, footHeight: end.MeetHeight, ring: ring);
+            plan = Plan(a, b, kit, levelled, null, null, corridor, footHeight: end.MeetHeight, ring: ring);
         bool ok = Usable(plan, path, from, to, world, spans, null, Levelled);
-        return ok && !InExcludedZone(plan) ? plan : null;
+        return ok ? plan : null;
+    }
+
+    /// <summary>Staircase feet kept on the shorter flight with their road's landing raised to them this generation
+    /// (StairLayout.StairsDownTo, <see cref="LandingRaised"/>), counted as their roads are accepted.</summary>
+    public static int FootLandingsRaised;
+
+    /// <summary>
+    /// Whether a staircase's road may have its landing raised to a foot at <paramref name="foot"/> (its low edge and height, as
+    /// the shorter flight leaves it, StairLayout.StairsDownTo): the road's own earthwork brings the ground there up to the
+    /// foot, so the foot steps off level. Asked of the owners that already decide the road's earthwork, at the road's end at the
+    /// foot (<see cref="RoadEndAt"/>) and back along the road as far as its ground is read for the foot (<see cref="FootBackReach"/>), each point
+    /// at the foot's height: the earthwork cap (RoadNetworkGenerator.PastTerrainLimit against EarthworkLimit, over the ground
+    /// before roads), a location's footprint but the road's own location (RoadLocationProtection.BlocksSegment), another road there
+    /// (RoadSpatialGrid.TryGetRoadWithin, within <see cref="OnRoad"/>: its own road is not in the grid yet), and ground that
+    /// holds a fill: dry (RoadWater.BuiltDry). Where any refuses, the stair is added instead.
+    /// </summary>
+    internal static bool LandingRaised(StairPlan plan, Vector3 foot, List<Vector2> path, int footIndex, int step, WorldGenerator world,
+        RoadLocationProtection.Targets locations)
+    {
+        var points = new List<Vector2> { RoadEndAt(plan, new Vector2(foot.x, foot.z)) };
+        for (float d = 0f; d <= FootBackReach; d += 1f) points.Add(Back(path, footIndex, step, d));
+        Vector2? last = null;
+        foreach (Vector2 p in points)
+        {
+            if (RoadNetworkGenerator.PastTerrainLimit(p, foot.y, RoadNetworkGenerator.EarthworkLimit, world)) return false;
+            if (RoadLocationProtection.BlocksSegment(last ?? p, p, 0f, locations)) return false;
+            if (RoadSpatialGrid.IsInitialized && RoadSpatialGrid.TryGetRoadWithin(p, OnRoad, out _)) return false;
+            if (!RoadWater.BuiltDry(world, p)) return false;
+            last = p;
+        }
+        return true;
     }
 
     /// <summary>The point <paramref name="reach"/> metres along <paramref name="path"/> from index
@@ -380,20 +426,31 @@ public static partial class RoadStairRuns
     /// at <paramref name="at"/> (the top's exit edge, or the foot), leaving the staircase on <paramref name="outward"/>, the road
     /// going on toward <paramref name="road"/> (its point <see cref="TravelReach"/> along) at <paramref name="height"/>. The
     /// centre of a ring that end stands on (RoadEndRing): a ring's radius out from it, squarely (straight on) where the road
-    /// going on from there keeps out of the staircase, else turned up to 67.5 degrees toward the road, the least turn that
+    /// going on from there keeps out of the staircase, else turned toward the road up to the most a start leaves a ring off
+    /// square (<see cref="RoadEndRing.MostSkew"/>), the least turn that
     /// does; straight on where none does (the staircase is then judged across its road once the road is planned).
     /// </summary>
     internal static Vector2 RoadEndPast(StairPlan plan, Vector2 at, float outward, Vector2 road, float height, bool top)
     {
         float radius = new RoadEndRing(at, outward, height).Radius;
-        float toRoad = RoadEndRing.Turn(StairLayout.Bearing(at, road), outward);
-        foreach (int k in new[] { 0, 1, -1, 2, -2, 3, -3 }.OrderBy(k => Mathf.Abs(k * StairLayout.HeadingStep - toRoad)).ThenBy(k => Mathf.Abs(k)))
+        // Every centre the ring's own rule allows this end to leave from (RoadEndRing.Allows, as a foot's start), priced as a
+        // start is (RoadEndRing.Price), the cheapest first.
+        float heading = StairLayout.Wrap(outward + 180f);
+        Vector2? best = null;
+        float bestPrice = float.MaxValue;
+        // Straight on first, then each heading step either way out to the most a start leaves a ring off square (RoadEndRing.MostSkew):
+        // a centre turned further leaves its end further off square than the ring allows.
+        int most = Mathf.RoundToInt(RoadEndRing.MostSkew / StairLayout.HeadingStep);
+        foreach (int k in Enumerable.Range(0, 2 * most + 1).Select(i => (i + 1) / 2 * (i % 2 == 1 ? 1 : -1)))
         {
             Vector2 centre = at + StairLayout.Forward(outward + k * StairLayout.HeadingStep) * radius;
             if ((road - centre).sqrMagnitude < 0.01f) continue;
-            if (!new RoadEndRing(centre, StairLayout.Bearing(road, centre), height).Intrudes(plan, top)) return centre;
+            var ring = new RoadEndRing(centre, StairLayout.Bearing(road, centre), height);
+            if (!ring.Allows(at, heading, Width) || ring.Intrudes(plan, top)) continue;
+            float price = ring.Price(heading, RoadEndRing.Turn(StairLayout.Bearing(centre, at), ring.Travel));
+            if (price < bestPrice - 0.001f) { best = centre; bestPrice = price; }
         }
-        return at + StairLayout.Forward(outward) * radius;
+        return best ?? at + StairLayout.Forward(outward) * radius;
     }
 
     /// <summary>A planned road's end this near a staircase's end meets it (<see cref="SpanAcrossItsRoad"/>).</summary>
@@ -488,7 +545,7 @@ public static partial class RoadStairRuns
     internal static void TallyRing(RoadEndRing ring, float heading, Vector2 at, string end)
     {
         float off = RoadEndRing.Turn(heading, ring.Travel);
-        System.Threading.Interlocked.Increment(ref RingEnds[Mathf.Clamp(Mathf.RoundToInt(Mathf.Abs(off) / StairLayout.HeadingStep), 0, 8)]);
+        System.Threading.Interlocked.Increment(ref RingEnds[Mathf.Clamp(Mathf.RoundToInt(FloatBits.Abs(off) / StairLayout.HeadingStep), 0, 8)]);
         if (ring.Through) System.Threading.Interlocked.Increment(ref RingEndsThrough);
         float arc = RoadEndRing.Turn(StairLayout.Bearing(ring.Centre, at), ring.Travel);
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
@@ -521,7 +578,7 @@ public static partial class RoadStairRuns
     /// <summary>The counts of <see cref="RoadFeetAcross"/> and the rest, and of <see cref="RingEnds"/>, for the generation's
     /// summary.</summary>
     internal static string AcrossCounts() => FormattableString.Invariant(
-        $"road staircases {RoadFeetAcross} at the foot ({MergedFeetAcross} merged), {RoadTopsAcross} at the top; approach starts {ApproachStartsAcross} ({ApproachLayoutsAcross} layouts); location checks {LocationChecksAcross}; ends laid off their road by 22.5 degree step 0..8: {string.Join("/", RingEnds)} ({RingEndsThrough} on a through road)");
+        $"road staircases {RoadFeetAcross} at the foot ({MergedFeetAcross} merged), {RoadTopsAcross} at the top; approach starts {ApproachStartsAcross} ({ApproachLayoutsAcross} layouts); location checks {LocationChecksAcross}; approach layouts {ApproachLayouts} for roads ({ApproachExpansions} expansions), {TrialApproachLayouts} for approach trials ({TrialApproachExpansions} expansions); ends laid off their road by 22.5 degree step 0..8: {string.Join("/", RingEnds)} ({RingEndsThrough} on a through road)");
 
     /// <summary>What a staircase refused for crossing its road is refused as (<see cref="RoadEndRing.Intrudes(StairPlan, out string, bool, float)"/>).</summary>
     internal const string AcrossItsRoad = "across its road";
@@ -538,7 +595,7 @@ public static partial class RoadStairRuns
             .OrderBy(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), foot)).FirstOrDefault();
         if (first == null) return false;
         float swing = StairLayout.Wrap(SettledHeading(plan, foot) - (first.YawDegrees + 180f) + 180f) - 180f;
-        return Mathf.Abs(swing) >= SwingTolerance;
+        return FloatBits.Abs(swing) >= SwingTolerance;
     }
 
     /// <summary>The road's own heading at a staircase's end <paramref name="end"/>, from the road's point
@@ -584,6 +641,90 @@ public static partial class RoadStairRuns
     /// <summary>Staircase feet given a level apron cut into the bank behind them this generation (StairLayout.CutFootApron).</summary>
     public static int FootAprons;
 
+    /// <summary>Staircase feet with no road past them finished onto the ground this generation (StairLayout.FinishFoot).</summary>
+    public static int FeetFinished;
+
+    /// <summary>
+    /// A staircase's own foot with no road carried on past it (RoadStairRuns.Lay: finished onto nothing) finished by the end
+    /// rule onto the ground past it (StairLayout.FinishFoot, the one owner, in the order a top is finished): each finish kept
+    /// only where the end reader finds it finished as its rule chose with a way off (<see cref="FootFinished"/>), on the ground
+    /// as its own cuts leave it (the finished ground the end audit reads it on, StairEnds.GroundOf: read on the ground before
+    /// them, a foot's stair cut into a bank stood in it), and its added pieces pass the checks the pieces a top's finish adds
+    /// pass (<see cref="AddedFits"/>) and keep off kept ground (<see cref="OnKeptGround"/>). Returns the new foot, or null
+    /// where none was laid (a foot already finished or lowered, or none kept: as laid).
+    /// </summary>
+    internal static Vector3? FinishFootOntoNothing(StairPlan plan, List<Vector2> path, int from, int to, WorldGenerator world,
+        List<RoadStairSpan> before, Vector2? meet)
+    {
+        if (plan.FootLowered > 0 || plan.FootFloorsTrimmed > 0 || plan.Foot == null) return null;
+        Func<float, float, float> ground = (x, z) => GroundAt(x, z, world);
+        int kept = plan.Pieces.Count - plan.SunkPieces;
+        StairLayout.FootFinish finish = StairLayout.FinishFoot(plan, ground, Width,
+            p => !OnKeptGround(p) && AddedFits(p.Pieces.GetRange(0, p.Pieces.Count - kept), path, from, to, world, before, meet),
+            p => FootFinished(p, ground));
+        return finish == StairLayout.FootFinish.None ? null : plan.Foot;
+    }
+
+    /// <summary>Whether <paramref name="plan"/>'s foot is finished by the end reader (StairEnds.Read on a run of its pieces),
+    /// on <paramref name="ground"/> as the plan's own cuts leave it, as the end audit reads the finished ground: the terrain's
+    /// whole-metre vertices cut (RoadTerrainModifier.GroundAfterCuts) and the game's mesh between them (BuriedPieces.MeshHeight,
+    /// as StairEnds.GroundOf): a way off it (not a miss nor a gap) and finished as its rule chose (StairEnds.Unfinished), the
+    /// verdict the end audit gives it. Read with the cuts at each point instead, a stair cut into a bank at a foot read
+    /// 1.12 m short where the audit's mesh read it 0.9. Nor is a foot whose finish walks a level run past a rest
+    /// (<see cref="WalksPastARest"/>): the finish's next case is tried.</summary>
+    internal static bool FootFinished(StairPlan plan, Func<float, float, float> ground)
+    {
+        Func<float, float, float> cut = AfterItsCuts(plan, ground);
+        StairEnds.End? foot = FootEnd(plan, cut);
+        return foot != null && StairEnds.Finished(foot) && !WalksPastARest(plan, cut, top: false);
+    }
+
+    /// <summary>Whether <paramref name="plan"/>'s end (its <paramref name="top"/>, else its foot) walks a level run further than a
+    /// rest, on <paramref name="ground"/>: the level run its end's floor is in (none where its end is a stair), by StairLayout.PastARest
+    /// on StairEnds.LevelRuns, as the road's final check reads it (<see cref="NoWayOff"/>). A finish laying floors at an end
+    /// outside the layout search asks it (<see cref="TopFinished"/>, <see cref="FootFinished"/>), so a finish that would walk
+    /// past a rest falls through to its next case, where the road was refused whole at the final check.</summary>
+    internal static bool WalksPastARest(StairPlan plan, Func<float, float, float> ground, bool top) =>
+        EndLevelRun(plan, ground, top) is { PastARest: true };
+
+    /// <summary>The level run <paramref name="plan"/>'s end (its <paramref name="top"/>, else its foot) is in, on
+    /// <paramref name="ground"/> (StairEnds.LevelRuns); null where its end is a stair. A staircase carried on from that end
+    /// walks it on (StairContinuation.Rows: <see cref="DownFromCrest"/>).</summary>
+    internal static StairEnds.LevelRun? EndLevelRun(StairPlan plan, Func<float, float, float> ground, bool top)
+    {
+        StairPiece? end = top ? plan.Pieces.FindLast(p => p.Kind != StairPieceKind.Support) : plan.Pieces.Find(p => p.Kind != StairPieceKind.Support);
+        if (end == null || end.Kind != StairPieceKind.Landing) return null;
+        var at = new Vector2(end.Position.x, end.Position.z);
+        foreach (StairEnds.LevelRun l in StairEnds.LevelRuns(StairRun.FromPlan(new Vector2(0f, 0f), new Vector2(0f, 0f), Width, plan), ground))
+            if (Array.Exists(l.Floors, f => f.x == at.x && f.y == at.y)) return l;
+        return null;
+    }
+
+    /// <summary><paramref name="ground"/> as <paramref name="plan"/>'s own cuts leave it, as the end audit's mesh reads it
+    /// (<see cref="FootFinished"/>).</summary>
+    private static Func<float, float, float> AfterItsCuts(StairPlan plan, Func<float, float, float> ground) =>
+        (x, z) => BuriedPieces.MeshHeight(x, z, (i, k) => RoadTerrainModifier.GroundAfterCuts(ground(i, k), plan.Cuts, i, k));
+
+    /// <summary>Whether <paramref name="plan"/>'s own foot with no road past it (RoadStairRuns.Lay: finished onto nothing) is
+    /// stepped off onto a road all the same, by the end reader on the ground <see cref="FootFinished"/> reads (StairEnds.End.OntoAnotherRoad):
+    /// the road it joins at the path's end, a road not its own, with no ring of its own (RoadEndRing) between them. The
+    /// verdict the road's final check gives that foot (<see cref="NoWayOff"/>, <see cref="FootOntoAnotherRoad"/>), read as the
+    /// staircase is laid, so its stretch is searched again instead of the road refused.</summary>
+    internal static bool OntoAnotherRoad(StairPlan plan, Func<float, float, float> ground) =>
+        FootEnd(plan, AfterItsCuts(plan, ground)) is { OntoAnotherRoad: true };
+
+    /// <summary>A plan's foot read by the end reader (StairEnds.Read on a run of its pieces), or null where it has no walked
+    /// piece; as <see cref="TopEnd"/> reads its top.</summary>
+    internal static StairEnds.End? FootEnd(StairPlan plan, Func<float, float, float> ground)
+    {
+        StairPiece? foot = plan.Pieces.Find(p => p.Kind != StairPieceKind.Support);
+        if (foot == null) return null;
+        StairLayout.TerminalExit? exit = StairLayout.Terminal(plan);
+        Vector2 top = exit != null ? new Vector2(exit.Edge.x, exit.Edge.z) : new Vector2(plan.End.x, plan.End.z);
+        var run = StairRun.FromPlan(new Vector2(foot.Position.x, foot.Position.z), top, Width, plan);
+        return StairEnds.Read(run, ground).Find(e => !e.Top);
+    }
+
     /// <summary>Level pads laid where a staircase starts at its road's end this generation (RoadEndRing.PadUnder): at feet,
     /// at tops (a flight going down from the road's end).</summary>
     public static int PadsAtFeet, PadsAtTops;
@@ -592,50 +733,51 @@ public static partial class RoadStairRuns
     public static int PadsPartial;
 
     /// <summary>
-    /// Why a road with <paramref name="stairs"/> may not be committed for one of their feet, and where; null when none: a
-    /// foot laid against its road's end (its ring) where one of the road's own pieces (<paramref name="own"/>) ends, whose
-    /// walked pieces there (within the start pad's reach, RoadEndRing.PadReach, but the steps sunk on purpose) all stand more
-    /// than a walker's step over the road's own height at that end, and not met on a stair sunk under the foot
-    /// (StairLayout.FootMeets) (the staircase stands over its road with no way
-    /// onto it), or whose lowest stands more than a rise under it (a pit at its foot under the road's bank). Asked before the
-    /// commit with the road's other refusals: the road is refused and searched for as any refused road is, never kept with
-    /// the staircase hanging (in game a tower's road staircase's foot stood 6.4 m over the road cut under it at -784,-4432,
-    /// its start pad refused and only counted).
+    /// The one finished-connection verdict of a road's staircases (<paramref name="stairs"/>) onto the road's own pieces
+    /// (<paramref name="own"/>, as finished: a landing laid at an end, RoadPitches.LandEnd, included): why the road may not be
+    /// committed for one of their ends, and where; null when none. Asked of every road before anything of it is stored, a
+    /// generated one, a marked manual one and an approach trial alike (RoadNetworkGenerator.RoadRefusal, the one list): the road is
+    /// refused and searched for as any refused road is, never kept with a staircase hanging (in game a tower's road
+    /// staircase's foot stood 6.4 m over the road cut under it at -784,-4432, its start pad refused and only counted).
+    /// <list type="bullet">
+    /// <item>An end of a staircase it lays (<paramref name="finished"/>, the runs as the road would store them) with no way off
+    /// it by the one end reader (StairEnds.Read: a gap or a miss), read on the ground <paramref name="groundOf"/> gives it: in
+    /// the one list, the finished ground as the road will stand once stored (StairEnds.GroundOf inside
+    /// RoadNetworkGenerator.AsWritten: its own earthwork, cuts, pads and the roads it raises, its own surface under a walker),
+    /// the ground the staircase-end audit reads it on once it is (StairEnds.AuditAll), so the two agree. Its other staircases
+    /// and the network's meeting it end to end are joined to it (StairStructures.MetAtEnds). Read on the ground its layout was
+    /// laid out on, a top whose road on was held down 2.4 m to the road beside it (RoadSpatialGrid.HoldToNetwork) at
+    /// 6518.7,-1452.7 (offline) was kept, its floor left standing over the road's cut.</item>
+    /// <item>A foot laid against its road's end (its ring) whose walked pieces there (within the start pad's reach,
+    /// RoadEndRing.StartReach, but the steps sunk on purpose) all stand more than a walker's step over the road's own height at
+    /// that end and are not met on a stair sunk under the foot (StairLayout.FootMeets), or whose lowest stands more than a rise
+    /// under it (a pit at its foot under the road's bank).</item>
+    /// <item>A top arriving on its road's end's ring (a flight going down from the road's end, RoadEndRing.MetAtTop) whose
+    /// exit is not within a walker's step of the road's height there (StairLayout.Walkable), as a foot is met.</item>
+    /// <item>A foot or a top of a staircase it lays with a way off it but not finished as the end rule chose (StairEnds.Unfinished, the
+    /// end audit's own verdict, on the same finished ground): no finish worked there (StairLayout.FinishFoot or FinishTop kept none), and
+    /// the road is refused and searched for again, not left for the end audit to find.</item>
+    /// </list>
+    /// The road's height at the ring is its own end's there: the end of the piece planned to that staircase
+    /// (PlannedPath.StairAtStart, StairAtEnd) nearest the ring's centre, else (a staircase planned with none marked) of the
+    /// pieces' ends within the ring's StartReach the nearest its centre (read only within the ring's own reach, the tower's
+    /// road above stored its end 4.0 m off the ring it was planned on, 6.4 m under the staircase's foot, and the foot was
+    /// never refused).
     /// </summary>
-    internal static string? FootLeftOver(IEnumerable<RoadStairSpan> stairs, IReadOnlyList<RoadSpatialGrid.PlannedPath> own, out Vector2 at,
-        Func<float, float, float>? ground = null)
+    internal static string? ConnectionRefusal(IEnumerable<RoadStairSpan> stairs, IReadOnlyList<RoadSpatialGrid.PlannedPath> own, out Vector2 at,
+        IReadOnlyList<StairRun>? finished = null, Func<StairRun, Func<float, float, float>>? groundOf = null, Func<StairRun, bool>? judged = null)
     {
         at = default;
-        var all = stairs as IReadOnlyList<RoadStairSpan> ?? stairs.ToList();
-        foreach (RoadStairSpan st in all)
+        foreach (RoadStairSpan st in stairs)
         {
             StairPlan plan = st.Plan;
-            // No road at its foot (it is where its road begins or ends): stepped off onto the ground, judged by the end reader
-            // as laid (StairEnds.Read, on the ground it was laid out on with the roads on it, the road's other staircases
-            // meeting it). A foot the reader finds no edge to step off is refused, as a foot over its road is (on RoadSeedD
-            // the road from the island's start at 5704,-3576 set off with a staircase on a shore steeper than its flight, its
-            // foot left 2.06 m over the ground with no road there).
-            if (!st.Existing && st.NoRoadAtFoot && ground != null && FootOffTheGround(st, all, ground) is Vector2 off)
+            if (st.Existing || plan.Ring is not RoadEndRing ring || RoadEnd(st, ring, own) is not float height) continue;
+            if (RoadEndRing.MetAtTop(plan))
             {
-                at = off;
-                return FootOverTheGround;
+                if (StairLayout.Walkable(plan.End.y, height)) continue;
+                at = ring.Centre;
+                return TopOffItsRoad;
             }
-            if (st.Existing || plan.Ring is not RoadEndRing ring || RoadEndRing.MetAtTop(plan)) continue;
-            // The road's own end at the ring, and its height there (a staircase met by the next one on a shared floor has none):
-            // of its pieces' ends where the staircase still starts (StartReach), the nearest the ring's centre. Read only within
-            // the ring's own disc (RoadsEnd), the tower's road above stored its end 4.0 m off the ring it was planned on, 6.4 m
-            // under the staircase's foot, and the foot was never refused.
-            float? road = null;
-            float nearest = float.PositiveInfinity;
-            foreach (RoadSpatialGrid.PlannedPath piece in own)
-                for (int k = 0; k < piece.Points.Count && piece.Points.Count >= 2; k += piece.Points.Count - 1)
-                {
-                    float d = Vector2.Distance(piece.Points[k], ring.Centre);
-                    if (d > ring.StartReach || d > nearest + 0.01f) continue;
-                    road = d < nearest - 0.01f || road is not float r ? piece.Heights[k] : Mathf.Min(r, piece.Heights[k]);
-                    nearest = Mathf.Min(nearest, d);
-                }
-            if (road is not float height) continue;
             float reach = ring.StartReach, lowest = float.PositiveInfinity;
             foreach (StairPiece p in plan.Pieces)
             {
@@ -658,33 +800,111 @@ public static partial class RoadStairRuns
                 return FootUnderItsRoad;
             }
         }
+        // Every end of its staircases with a way off it on the finished ground (read last: the ring checks above read no ground).
+        if (finished != null && groundOf != null && NoWayOff(finished, groundOf, out string why, judged) is Vector2 off)
+        {
+            at = off;
+            return why;
+        }
         return null;
     }
 
-    /// <summary>Why <see cref="FootLeftOver"/> refuses a road: a foot over its road, or under it, or, with no road there, a
-    /// foot no edge of which steps off onto the ground.</summary>
-    internal const string FootOverItsRoad = "a staircase's foot over its road", FootUnderItsRoad = "a staircase's foot under its road",
-        FootOverTheGround = "a staircase's foot with no road, over the ground";
-
-    /// <summary>Where <paramref name="st"/>'s foot, with no road there, gaps by the end reader (StairEnds.Read: no edge of its
-    /// last walked pieces steps off onto <paramref name="ground"/>, the ground a road's staircase is laid out on
-    /// (PlanningGround), as its own earthwork leaves it (its cuts, a foot's apron among them: each lowers the ground to its
-    /// height within StairLayout.CutRadius and climbs back on its batter, as the writer leaves it, RoadTerrainModifier.GroundAfterCuts) and with the network's roads on it,
-    /// nor onto another of <paramref name="all"/>'s staircases): the foot's last stair's exit edge. Null where a walker steps
-    /// off it. Read without its cuts, a foot onto the level apron cut for it at the island's start on RoadSeedA was refused.</summary>
-    internal static Vector2? FootOffTheGround(RoadStairSpan st, IReadOnlyList<RoadStairSpan> all, Func<float, float, float> ground)
+    /// <summary>The road's own height at the end on <paramref name="ring"/> where <paramref name="st"/> meets it
+    /// (<see cref="ConnectionRefusal"/>): of the pieces of <paramref name="own"/> planned to it, else of every piece, the end
+    /// within the ring's StartReach nearest its centre (the lower of two as near); null where none ends there (a staircase
+    /// met by the next one on a shared floor has none).</summary>
+    private static float? RoadEnd(RoadStairSpan st, RoadEndRing ring, IReadOnlyList<RoadSpatialGrid.PlannedPath> own)
     {
-        StairRun run = StairRun.FromPlan(st.FromPoint, st.ToPoint, Width, st.Plan, st.Kit);
-        var others = new List<StructurePiece>();
-        foreach (RoadStairSpan other in all)
-            if (!ReferenceEquals(other, st)) others.AddRange(StairRun.FromPlan(other.FromPoint, other.ToPoint, Width, other.Plan, other.Kit).Pieces);
-        List<Vector3> cuts = st.Plan.Cuts;
-        float Cut(float x, float z) => RoadTerrainModifier.GroundAfterCuts(ground(x, z), cuts, x, z);
-        foreach (StairEnds.End end in StairEnds.Read(run, StairEnds.WithRoads(Cut), others))
-            if (!end.Top && end.Verdict == StairEnds.Verdict.Gap)
-                return end.Edge is Vector3 e ? new Vector2(e.x, e.z) : st.Plan.Reversed ? st.ToPoint : st.FromPoint;
+        bool Marked(RoadSpatialGrid.PlannedPath piece, bool atStart) =>
+            (atStart ? piece.StairAtStart : piece.StairAtEnd) is { } m && ReferenceEquals(m.Stair, st);
+        foreach (bool marked in new[] { true, false })
+        {
+            float? road = null;
+            float nearest = float.PositiveInfinity;
+            foreach (RoadSpatialGrid.PlannedPath piece in own)
+                for (int k = 0; k < piece.Points.Count && piece.Points.Count >= 2; k += piece.Points.Count - 1)
+                {
+                    if (marked && !Marked(piece, k == 0)) continue;
+                    float d = Vector2.Distance(piece.Points[k], ring.Centre);
+                    if (d > ring.StartReach || d > nearest + 0.01f) continue;
+                    road = d < nearest - 0.01f || road is not float r ? piece.Heights[k] : Mathf.Min(r, piece.Heights[k]);
+                    nearest = Mathf.Min(nearest, d);
+                }
+            if (road != null) return road;
+        }
         return null;
     }
+
+    /// <summary>Why <see cref="ConnectionRefusal"/> refuses a road: an end of a staircase it lays with no way off it on the
+    /// finished ground; a foot over its road, or under it; a top arriving on its road's end off its road's height.</summary>
+    internal const string NoWayOffItsEnd = "a staircase's end with no way off it", FootOverItsRoad = "a staircase's foot over its road",
+        FootUnderItsRoad = "a staircase's foot under its road", TopOffItsRoad = "a staircase's top off its road",
+        FootUnfinished = "a staircase's foot no finish fits", TopUnfinished = "a staircase's top no finish fits", FootOntoAnotherRoad = "a staircase's foot onto a road not its own";
+
+    /// <summary>Where the first end of <paramref name="runs"/> with no way off it is, by the one end reader (StairEnds.Read on
+    /// <paramref name="groundOf"/>'s ground for its run: a gap or a miss, an end not verified is neither; <paramref name="why"/>
+    /// <see cref="NoWayOffItsEnd"/>), or the first end, foot or top, with a way off not finished as its rule chose (StairEnds.Unfinished,
+    /// the end audit's UNFINISHED: <see cref="TopUnfinished"/>,
+    /// <see cref="FootUnfinished"/>), or the first foot stepped off onto a road with no road of its own recorded there
+    /// (StairEnds.End.OntoAnotherRoad: none planned to it, or its road's end there not kept; <see cref="FootOntoAnotherRoad"/>:
+    /// each end is met by its road, never left not verified), its last stair's exit edge (or the run's end where none was
+    /// read); or, past its ends, the middle of its first level run walking further than a rest (StairEnds.LevelRuns,
+    /// StairLayout.PastARest: a walkway over a dip is none; <see cref="LevelRunPastARest"/>); null where every end has one, every end is finished, every foot
+    /// is met by its own road and no level run is longer than a rest. Each run is joined to the others of <paramref name="runs"/> and to the network's
+    /// staircases meeting it end to end (StairStructures.MetAtEnds), as the audit joins it once all are stored.</summary>
+#if ROADS_TESTS
+    /// <summary>Tests: each run's ends as <see cref="NoWayOff"/> reads them, to be changed in place before it judges them.</summary>
+    internal static Action<StairRun, List<StairEnds.End>>? EndsJudged;
+#endif
+
+    internal static Vector2? NoWayOff(IReadOnlyList<StairRun> runs, Func<StairRun, Func<float, float, float>> groundOf, out string why,
+        Func<StairRun, bool>? judged = null)
+    {
+        foreach (StairRun run in runs)
+        {
+            // Only the runs asked of (<paramref name="judged"/>: a staircase onto a placed location's landing as it is planned,
+            // RoadNetworkGenerator.EntryStairsEnds); every run is still joined to the others.
+            if (judged != null && !judged(run)) continue;
+            List<StructurePiece> others = StairStructures.MetAtEnds(run);
+            foreach (StairRun other in runs)
+                if (!ReferenceEquals(other, run)) others.AddRange(other.Pieces);
+            Func<float, float, float> ground = groundOf(run);
+            List<StairEnds.End> read = StairEnds.Read(run, ground, others);
+#if ROADS_TESTS
+            EndsJudged?.Invoke(run, read);
+#endif
+            foreach (StairEnds.End end in read)
+                if (end.Verdict is StairEnds.Verdict.Gap or StairEnds.Verdict.Miss || end.OntoAnotherRoad || StairEnds.Unfinished(end) != null)
+                {
+                    why = end.Verdict is StairEnds.Verdict.Gap or StairEnds.Verdict.Miss ? NoWayOffItsEnd
+                        : end.OntoAnotherRoad ? FootOntoAnotherRoad : end.Top ? TopUnfinished : FootUnfinished;
+                    if (RoadNetworkGenerator.RoadsLog)
+                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(StairEnds.Line(end) + " (as the road would be stored: refused)");
+                    return end.Edge is Vector3 e ? new Vector2(e.x, e.z) : end.Top ? run.To : run.From;
+                }
+            // No level run longer than a rest anywhere on it, its ends' finishes included, but a walkway carrying the road over a
+            // dip (StairLayout.PastARest); a level run carried on across onto a staircase meeting it end to end (its others,
+            // the network's whole) is one run with that one's floors.
+            var met = new List<StructurePiece>(StairStructures.MetEndToEnd(run));
+            foreach (StairRun other in runs)
+                if (!ReferenceEquals(other, run)) met.AddRange(other.Pieces);
+            foreach (StairEnds.LevelRun flat in StairEnds.LevelRuns(run, ground, met))
+                if (flat.PastARest)
+                {
+                    why = LevelRunPastARest;
+                    if (RoadNetworkGenerator.RoadsLog)
+                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(FormattableString.Invariant(
+                            $"[STAIRS] level run of {flat.Rows} rows at ({flat.At.x:F1}, {flat.At.y:F1}) on the staircase ({run.From.x:F1}, {run.From.y:F1}) -> ({run.To.x:F1}, {run.To.y:F1}), a rest is {StairLayout.RestFloors}, ground {flat.EndA:F2} and {flat.EndB:F2} at its ends, {flat.Low:F2} at its lowest, {flat.Beside} rows beside a dip: {(StairChain.OverADip(flat.Low, flat.EndA, flat.EndB) ? "more than a rest beside the dip" : "no dip")} (as the road would be stored: refused)"));
+                    return flat.At;
+                }
+        }
+        why = "";
+        return null;
+    }
+
+    /// <summary>Why <see cref="NoWayOff"/> refuses a road: a staircase it lays walks level further than a rest
+    /// (StairLayout.PastARest).</summary>
+    internal const string LevelRunPastARest = "a staircase's level run longer than a rest";
 
     /// <summary>Pads not laid this generation, by why (<see cref="StartPads"/>).</summary>
     public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> PadsRefused = new();
@@ -699,25 +919,41 @@ public static partial class RoadStairRuns
     /// is laid only where one of the road's own pieces ends at its road's end, within a step of its height
     /// (a staircase met by the next one on a shared floor has no road there), and none of it lies in water, on another
     /// road at another height or on another staircase's flight; its points inside a location's footprint are left out (the
-    /// terrain writer leaves a location's ground alone). Each refusal is counted by why (<see cref="PadsRefused"/>).
-    /// The one owner of staircase starts (docs/OWNERS.md).
+    /// terrain writer leaves a location's ground alone). Each refusal is counted by why (<see cref="PadsRefused"/>), and each pad
+    /// laid; not where <paramref name="tally"/> is false (a check reading what the road would write: the pads it stores are
+    /// counted as it is stored). The one owner of staircase starts (docs/OWNERS.md).
     /// </summary>
     internal static List<RoadSpatialGrid.PlannedPath> StartPads(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, IReadOnlyList<RoadStairSpan> stairs,
-        WorldGenerator? world, string? label = null)
+        WorldGenerator? world, string? label = null, bool tally = true) => StartPads(own, stairs, world, label, tally, null, null, null);
+
+    /// <summary><see cref="StartPads(IReadOnlyList{RoadSpatialGrid.PlannedPath}, IReadOnlyList{RoadStairSpan}, WorldGenerator?, string?, bool)"/>
+    /// read against the network as it will stand once the road's <paramref name="proposed"/> changes are made (the other
+    /// roads it raises at their new heights), with each count and line it would make kept in <paramref name="said"/> (as
+    /// <paramref name="tally"/> true makes them, said with the road's label) for its commit to make as it stores the pads
+    /// (RoadNetworkGenerator.Written). Each pad laid along the road's line from the end of the road's own piece it meets (RoadEndRing.Pad.Line) in
+    /// <paramref name="along"/>: what the ridge judge reads of it as part of the road (RoadNetworkGenerator.Ridges, the owner's
+    /// rule of 18 Nov 2026).</summary>
+    internal static List<RoadSpatialGrid.PlannedPath> StartPads(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, IReadOnlyList<RoadStairSpan> stairs,
+        WorldGenerator? world, string? label, bool tally, RoadNetworkGenerator.Proposed? proposed, List<Action<string?>>? said,
+        List<RoadRidges.AtEnd>? along = null)
     {
+        void Tally(Action<string?> say) { if (said != null) said.Add(say); else if (tally) say(label); }
         var pads = new List<RoadSpatialGrid.PlannedPath>();
         if (world == null || stairs.Count == 0) return pads;
-        float cap = RoadNetworkGenerator.ShapedLimit;
-        float Ground(float x, float z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world);
+        // The earthwork cap as every road is judged by it (RoadNetworkGenerator.EarthworkLimit: none where none is set).
+        float cap = RoadNetworkGenerator.EarthworkLimit;
+        // The ground before roads, as every road's earthwork is measured over (RoadNetworkGenerator.GroundBeforeRoads).
+        Func<Vector2, float> before = RoadNetworkGenerator.GroundBeforeRoads(world);
+        float Ground(float x, float z) => before(new Vector2(x, z));
         var runs = new List<StairRun>(stairs.Count);
         foreach (RoadStairSpan st in stairs) runs.Add(StairRun.FromPlan(st.FromPoint, st.ToPoint, Width, st.Plan, st.Kit));
-        void Refused(RoadEndRing.Pad? pad, RoadEndRing r, string kind, string why)
+        void Refused(RoadEndRing.Pad? pad, RoadEndRing r, string kind, string why) => Tally(l =>
         {
             PadsRefused.AddOrUpdate(kind, 1, (_, n) => n + 1);
             if (RoadNetworkGenerator.RoadsLog)
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
-                    $"[STAIRS] start pad at ({(pad?.End ?? r.Centre).x:F1}, {(pad?.End ?? r.Centre).y:F1}) not laid on {label ?? "(unlabelled)"}: {why}"));
-        }
+                    $"[STAIRS] start pad at ({(pad?.End ?? r.Centre).x:F1}, {(pad?.End ?? r.Centre).y:F1}) not laid on {l ?? "(unlabelled)"}: {why}"));
+        });
         // Each end of each staircase where its road ends: the ring it was laid against (a road staircase's foot, an
         // approach's road end), and a road staircase's top, on the ring its road starts on again there (RoadEndPast, read
         // as planned: PlannedRing). Unpadded, a top floor on that ring stood over the road's grade carried on past its end
@@ -737,16 +973,20 @@ public static partial class RoadStairRuns
             StairPlan plan = stairs[s].Plan;
             if (RoadEndRing.PadUnder(plan, ring, top, Ground, cap, out string why) is not RoadEndRing.Pad pad)
             {
-                Refused(null, ring, why.StartsWith("a cut", StringComparison.Ordinal) ? "past the earthwork cap" : why, why);
+                Refused(null, ring, why.StartsWith(RoadEndRing.PastTheCap, StringComparison.Ordinal) ? RoadEndRing.PastTheCap : why, why);
                 continue;
             }
             bool meets = false;
+            (Vector2 at, float h)? meetsAt = null;
             foreach (RoadSpatialGrid.PlannedPath piece in own)
             {
                 if (piece.Points.Count < 2 || piece.FollowTerrain) continue;
                 foreach (int i in new[] { 0, piece.Points.Count - 1 })
-                    meets |= Vector2.Distance(piece.Points[i], pad.End) <= PadMeetsEnd
-                        && StairLayout.Walkable(piece.Heights[i], pad.Height);
+                    if (Vector2.Distance(piece.Points[i], pad.End) <= PadMeetsEnd && StairLayout.Walkable(piece.Heights[i], pad.Height))
+                    {
+                        meets = true;
+                        meetsAt ??= (piece.Points[i], piece.Heights[i]);
+                    }
             }
             if (!meets) { Refused(pad, ring, "no road ends there", "no road of its own ends there at its height"); continue; }
             var points = new List<Vector2>();
@@ -757,7 +997,7 @@ public static partial class RoadStairRuns
                 Vector2 q = pad.Points[i];
                 if (RoadLocationProtection.Contains(q)) continue;
                 if (!RoadWater.BuiltDry(world, q)) clash = "in water";
-                else if (RoadSpatialGrid.TryGetRoadHeightWithin(q, RoadEndRing.PadSpacing, out float road)
+                else if (RoadSpatialGrid.TryGetRoadHeightWithin(q, RoadEndRing.PadSpacing, out float road, proposed)
                          && !StairLayout.Walkable(road, pad.Heights[i])) clash = "on another road";
                 points.Add(q);
                 heights.Add(pad.Heights[i]);
@@ -770,14 +1010,21 @@ public static partial class RoadStairRuns
             }
             if (clash != null) { Refused(pad, ring, clash, clash); continue; }
             if (points.Count == 0) continue;
-            System.Threading.Interlocked.Increment(ref pad.Top ? ref PadsAtTops : ref PadsAtFeet);
-            if (pad.LeftOut > 0) System.Threading.Interlocked.Increment(ref PadsPartial);
-            if (RoadNetworkGenerator.RoadsLog)
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
-                    $"[STAIRS] start pad {(pad.Top ? "top" : "foot")} at ({pad.End.x:F1}, {pad.End.y:F1}) on {label ?? "(unlabelled)"}: {points.Count} point(s) at {pad.Height:F2}, under {pad.Pieces} walked piece(s), cut {pad.MostCut:F2} m, fill {pad.MostFill:F2} m, {pad.LeftOut} left out over falling ground"));
+            RoadEndRing.Pad laid = pad;
+            int count = points.Count;
+            Tally(l =>
+            {
+                System.Threading.Interlocked.Increment(ref laid.Top ? ref PadsAtTops : ref PadsAtFeet);
+                if (laid.LeftOut > 0) System.Threading.Interlocked.Increment(ref PadsPartial);
+                if (RoadNetworkGenerator.RoadsLog)
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
+                        $"[STAIRS] start pad {(laid.Top ? "top" : "foot")} at ({laid.End.x:F1}, {laid.End.y:F1}) on {l ?? "(unlabelled)"}: {count} point(s) at {laid.Height:F2}, under {laid.Pieces} walked piece(s), cut {laid.MostCut:F2} m, fill {laid.MostFill:F2} m, {laid.LeftOut} left out over falling ground"));
+            });
             pad.Points.Clear(); pad.Points.AddRange(points);
             pad.Heights.Clear(); pad.Heights.AddRange(heights);
             pads.Add(pad.ToPath());
+            if (along != null && meetsAt is (Vector2 from, float fromHeight) && pad.Line(from, fromHeight) is RoadSpatialGrid.PlannedPath line)
+                along.Add(new RoadRidges.AtEnd(from, line));
         }
         return pads;
     }
@@ -796,4 +1043,6 @@ public static partial class RoadStairRuns
     /// <summary>Staircase layouts (road staircases and approaches) laid any way at their foot, none facing the road (nor
     /// set off back beside it within StairLayout.MostSetOffBack) reaching: layouts tried, not staircases laid.</summary>
     public static int FeetFacedFreely;
+    /// <summary>Merges whose free layout was not laid: both held layouts before it ran out of budget (RoadStairRuns.Merge).</summary>
+    public static int MergesFreeSkipped;
 }

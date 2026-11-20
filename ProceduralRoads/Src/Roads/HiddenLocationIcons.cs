@@ -98,10 +98,10 @@ public static class HiddenLocationIcons
     /// in the classic setting, otherwise those whose middles are less than total + 0.8 zones apart
     /// (ZonesWithinRadius, ghostZone). The server's own reference position counts as a player's.
     /// </summary>
-    public static bool WithinPlacingReach(Vector2s player, Vector2s locationZone, int total, bool classic, float zoneSize = 64f)
+    public static bool WithinPlacingReach(Vector2s player, Vector2s location, int total, bool classic, float zoneSize = 64f)
     {
-        int dx = locationZone.x - player.x, dz = locationZone.y - player.y;
-        if (Mathf.Abs(dx) > total || Mathf.Abs(dz) > total) return false;
+        int dx = location.x - player.x, dz = location.y - player.y;
+        if (FloatBits.Abs(dx) > total || FloatBits.Abs(dz) > total) return false;
         if (classic) return true;
         float reach = total * zoneSize + zoneSize * 0.8f;
         return (dx * dx + dz * dz) * zoneSize * zoneSize < reach * reach;
@@ -119,8 +119,8 @@ public static class HiddenLocationIcons
             foreach (Vector3 r in references) zones.Add(ZoneOf(r));
             foreach (var kv in s_hidden)
             {
-                Vector2s locationZone = ZoneOf(kv.Value);
-                if (zones.Exists(z => WithinPlacingReach(z, locationZone, total, classic))) shown.Add(kv.Value);
+                Vector2s location = ZoneOf(kv.Value);
+                if (zones.Exists(z => WithinPlacingReach(z, location, total, classic))) shown.Add(kv.Value);
             }
             foreach (Vector3 p in shown) s_hidden.Remove(Key(p));
         }
@@ -152,7 +152,7 @@ public static class HiddenLocationIcons
         {
             using var reader = new BinaryReader(new MemoryStream(data));
             int format = reader.ReadInt32();
-            if (format != Format) throw new InvalidDataException($"hidden site icons format {format}");
+            if (format != Format) throw new InvalidDataException($"hidden location icons format {format}");
             int count = reader.ReadInt32();
             if (count < 0 || count > 100000) throw new InvalidDataException($"hidden location icons count {count}");
             for (int i = 0; i < count; i++) loaded.Add(new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle()));

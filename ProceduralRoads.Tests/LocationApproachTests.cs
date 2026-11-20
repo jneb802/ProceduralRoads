@@ -56,6 +56,8 @@ public class LocationApproachTests
     {
         RoadSpatialGrid.Clear();
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(), 20f, 16f) });
+        // Only a location on the preload list is arrived at inside its footprint (RoadLocationProtection.Enterable).
+        PlacedLocations.Preload(new Vector2());
         using var grade = GradeCap.At(0.35f);
         try
         {
@@ -63,6 +65,30 @@ public class LocationApproachTests
             var better = Improve(original, world);
             Assert.NotSame(original, better);
             Assert.True(Mathf.Abs(better[better.Count - 1].y) > 5f);
+        }
+        finally { RoadLocationProtection.Reset(); PlacedLocations.Reset(); }
+    }
+
+    /// <summary>The same location not on the preload list, the same trial asked at the ground it shapes: every proposal ending in
+    /// the paint it does not shape is refused by the trial's final check (RoadLocationProtection.Enterable, through ArrivalKeep),
+    /// so the road keeps its route; generation asks it only at the ring outside the whole footprint
+    /// (RoadNetworkGenerator.KeepOutEdge).</summary>
+    [Fact]
+    public void AnApproachToALocationNotOnThePreloadListStaysOutOfItsFootprint()
+    {
+        RoadSpatialGrid.Clear();
+        // Not on the preload list: none left by another test (PlacedLocations.Preloaded reads it).
+        PlacedLocations.Reset();
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(), 20f, 16f) });
+        // The footprint is installed and the location is kept out of: a failure below is then the approach's, not a missing index.
+        Assert.True(RoadLocationProtection.Contains(new Vector2()), "the location's footprint was not installed by Set");
+        Assert.False(RoadLocationProtection.Enterable(new Vector2()), "the location at the origin is enterable: it is on the preload list or not a footprint");
+        using var grade = GradeCap.At(0.35f);
+        try
+        {
+            var world = new Hillside(); var original = Route();
+            var better = Improve(original, world);
+            Assert.Same(original, better);
         }
         finally { RoadLocationProtection.Reset(); }
     }

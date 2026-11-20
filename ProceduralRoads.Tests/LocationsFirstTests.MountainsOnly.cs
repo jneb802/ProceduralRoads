@@ -9,8 +9,8 @@ namespace ProceduralRoads.Tests;
 
 public partial class LocationsFirstTests
 {
-    /// <summary>The cave placed on a plateau 10 m over the level ground out to 12 m from its centre, its edge falling 1 in 1
-    /// to the ground 22 m out: too steep for a road onto its landing, a staircase climbs it. <paramref name="prefab"/> in
+    /// <summary>The cave placed on a plateau 16 m over the level ground out to 12 m from its centre, its edge falling 1 in 1
+    /// to the ground 28 m out: too steep for a road onto its landing, a staircase climbs it. <paramref name="prefab"/> in
     /// place of the cave's own.</summary>
     private PlacedLocation OnAPlateau(string? prefab = null)
     {
@@ -20,12 +20,12 @@ public partial class LocationsFirstTests
         PlacedLocation cave = Cave();
         PlacedLocationRecord record = cave.Record;
         if (prefab != null) record.Prefab = prefab;
-        Func<float, float, float> plateau = (x, z) => cave.Ground(x, z) + Mathf.Clamp(10f - (new Vector2(x, z).magnitude - 12f), 0f, 10f);
-        var placedLocation = new PlacedLocation { Record = record, Ground = plateau, Shape = PlacedLocationShape.Of(cave.Centre, 90f, CaveFloor[0], 0f, null, plateau, false, 60f) };
-        PlacedLocations.Ready(placedLocation);
+        Func<float, float, float> plateau = (x, z) => cave.Ground(x, z) + Mathf.Clamp(16f - (new Vector2(x, z).magnitude - 12f), 0f, 16f);
+        var location = new PlacedLocation { Record = record, Ground = plateau, Shape = PlacedLocationShape.Of(cave.Centre, 90f, CaveFloor[0], 0f, null, plateau, false, 60f) };
+        PlacedLocations.Ready(location);
         LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
         SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
-        return placedLocation;
+        return location;
     }
 
     /// <summary>Outside the Mountains a road to a placed location is still carried on onto its landing where a road gets there,
@@ -51,7 +51,7 @@ public partial class LocationsFirstTests
     }
 
     /// <summary>A placed location whose landing only a staircase climbs to: in the Mountains the staircase is laid onto it; elsewhere
-    /// none is, and the road, which would end at the location's ring 10 m under its landing, is refused: not level with the
+    /// none is, and the road, which would end at the location's ring 16 m under its landing, is refused: not level with the
     /// location, it does not reach it. Before, it was kept and counted the location reached.</summary>
     [Fact]
     public void APlacedLocationNoRoadClimbsGetsAStaircaseOntoItsLandingInEveryBiome()
@@ -62,15 +62,14 @@ public partial class LocationsFirstTests
         Assert.True(PlacedLocations.Landed(cave.Centre));
         Assert.Single(StairStructures.Runs);
 
+        // Outside the Mountains too: a staircase onto a placed Location's landing is tried in every biome (ApproachStairsAt).
         _world.Biome = Heightmap.Biome.Plains;
         cave = OnAPlateau();
-        Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 120f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave"));
-        Assert.Equal(RoadNetworkGenerator.NotLevelRefusal, RoadSpatialGrid.LastRefusal);
-        Assert.False(PlacedLocations.Landed(cave.Centre));
-        Assert.Empty(StairStructures.Runs);
-        Assert.Empty(RoadSpatialGrid.GetRoadPointsNearPosition(Vector3.zero, 60f).Where(p => p.IsRoad));
-        Assert.False(RoadNetworkGenerator.LandingReached(cave));
-        Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 120f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave"),
+            "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
+        Assert.True(PlacedLocations.Landed(cave.Centre));
+        Assert.Single(StairStructures.Runs);
+        Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
     }
 
     /// <summary>A boss's entrance keeps its staircase onto its landing outside the Mountains too

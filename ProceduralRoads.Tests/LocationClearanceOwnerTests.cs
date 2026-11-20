@@ -40,13 +40,16 @@ public class LocationClearanceOwnerTests : IDisposable
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(end, 10f) });
         var start = new Vector2(-100, 0);
         // Into the ring and on to the centre: the arrival, trimmed away.
-        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(-20, 0), new Vector2(-8, 0), 4f, start, end));
-        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(-8, 0), new Vector2(0, 0), 4f, start, end));
+        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(-20, 0), new Vector2(-8, 0), 4f, new RoadLocationProtection.Targets(null, end)));
+        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(-8, 0), new Vector2(0, 0), 4f, new RoadLocationProtection.Targets(null, end)));
         // Out of the ring again (round the location to come in from its far side): kept by the trim, and refused at the end.
-        Assert.True(RoadLocationProtection.BlocksRoute(new Vector2(-12, 6), new Vector2(-12, 20), 4f, start, end));
-        Assert.True(RoadLocationProtection.BlocksRoute(new Vector2(-16, 12), new Vector2(16, 12), 4f, start, end));
-        // The old exemption let both through; it stays for the callers that clip their own end (stairs at a place).
-        Assert.False(RoadLocationProtection.BlocksSegment(new Vector2(-16, 12), new Vector2(16, 12), 4f, start, end));
+        Assert.True(RoadLocationProtection.BlocksRoute(new Vector2(-12, 6), new Vector2(-12, 20), 4f, new RoadLocationProtection.Targets(null, end)));
+        Assert.True(RoadLocationProtection.BlocksRoute(new Vector2(-16, 12), new Vector2(16, 12), 4f, new RoadLocationProtection.Targets(null, end)));
+        // The old exemption let both through; it stays for the callers that clip their own end (stairs at a location), for a
+        // location on the preload list (RoadLocationProtection.Enterable) only.
+        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(-16, 12), new Vector2(16, 12), 4f, new RoadLocationProtection.Targets(null, end)));
+        PlacedLocations.Preload(end);
+        Assert.False(RoadLocationProtection.BlocksSegment(new Vector2(-16, 12), new Vector2(16, 12), 4f, new RoadLocationProtection.Targets(null, end)));
     }
 
     [Fact]
@@ -55,9 +58,9 @@ public class LocationClearanceOwnerTests : IDisposable
         var start = new Vector2(0, 0);
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(start, 10f) });
         var end = new Vector2(100, 0);
-        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(0, 0), new Vector2(8, 0), 4f, start, end));
-        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(8, 0), new Vector2(20, 0), 4f, start, end));
-        Assert.True(RoadLocationProtection.BlocksRoute(new Vector2(-16, 12), new Vector2(16, 12), 4f, start, end));
+        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(0, 0), new Vector2(8, 0), 4f, new RoadLocationProtection.Targets(start, null)));
+        Assert.False(RoadLocationProtection.BlocksRoute(new Vector2(8, 0), new Vector2(20, 0), 4f, new RoadLocationProtection.Targets(start, null)));
+        Assert.True(RoadLocationProtection.BlocksRoute(new Vector2(-16, 12), new Vector2(16, 12), 4f, new RoadLocationProtection.Targets(start, null)));
     }
 
     [Fact]
@@ -70,13 +73,13 @@ public class LocationClearanceOwnerTests : IDisposable
         // Clear of the unswayed line by a metre, and of the swayed point (and its sideways step, all the sway was checked
         // for before), but not of the leg from it to the next point.
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(66, 6), 1f) });
-        Assert.True(RoadLocationProtection.FirstBlockedLeg(swayed, 4f, null, even[0], even[10]) > 0);
-        Assert.False(RoadLocationProtection.BlocksSegment(even[5], swayed[5], RoadLocationProtection.Clearance(4f), null, null));
+        Assert.True(RoadLocationProtection.FirstBlockedLeg(swayed, 4f, null, even[0], even[10], default) > 0);
+        Assert.False(RoadLocationProtection.BlocksSegment(even[5], swayed[5], RoadLocationProtection.Clearance(4f), default));
 
-        var kept = RoadWiggle.KeepClearOfLocations(swayed.ToList(), even, even, 4f);
+        var kept = RoadWiggle.KeepClearOfLocations(swayed.ToList(), even, even, 4f, out _);
 
         Assert.NotNull(kept);
-        Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(kept!, 4f, null, even[0], even[10]));
+        Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(kept!, 4f, null, even[0], even[10], default));
         Assert.Equal(even[5], kept![5]);
         Assert.Equal(new Vector2(24, 6), kept[2]);
     }
@@ -86,7 +89,8 @@ public class LocationClearanceOwnerTests : IDisposable
     {
         var even = Enumerable.Range(0, 11).Select(i => new Vector2(i * 12, 0)).ToList();
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(60, 3), 1f) });
-        Assert.Null(RoadWiggle.KeepClearOfLocations(even.ToList(), even, even, 4f));
+        Assert.Null(RoadWiggle.KeepClearOfLocations(even.ToList(), even, even, 4f, out int blocked));
+        Assert.Equal(5, blocked);
     }
 
     [Fact]
@@ -98,7 +102,7 @@ public class LocationClearanceOwnerTests : IDisposable
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(6, 12), 1f) });
         var plan = RoadSpatialGrid.PlanRoadPath(path, 4, world);
         Assert.True(plan != null, RoadSpatialGrid.LastRefusal);
-        Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(plan!.Points, 4f, plan.Widths, path[0], path[2]));
+        Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(plan!.Points, 4f, plan.Widths, path[0], path[2], default));
     }
 
     [Fact]
@@ -107,17 +111,18 @@ public class LocationClearanceOwnerTests : IDisposable
         // A dog-leg round a location: pulled straight, the road would run 2 m from it.
         var path = new List<Vector2> { new(0, 0), new(10, 0), new(20, 10), new(30, 0), new(40, 0) };
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(20, 2), 1f) });
-        Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(path, 4f, null, path[0], path[4]));
+        Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(path, 4f, null, path[0], path[4], default));
         using (StaticOverride.Set(() => RoadPathPull.Tolerance, 0f))
         {
             var pulled = RoadPathPull.Pull(path, 4f, _ => 40f, _ => false, 1f);
-            Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(pulled, 4f, null, path[0], path[4]));
+            Assert.Equal(-1, RoadLocationProtection.FirstBlockedLeg(pulled, 4f, null, path[0], path[4], default));
             Assert.Contains(new Vector2(20, 10), pulled);
         }
     }
 
     public void Dispose()
     {
+        PlacedLocations.Reset();
         RoadSpatialGrid.Clear();
         RoadLocationProtection.Reset();
         RoadLocationProtection.Source = previousSource;

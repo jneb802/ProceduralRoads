@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Valheim.Testing.Doubles;
 using Xunit;
@@ -151,6 +152,251 @@ public class BiomeBlendedHeightTests
         foreach (float x in new[] { -32f, 32f, 31.999f, 32.001f, -1056f, 992f })
             foreach (float z in new[] { -32f, 96f, 95.999f, -96.001f })
                 Assert.Equal(BiomeBlendedHeight.GetBlendedHeight(x, z, world), BiomeBlendedHeight.GetBlendedHeight(x, z, world, last));
+    }
+
+    /// <summary>While a generation's workers run (BiomeBlendedHeight.CornerGrid open for the world), a reader without a corner
+    /// memo gets the same heights to the bit as reading every corner from the world, each corner read from the world once;
+    /// a corner past the grid's reach, and any other world, are read from the world each time; once the workers end, the
+    /// corners are read from the world again (a world changed since is read as it is now).</summary>
+    [Fact]
+    public void TheWorkersCornerGridGivesTheSameHeightsToTheBitReadingEachCornerOnce()
+    {
+        var world = new PatchWorld();
+        var random = new System.Random(11);
+        var points = new List<Vector2>();
+        for (int i = 0; i < 20000; i++) points.Add(new Vector2((float)(random.NextDouble() * 2000 - 1000), (float)(random.NextDouble() * 2000 - 1000)));
+        foreach (float x in new[] { -32f, 32f, 31.999f, 32.001f, -1056f, 992f })
+            foreach (float z in new[] { -32f, 96f, 95.999f, -96.001f })
+                points.Add(new Vector2(x, z));
+        var plain = points.Select(p => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world)).ToList();
+        long plainReads = world.BiomeReads;
+        Assert.Equal(4L * points.Count, plainReads);
+        var other = new PatchWorld();
+        var grid = BiomeBlendedHeight.CornerGrid.Begin(world);
+        try
+        {
+            world.BiomeReads = 0;
+            for (int i = 0; i < points.Count; i++)
+                Assert.Equal(plain[i], BiomeBlendedHeight.GetBlendedHeight(points[i].x, points[i].y, world));
+            int Heightmap(float w) => Mathf.FloorToInt((w + RoadConstants.HalfZoneSize) / RoadConstants.ZoneSize);
+            long corners = points.Select(p => (Heightmap(p.x), Heightmap(p.y)))
+                .SelectMany(h => new[] { h, (h.Item1 + 1, h.Item2), (h.Item1, h.Item2 + 1), (h.Item1 + 1, h.Item2 + 1) }).Distinct().Count();
+            Assert.Equal(corners, world.BiomeReads);
+            // Asked again: nothing read.
+            foreach (var p in points.Take(100)) BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world);
+            Assert.Equal(corners, world.BiomeReads);
+            // Past the reach: read from the world, the same height.
+            float far = (BiomeBlendedHeight.CornerGrid.Reach + 5) * RoadConstants.ZoneSize;
+            long before = world.BiomeReads;
+            float farHeight = BiomeBlendedHeight.GetBlendedHeight(far, 10f, world);
+            Assert.Equal(before + 4, world.BiomeReads);
+            Assert.Equal(farHeight, BiomeBlendedHeight.GetBlendedHeight(far, 10f, world, new BiomeBlendedHeight.Corners()));
+            // Another world: its own corners, each time.
+            BiomeBlendedHeight.GetBlendedHeight(100f, 100f, other);
+            Assert.Equal(4L, other.BiomeReads);
+        }
+        finally { BiomeBlendedHeight.CornerGrid.End(grid); }
+        world.BiomeReads = 0;
+        BiomeBlendedHeight.GetBlendedHeight(points[0].x, points[0].y, world);
+        Assert.Equal(4L, world.BiomeReads);
+    }
+
+    /// <summary>With LowMemoryGeneration on the workers hold no corner grid: every corner is read from the world.</summary>
+    [Fact]
+    public void LowMemoryGenerationHoldsNoCornerGrid()
+    {
+        var world = new PatchWorld();
+        bool low = GenerationMemory.Low;
+        GenerationMemory.Low = true;
+        BiomeBlendedHeight.CornerGrid? grid = null;
+        try
+        {
+            grid = BiomeBlendedHeight.CornerGrid.Begin(world);
+            Assert.Null(grid);
+            BiomeBlendedHeight.GetBlendedHeight(100f, 100f, world);
+            BiomeBlendedHeight.GetBlendedHeight(100f, 100f, world);
+            Assert.Equal(8L, world.BiomeReads);
+        }
+        finally { BiomeBlendedHeight.CornerGrid.End(grid); GenerationMemory.Low = low; }
+    }
+
+    /// <summary>While a generation's workers run (BiomeBlendedHeight.BeginHeights), a point read again is answered with the
+    /// height read the first time, to the bit, without asking the world; points in the same slot replace each other; before
+    /// the opening, after the closing, for another world and with LowMemoryGeneration on, the world is asked each time.</summary>
+    [Fact]
+    public void TheWorkersHeightMemoGivesTheSameHeightsToTheBitAskingTheWorldOnce()
+    {
+        var world = new PatchWorld();
+        var random = new System.Random(5);
+        var points = new List<Vector2>();
+        for (int i = 0; i < 100000; i++) points.Add(new Vector2((float)(random.NextDouble() * 4000 - 2000), (float)(random.NextDouble() * 4000 - 2000)));
+        points.Add(new Vector2(0f, 0f)); points.Add(new Vector2(-0f, 0f)); points.Add(new Vector2(32f, -32f));
+        var plain = new List<float>();
+        foreach (var p in points) plain.Add(BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world));
+        var window = BiomeBlendedHeight.BeginHeights(world);
+        try
+        {
+            for (int round = 0; round < 2; round++)
+                for (int i = 0; i < points.Count; i++)
+                    Assert.Equal(Bits(plain[i]), Bits(BiomeBlendedHeight.GetBlendedHeight(points[i].x, points[i].y, world)));
+            world.BiomeReads = 0;
+            BiomeBlendedHeight.GetBlendedHeight(points[points.Count - 1].x, points[points.Count - 1].y, world);
+            Assert.Equal(0L, world.BiomeReads);
+            var other = new PatchWorld();
+            BiomeBlendedHeight.GetBlendedHeight(points[points.Count - 1].x, points[points.Count - 1].y, other);
+            BiomeBlendedHeight.GetBlendedHeight(points[points.Count - 1].x, points[points.Count - 1].y, other);
+            Assert.Equal(8L, other.BiomeReads);
+        }
+        finally { BiomeBlendedHeight.EndHeights(window); }
+        world.BiomeReads = 0;
+        BiomeBlendedHeight.GetBlendedHeight(points[points.Count - 1].x, points[points.Count - 1].y, world);
+        Assert.Equal(4L, world.BiomeReads);
+        bool low = GenerationMemory.Low;
+        GenerationMemory.Low = true;
+        BiomeBlendedHeight.HeightsWindow? lowWindow = null;
+        try
+        {
+            lowWindow = BiomeBlendedHeight.BeginHeights(world);
+            world.BiomeReads = 0;
+            BiomeBlendedHeight.GetBlendedHeight(5f, 5f, world);
+            BiomeBlendedHeight.GetBlendedHeight(5f, 5f, world);
+            Assert.Equal(8L, world.BiomeReads);
+        }
+        finally { BiomeBlendedHeight.EndHeights(lowWindow); GenerationMemory.Low = low; }
+    }
+
+    private static int Bits(float f) => System.BitConverter.ToInt32(System.BitConverter.GetBytes(f), 0);
+
+    /// <summary>A world double changed between two generations' workers is read as it is now: the memo is forgotten at each
+    /// opening.</summary>
+    [Fact]
+    public void TheHeightMemoForgetsAWorldChangedBetweenOpenings()
+    {
+        var world = new ShiftWorld();
+        var first = BiomeBlendedHeight.BeginHeights(world);
+        try { Assert.Equal(1f, BiomeBlendedHeight.GetBlendedHeight(10f, 10f, world)); }
+        finally { BiomeBlendedHeight.EndHeights(first); }
+        world.Ground = 2f;
+        var second = BiomeBlendedHeight.BeginHeights(world);
+        try { Assert.Equal(2f, BiomeBlendedHeight.GetBlendedHeight(10f, 10f, world)); }
+        finally { BiomeBlendedHeight.EndHeights(second); }
+    }
+
+    /// <summary>A cancelled run that ends after the next run opened its windows closes only its own: the next run keeps its
+    /// corner grid and its height memo until it ends itself.</summary>
+    [Fact]
+    public void ARunThatEndsAfterTheNextBeginsClosesOnlyItsOwnWindows()
+    {
+        var world = new PatchWorld();
+        // The height memo alone (no corner grid open, so each read the world answers asks four corner biomes).
+        var heightsA = BiomeBlendedHeight.BeginHeights(world);
+        var heightsB = BiomeBlendedHeight.BeginHeights(world);
+        try
+        {
+            BiomeBlendedHeight.EndHeights(heightsA);
+            world.BiomeReads = 0;
+            BiomeBlendedHeight.GetBlendedHeight(123.5f, -77.25f, world);
+            BiomeBlendedHeight.GetBlendedHeight(123.5f, -77.25f, world);
+            Assert.Equal(4L, world.BiomeReads);
+        }
+        finally { BiomeBlendedHeight.EndHeights(heightsB); }
+        world.BiomeReads = 0;
+        BiomeBlendedHeight.GetBlendedHeight(123.5f, -77.25f, world);
+        Assert.Equal(4L, world.BiomeReads);
+        // The corner grid alone.
+        var gridA = BiomeBlendedHeight.CornerGrid.Begin(world);
+        var gridB = BiomeBlendedHeight.CornerGrid.Begin(world);
+        try
+        {
+            Assert.NotNull(gridB);
+            BiomeBlendedHeight.CornerGrid.End(gridA);
+            Assert.Same(gridB, BiomeBlendedHeight.CornerGrid.For(world));
+        }
+        finally { BiomeBlendedHeight.CornerGrid.End(gridB); }
+        Assert.Null(BiomeBlendedHeight.CornerGrid.For(world));
+    }
+
+    /// <summary>A world whose four heightmap corners round (0, 0) are the biomes it is given, and which counts its biome
+    /// height asks.</summary>
+    private sealed class CornerWorld : WorldGenerator
+    {
+        public Heightmap.Biome[] Corners = new Heightmap.Biome[4];
+        public long HeightAsks, BiomeReads;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false)
+        {
+            BiomeReads++;
+            return Corners[(wx > 0f ? 1 : 0) + (wy > 0f ? 2 : 0)];
+        }
+        public override float GetBiomeHeight(Heightmap.Biome biome, float wx, float wy, out Color mask, bool preGeneration = false, bool riverPreDN = true)
+        {
+            HeightAsks++;
+            mask = default;
+            return (int)biome % 1000 * 1.3f + wx * 0.11f - wy * 0.05f;
+        }
+        public override float GetHeight(float wx, float wy) => 0f;
+    }
+
+    /// <summary>The blend asks the world for each distinct corner biome's height once, and gives the bilinear blend of
+    /// all four corners' heights, to the bit, for every way the four corners can share biomes.</summary>
+    [Fact]
+    public void ABorderPointAsksEachDistinctCornerBiomeOnce()
+    {
+        var biomes = new[] { Heightmap.Biome.Meadows, Heightmap.Biome.Swamp, Heightmap.Biome.Mountain, Heightmap.Biome.BlackForest };
+        var world = new CornerWorld();
+        int patterns = 0;
+        for (int a = 0; a < 4; a++)
+            for (int b = 0; b < 4; b++)
+                for (int c = 0; c < 4; c++)
+                    for (int d = 0; d < 4; d++)
+                    {
+                        world.Corners = new[] { biomes[a], biomes[b], biomes[c], biomes[d] };
+                        int distinct = world.Corners.Distinct().Count();
+                        foreach (var (x, z) in new[] { (3.5f, -7.25f), (-20f, 20f), (0.5f, 0.5f), (-31f, 31.5f) })
+                        {
+                            world.HeightAsks = 0;
+                            float height = BiomeBlendedHeight.GetBlendedHeight(x, z, world);
+                            Assert.Equal(distinct, world.HeightAsks);
+                            // Every corner's height asked, blended as the game blends them.
+                            float H(int i) => world.GetBiomeHeight(world.Corners[i], x, z, out _);
+                            float S(float t) { t = Mathf.Clamp01(t); return t * t * (3f - 2f * t); }
+                            float tx = S((x + 32f) / 2f / 32f), tz = S((z + 32f) / 2f / 32f);
+                            float expected = distinct == 1 ? H(0) : Mathf.Lerp(Mathf.Lerp(H(0), H(1), tx), Mathf.Lerp(H(2), H(3), tx), tz);
+                            Assert.Equal(Bits(expected), Bits(height));
+                        }
+                        patterns++;
+                    }
+        Assert.Equal(256, patterns);
+    }
+
+    /// <summary>A biome value with its top bit set (a mod's, past what the game declares) is not kept in the workers' corner
+    /// grid, whose slots hold a biome shifted left by one: it is read from the world each time and comes back whole.</summary>
+    [Fact]
+    public void TheCornerGridDoesNotKeepATopBitBiome()
+    {
+        var top = (Heightmap.Biome)unchecked((int)0x80000000);
+        var world = new CornerWorld { Corners = new[] { top, top, Heightmap.Biome.Meadows, Heightmap.Biome.Meadows } };
+        float plain = BiomeBlendedHeight.GetBlendedHeight(5f, 5f, world);
+        var grid = BiomeBlendedHeight.CornerGrid.Begin(world);
+        try
+        {
+            Assert.NotNull(grid);
+            world.BiomeReads = 0;
+            Assert.Equal(Bits(plain), Bits(BiomeBlendedHeight.GetBlendedHeight(5f, 5f, world)));
+            Assert.Equal(4L, world.BiomeReads);
+            // Asked again: the two Meadows corners come from the grid, the two top-bit ones from the world.
+            Assert.Equal(Bits(plain), Bits(BiomeBlendedHeight.GetBlendedHeight(5f, 5f, world)));
+            Assert.Equal(6L, world.BiomeReads);
+        }
+        finally { BiomeBlendedHeight.CornerGrid.End(grid); }
+    }
+
+    private sealed class ShiftWorld : WorldGenerator
+    {
+        public float Ground = 1f;
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+        public override float GetBiomeHeight(Heightmap.Biome biome, float wx, float wy, out Color mask, bool preGeneration = false, bool riverPreDN = true)
+        { mask = default; return Ground; }
+        public override float GetHeight(float wx, float wy) => Ground;
     }
 
     /// <summary>

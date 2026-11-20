@@ -50,16 +50,14 @@ public static class RoadRockPolicy
         return (first, last);
     }
 
-    public const Heightmap.Biome SupportedBiomes = Heightmap.Biome.Mountain |
-        Heightmap.Biome.Plains | Heightmap.Biome.BlackForest | Heightmap.Biome.Meadows | Heightmap.Biome.Swamp;
-
     /// <summary>
-    /// Whether a rock standing here may be carved or removed at all: never in
-    /// a zone explored before the road network reached the world
-    /// (NetworkCutoff), where the rocks are the players' landscape.
+    /// Whether a rock whose body spans <paramref name="min"/> to <paramref name="max"/> (its colliders' bounds) may be carved
+    /// or removed at all: never where any of it is in a zone explored before the road network reached the world
+    /// (NetworkCutoff.ExcludesAny), where the rocks are the players' landscape, whichever side of the border its root is on.
     /// The one owner of which rocks a road clears or carves (docs/OWNERS.md).
     /// </summary>
-    public static bool MayTouch(UnityEngine.Vector3 position) => !NetworkCutoff.Excludes(ZoneSystem.GetZone(position));
+    public static bool MayTouch(UnityEngine.Vector3 min, UnityEngine.Vector3 max) =>
+        !NetworkCutoff.ExcludesAny(new UnityEngine.Vector2(min.x, min.z), new UnityEngine.Vector2(max.x, max.z));
 
     /// <summary>A zone is 64 m across: 46 m from its centre reaches its corners.</summary>
     public const float ZoneCornerReach = 46f;
@@ -71,8 +69,61 @@ public static class RoadRockPolicy
     /// zone is not one NetworkCutoff leaves as the players found it.
     /// </summary>
     public static bool ZoneNeedsLook(Vector2s zone, UnityEngine.Vector3 zoneCentre) =>
-        MayTouch(zoneCentre) &&
+        MayTouch(zoneCentre, zoneCentre) &&
         (RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0 || StructurePlans.AnyStructureNear(zoneCentre, ZoneCornerReach));
+
+    /// <summary>Squared distance on the ground plane (the live rock pass orders its zones by their distance from the player).</summary>
+    public static float FlatDistanceSquared(float dx, float dz) => dx * dx + dz * dz;
+
+    /// <summary>The order of the live rock pass: of the zones that still need a look, the nearest the player first, then the next
+    /// nearest, as long as each probe leaves no carves to run. Candidates are taken in order of their
+    /// <paramref name="distancesSquared"/> (ties by list order); each is asked <paramref name="ready"/> at most once, in that order
+    /// (it is where a zone not needing a look is marked done), and a ready one is probed. A probe that returns true left carves
+    /// pending (they run over the following frames) and ends the chain; one that returns false (nothing to carve) lets the next
+    /// ready zone be probed in the same tick, while the tick is inside <paramref name="budgetMs"/> (<see cref="CarvesMoreThisFrame"/>:
+    /// at least one probe). <paramref name="order"/> is scratch. Returns how many zones were probed.</summary>
+    public static int ProbeNearestFirst(IReadOnlyList<float> distancesSquared, List<int> order, System.Func<int, bool> ready,
+        System.Func<int, bool> probe, System.Func<double> elapsedMs, double budgetMs)
+    {
+        order.Clear();
+        for (int i = 0; i < distancesSquared.Count; i++) order.Add(i);
+        order.Sort((a, b) =>
+        {
+            int c = distancesSquared[a].CompareTo(distancesSquared[b]);
+            return c != 0 ? c : a.CompareTo(b);
+        });
+        int probed = 0;
+        foreach (int i in order)
+        {
+            if (probed > 0 && !CarvesMoreThisFrame(probed, elapsedMs(), budgetMs)) break;
+            if (!ready(i)) continue;
+            probed++;
+            if (probe(i)) break;
+        }
+        return probed;
+    }
+
+    /// <summary>Squared ground distance from (<paramref name="x"/>, <paramref name="z"/>) to the nearest of the
+    /// <paramref name="references"/> (the connected players' reference positions); to the world centre when there are none.</summary>
+    public static float NearestReferenceDistanceSquared(IReadOnlyList<(float x, float z)> references, float x, float z)
+    {
+        if (references.Count == 0) return FlatDistanceSquared(x, z);
+        float best = float.PositiveInfinity;
+        for (int i = 0; i < references.Count; i++)
+            best = System.Math.Min(best, FlatDistanceSquared(x - references[i].x, z - references[i].z));
+        return best;
+    }
+
+    /// <summary>The server bake's zone queue order: <paramref name="zones"/> sorted nearest first by
+    /// <paramref name="distanceSquared"/> (the zone's distance to the nearest player, or to the world centre with none);
+    /// ties keep their list order.</summary>
+    public static void SortNearestFirst<T>(List<T> zones, System.Func<T, float> distanceSquared)
+    {
+        var keyed = new List<(float d, int i, T zone)>(zones.Count);
+        for (int i = 0; i < zones.Count; i++) keyed.Add((distanceSquared(zones[i]), i, zones[i]));
+        keyed.Sort((a, b) => { int c = a.d.CompareTo(b.d); return c != 0 ? c : a.i.CompareTo(b.i); });
+        for (int i = 0; i < keyed.Count; i++) zones[i] = keyed[i].zone;
+    }
 
     /// <summary>How many narrow capsules across the road a count of what blocks it uses (the viaduct parapet's overlap rule).</summary>
     public const int Slots = 5;
@@ -104,15 +155,10 @@ public static class RoadRockPolicy
 
     public static bool IsNaturalBoulder(string name) => NaturalBoulders.Contains(name);
 
-    // The deposits among them hold ore: the road takes only their chunks in its way, as a pickaxe would.
-    private static readonly HashSet<string> ResourceDeposits = new() { "rock4_copper", "silvervein", "rock3_silver" };
-
-    /// <summary>A copper or silver deposit (judged by its policy name, so a fractured one counts as its deposit).</summary>
-    public static bool IsResourceDeposit(string name) => ResourceDeposits.Contains(name);
-
     /// <summary>Whether carving removes a clearable rock in the road whole rather than cutting it: a small rock is
-    /// (<see cref="CarveMinSize"/>), a deposit never, whatever its size.</summary>
-    public static bool CarveRemovesWhole(string name, float size) => size < CarveMinSize && !IsResourceDeposit(name);
+    /// (<see cref="CarveMinSize"/>, measured over the whole surviving rock: RoadRockCarve.SurvivingSize). A copper or
+    /// silver deposit follows the same rule: no ore is kept back or dropped for it.</summary>
+    public static bool CarveRemovesWhole(float size) => size < CarveMinSize;
 
     /// <summary>Whether a frame applying the carves a pass left for later carves one more: the first always (a carve
     /// cannot be split, and the queue must move), more only while the frame is inside <paramref name="budgetMs"/>.</summary>
@@ -158,32 +204,63 @@ public static class RoadRockPolicy
     public static bool ReleasesWaiting(Vector2s waitedFrom, int waitedVersion, Vector2s playerZoneNow, int versionNow) =>
         waitedFrom.x != playerZoneNow.x || waitedFrom.y != playerZoneNow.y || waitedVersion != versionNow;
 
-    /// <summary>Whether a rock a road takes may be removed whole at all (a rock the carve cannot cut): a deposit
-    /// may not, so its ore is never lost with it; it is carved or kept. A deck's rock goes whole regardless (<see cref="HowTaken"/>).</summary>
-    public static bool MayRemoveWhole(string name) => !IsResourceDeposit(name);
-
     /// <summary>What the pass does with a rock it judged.</summary>
     public enum Taking { Keep, Carve, RemoveWhole }
 
     /// <summary>
+    /// Whether a piece of the world's vegetation rests on a rock: the first solid under it, read straight down at its own position
+    /// from the top of its own body (<paramref name="downward"/>, nearest first) past its own colliders (<paramref name="own"/>), is
+    /// that rock's (<paramref name="ofTheRock"/>), not the terrain nor another object. The game stands vegetation on the first solid
+    /// under its position as it places it (snapped to the static solid there), so this is the rock it was stood on; one standing on
+    /// the ground beside a rock, or under a rock's overhang, meets the ground first. No distance, no margin: what lies under it
+    /// decides. A rock removed whole takes what rests on it (RoadRockProbe), so nothing is left standing in the air.
+    /// </summary>
+    public static bool RestsOn<T>(IEnumerable<T> downward, System.Func<T, bool> own, System.Func<T, bool> ofTheRock)
+    {
+        foreach (T hit in downward)
+        {
+            if (own(hit)) continue;
+            return ofTheRock(hit);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Why a piece of vegetation resting on a rock removed whole (<see cref="RestsOn"/>) stays, or null where it goes with the rock:
+    /// only the world's own vegetation (<paramref name="vegetation"/>, the zone system's list) that is no rock itself (a rock is the
+    /// rock clearing's, <see cref="IsClearableRock(string)"/>), never a location's part (<paramref name="locationChild"/>) nor a
+    /// player's piece (<paramref name="piece"/>), never in a zone the network leaves as it is (<paramref name="mayTouch"/>,
+    /// <see cref="MayTouch"/>), and only by its owner (<paramref name="owner"/>), as the rock under it is.
+    /// </summary>
+    public static string? KeptOffItsRock(string name, ICollection<string> vegetation, bool locationChild, bool piece, bool mayTouch, bool owner) =>
+        !vegetation.Contains(name) ? "not the world's vegetation"
+        : IsClearableRock(name) ? "a rock"
+        : locationChild ? "a location's part"
+        : piece ? "a piece"
+        : !mayTouch ? "zone explored before the road network"
+        : !owner ? "not owner"
+        : null;
+
+    /// <summary>
     /// How the pass (RoadRockProbe) takes a rock it judged. One a deck's clearance met (<paramref name="onDeck"/>,
-    /// <see cref="RockClearance.WholeOnly"/>) and the deck takes (<see cref="DeckTakes"/>) goes whole, a deposit too: a rock
-    /// through a deck is never carved, nor kept for its biome or its ore. Otherwise a rock the road's clearing takes
-    /// (<paramref name="clears"/>) is carved, or removed whole when small (<see cref="CarveRemovesWhole"/>) or with no network
-    /// view to carve, a deposit then kept (<see cref="MayRemoveWhole"/>); anything else is kept.
+    /// <see cref="RockClearance.WholeOnly"/>) and the deck takes (<see cref="DeckTakes"/>) goes whole: a rock through a deck
+    /// is never carved, nor kept for its biome. Otherwise a rock the road's clearing takes (<paramref name="clears"/>) is
+    /// carved, or removed whole when small (<see cref="CarveRemovesWhole"/>) or with no network view to carve; anything
+    /// else is kept. A deposit is a rock like any other here. A Location's stakes the clearing takes (<paramref name="stakes"/>,
+    /// LocationRock.ClearedForAWay) go whole: they are no rock to carve.
     /// The one owner of which rocks a road clears or carves (docs/OWNERS.md).
     /// </summary>
-    public static Taking HowTaken(bool clears, bool deckTakes, bool onDeck, string judgedAs, float size, bool networked)
+    public static Taking HowTaken(bool clears, bool deckTakes, bool onDeck, float size, bool networked, bool stakes = false)
     {
         if (onDeck && deckTakes) return Taking.RemoveWhole;
         if (!clears) return Taking.Keep;
-        if (networked && !CarveRemovesWhole(judgedAs, size)) return Taking.Carve;
-        return MayRemoveWhole(judgedAs) ? Taking.RemoveWhole : Taking.Keep;
+        if (stakes) return Taking.RemoveWhole;
+        return networked && !CarveRemovesWhole(size) ? Taking.Carve : Taking.RemoveWhole;
     }
 
     /// <summary>
     /// Whether a deck's clearance (a bridge's or a viaduct's, <see cref="RockClearance.WholeOnly"/>) takes a rock it meets:
-    /// any rock the clearing knows (a boulder, a deposit, a Mistlands rock or cliff, with <paramref name="mist"/> and
+    /// any rock the clearing knows (a boulder, a copper or silver deposit, a Mistlands rock or cliff, with <paramref name="mist"/> and
     /// <paramref name="cliffs"/>), in any biome, whether or not the world's vegetation lists it -- unless a location holds it (a
     /// part of a location, or a location's own rock on its approach: <paramref name="protectedLocation"/>), a player built it, or
     /// another peer owns it (<see cref="CanClear"/>'s same holds). The biome rule kept a coastal rock in the Mistlands
@@ -380,22 +457,6 @@ public static class RoadRockPolicy
     }
 
     /// <summary>
-    /// The surface a road point's clearance stands on, and whether the point is
-    /// probed at all. A pass over loaded zones skips a point with no ground
-    /// under it (the terrain collider is not built yet) and looks again later.
-    /// A zone the server generates for a remote peer has only its own terrain,
-    /// and nothing looks at its objects again: a rock of that zone reaching over
-    /// the road in the zone next door is judged then or never, so the clearance
-    /// stands on the road's own stored height, the surface it levels to (as the
-    /// carve already does in RoadRockCarve.PointsNear).
-    /// </summary>
-    public static bool ClearanceSurface(bool haveGround, float ground, float roadHeight, bool generating, out float surface)
-    {
-        surface = haveGround ? ground : roadHeight;
-        return haveGround || generating;
-    }
-
-    /// <summary>
     /// How far round a zone's centre a pass over that zone's own objects must
     /// look for road points: <paramref name="zoneReach"/> (its corners), or
     /// further when one of its rocks reaches out of it. A clearance can meet a
@@ -428,30 +489,23 @@ public static class RoadRockPolicy
         return false;
     }
 
-    public static bool CanClear(string name, bool registeredVegetation, Heightmap.Biome biome,
+    /// <summary>A natural boulder (or copper or silver deposit) the clearing takes: in every biome alike (the owner's decision of
+    /// 14 Nov 2026), so a rock at a biome border is judged as its road's.</summary>
+    public static bool CanClear(string name, bool registeredVegetation,
         bool protectedLocation, bool playerPiece, bool hasNetworkView, bool validView, bool owned) =>
-        BoulderInBiome(name, biome) && registeredVegetation && Free(protectedLocation, playerPiece, hasNetworkView, validView, owned);
-
-    /// <summary>A natural boulder (or copper or silver deposit) standing in a biome whose boulders are cleared.</summary>
-    private static bool BoulderInBiome(string name, Heightmap.Biome biome) => IsNaturalBoulder(name) && (biome & SupportedBiomes) != 0;
-
-    /// <summary>A Mistlands rock (with <paramref name="rocks"/>) or cliff (with <paramref name="cliffs"/>) standing in the Mistlands.</summary>
-    private static bool MistlandsRockInBiome(string name, bool rocks, bool cliffs, Heightmap.Biome biome) =>
-        IsMistlandsRock(name, rocks, cliffs) && (biome & Heightmap.Biome.Mistlands) != 0;
+        IsNaturalBoulder(name) && registeredVegetation && Free(protectedLocation, playerPiece, hasNetworkView, validView, owned);
 
     /// <summary>The automatic pass (RoadRockClearing) clears Mistlands rocks and cliffs as well as boulders.</summary>
     public const bool PassClearsMistlandsRocks = true;
     public const bool PassClearsMistlandsCliffs = true;
 
     /// <summary>
-    /// Whether the automatic rock clearing takes a rock of the world's own vegetation
-    /// standing on a road in <paramref name="biome"/>: the rule of <see cref="CanClear"/> and
-    /// <see cref="CanClearMistlands"/> for a rock no player or location holds. A rock it would not take is kept off the
-    /// road with the vegetation instead.
+    /// Whether the automatic rock clearing takes a rock of the world's own vegetation standing on a road, in any biome:
+    /// the rule of <see cref="CanClear"/> and <see cref="CanClearMistlands"/> for a rock no player or location holds.
     /// The one owner of which rocks a road clears or carves (docs/OWNERS.md).
     /// </summary>
-    public static bool ClearingTakes(string name, Heightmap.Biome biome) =>
-        BoulderInBiome(name, biome) || MistlandsRockInBiome(name, PassClearsMistlandsRocks, PassClearsMistlandsCliffs, biome);
+    public static bool ClearingTakes(string name) =>
+        IsNaturalBoulder(name) || IsMistlandsRock(name, PassClearsMistlandsRocks, PassClearsMistlandsCliffs);
 
     // Mistlands rocks and cliffs are recognised separately: the cliffs are
     // outcrops tens of metres across, not boulders.
@@ -460,7 +514,9 @@ public static class RoadRockPolicy
     public static bool IsMistlandsRock(string name, bool rocks, bool cliffs) =>
         (rocks && IsMistlandsBoulder(name)) || (cliffs && IsMistlandsCliff(name));
 
-    public static bool CanClearMistlands(string name, bool rocks, bool cliffs, bool registeredVegetation, Heightmap.Biome biome,
+    /// <summary>A Mistlands rock (with <paramref name="rocks"/>) or cliff (with <paramref name="cliffs"/>) the clearing takes,
+    /// in every biome alike.</summary>
+    public static bool CanClearMistlands(string name, bool rocks, bool cliffs, bool registeredVegetation,
         bool protectedLocation, bool playerPiece, bool hasNetworkView, bool validView, bool owned) =>
-        MistlandsRockInBiome(name, rocks, cliffs, biome) && registeredVegetation && Free(protectedLocation, playerPiece, hasNetworkView, validView, owned);
+        IsMistlandsRock(name, rocks, cliffs) && registeredVegetation && Free(protectedLocation, playerPiece, hasNetworkView, validView, owned);
 }

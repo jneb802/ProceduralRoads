@@ -10,7 +10,7 @@ public class LocationProtectionTests : IDisposable
 {
     private readonly ValheimWorldScope _world = new ValheimWorldScope();
     public LocationProtectionTests() { RoadLocationProtection.Reset(); RoadLocationProtection.Source = null; }
-    public void Dispose() { RoadLocationProtection.Reset(); RoadLocationProtection.Source = null; RoadSpatialGrid.Clear(); _world.Dispose(); }
+    public void Dispose() { PlacedLocations.Reset(); RoadLocationProtection.Reset(); RoadLocationProtection.Source = null; RoadSpatialGrid.Clear(); _world.Dispose(); }
     private sealed class Flat : WorldGenerator { public override float GetHeight(float x, float z) => 60f; }
     private static void Pit(float radius = 12) => RoadLocationProtection.Set(new[] {
         new RoadLocationProtection.Footprint(new Vector2(0, 0), radius) });
@@ -34,7 +34,7 @@ public class LocationProtectionTests : IDisposable
     public void LongDiagonalCannotJumpOverASmallFootprint()
     {
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(8,4), 1) });
-        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(0,0), new Vector2(16,8), 0, null, null));
+        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(0,0), new Vector2(16,8), 0, default));
     }
 
     [Fact]
@@ -43,8 +43,10 @@ public class LocationProtectionTests : IDisposable
         RoadLocationProtection.Set(new[] {
             new RoadLocationProtection.Footprint(new Vector2(0,0), 10),
             new RoadLocationProtection.Footprint(new Vector2(40,0), 10) });
-        Assert.False(RoadLocationProtection.BlocksSegment(new Vector2(0,0), new Vector2(8,0),4,new Vector2(0,0),null));
-        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(24,0), new Vector2(56,0),4,new Vector2(0,0),null));
+        // The exempt location is on the preload list (RoadLocationProtection.Enterable).
+        PlacedLocations.Preload(new Vector2(0,0));
+        Assert.False(RoadLocationProtection.BlocksSegment(new Vector2(0,0), new Vector2(8,0),4,new RoadLocationProtection.Targets(new Vector2(0,0),null)));
+        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(24,0), new Vector2(56,0),4,new RoadLocationProtection.Targets(new Vector2(0,0),null)));
     }
 
     [Fact]
@@ -52,7 +54,7 @@ public class LocationProtectionTests : IDisposable
     {
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(-128,-128), 8) });
         Assert.True(RoadLocationProtection.Contains(new Vector2(-129,-129)));
-        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(-145,-117),new Vector2(-110,-117),4,null,null));
+        Assert.True(RoadLocationProtection.BlocksSegment(new Vector2(-145,-117),new Vector2(-110,-117),4,default));
         Assert.False(RoadLocationProtection.Contains(new Vector2(-128,-117)));
         Assert.Equal(8, RoadLocationProtection.RadiusAt(new Vector2(-128,-128),2));
     }

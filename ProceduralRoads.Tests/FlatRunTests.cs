@@ -33,7 +33,7 @@ public class FlatRunTests : IDisposable
     private static StairPlan Plan(Vector2 a, Vector2 b, Func<float, float, float> ground, List<Vector2>? corridor)
     {
         MethodInfo plan = typeof(RoadStairRuns).GetMethod("Plan", BindingFlags.NonPublic | BindingFlags.Static)!;
-        object?[] given = { a, b, StairKit.Stone, ground, null, null, corridor };
+        object?[] given = { a, b, StairKit.Stone, RoadStairRuns.LayoutGround.Own(ground), null, null, corridor };
         var args = new object?[plan.GetParameters().Length];
         for (int i = 0; i < args.Length; i++) args[i] = i < given.Length ? given[i] : Type.Missing;
         return (StairPlan)plan.Invoke(null, args)!;
@@ -101,15 +101,19 @@ public class FlatRunTests : IDisposable
     }
 
     /// <summary>A trench (valley) or a wall (ridge) 24 m deep or high across the whole world, faces of 1.2 no road climbs,
-    /// level ground at 60 m either side (the valley floor above the water); sea past 200 m.</summary>
+    /// level ground at 60 m either side (the valley floor above the water); sea past 200 m. The trench's floor is 20 m wide,
+    /// the wall's top 4 m: 20 m wide, its staircases' tops joined across it walked 10 rows level on flat ground, longer than
+    /// a rest and over no dip (StairLayout.PastARest), and no road crossed it; 8 m wide, its road was cut into it as a trench.</summary>
     private sealed class AcrossWorld : WorldGenerator
     {
         public float Sign;
+        /// <summary>The wall's flat top, metres wide.</summary>
+        public float Top = 4f;
         public override float GetHeight(float wx, float wy)
         {
             if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
             float d = Mathf.Abs(wx - 40f);
-            return 60f + Sign * Mathf.Clamp((30f - d) * 1.2f, 0f, 24f);
+            return 60f + Sign * Mathf.Clamp(((Sign > 0f ? 20f + Top / 2f : 30f) - d) * 1.2f, 0f, 24f);
         }
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
         public override int GetSeed() => 95;
@@ -146,5 +150,49 @@ public class FlatRunTests : IDisposable
 
         Assert.NotEmpty(off);
         Assert.Equal(off, Staircases(1f, refuse: true));
+    }
+
+    /// <summary>
+    /// A ridge with a wide flat top, under the rule that no staircase walks level further than a rest (StairLayout.PastARest),
+    /// pinned as the generator does it today. A top 20 m wide (the wall's before the rule) and one 32 m wide, both wider than a
+    /// rest, are crossed as staircase, road, staircase: a staircase up each face to its rim and a road across the top between
+    /// them (RoadStairRuns.RoadOverRidgeTops), never two staircases met on the crest (a boardwalk across the top a road can do
+    /// the work of) nor one over both faces. Each staircase's level runs, read with the other's pieces as the road's final check
+    /// reads staircases met end to end (StairEnds.LevelRuns), are a rest at most.
+    /// </summary>
+    [Theory]
+    [InlineData(20f)]
+    [InlineData(32f)]
+    public void AWideFlatRidgeTopIsCrossedOnlyWideEnoughForARoadAcrossIt(float top)
+    {
+        RoadNetworkGenerator.Reset();
+        var world = new AcrossWorld { Sign = 1f, Top = top };
+        _scope.WithWorld(world);
+        typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!
+            .SetValue(null, new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f });
+        RoadStairRuns.ResetCache();
+
+        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-60f, 0f), 0f, new Vector2(140f, 0f), 0f, 4f, "across"));
+        Assert.Equal(2, StairStructures.Runs.Count);
+        float Ground(float x, float z) => world.GetHeight(x, z);
+        StairRun up = StairStructures.Runs[0], down = StairStructures.Runs[1];
+        foreach (StairRun run in StairStructures.Runs)
+        {
+            // Its pieces on one face: where the road meets its top (a ring's radius past its exit) may be the top's middle.
+            var walked = run.Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport).ToList();
+            Assert.True(walked.All(p => p.Position.x < 40f) || walked.All(p => p.Position.x > 40f), "a staircase across the top");
+            StairRun other = ReferenceEquals(run, up) ? down : up;
+            Assert.All(StairEnds.LevelRuns(run, Ground, other.Pieces), l => Assert.InRange(l.Rows, 1, StairLayout.RestFloors));
+        }
+        // Not met on the crest: their walked pieces further apart than a rest (a run's ends are its road's path points, and
+        // the road meets a top a ring's radius past its exit, so they may meet at the top's middle with the road between).
+        var faces = StairStructures.Runs.Select(r => r.Pieces.Where(p => p.Kind != StructurePieceKind.StairSupport).ToList()).ToList();
+        float gap = faces.Single(w => w.All(p => p.Position.x > 40f)).Min(p => p.Position.x)
+            - faces.Single(w => w.All(p => p.Position.x < 40f)).Max(p => p.Position.x);
+        Assert.True(gap > StairLayout.RestFloors * StairLayout.PieceRun, $"tops {gap:F1} m apart: met on the crest");
+        // And road across the top between them.
+        bool road = false;
+        for (float z = -60f; z <= 60f && !road; z += 1f) road = RoadSpatialGrid.TryGetRoadWithin(new Vector2(40f, z), 1f, out _);
+        Assert.True(road, "no road across the top");
     }
 }

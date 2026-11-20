@@ -31,17 +31,26 @@ namespace ProceduralRoads;
 /// The consequence for this mod: support decays GEOMETRICALLY up a pier, so
 /// the ceiling is a height, not a piece count, and no amount of extra
 /// structure underneath raises it.
+///
+/// <para><b>What each predictor here is</b> (decision 6p; docs/OWNERS.md, a structure's final support). None is a proven
+/// bound: each is a cheap <b>estimate</b> (column arithmetic under the stated assumptions: a support point straight down,
+/// no sideways sharing) or a <b>measured limit</b> (read in game on generated bridges, with its evidence), kept so the kit
+/// choice and the layouts stay cheap. The physical verdict is the support rule's reading of the pieces as laid
+/// (<see cref="SupportGraph.Settle"/>): every kit's selected candidate, stone and wooden, is read so before it is chosen
+/// (<see cref="BridgeStructures.CheckSupport"/>, each piece from its measured data, <see cref="BuriedPieces.DataOf"/>), and
+/// one it breaks a piece of is built in another kit that fits, else not at all (<see cref="BridgeStructures.KitAmong"/>);
+/// the wooden kits' measured ceiling is their estimate.</para>
 /// </summary>
 public static class BridgeSupport
 {
-    /// <summary>What one pole keeps of the support of the pole directly
+    /// <summary>Estimate input (confirmed in game to four figures, 0.7376 against 0.7375). What one pole keeps of the support of the pole directly
     /// beneath it. Directly beneath means the support point is straight down,
     /// so the angle lerp lands on its vertical loss exactly and no
     /// collider geometry enters into it.</summary>
     public static float ColumnStepFactor(float segment) =>
         1f - SupportGraph.Wood.VerticalLoss * (segment + SupportGraph.DistanceMargin);
 
-    /// <summary>Support at the top of a column of <paramref name="poles"/>
+    /// <summary>Estimate: an isolated column, which under-reads a bridge's lattice (<see cref="MeasuredCeiling"/>). Support at the top of a column of <paramref name="poles"/>
     /// poles whose foot is buried. One pole is the buried foot itself.</summary>
     public static float ColumnSupport(int poles, float segment)
     {
@@ -49,7 +58,7 @@ public static class BridgeSupport
         return SupportGraph.Wood.Max * Mathf.Pow(ColumnStepFactor(segment), poles - 1);
     }
 
-    /// <summary>How many poles a column can carry before its top pole is
+    /// <summary>Estimate, as <see cref="ColumnSupport"/>. How many poles a column can carry before its top pole is
     /// below <see cref="SupportGraph.Wood"/> Min and falls. Exact: it is the largest
     /// <c>n</c> with <c>100 * f^(n-1) &gt;= 10</c>.</summary>
     public static int MaxPoles(float segment)
@@ -67,7 +76,7 @@ public static class BridgeSupport
     /// <see cref="BridgeLayout.PierHeight"/> is measured: deck height above the
     /// channel bed.
     ///
-    /// <para>MEASURED IN GAME, not derived. The column arithmetic above is
+    /// <para>A measured limit: MEASURED IN GAME, not derived. The column arithmetic above is
     /// exact and confirmed to four figures, and it is still the wrong model
     /// for a bridge: <see cref="MeasuredCeiling"/> says why.</para>
     /// </summary>
@@ -109,6 +118,14 @@ public static class BridgeSupport
     /// and the beam is the weak link exactly as the derivation said. Only the
     /// number was wrong - which is the usual way, and the reason this constant
     /// is a measurement with its evidence attached rather than a formula.</para>
+    ///
+    /// <para>Read again 9 Nov 2026 (Valheim 1.0.21, a dedicated server: both railed kits as the solve lays them, their deck
+    /// 13, 15 and 17 m over the lowest ground, 30 m long): built piece by piece all six stood, every piece far over the
+    /// support rule's reading, because the game keeps what a piece first read off pieces laid after it at their most
+    /// (WearNTear's support cache). After their zone unloaded and loaded, its readings fell towards the rule's, and the
+    /// braced bridge 15 m tall lost two handrails and a deck plate over mid-span, each one the rule breaks; the 17 m ones
+    /// stood. Under this ceiling a wooden bridge is held as built, not always after a reload: the rule's reading, the state
+    /// after a reload, is the verdict the builder acts on (<see cref="BridgeStructures.KitAmong"/>).</para>
     /// </summary>
     public const float MeasuredCeiling = 18f;
 
@@ -117,14 +134,14 @@ public static class BridgeSupport
     public static float StoneStepFactor(float distance) => 1f - SupportGraph.Stone.VerticalLoss * (distance + SupportGraph.DistanceMargin);
 
     /// <summary>
-    /// A stone kit pier course (<see cref="BridgeLayout.StonePierBlock"/>, 2 x 1 x 1 m blocks) on the course under it:
+    /// Estimate (derived). A stone kit pier course (<see cref="BridgeLayout.StonePierBlock"/>, 2 x 1 x 1 m blocks) on the course under it:
     /// the courses are bonded, each block over the joint of the two under it, so its centre stands a metre up and half a
     /// metre off along and across from theirs (sqrt 1.5 m), the support point straight down on their top.
     /// </summary>
     public static float StoneCourseFactor => StoneStepFactor(Mathf.Sqrt(1.5f));
 
     /// <summary>
-    /// What an arch keeps of the pier course its tall end stands against: read in game on a stair held out from a face
+    /// A measured reading (one, in game). What an arch keeps of the pier course its tall end stands against: read in game on a stair held out from a face
     /// (cli_piece_support), a stone_arch 720 against a stone_pillar at 1000, its tall end on
     /// the pillar and nothing under it. A pier's top course is the weaker of the two courses beside the arch's tall end,
     /// so this is taken off it.
@@ -140,26 +157,31 @@ public static class BridgeSupport
     public static float StoneRailOnRailFactor => StoneStepFactor(Mathf.Sqrt(2f));
 
     /// <summary>
-    /// A floor, or a top course block, over a 6 m opening's open bay (<see cref="BridgeLayout.StoneBay.Open"/>): half on an
-    /// arch's crown, half over the open bay, its centre over the crown's end, a metre along and a metre up from the arch's
-    /// origin and half a metre across (sqrt 2.25 m). Its support point is straight down on the crown's flat top (the arch's
-    /// top collider runs its whole 2 m), so it keeps <see cref="StoneStepFactor"/> of that distance: 0.8 of the arch, more
-    /// than the railing over a crown keeps (<see cref="StoneOnArchFactor"/> then <see cref="StoneRailOnRailFactor"/>), so
-    /// the open bay leaves <see cref="StoneMaxPierCourses"/> as it was. Derived, not measured in game.
+    /// A top course block over a 6 m opening's open bay (<see cref="BridgeLayout.StoneBay.Open"/>): half on an arch's
+    /// crown, half over the open bay, its centre over the crown's end, a metre along and a metre up from the arch's origin and
+    /// half a metre across (sqrt 2.25 m). Its support point is straight down on the crown's flat top (the arch's top collider
+    /// runs its whole 2 m), so it keeps <see cref="StoneStepFactor"/> of that distance: 0.8 of the arch, more than the
+    /// railing over a crown keeps (<see cref="StoneOnArchFactor"/> then <see cref="StoneRailOnRailFactor"/>), so the open bay
+    /// leaves <see cref="StoneMaxPierCourses"/> as it was. Derived, not measured in game.
     /// </summary>
     public static float StoneOnCrownFactor => StoneStepFactor(1.5f);
 
     /// <summary>
-    /// The strip a stone deck ends on over a river's opening, on the crown of the half arch springing from the pier beside
-    /// it (<see cref="BridgeLayout.StoneNavigationBays"/>): a block laid across its lane over the arch's crown half, its
-    /// centre a metre up, half a metre along and half a metre across from the arch's origin (sqrt 1.5 m), the support point
-    /// straight down on the crown's flat top. It keeps more of the arch than the railing over an arch does
-    /// (<see cref="StoneOnArchFactor"/> then <see cref="StoneRailOnRailFactor"/>), so the opening leaves
-    /// <see cref="StoneMaxPierCourses"/> as it was. Derived, not measured in game.
+    /// A floor over a 6 m opening's open bay, between the crowns of the two arches either side. Neither crown is under its
+    /// centre: each of its two support points (the crowns' ends) lies a metre along and below it, at an angle, which alone
+    /// would lose nearly the horizontal loss. It is carried instead by the game's rule for two support points opposite each
+    /// other (<see cref="SupportGraph.OppositeDegrees"/>): the mean of the two points' worths, each the arch's support less
+    /// the vertical loss over the reach from the floor's centre to that arch's origin, two metres along, a metre up and half
+    /// a metre across (sqrt 5.25 m, plus <see cref="SupportGraph.DistanceMargin"/>): <see cref="StoneStepFactor"/> of that
+    /// reach. It keeps more of the arches than the railing over a crown keeps (<see cref="StoneOnArchFactor"/> then
+    /// <see cref="StoneRailOnRailFactor"/>), so the open bay leaves <see cref="StoneMaxPierCourses"/> as it was. Derived from
+    /// the support rule, read by it over a whole bridge (StoneBridgeTests), not measured in game.
     /// </summary>
-    public static float StoneStripOnCrownFactor => StoneStepFactor(Mathf.Sqrt(1.5f));
+    public static float StoneFloorBetweenCrownsFactor => StoneStepFactor(Mathf.Sqrt(5.25f));
 
     /// <summary>
+    /// Estimate: admits the stone kit (<see cref="BridgeLayout.StoneFits"/>) and caps a pier's courses as laid; the bridge it
+    /// admits is read by the support rule before it is chosen (<see cref="BridgeStructures.CheckSupport"/>).
     /// The most courses a stone kit pier stands (its top course beside the arches, at the deck's underside, down to the one
     /// on the ground). Derived, not measured: the ground course is at <see cref="SupportGraph.Stone"/> Max, each course over it
     /// keeps <see cref="StoneCourseFactor"/>, and the weakest piece the pier carries is the railing's top course over the
@@ -167,6 +189,21 @@ public static class BridgeSupport
     /// <see cref="StoneOnArchFactor"/>, the top course on it <see cref="StoneRailOnRailFactor"/>), which has to keep
     /// <see cref="SupportGraph.Stone"/> Min. Nine courses (that railing at 116); a tenth would leave it at 97.
     /// </summary>
+    /// <summary>
+    /// The most a mound raises the ground under a structure's limiting pier or stair footing (StructureGround.Mound): 3 m,
+    /// the maintainer's limit (9 Nov 2026), for the stone kit's piers and footings past <see cref="StoneMaxPierCourses"/>
+    /// and <see cref="StoneMaxFootingPillars"/> (a Dvergr viaduct's piers take RoadRules.ViaductMostMound, its override,
+    /// defined in RoadRules with the other Mistlands viaduct values; this global stays with its owner). A limit
+    /// of the look, not the support: the mound is real ground (the terrain writer's), and the structure on it is read by the
+    /// support rule as any is. A what-if over seven test worlds needed at most 2.64 m.
+    /// </summary>
+    public const float MostMound = 3f;
+
+    /// <summary>The most a mound raises the ground under a structure of <paramref name="kit"/> (StructureGround.MayRaise):
+    /// RoadRules.ViaductMostMound (with the Mistlands overrides) under a Dvergr viaduct's pier, else <see cref="MostMound"/>.
+    /// The one accessor of the mound limit and its override.</summary>
+    public static float MostMoundOf(BridgeStructures.Kit kit) => kit == BridgeStructures.Kit.DvergrViaduct ? RoadRules.ViaductMostMound : MostMound;
+
     public static int StoneMaxPierCourses()
     {
         float over = StoneArchOnPier * StoneOnArchFactor * StoneRailOnRailFactor;
@@ -176,6 +213,7 @@ public static class BridgeSupport
     }
 
     /// <summary>
+    /// Estimate, as <see cref="StoneMaxPierCourses"/>, for footings.
     /// The most stone_pillars a stone kit stair's footing stacks (from the step down to the one on the ground). Derived:
     /// each 2 m pillar keeps <see cref="StoneStepFactor"/> of 2 m of the one under it, and the step and the side wall on the
     /// top pillar (their centres 1.5 m up and about 0.7 m off its own, sqrt 2.75 m) have to keep

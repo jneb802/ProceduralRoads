@@ -14,10 +14,6 @@ namespace ProceduralRoads;
 [HarmonyPatch]
 internal static class RoadGeneration_Patch
 {
-    /// <summary>What an operator is told as road_generate or road_regen_island starts.</summary>
-    internal const string HeldWhileBuilding =
-        "Locations first, then the roads; this takes a few minutes (road_progress). The world holds still meanwhile: you stay where you stand.";
-
     /// <summary>Hands <see cref="WhyTheWorldCannotHold"/> to the generation's owner, which asks it as an operator's run starts
     /// and every frame it runs.</summary>
     internal static void Install() => RoadLifecycleManager.WorldCannotHold = WhyTheWorldCannotHold;

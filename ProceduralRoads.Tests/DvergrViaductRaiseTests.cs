@@ -220,7 +220,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
     public void ARaiseOverThePierCeilingIsTakenLowerDownToAtGrade()
     {
         // The middle pier stands on the valley floor, as tall as the valley is deep.
-        foreach (var (depth, drawn, taken) in new[] { (21.5f, 1, 0), (21.5f, 2, 0), (20.5f, 2, 1), (20.5f, 1, 1) })
+        foreach (var (depth, drawn, taken) in new[] { (25.5f, 1, 0), (25.5f, 2, 0), (24.5f, 2, 1), (24.5f, 1, 1) })
         {
             var world = new StepValley { Depth = _ => depth };
             _scope.WithWorld(world);
@@ -262,7 +262,7 @@ public sealed class DvergrViaductRaiseTests : IDisposable
         float deck = DvergrViaduct.DeckHeight(raised, world);
         Assert.True(deck < grade + DvergrViaduct.MostRaisedSteps * StairLayout.PieceRise - 0.5f, $"deck {deck:F1} m, at grade {grade:F1} m");
         Assert.Equal((deck, deck), (near.Height, far.Height));
-        Assert.All(DvergrViaduct.SolveComplete(raised, world, world.GetSeed()).FindAll(p => p.Prefab == DvergrViaduct.Floor),
+        Assert.All(DvergrViaduct.SolveComplete(raised, world, world.GetSeed()).FindAll(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor),
             p => Assert.Equal(deck - DvergrViaduct.FloorDrop, p.Position.y, 3));
     }
 

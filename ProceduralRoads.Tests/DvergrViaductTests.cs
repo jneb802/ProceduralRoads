@@ -171,7 +171,7 @@ public sealed class DvergrViaductTests : IDisposable
         Assert.Equal(13.2f, way, 3);
         Assert.Equal(14f, DvergrViaduct.NavigationGap(way), 3);
         List<StructurePiece> complete = DvergrViaduct.SolveComplete(c, world, 1);
-        var floors = complete.Where(p => p.Prefab == DvergrViaduct.Floor).Select(p => Along(c, p)).ToList();
+        var floors = complete.Where(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor).Select(p => Along(c, p)).ToList();
         float nearEdge = floors.Where(a => a < f).Max() + 1f, farEdge = floors.Where(a => a > f).Min() - 1f;
         Assert.Equal(14f, farEdge - nearEdge, 3);
         Assert.Equal(f, (nearEdge + farEdge) * 0.5f, 3);
@@ -185,7 +185,7 @@ public sealed class DvergrViaductTests : IDisposable
             Assert.Contains(complete, p => p.Kind == StructurePieceKind.ViaductPier && Mathf.Abs(Along(c, p) - pier) <= 2.01f && p.Prefab == DvergrViaduct.Footing);
         // The ruined one keeps the gap open too, and its piers.
         List<StructurePiece> built = DvergrViaduct.Solve(c, world, 1);
-        Assert.DoesNotContain(built, p => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(Along(c, p) - f) < 7f);
+        Assert.DoesNotContain(built, p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor && Mathf.Abs(Along(c, p) - f) < 7f);
         Assert.Equal(2 * 4, built.Count(p => p.Prefab == DvergrViaduct.Footing));
     }
 
@@ -263,9 +263,12 @@ public sealed class DvergrViaductTests : IDisposable
         RoadCrossing c = DvergrViaduct.ValleyCrossing(new Vector2(-24f, 0f), new Vector2(24f, 0f), world, out string why)!;
         Assert.True(c != null, why);
         Assert.False(DvergrViaduct.HasNavigationBay(c!, world));
-        // The deck's modules, floors and course: the floors that would lie wholly in the bank are left out, the course
-        // over them is flush with the bank.
-        var deck = DvergrViaduct.SolveComplete(c!, world, 1).Where(p => p.Kind == StructurePieceKind.ViaductDeck).Select(p => Mathf.Round(Along(c!, p) * 2f) / 2f).OrderBy(a => a).Distinct().ToList();
+        // The deck's modules, floors and course, laid or left out as wholly in the finished ground (BuriedPieces.Buried: the
+        // bank at or over its top, the course flush with a bank at the deck's height too, the rest standing without them).
+        List<StructurePiece> laid = DvergrViaduct.Solve(c!, world, 1, false, out DvergrViaduct.HoldReport report);
+        Func<Vector2, float> finished = StructureGround.At(world);
+        Assert.All(report.Buried, p => Assert.True(BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (x, z) => finished(new Vector2(x, z))), $"{p.Prefab} at {p.Position}"));
+        var deck = laid.Concat(report.Buried).Where(p => p.Kind == StructurePieceKind.ViaductDeck).Select(p => Mathf.Round(Along(c!, p) * 2f) / 2f).OrderBy(a => a).Distinct().ToList();
         for (int i = 1; i < deck.Count; i++) Assert.Equal(DvergrViaduct.Module, deck[i] - deck[i - 1], 3);
         // Bank to bank: the remainder past the outer piers goes onto the banks.
         Assert.True(deck.First() - 1f <= 0f && deck.Last() + 1f >= c!.Width, $"deck {deck.First() - 1f}..{deck.Last() + 1f} of {c.Width}");
@@ -549,9 +552,9 @@ public sealed class DvergrViaductTests : IDisposable
     {
         var (c, world) = Case(name);
         float deck = DvergrViaduct.DeckHeight(c, world);
-        bool Lower(StructurePiece p) => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.FloorDrop)) < 0.01f;
+        bool Lower(StructurePiece p) => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.FloorDrop)) < 0.01f;
         bool Walk(StructurePiece p) =>
-            (p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.IronDeckDrop)) < 0.01f)
+            (p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.IronDeckDrop)) < 0.01f)
             || (p.Prefab == DvergrViaduct.Block && p.Kind == StructurePieceKind.ViaductDeck && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.CourseDrop)) < 0.01f);
         List<int> Modules(IEnumerable<StructurePiece> ps, Func<StructurePiece, bool> what) =>
             ps.Where(what).Select(p => Mathf.RoundToInt(Along(c, p))).Distinct().OrderBy(a => a).ToList();
@@ -584,14 +587,14 @@ public sealed class DvergrViaductTests : IDisposable
         for (int i = 1; i < piers.Count; i++) Assert.InRange(piers[i] - piers[i - 1], DvergrViaduct.TightSpacing - 1e-3f, DvergrViaduct.PierSpacing - 1f);
         List<StructurePiece> whole = DvergrViaduct.SolveComplete(c, world, 5);
         float deck = DvergrViaduct.DeckHeight(c, world);
-        int modules = whole.Where(p => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.FloorDrop)) < 0.01f)
+        int modules = whole.Where(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.FloorDrop)) < 0.01f)
             .Select(p => Mathf.RoundToInt(Along(c, p))).Distinct().Count();
         Assert.Equal(2 * (modules - 1), whole.Count(p => p.Prefab == DvergrViaduct.Arch));
     }
 
     /// <summary>Bays flex where 16 m ones do not carry the deck (the other bays may flex a little), the widest that does (fewer piers do): 18 m piers stand 16 m apart, 22 m
-    /// piers 12 m (two corbel bands tip to tip, never closer), those between no closer the taller they are, and 23 m piers
-    /// are over the ceiling.</summary>
+    /// piers 12 m (two corbel bands tip to tip, never closer), those between no closer the taller they are, and 28 m piers
+    /// are over the ceiling by more than a mound under them makes up (RoadRules.ViaductMostMound).</summary>
     [Fact]
     public void TallPiersStandCloser()
     {
@@ -611,7 +614,8 @@ public sealed class DvergrViaductTests : IDisposable
             Assert.True(bay <= last + 1e-3f, $"{depth} m: {bay} m bays, wider than {last} m");
             last = bay;
         }
-        var deep = new MistValley { Top = 80f, Depth = 23f, FloorHalf = 36f, Face = 2f };
+        // Banks on the flats (the rim 8 + 16 m out): the middle pier as tall as the valley is deep, over its mound's reach.
+        var deep = new MistValley { Top = 80f, Depth = DvergrViaduct.PierCeiling + RoadRules.ViaductMostMound + 0.5f, FloorHalf = 8f, Face = 2f };
         _scope.WithWorld(deep);
         Assert.Null(DvergrViaduct.ValleyCrossing(new Vector2(-48f, 0f), new Vector2(48f, 0f), deep, out string over));
         Assert.Contains("ceiling", over);
@@ -683,7 +687,7 @@ public sealed class DvergrViaductTests : IDisposable
         Assert.Contains(piers, a => Mathf.Abs(a - farBay) < 1e-3f);
         Assert.DoesNotContain(piers, a => a > nearBay + 1e-3f && a < farBay - 1e-3f);
         float deck = DvergrViaduct.DeckHeight(c, w);
-        bool IronWalk(StructurePiece p) => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.IronDeckDrop)) < 0.01f;
+        bool IronWalk(StructurePiece p) => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.IronDeckDrop)) < 0.01f;
         bool Walk(StructurePiece p) => IronWalk(p)
             || (p.Prefab == DvergrViaduct.Block && p.Kind == StructurePieceKind.ViaductDeck && Mathf.Abs(p.Position.y - (deck - DvergrViaduct.CourseDrop)) < 0.01f);
         List<StructurePiece> whole = DvergrViaduct.SolveComplete(c, w, 3);
@@ -722,8 +726,12 @@ public sealed class DvergrViaductTests : IDisposable
         Assert.Equal(4, pier.Count(p => p.Prefab == DvergrViaduct.Filler));
         Assert.Equal(8, pier.Count(p => p.Prefab == DvergrViaduct.CorbelCorner));
         Assert.True(pier.Count(p => p.Prefab == DvergrViaduct.Screen) >= 2 * 6, "an iron screen at u +-1 from the deck to the ground");
+        // Six iron plates in its seams: one on each shaft's head (D - 8), one either side under the top course (D - 4).
+        Assert.Equal(4, pier.Count(p => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - 8f)) < 0.01f));
+        Assert.Equal(2, pier.Count(p => p.Prefab == DvergrViaduct.Floor && Mathf.Abs(p.Position.y - (deck - 4f)) < 0.01f));
+        Assert.Equal(6, pier.Count(p => p.Prefab == DvergrViaduct.Floor));
         // The deck: floors two abreast at D - 2, the course at D - 1, arches at D + 1 on both edges.
-        Assert.All(pieces.Where(p => p.Prefab == DvergrViaduct.Floor), p => Assert.Equal(deck - 2f, p.Position.y, 3));
+        Assert.All(pieces.Where(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor), p => Assert.Equal(deck - 2f, p.Position.y, 3));
         Assert.All(pieces.Where(p => p.Prefab == DvergrViaduct.Arch), p => Assert.Equal(deck + 1f, p.Position.y, 3));
         Assert.Contains(pieces, p => p.Prefab == DvergrViaduct.HeadLeft);
         // Every piece on a heading the hammer can build.
@@ -748,8 +756,8 @@ public sealed class DvergrViaductTests : IDisposable
         var complete = new HashSet<string>(DvergrViaduct.SolveComplete(c, world, 1234).Select(Place));
         Assert.All(DvergrViaduct.Solve(c, world, 1234), p => Assert.Contains(Place(p), complete));
         // Like vanilla, mostly standing: some floors and more arches gone, the piers' cores never.
-        int floors = DvergrViaduct.Solve(c, world, 1234).Count(p => p.Prefab == DvergrViaduct.Floor);
-        int allFloors = DvergrViaduct.SolveComplete(c, world, 1234).Count(p => p.Prefab == DvergrViaduct.Floor);
+        int floors = DvergrViaduct.Solve(c, world, 1234).Count(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor);
+        int allFloors = DvergrViaduct.SolveComplete(c, world, 1234).Count(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor);
         Assert.InRange(floors, allFloors * 0.7f, allFloors);
         foreach (int seed in new[] { 1, 2, 3, 4, 5 })
             Assert.Equal(DvergrViaduct.SolveComplete(c, world, seed).Count(p => p.Prefab == DvergrViaduct.Footing || p.Prefab == DvergrViaduct.Band),
@@ -762,7 +770,7 @@ public sealed class DvergrViaductTests : IDisposable
         var (c, world) = Case("wide");
         foreach (int seed in Enumerable.Range(1, 40))
         {
-            var floors = DvergrViaduct.Solve(c, world, seed).Where(p => p.Prefab == DvergrViaduct.Floor)
+            var floors = DvergrViaduct.Solve(c, world, seed).Where(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor)
                 .Select(p => Mathf.RoundToInt(Along(c, p))).Distinct().OrderBy(a => a).ToList();
             for (int i = 1; i < floors.Count; i++)
                 Assert.True(floors[i] - floors[i - 1] <= 4, $"seed {seed}: no floor from {floors[i - 1]} to {floors[i]}");

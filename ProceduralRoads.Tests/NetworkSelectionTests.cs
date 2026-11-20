@@ -8,7 +8,7 @@ namespace ProceduralRoads.Tests;
 
 public class NetworkSelectionTests
 {
-    private static (string name, Vector3 position, float radius) Place(string name, float x, float z = 0)
+    private static (string name, Vector3 position, float radius) Location(string name, float x, float z = 0)
         => (name, new Vector3(x, 0, z), 5);
     private static List<(string name, Vector3 position, float radius)> Choose(
         List<(string name, Vector3 position, float radius)> locations, int quota, int seed = 1,
@@ -23,7 +23,7 @@ public class NetworkSelectionTests
     [Fact]
     public void TheDrawIsTheSameForPositionsReadToATenthOfAMetre()
     {
-        var locations = Enumerable.Range(0, 40).Select(i => Place(i % 3 == 0 ? "high" : "low", i * 97f + 0.48f, (i * 53) % 700 + 0.46f)).ToList();
+        var locations = Enumerable.Range(0, 40).Select(i => Location(i % 3 == 0 ? "high" : "low", i * 97f + 0.48f, (i * 53) % 700 + 0.46f)).ToList();
         var dumped = locations.Select(p => (p.name, new Vector3(Mathf.Round(p.position.x * 10f) / 10f, 0, Mathf.Round(p.position.z * 10f) / 10f), p.radius)).ToList();
         foreach (int seed in new[] { 1, 301358575 })
             Assert.Equal(Choose(locations, 9, seed).Select(p => Mathf.FloorToInt(p.position.x)),
@@ -70,7 +70,7 @@ public class NetworkSelectionTests
     public void RequiredLocationsConsumeSlotsAndMayExceedBudget()
     {
         var locations = new List<(string, Vector3, float)> {
-            Place("required1",0), Place("required2",100), Place("low",200), Place("high",300) };
+            Location("required1",0), Location("required2",100), Location("low",200), Location("high",300) };
         Assert.Equal(2, Choose(locations, 1).Count);
         Assert.All(Choose(locations, 2), p => Assert.StartsWith("required", p.name));
         Assert.Equal(3, Choose(locations, 3).Count);
@@ -80,7 +80,7 @@ public class NetworkSelectionTests
     public void RequiredLocationsUseTheirSubAreaTurnWithoutGrantingExtraOptionalSlots()
     {
         var locations = new List<(string, Vector3, float)> {
-            Place("required",10), Place("near",20), Place("far",210) };
+            Location("required",10), Location("near",20), Location("far",210) };
         var selected = Choose(locations, 2, area: 90000);
         Assert.Equal(new[] { "required", "far" }, selected.Select(p => p.name));
     }
@@ -88,8 +88,8 @@ public class NetworkSelectionTests
     [Fact]
     public void SpreadingIncludesSparseDistantArea()
     {
-        var locations = Enumerable.Range(0,20).Select(i => Place("high"+i,i)).ToList();
-        locations.Add(Place("far",210));
+        var locations = Enumerable.Range(0,20).Select(i => Location("high"+i,i)).ToList();
+        locations.Add(Location("far",210));
         var selected = Choose(locations, 2, area: 90000);
         Assert.Equal(2, selected.Count);
         Assert.Contains(selected, p => p.name == "far");
@@ -98,7 +98,7 @@ public class NetworkSelectionTests
     [Fact]
     public void DrawIsStableAcrossInputOrderAndDoesNotDuplicate()
     {
-        var locations = Enumerable.Range(0,30).Select(i => Place("location"+i,i*60)).ToList();
+        var locations = Enumerable.Range(0,30).Select(i => Location("location"+i,i*60)).ToList();
         var chosen = Choose(locations, 12, seed: 123, area: 900000);
         locations.Reverse();
         Assert.Equal(chosen, Choose(locations, 12, seed: 123, area: 900000));
@@ -108,7 +108,7 @@ public class NetworkSelectionTests
     [Fact]
     public void WeightedDrawCanChooseLowerPriorityAndChangesWithSeed()
     {
-        var locations = new List<(string, Vector3, float)> { Place("high",0), Place("low",1) };
+        var locations = new List<(string, Vector3, float)> { Location("high",0), Location("low",1) };
         var results = Enumerable.Range(0,1000).Select(seed => Choose(locations,1,seed)[0].name).ToHashSet();
         Assert.Contains("high", results);
         Assert.Contains("low", results);

@@ -19,12 +19,10 @@ public class PitchTests
     {
         // A 200 m climb at 25%.
         var (p, h) = Climb(200f, 0.25f);
-        var grades = RoadPitches.PlacePitches(p, h, 0.35f, null, pitchGrade: 0.5f, pitchLength: 8f,
+        var grades = RoadPitches.PlacePitches(p, h, 0.35f, null,
             everyMin: 12f, everyMax: 25f, easeMin: 4f, easeMax: 8f, easeGrade: 0.08f, minGrade: 0.12f);
         Assert.NotNull(grades);
-        float cap = RoadPitches.LimitCap(0.35f, grades);
-        Assert.Equal(0.5f, cap, 3);
-        Assert.True(RoadGrade.Limit(p, h, cap, grades));
+        Assert.True(RoadGrade.Limit(p, h, 0.35f, grades));
         // Ease runs: several, each 4-8 m, at no more than 8%; not all the same length.
         var easeRuns = new List<float>(); float run = 0f; float steepest = 0f;
         for (int i = 1; i < p.Count; i++)
@@ -38,9 +36,9 @@ public class PitchTests
         Assert.True(easeRuns.Count >= 5, $"{easeRuns.Count} eases on 200 m");
         Assert.All(easeRuns, r => Assert.InRange(r, 3f, 9f));
         Assert.True(easeRuns.Max() - easeRuns.Min() >= 1f, "every ease the same length");
-        // The height the eases give up goes into pitches steeper than the old cap, never past 50%.
-        Assert.True(steepest > 0.35f, $"steepest {steepest:F2}: no pitch");
-        Assert.True(steepest <= 0.5001f);
+        // The height the eases give up goes into the edges between them, steeper than the climb but never past the cap.
+        Assert.True(steepest > 0.25f + 1e-3f, $"steepest {steepest:F2}: no pitch");
+        Assert.True(steepest <= 0.35f + 1e-4f, $"steepest {steepest:F3}: past the cap");
         Assert.Equal(40f, h[0]); Assert.Equal(40f + 0.25f * 200f, h[h.Count - 1], 3);
     }
 
@@ -51,15 +49,15 @@ public class PitchTests
         var (p, h) = Climb(200f, 0.25f);
         var landing = new float[p.Count];
         for (int i = 0; i < p.Count; i++) landing[i] = (p[i].x > 40f && p[i].x <= 46f) ? 0.05f : 0.35f;
-        var grades = RoadPitches.PlacePitches(p, h, 0.35f, landing, pitchGrade: 0.5f, pitchLength: 8f,
+        var grades = RoadPitches.PlacePitches(p, h, 0.35f, landing,
             everyMin: 12f, everyMax: 25f, easeMin: 4f, easeMax: 8f, easeGrade: 0.09f, minGrade: 0.12f);
         Assert.NotNull(grades);
-        // The landing stays at its own grade, the edges beside it may pitch,
+        // The landing stays at its own grade, the edges beside it keep the cap,
         // and no generated ease starts within 12 m after it.
         Assert.All(Enumerable.Range(0, p.Count).Where(i => p[i].x > 40.5f && p[i].x <= 46f), i => Assert.Equal(0.05f, grades![i], 3));
-        Assert.Equal(0.5f, grades![p.FindIndex(q => q.x > 48f)], 3);
+        Assert.Equal(0.35f, grades![p.FindIndex(q => q.x > 48f)], 3);
         Assert.DoesNotContain(Enumerable.Range(0, p.Count).Where(i => p[i].x > 46.5f && p[i].x < 58f), i => grades![i] <= 0.0901f);
-        Assert.True(RoadGrade.Limit(p, h, RoadPitches.LimitCap(0.35f, grades), grades));
+        Assert.True(RoadGrade.Limit(p, h, 0.35f, grades));
     }
 
     [Fact]
@@ -74,12 +72,12 @@ public class PitchTests
             if (i > 0) gh += (p[i].x > 40f && p[i].x <= 47f ? 0.02f : 0.29f) * (p[i].x - p[i - 1].x);
             ground.Add(gh);
         }
-        var grades = RoadPitches.PlacePitches(p, h, 0.35f, null, pitchGrade: 0.5f, pitchLength: 8f,
+        var grades = RoadPitches.PlacePitches(p, h, 0.35f, null,
             everyMin: 12f, everyMax: 25f, easeMin: 4f, easeMax: 8f, easeGrade: 0.09f, minGrade: 0.12f, ground: ground);
         Assert.NotNull(grades);
         // Some ease lies on the bench.
         Assert.Contains(Enumerable.Range(0, p.Count), i => p[i].x > 40.5f && p[i].x <= 47f && grades![i] <= 0.0901f);
-        var without = RoadPitches.PlacePitches(p, h, 0.35f, null, pitchGrade: 0.5f, pitchLength: 8f,
+        var without = RoadPitches.PlacePitches(p, h, 0.35f, null,
             everyMin: 12f, everyMax: 25f, easeMin: 4f, easeMax: 8f, easeGrade: 0.09f, minGrade: 0.12f);
         Assert.NotEqual(string.Join(",", grades!), string.Join(",", without!));
     }
@@ -115,38 +113,42 @@ public class PitchTests
         var g = RoadPitches.ApplyJunctionLanding(p, null, 0.35f, atStart: false, atEnd: true, length: 6f);
         Assert.All(Enumerable.Range(0, p.Count).Where(i => p[i].x > 114.5f), i => Assert.Equal(0.05f, g[i], 3));
         Assert.All(Enumerable.Range(1, p.Count - 1).Where(i => p[i].x < 110f), i => Assert.Equal(0.35f, g[i], 3));
-        var pitched = RoadPitches.PlacePitches(p, h, 0.35f, g, pitchGrade: 0.5f, pitchLength: 8f,
+        var pitched = RoadPitches.PlacePitches(p, h, 0.35f, g,
             everyMin: 12f, everyMax: 25f, easeMin: 4f, easeMax: 8f, easeGrade: 0.09f, minGrade: 0.12f);
         Assert.NotNull(pitched);
-        Assert.True(RoadGrade.Limit(p, h, RoadPitches.LimitCap(0.35f, pitched), pitched));
+        Assert.True(RoadGrade.Limit(p, h, 0.35f, pitched));
         for (int i = 1; i < p.Count; i++)
             if (p[i].x > 114.5f) Assert.True((h[i] - h[i - 1]) / (p[i].x - p[i - 1].x) <= RoadPitches.JunctionLandingGrade + 1e-4f, $"landing step at {p[i].x} is {(h[i] - h[i - 1]):F3}");
     }
     [Theory]
-    [InlineData(0.28f)]
-    [InlineData(0.30f)]
-    [InlineData(0.33f)]
-    [InlineData(0.35f)]
-    public void ASteepClimbKeepsItsEasesAndTakesTheHeightInLongerPitches(float grade)
+    [InlineData(0.20f, true)]
+    [InlineData(0.25f, true)]
+    [InlineData(0.30f, false)]
+    [InlineData(0.35f, false)]
+    public void AClimbKeepsEveryRestAndIsTooSteepWhereTheyDoNotFitUnderTheCap(float grade, bool fits)
     {
-        // A 216 m climb held at the 35% cap lost every ease (the room test
-        // dropped them one by one); from 30% up no climb kept a rest. Rests are never dropped:
-        // the pitches beside them get longer instead.
+        // A 216 m climb keeps every rest, the edges between them at the cap at most. Where those edges cannot make the
+        // climb's height it is too steep for its rests: counted and reported, never given the height by dropping a rest or
+        // by an edge past the cap.
         var (p, h) = Climb(216f, grade);
         RoadPitches.ResetCounters();
-        var grades = RoadPitches.PlacePitches(p, h, 0.35f, null);
+        var steep = new List<Vector2>();
+        var grades = RoadPitches.PlacePitches(p, h, 0.35f, null, tooSteep: steep);
         Assert.NotNull(grades);
         int eases = 0; bool inEase = false;
         for (int i = 1; i < grades!.Length; i++) { bool e = grades[i] <= RoadPitches.EaseGrade + 1e-4f; if (e && !inEase) eases++; inEase = e; }
         Assert.True(eases >= 7, $"{eases} eases on a 216 m climb at {grade:P0}");
-        Assert.Equal(0, RoadPitches.ClimbsThatLostEases);
+        Assert.All(grades, g => Assert.True(g <= 0.35f + 1e-6f, $"an edge allowed {g:P0}"));
+        Assert.Equal(fits ? 0 : 1, RoadPitches.ClimbsTooSteepForRests);
+        Assert.Equal(fits, steep.Count == 0);
+        if (!fits) return;
         float end = h[h.Count - 1];
-        Assert.True(RoadGrade.Limit(p, h, RoadPitches.LimitCap(0.35f, grades), grades), "the limiter could not build it");
+        Assert.True(RoadGrade.Limit(p, h, 0.35f, grades), "the limiter could not build it");
         Assert.Equal(end, h[h.Count - 1], 3);
         for (int i = 1; i < p.Count; i++)
         {
             float g = (h[i] - h[i - 1]) / Vector2.Distance(p[i - 1], p[i]);
-            Assert.True(g <= RoadPitches.PitchGrade + 1e-3f, $"step {i} at {g:P0}");
+            Assert.True(g <= 0.35f + 1e-3f, $"step {i} at {g:P0}");
             if (grades[i] <= RoadPitches.EaseGrade + 1e-4f) Assert.True(g <= RoadPitches.EaseGrade + 1e-3f, $"ease step {i} at {g:P0}");
         }
     }

@@ -47,12 +47,12 @@ public sealed class DvergrViaductRuinTests : IDisposable
         {
             List<StructurePiece> built = DvergrViaduct.Solve(c!, world, seed), complete = DvergrViaduct.SolveComplete(c!, world, seed);
             bool IsCourse(StructurePiece p) => p.Prefab == DvergrViaduct.Block && p.Kind == StructurePieceKind.ViaductDeck;
-            floors += built.Count(p => p.Prefab == DvergrViaduct.Floor); allFloors += complete.Count(p => p.Prefab == DvergrViaduct.Floor);
+            floors += built.Count(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor); allFloors += complete.Count(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor);
             course += built.Count(IsCourse); allCourse += complete.Count(IsCourse);
             arches += built.Count(p => p.Prefab == DvergrViaduct.Arch); allArches += complete.Count(p => p.Prefab == DvergrViaduct.Arch);
             // Modules by their centre along the deck.
-            var modules = complete.Where(p => p.Prefab == DvergrViaduct.Floor).Select(p => Mathf.RoundToInt(Along(c!, p))).Distinct().OrderBy(a => a).ToList();
-            var floored = new HashSet<int>(built.Where(p => p.Prefab == DvergrViaduct.Floor).Select(p => Mathf.RoundToInt(Along(c!, p))));
+            var modules = complete.Where(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor).Select(p => Mathf.RoundToInt(Along(c!, p))).Distinct().OrderBy(a => a).ToList();
+            var floored = new HashSet<int>(built.Where(p => p.Kind == StructurePieceKind.ViaductDeck && p.Prefab == DvergrViaduct.Floor).Select(p => Mathf.RoundToInt(Along(c!, p))));
             Vector2 side = new(-c!.Direction.y, c.Direction.x);
             var coursed = built.Where(IsCourse)
                 .Select(p => (Mathf.RoundToInt(Along(c, p)), Mathf.RoundToInt(Vector2.Dot(new Vector2(p.Position.x, p.Position.z) - c.FromBank, side)))).ToHashSet();

@@ -56,6 +56,8 @@ public class LocationDoorTests : IDisposable
 
     private static void Place(Vector2 centre, IReadOnlyList<LevelOp> ops)
     {
+        // A crypt turns with its door, so the game places it first: on the preload list (RoadLocationProtection.Enterable).
+        PlacedLocations.Preload(centre);
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, Crypt4Paint,
             LocationLevelling.ArrivalReach(ops, Crypt4Exterior, Crypt4Paint)) });
         LocationLevelling.Source = c => (c - centre).magnitude < 0.5f ? ops : null;
@@ -127,9 +129,10 @@ public class LocationDoorTests : IDisposable
         Place(crypt, Crypt4);
         // Ends at the carried-in edge (18 + 4) on the far side, having crossed the structure: refused.
         var across = new List<Vector2> { new(60f, 0f), new(-22f, 0f) };
-        Assert.Null(RoadSpatialGrid.PlanRoadPath(across, 4f, WorldGenerator.instance));
+        var toCrypt = new RoadLocationProtection.Targets(null, crypt);
+        Assert.Null(RoadSpatialGrid.PlanRoadPath(across, 4f, WorldGenerator.instance, locations: toCrypt));
         // Straight in to that edge: built.
         var straight = new List<Vector2> { new(60f, 0f), new(22f, 0f) };
-        Assert.NotNull(RoadSpatialGrid.PlanRoadPath(straight, 4f, WorldGenerator.instance));
+        Assert.NotNull(RoadSpatialGrid.PlanRoadPath(straight, 4f, WorldGenerator.instance, locations: toCrypt));
     }
 }

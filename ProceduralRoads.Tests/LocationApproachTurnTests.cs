@@ -36,7 +36,7 @@ public class LocationApproachTurnTests
             RoadEnd = end, RoadHeight = ground(end.x, end.y), Arriving = StairLayout.Bearing(before, end),
             Centre = new Vector2(0f, 0f), RoadTail = new List<Vector2> { before, end },
         };
-        return RoadStairRuns.PlanPlacedLocationApproach(request, 90f, CaveFloor, ground, (x, z) => Heightmap.Biome.Mountain, 77, out why);
+        return RoadStairRuns.PlanPlacedLocationApproach(request, 90f, CaveFloor, TestLattice.Of(ground), (x, z) => Heightmap.Biome.Mountain, 77, out why);
     }
 
     [Fact]
@@ -132,14 +132,22 @@ public class LedgeFinishTests
     }
 
     /// <summary>Over a lip a ledge under its top floor (StairRailing.LedgeDrop), read at the floor's own far corners (the
-    /// end rule: up to a ledge, a stair down), the floor itself becomes the step down, back to back, within its own 2 m,
-    /// with room past it or not (a 2x2 landing between them looks better but is not required); within a step, it stays.</summary>
+    /// end rule: up to a ledge, a stair down): the floor itself becomes the step down, back to back, within its own 2 m (back to
+    /// back first, the owner's of 19 Nov 2026, also with room past it); where that does not fit, the floor is kept and the
+    /// stair down laid off it; within a step, it stays.</summary>
     [Fact]
     public void OverALedgeTheTopFloorBecomesTheStepDown()
     {
+        StairPlan landing = TopFloor();
+        Assert.Equal(StairLayout.TopFinish.FloorThenDown, RoadStairRuns.FinishOverLedge(landing, (x, z) => 10f - (StairLayout.StepUp + StairRailing.LedgeDrop) / 2f, 2f,
+            p => p.Pieces.Exists(pc => pc.Kind == StairPieceKind.Landing)));
+        Assert.Single(landing.Pieces, p => p.Kind == StairPieceKind.Landing);
+        Assert.Single(landing.Pieces, p => p.Kind == StairPieceKind.Stair && p.Position.x > 2f);
+
+        // With room past it: back to back all the same.
         StairPlan room = TopFloor();
         Assert.Equal(StairLayout.TopFinish.BackToBack, RoadStairRuns.FinishOverLedge(room, (x, z) => 10f - (StairLayout.StepUp + StairRailing.LedgeDrop) / 2f, 2f, _ => true));
-        Assert.DoesNotContain(room.Pieces, p => p.Kind == StairPieceKind.Stair && p.Position.x > 2f);
+        Assert.DoesNotContain(room.Pieces, p => p.Kind == StairPieceKind.Landing);
 
         // Nothing may stand past the landing's front edge: back to back, within the landing's own 2 m.
         StairPlan tight = TopFloor();

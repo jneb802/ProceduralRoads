@@ -102,6 +102,27 @@ public class TerrainReapplicationTests : System.IDisposable
         finally { TearDown(); }
     }
 
+    /// <summary>The writer's minute line counts each zone write and a rewrite of a zone written already this session.</summary>
+    [Fact]
+    public void TheWriteSummaryCountsWritesAndRewrites()
+    {
+        var (_, hm, tc, points) = SetUp();
+        try
+        {
+            RoadTerrainModifier.ResetForWorld();
+            Assert.Null(RoadTerrainModifier.WriteStats.TakeLine());
+            RoadTerrainModifier.ApplyRoadTerrainMods(Zone, points);
+            RoadTerrainModifier.ApplyRoadTerrainModsWithContext(Zone, points, hm, tc);
+            string? line = RoadTerrainModifier.WriteStats.TakeLine();
+            Assert.NotNull(line);
+            Assert.Contains("2 zone write(s), 0 with nothing to write, 1 rewrite(s)", line);
+            Assert.Contains("the most writes of one zone 2", line);
+            Assert.Contains("(zone (0, 0))", line);
+            Assert.Null(RoadTerrainModifier.WriteStats.TakeLine());
+        }
+        finally { RoadTerrainModifier.ResetForWorld(); TearDown(); }
+    }
+
     [Fact]
     public void AChangedNetworkIsWrittenOnTheNextZoneLoad()
     {

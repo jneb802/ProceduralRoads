@@ -12,12 +12,16 @@ namespace ProceduralRoads.Tests;
 public sealed class CoastalLandingRecordTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
+    // Landings are off for the release: this class turns the search on to test their record.
+    private readonly Func<Heightmap.Biome, bool> _given = RoadCoastalLandings.GivenIn;
+    public CoastalLandingRecordTests() => RoadCoastalLandings.GivenIn = _ => true;
 
     public void Dispose()
     {
         RoadNetworkGenerator.Reset();
         RoadNetworkPersistence.Reset();
         _scope.Dispose();
+        RoadCoastalLandings.GivenIn = _given;
     }
 
     /// <summary>Meadows at 33 m inside 600 m, a gentle beach falling to deep water beyond.</summary>
@@ -67,6 +71,18 @@ public sealed class CoastalLandingRecordTests : IDisposable
     }
 
     [Fact]
+    public void AsShippedAGeneratedNetworkMakesNoCoastLandingDestination()
+    {
+        RoadCoastalLandings.GivenIn = _given;
+        Generate();
+        Assert.Empty(RoadNetworkGenerator.GetCoastalLandings());
+        // The shore this world has is one the search takes when it is on, so none here is the rule's doing, not the coast's.
+        RoadCoastalLandings.GivenIn = _ => true;
+        var detected = RoadIslandDetector.Detect(new Island600(), worldRadius: 1024, minArea: 1, options: new());
+        Assert.Contains(detected, i => i.CoastalLandings.Count > 0);
+    }
+
+    [Fact]
     public void LandingsSaveWithTheNetworkAndLoadBackAsSaved()
     {
         Generate();
@@ -104,5 +120,43 @@ public sealed class CoastalLandingRecordTests : IDisposable
         Assert.Empty(RoadNetworkGenerator.GetCoastalLandings());
         RoadNetworkGenerator.SaveGlobalRoadData();
         Assert.Equal(newer, RoadNetworkPersistence.SavedRecord("ProceduralRoads_CoastLandings"));
+    }
+
+    [Theory]
+    [InlineData(9999f, true)]
+    [InlineData(10000f, false)]
+    [InlineData(10001f, false)]
+    public void SavedLandingsAndRoadPointsUseTheSameWorldEdge(float x, bool inside)
+    {
+        // Exercise the real road reader with the same coordinate as the landing reader below.
+        RoadSpatialGrid.Clear();
+        RoadSpatialGrid.CommitLevelled(new[] { new Vector2(x, 0f) }, new[] { 34f }, 4f);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        byte[] points = RoadSpatialGrid.SerializeAllRoadPoints()!;
+        RoadSpatialGrid.Clear();
+        Assert.Equal(inside, RoadSpatialGrid.DeserializeAllRoadPoints(points));
+
+        Generate();
+        RoadNetworkGenerator.SaveGlobalRoadData();
+        var edge = new CoastalLanding(new Vector3(x, 34f, 0f), 1, true, true);
+        var otherEdge = new CoastalLanding(new Vector3(0f, 34f, x), 1, true, true);
+        var interior = new CoastalLanding(new Vector3(128f, 34f, 0f), 1, true, true);
+        RoadNetworkPersistence.SetSavedRecord("ProceduralRoads_CoastLandings",
+            RoadNetworkPersistence.SerializeCoastalLandings(new[] { edge, interior, otherEdge }));
+        RoadNetworkGenerator.Reset();
+        var messages = new List<string>();
+        BepInEx.Logging.ManualLogSource.Captured = messages;
+        try
+        {
+            Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData());
+            Assert.Equal((inside ? new[] { edge.Position, interior.Position, otherEdge.Position } : new[] { interior.Position }).OrderBy(p => p.x).ThenBy(p => p.z),
+                RoadNetworkGenerator.GetCoastalLandings().Select(l => l.Position));
+            Assert.Equal(inside ? 0 : 1, messages.Count(m => m.Contains("shore landings") && m.Contains("outside the world")));
+        }
+        finally { BepInEx.Logging.ManualLogSource.Captured = null; }
+        RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(),
+            StructurePlans.SpawnedZones, RoadNetworkGenerator.GetCoastalLandings());
+        Assert.Equal(RoadNetworkPersistence.SerializeCoastalLandings(RoadNetworkGenerator.GetCoastalLandings()),
+            RoadNetworkPersistence.SavedRecord("ProceduralRoads_CoastLandings"));
     }
 }

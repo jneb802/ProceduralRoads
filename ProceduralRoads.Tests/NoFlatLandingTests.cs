@@ -72,6 +72,9 @@ public partial class NoFlatLandingTests : IDisposable
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
         PlacedLocations.Reset();
+        // Placed first with no landing to go onto (PlacedLocations.FlatlessPlaced): on the preload list, so its road may be
+        // carried on into it (RoadLocationProtection.Enterable).
+        PlacedLocations.Preload(new Vector2(0f, 0f));
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 20f, Radius) });
         LocationLevelling.Source = c => c.magnitude < 0.5f ? ops : null;
         SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });

@@ -116,26 +116,27 @@ public class NetworkRoutingTests
     }
 
     /// <summary>FindPathToNetwork returns null both when it fails and when the
-    /// start was already within reach. The caller checks the exact point but
-    /// the search checks the cell centre, up to 5.66 m away, so a destination
-    /// the network already passes could be read as unreachable and given a
-    /// road of its own.</summary>
+    /// start is served already, by the caller's own test of the exact point (a plain point's,
+    /// RoadNetworkGenerator.Reached, as RoadNetworkGenerator.JoinTo asks it), so a destination
+    /// the network already serves is not read as unreachable and given a road of its own.</summary>
     [Fact]
     public void AlreadyOnTheNetworkIsNotReportedAsAFailedSearch()
     {
+        using var scope = new ValheimWorldScope();
         RoadSpatialGrid.Clear();
         try
         {
             var world = new FlatGround();
+            scope.WithWorld(world);
             var finder = new RoadPathfinder(world);
             RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(0, 0), new(8, 0), new(16, 0) }, 4, world);
             RoadSpatialGrid.FinalizeRoadNetwork();
 
-            var path = finder.FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize);
+            var path = finder.FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize, () => RoadNetworkGenerator.Reached(new Vector2(0, 0), null));
             Assert.Null(path);
-            Assert.True(finder.AlreadyOnNetwork, "a start already within reach is not a failure");
+            Assert.True(finder.AlreadyOnNetwork, "a start already served is not a failure");
 
-            var away = finder.FindPathToNetwork(new Vector2(4000, 4000), RoadPathfinder.CellSize);
+            var away = finder.FindPathToNetwork(new Vector2(4000, 4000), RoadPathfinder.CellSize, () => RoadNetworkGenerator.Reached(new Vector2(4000, 4000), null));
             Assert.False(finder.AlreadyOnNetwork, "a real search must not claim it was already connected");
             Assert.Null(away);
         }
@@ -176,7 +177,7 @@ public class NetworkRoutingTests
         {
             var world=new Flat();
             RoadSpatialGrid.AddRoadPath(new() {new Vector2(-80,0),new Vector2(80,0)},4,world);
-            var path=new RoadPathfinder(world).FindPathToNetwork(new Vector2(0,100), RoadPathfinder.CellSize,
+            var path=new RoadPathfinder(world).FindPathToNetwork(new Vector2(0,100), RoadPathfinder.CellSize,()=>false, // no road within reach of the start
                 new[] {new Vector2(-80,0),new Vector2(80,0)});
             Assert.NotNull(path);
             var end=path![path.Count-1];

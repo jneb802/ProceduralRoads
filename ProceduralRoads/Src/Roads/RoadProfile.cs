@@ -38,6 +38,8 @@ public static class RoadProfile
     /// margin a seven-metre cut is an eight-metre slot with near-vertical
     /// walls: the depth is legal, the SHAPE is what reads as a trench.
     /// </summary>
+    // Inlined (the game's runtime calls it otherwise): asked for every road point reaching every vertex the writer fits.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     public static float LevelBlend(float distFromCenter, float roadWidth, float blendMargin)
     {
         float halfWidth = roadWidth * 0.5f;
@@ -85,6 +87,7 @@ public static class RoadProfile
     }
 
 
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
     private static float Smooth(float t)
     {
         t = Mathf.Clamp01(t);

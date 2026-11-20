@@ -43,10 +43,7 @@ public class CrossingHeadingTests
 
     /// <summary>Two land patches too narrow for a bank to be re-found on any
     /// turned line: the reviewer's shape, which is what makes it unturnable.
-    /// Offsetting the far patch to make the road's own bearing off-grid does
-    /// not work -- the crossing scan only walks the eight unit grid directions
-    /// (see ACrossingScanOnlyWalksTheEightGridDirections), so the router cannot
-    /// reach it at all.</summary>
+    /// The far patch lies due east, on a grid heading the router jumps on.</summary>
     private sealed class NarrowBanksWorld : WorldGenerator
     {
         private static bool Land(float x, float z) =>
@@ -64,11 +61,14 @@ public class CrossingHeadingTests
         typeof(RoadNetworkGenerator).GetField("m_pathfinder", BindingFlags.NonPublic | BindingFlags.Static)!
             .SetValue(null, pathfinder);
 
+    // Every ford style weight back to its default, the span's too: the two-weight overload keeps the span's, so a test that
+    // set it to 0 left the next class's generation picking among wade and raise only (a later network's wade raised).
     private static void TearDownGeneration()
     {
         SetPathfinder(null);
         RoadNetworkGenerator.Reset();
-        RoadCrossingDetector.SetFordStyleWeights(1f, 1f);
+        RoadCrossingDetector.SetFordStyleWeights(RoadConstants.DefaultFordStyleWeight, RoadConstants.DefaultFordStyleWeight,
+            RoadConstants.DefaultFordStyleWeight);
     }
 
     // ---- the defect: an accepted route losing its bridge ----
@@ -163,23 +163,18 @@ public class CrossingHeadingTests
     }
 
     /// <summary>
-    /// Why the constraint costs so little: a crossing is found by walking the
-    /// EIGHT unit grid directions out of a cell (TryGetRiverCrossing refuses a
-    /// knight move outright), so the jump it accepts runs cell-centre to
-    /// cell-centre along one of them and its bearing is a multiple of 45
-    /// degrees -- already one of the sixteen the hammer can turn to. Nothing
-    /// has to be turned unless a later step moves a bank OFF that line (the
-    /// bank-top climb walks the road, which can bend).
-    ///
-    /// This is a fact about the router, not a guarantee about every crossing,
-    /// which is why the snap still exists and still has to be correct.
+    /// Every crossing the search takes is built on a heading the hammer can turn to (a multiple of 22.5 degrees), whatever
+    /// heading the search crossed on: the grid's eight are on it, and a knight's (26.6 degrees) is turned onto the nearest by
+    /// the detector, within a cell of the banks the search priced on the same turned line
+    /// (BridgeLayout.TurnedOntoPlaceableHeading).
     /// </summary>
     [Theory]
     [InlineData(-30f, 30f)]
     [InlineData(-8f, 40f)]
     [InlineData(0f, 0f)]
     [InlineData(24f, -24f)]
-    public void ACrossingScanOnlyWalksTheEightGridDirections(float startZ, float endZ)
+    [InlineData(-40f, 40f)]
+    public void EveryCrossingIsBuiltOnAHeadingTheHammerCanTurnTo(float startZ, float endZ)
     {
         var world = new GullyWorld();
         var router = new RoadPathfinder(world) { Bridges = true, Fords = false };
@@ -190,11 +185,9 @@ public class CrossingHeadingTests
 
         foreach (var c in crossings)
         {
-            Vector2 jump = path![c.ToIndex] - path[c.FromIndex];
-            float bearing = BridgeLayout.YawDegrees(jump.normalized);
-            float off = Mathf.Abs(bearing % 45f);
-            Assert.True(Mathf.Min(off, 45f - off) < 0.01f,
-                $"the accepted jump runs at {bearing:F3} deg, which is not a multiple of 45");
+            float bearing = BridgeLayout.YawDegrees(c.Direction);
+            Assert.True(BridgeLayout.HeadingIsPlaceable(bearing),
+                $"the crossing is built at {bearing:F3} deg, which is not a multiple of 22.5");
         }
     }
 
@@ -302,6 +295,19 @@ public class CrossingHeadingTests
         // Not the bank tops the climb reached for, which are the 63.435 degree pair.
         Assert.True(world.GetHeight(crossing.FromBank.x, crossing.FromBank.y) < 39f,
             "the unplaceable bank-top layout was kept after all");
+        // A candidate is banks AND the path interval it consumes: the accepted jump's, path[2]..path[3], not the tops'.
+        Assert.Equal((2, 3), (crossing.FromIndex, crossing.ToIndex));
+
+        // The reviewer's own route: the accepted jump starts at index ONE, with land before it. The optional tops
+        // consume that land; the fallback must return the indices with the banks (1..2), or the painter believes the
+        // land in front of the crossing is spoken for and paints no near approach (painted in
+        // FallingBackReturnsThePathIntervalTooWithAFollowingCrossingBehindIt).
+        var reviewer = new List<Vector2> { new(-16f, -8f), new(-16f, 0f), new(16f, 0f), new(16f, 8f) };
+        var fallback = Assert.Single(RoadCrossingDetector.Detect(reviewer, world, bridges: true, fords: false));
+        Assert.True(BridgeLayout.HeadingIsPlaceable(BridgeLayout.YawDegrees(fallback.Direction)));
+        Assert.InRange(fallback.FromBank.y, -0.01f, 0.01f);
+        Assert.InRange(fallback.ToBank.y, -0.01f, 0.01f);
+        Assert.Equal((1, 2), (fallback.FromIndex, fallback.ToIndex));
     }
 
     /// <summary>
@@ -325,23 +331,29 @@ public class CrossingHeadingTests
             // fall back. The second is approached along the high ground with no
             // rise to climb, so it never enters that path at all: it is the
             // crossing BEHIND the fallback, and it must still get its land.
+            // The reviewer's route, its first leg 28 m long rather than 8 so the
+            // way down from the high ground to the first bridge is inside the
+            // grade cap, and running on 48 m past the second channel for the same
+            // reason. The accepted jump is still path[1]..path[2], with the tops'
+            // interval starting at the road's first point: no land in front.
             var path = new List<Vector2>
             {
-                new(-16f, -8f), new(-16f, 0f), new(16f, 0f),
-                new(16f, 8f), new(36f, 8f), new(68f, 8f), new(72f, 8f),
+                new(-16f, -28f), new(-16f, 0f), new(16f, 0f),
+                new(16f, 8f), new(36f, 8f), new(68f, 8f), new(120f, 8f),
             };
             var crossings = RoadCrossingDetector.Detect(path, world, bridges: true, fords: false);
             Assert.Equal(2, crossings.Count);
             foreach (var c in crossings)
                 Assert.True(BridgeLayout.HeadingIsPlaceable(BridgeLayout.YawDegrees(c.Direction)),
                     $"crossing at ({c.Center.x:F1},{c.Center.y:F1}) stands at {BridgeLayout.YawDegrees(c.Direction):F3}");
+            // The first fell back to its water's edge (on the road's row, not the tops at z = 8), with the jump's own
+            // interval: path[1]..path[2].
+            Assert.InRange(crossings[0].FromBank.y, -0.01f, 0.01f);
+            Assert.InRange(crossings[0].ToBank.y, -0.01f, 0.01f);
+            Assert.Equal((1, 2), (crossings[0].FromIndex, crossings[0].ToIndex));
 
-            // Cap held out: this route is drawn to place two bridges, not to
-            // be a road a capped search would have chosen.
-            using (GradeCap.Off())
-                typeof(RoadNetworkGenerator).GetMethod("AddRoadPathWithCrossings",
-                    BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null,
-                    new object?[] { path, crossings, 4f, null, null });
+            // Cut at the crossings' intervals and planned at the configured cap, and stored.
+            Assert.True(BridgeTests.PaintWithCrossings(path, crossings) != null, RoadSpatialGrid.LastRefusal);
 
             // The land in front of the first crossing, between the two, and
             // after the second: all painted.
@@ -349,7 +361,7 @@ public class CrossingHeadingTests
                      {
                          (-16f, -4f, "in front of the first crossing"),
                          (26f, 8f, "between the two crossings"),
-                         (70f, 8f, "after the second crossing"),
+                         (100f, 8f, "after the second crossing"),
                      })
                 Assert.True(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, z), 2.5f).Count > 0,
                     $"no painted road {where}, at ({x},{z}); intervals " +
@@ -440,10 +452,7 @@ public class CrossingHeadingTests
 
             // Paint it the way the generator does, then walk the painted road
             // from each end of the supplied route to the bank it moved to.
-            using (GradeCap.Off())
-                typeof(RoadNetworkGenerator)
-                    .GetMethod("AddRoadPathWithCrossings", BindingFlags.NonPublic | BindingFlags.Static)!
-                    .Invoke(null, new object?[] { path, new List<RoadCrossing> { crossing }, 4f, null, null });
+            Assert.True(BridgeTests.PaintWithCrossings(path, new List<RoadCrossing> { crossing }) != null, RoadSpatialGrid.LastRefusal);
 
             Assert.True(PaintedRoadReaches(path[0], crossing.FromBank, crossing),
                 $"no painted road from {path[0]} to the moved near bank ({crossing.FromBank.x:F2},{crossing.FromBank.y:F2})");

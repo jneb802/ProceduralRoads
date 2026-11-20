@@ -13,11 +13,21 @@ public static class RoadCoastalLandings
     public const float AreaPerLanding = 5_000_000;
     public const float Separation = 400;
     public const float Radius = 16;
-    /// <summary>Its selection weight and place in the connection order: below a custom location, above the default. The one owner of which places get a road and which connect (docs/OWNERS.md).</summary>
+    /// <summary>The farthest from a shore cell the coast's checks read the detector's raster (its water approach).</summary>
+    internal const float RasterReach = 150;
+    /// <summary>Its selection weight and place in the connection order: below a custom location, above the default. The one owner of automatic destinations (docs/OWNERS.md).</summary>
     public const int Priority = 60;
-    private const float Sea = RoadConstants.SeaLevel;
+    private const float Sea = RoadWater.Surface;
+    /// <summary>How far round a shore cell its surroundings are read for steepness, metres.</summary>
+    internal const float SurroundReach = 100;
+    /// <summary>The most a shore cell's surroundings within <see cref="SurroundReach"/> may rise over it, metres.</summary>
+    internal const float SurroundRise = 8;
     private static readonly (int x, int z)[] Directions =
         { (-1,-1), (-1,0), (-1,1), (0,-1), (0,1), (1,-1), (1,0), (1,1) };
+
+    /// <summary>Whether a shore in this biome gives a landing: <see cref="RoadRules.For"/>'s CoastLandings, false in every biome
+    /// for the release. Read only here; the unit tests swap it to keep the search under test.</summary>
+    internal static Func<Heightmap.Biome, bool> GivenIn = biome => RoadRules.For(biome).CoastLandings;
 
     public static List<Vector3> Find(Island island, float[] heights, int size,
         Func<float, float, Heightmap.Biome> biomeAt, RoadNetworkOptions options)
@@ -30,6 +40,8 @@ public static class RoadCoastalLandings
     internal static IEnumerable<bool> FindSteps(Island island,float[] heights,int size,
         Func<float,float,Heightmap.Biome> biomeAt,RoadNetworkOptions options,RoadPreparation preparation,Action<List<Vector3>> complete)
     {
+        // No biome gives a landing (off for the release): none is found, and the island is not read for shores.
+        if (!Enum.GetValues(typeof(Heightmap.Biome)).Cast<Heightmap.Biome>().Any(GivenIn)) { complete(new List<Vector3>()); yield break; }
         var candidates = new List<(Vector3 point, float rise)>();
         if (heights.Length != size * size) throw new ArgumentException("Height raster dimensions differ");
         preparation.BeginStage($"Checking island {island.Id+1} coast",island.Cells.Count,"cells visited", "Checking coastal candidates"); yield return true;
@@ -58,7 +70,7 @@ public static class RoadCoastalLandings
                 bool deep = false, wet = false;
                 float waterLength = 0;
                 float step = spacing * (d.x != 0 && d.z != 0 ? 1.41421356f : 1);
-                for (int i = 1; i * step <= 150; i++)
+                for (int i = 1; i * step <= RasterReach; i++)
                 {
                     if(preparation.Checkpoint(0)) yield return true;
                     float water = H(cell.x + d.x*i, cell.y + d.z*i);
@@ -80,23 +92,21 @@ public static class RoadCoastalLandings
             // Reject steep surroundings. This bounded window reads cached heights,
             // not thousands of additional WorldGenerator queries per candidate.
             float rise = 0;
-            int reach = Mathf.CeilToInt(100 / spacing);
-            for (int dx = -reach; dx <= reach && rise <= 8; dx++)
+            int reach = Mathf.CeilToInt(SurroundReach / spacing);
+            for (int dx = -reach; dx <= reach && rise <= SurroundRise; dx++)
                 for (int dz = -reach; dz <= reach; dz++)
                 {
                     rise = Math.Max(rise, H(cell.x+dx, cell.y+dz) - h);
                     if(preparation.Checkpoint(0)) yield return true;
                 }
-            if (rise > 8) continue;
+            if (rise > SurroundRise) continue;
 
             // The biome query is the only thing here that asks the world
             // generator; everything above reads the raster the detector already
             // built. It runs last so it is paid once per surviving candidate
             // rather than once per low shore cell on every island.
             var biome = biomeAt(p.x, p.y);
-            if (!options.Allows(biome) || (biome != Heightmap.Biome.Meadows
-                && biome != Heightmap.Biome.BlackForest && biome != Heightmap.Biome.Plains
-                && biome != Heightmap.Biome.Mistlands)) continue;
+            if (!options.Allows(biome) || !GivenIn(biome)) continue;
 
             candidates.Add((new Vector3(p.x, h, p.y), rise));
             }

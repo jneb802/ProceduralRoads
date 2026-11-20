@@ -56,7 +56,7 @@ public sealed class CrossingRecordTests : IDisposable
         w.Write(10f); w.Write(0f); w.Write(fault == "negative fairway" ? -1f : 0f);
         w.Write(fault == "unknown kind" ? 99 : fault == "ford" ? (int)CrossingKind.Ford : (int)CrossingKind.Bridge);
         w.Write(fault == "unknown style" ? 99 : fault == "bridge with a ford style" ? (int)FordStyle.Wade : fault == "ford" ? (int)FordStyle.Raise : (int)FordStyle.None);
-        w.Write(fault == "unknown flag" ? 2 : fault == "long valley" ? 1 : 0);
+        w.Write(fault == "unknown flag" ? 4 : fault == "long valley" ? 1 : 0);
         w.Write((int)BridgeStructures.Kit.WoodRail + 1);
         // Its ends: none, road ends at a ford's banks, or a structure's (the near landed on its fourth row, the far met level
         // a quarter turn off the line), or the given fault in the near one.

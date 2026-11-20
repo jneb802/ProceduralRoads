@@ -118,10 +118,10 @@ public static class ManualRoadCommands
             {
                 Vector2 at = Position(words);
                 // Inside a location: the network is joined from the location, as the generator joins it, once asked twice.
-                ManualRoads.Location? target = ManualRoads.LocationAt(at);
-                if (target != null && !ManualRoads.ConfirmLocation(actor, target, DateTime.UtcNow))
+                ManualRoads.Location? location = ManualRoads.LocationAt(at);
+                if (location != null && !ManualRoads.ConfirmLocation(actor, location, DateTime.UtcNow))
                 {
-                    string warning = ManualRoads.InsideLocationWarning(at, target);
+                    string warning = ManualRoads.InsideLocationWarning(at, location);
                     args.Context.AddString(warning);
                     Log.LogInfo($"Manual road: {warning}");
                     return;
@@ -136,7 +136,7 @@ public static class ManualRoadCommands
                     int before = RoadSpatialGrid.RoadNetworkVersion;
                     try
                     {
-                        Complete(args, operation, ManualRoads.Prepare(new[] { at }, true, null, force, target), draft, false, actor, searched);
+                        Complete(args, operation, ManualRoads.Prepare(new[] { at }, true, null, force, location), draft, false, actor, searched);
                     }
                     catch (Exception ex) { Fail(args, ex, searched, before); }
                     finally { s_connectPending = false; }

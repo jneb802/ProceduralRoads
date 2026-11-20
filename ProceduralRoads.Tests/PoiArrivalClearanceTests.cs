@@ -38,10 +38,12 @@ public class PoiArrivalClearanceTests : IDisposable
         // This approach grazes the extra margin but never enters the location.
         var path = new List<Vector2> { new(0, 40), new(-16, 0) };
         if (reverse) path.Reverse();
-        Assert.True(RoadLocationProtection.BlocksSegment(path[0], path[1], 4f, null, null));
-        Assert.False(RoadLocationProtection.BlocksSegment(path[0], path[1], 0f, null, null));
+        // The location the arrival is planned to, by identity: its end at the trimmed edge.
+        var toLocation = reverse ? new RoadLocationProtection.Targets(new Vector2(0, 0), null) : new RoadLocationProtection.Targets(null, new Vector2(0, 0));
+        Assert.True(RoadLocationProtection.BlocksSegment(path[0], path[1], 4f, default));
+        Assert.False(RoadLocationProtection.BlocksSegment(path[0], path[1], 0f, default));
         PlainRoads.WithModDefaults(() =>
-            Assert.NotNull(RoadSpatialGrid.PlanRoadPath(path, 4f, world)));
+            Assert.NotNull(RoadSpatialGrid.PlanRoadPath(path, 4f, world, locations: toLocation)));
     }
 
     [Fact]
@@ -51,14 +53,14 @@ public class PoiArrivalClearanceTests : IDisposable
             new RoadLocationProtection.Footprint(new Vector2(0, 0), 12f),
             new RoadLocationProtection.Footprint(new Vector2(-8, 20), 2f) });
         var path = new List<Vector2> { new(0, 40), new(-16, 0) };
-        Assert.Null(RoadSpatialGrid.PlanRoadPath(path, 4f, world));
+        Assert.Null(RoadSpatialGrid.PlanRoadPath(path, 4f, world, locations: new RoadLocationProtection.Targets(null, new Vector2(0, 0))));
     }
 
     [Fact]
     public void EvenAnArrivalCannotCrossTheDestinationItself()
     {
         var path = new List<Vector2> { new(40, 0), new(-16, 0) };
-        Assert.Null(RoadSpatialGrid.PlanRoadPath(path, 4f, world));
+        Assert.Null(RoadSpatialGrid.PlanRoadPath(path, 4f, world, locations: new RoadLocationProtection.Targets(null, new Vector2(0, 0))));
     }
 
     [Fact]
@@ -76,7 +78,7 @@ public class PoiArrivalClearanceTests : IDisposable
                 p.x * Mathf.Sin(angle) + p.y * Mathf.Cos(angle));
             RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, 12f) });
             var path = new List<Vector2> { Rotate(new Vector2(0, 40)), Rotate(new Vector2(-16, 0)) };
-            Assert.NotNull(RoadSpatialGrid.PlanRoadPath(path, 4f, world));
+            Assert.NotNull(RoadSpatialGrid.PlanRoadPath(path, 4f, world, locations: new RoadLocationProtection.Targets(null, centre)));
         }
     }
 
@@ -86,7 +88,7 @@ public class PoiArrivalClearanceTests : IDisposable
         // The original input skirted the location well away from its clearance.
         // A changed end now grazes the margin, but it is not our destination.
         Assert.True(RoadLocationProtection.BlocksFinalSegment(new Vector2(0, 40), new Vector2(-16, 0), 4f,
-            new Vector2(0, 40), new Vector2(-30, 0), out var hit));
+            new Vector2(0, 40), new Vector2(-30, 0), new RoadLocationProtection.Targets(null, new Vector2(-30, 0)), out var hit));
         Assert.True(hit.HasValue);
         Assert.Equal(12f, hit!.Value.Radius);
     }
@@ -97,7 +99,7 @@ public class PoiArrivalClearanceTests : IDisposable
         var lines = _scope.CaptureLog();
         AnArrivalDoesNotExemptAThirdLocation();
         string detail = Assert.Single(lines.Where(s => s.StartsWith("POI clearance refused trial:")));
-        Assert.Contains("site=(-8.00,20.00) radius=2.00", detail);
+        Assert.Contains("location=(-8.00,20.00) radius=2.00", detail);
         Assert.Contains("segment=(", detail);
         Assert.Contains("input=(0.00,40.00)->(-16.00,0.00)", detail);
         Assert.Contains("Trial refusal, not necessarily a lost road", detail);

@@ -68,7 +68,7 @@ public static class RoadRockProbe
 
     /// <summary>
     /// The probe, reporting how many objects were cleared (<paramref name="clearedCount"/>). A clearable rock loses only its
-    /// chunks in the road (<see cref="RoadRockCarve"/>); a rock with no chunks is removed whole, an ore deposit kept. A rock through
+    /// chunks in the road (<see cref="RoadRockCarve"/>); a rock with no chunks is removed whole, an ore deposit too. A rock through
     /// a deck goes whole, whatever the road's rule (<see cref="RoadRockPolicy.HowTaken"/>). The item
     /// drops near the probe are counted before and after, and any rise is reported and logged as a warning.
     /// With the carves left for later: every rock the pass would carve goes into
@@ -85,14 +85,13 @@ public static class RoadRockProbe
         finally { RoadRockStats.EndPass(passStarted); }
     }
 
-    /// <summary>A rock a pass judged for carving, carved later (<see cref="CarveDeferred"/>): the rock, the pass's
-    /// line for it, and whether the rules let it go whole when it cannot be carved.</summary>
+    /// <summary>A rock a pass judged for carving, carved later (<see cref="CarveDeferred"/>): the rock and the pass's
+    /// line for it.</summary>
     public readonly struct PendingCarve
     {
         public readonly GameObject Root;
         public readonly string Line;
-        public readonly bool MayRemoveWhole;
-        public PendingCarve(GameObject root, string line, bool mayRemoveWhole) { Root = root; Line = line; MayRemoveWhole = mayRemoveWhole; }
+        public PendingCarve(GameObject root, string line) { Root = root; Line = line; }
     }
 
     /// <summary>What became of a carve applied after its pass.</summary>
@@ -109,19 +108,16 @@ public static class RoadRockProbe
         if (root == null || !root.activeInHierarchy) return DeferredOutcome.Skipped;
         var view = root.GetComponent<ZNetView>();
         if (view == null || !view.IsValid() || !view.IsOwner()) return DeferredOutcome.Skipped;
-        var (carved, removed) = CarveOne(root, pending.Line, pending.MayRemoveWhole, null);
-        return carved > 0 ? DeferredOutcome.Carved : removed > 0 ? DeferredOutcome.RemovedWhole : DeferredOutcome.Kept;
+        var (carved, removed, refused) = CarveOne(root, pending.Line, null);
+        return carved > 0 ? DeferredOutcome.Carved : removed > 0 ? DeferredOutcome.RemovedWhole :
+            refused ? DeferredOutcome.Skipped : DeferredOutcome.Kept;
     }
 
     /// <summary>How far round a pass's centre its item drops are counted: its reach plus the largest rock's.</summary>
     internal static float DropRadius(float radius) => radius + 30f;
 
-    /// <summary>Road points the last pass skipped because no ground answered there (a terrain collider not built yet).</summary>
+    /// <summary>Road points the last pass skipped because their ground is not known (RoadRockCarve.GroundReader: inside a location whose ground is not read yet).</summary>
     internal static int LastGroundMisses;
-    /// <summary>Road points the last pass probed at the road's stored height: generating a zone, outside its terrain.</summary>
-    internal static int LastRoadHeightPoints;
-    /// <summary>Objects the last pass found in the road but passed over: generating a zone, they belong to another.</summary>
-    internal static int LastOtherZoneObjects;
 
     /// <summary>Kept rocks and rocks left untouched, already logged: the pass over loaded zones revisits a zone.</summary>
     private static readonly HashSet<string> s_reported = new HashSet<string>();
@@ -139,19 +135,17 @@ public static class RoadRockProbe
         clearedCount = 0;
         LastGroundMisses = 0;
         LastNotOwner = 0;
-        LastRoadHeightPoints = 0;
-        LastOtherZoneObjects = 0;
         var lines = new List<string>();
         if (!RoadSpatialGrid.IsInitialized || ZoneSystem.instance == null || ZNetScene.instance == null)
         { lines.Add("Error: world or road network not available"); return lines; }
 
         var natural = NaturalRocks(mist, cliffs);
 
-        var hits = new Dictionary<GameObject, Hit>();
+        var hits = new Dictionary<GameObject, RoadRockHit>();
         var otherZone = new HashSet<GameObject>();
         long lookup = RoadRockStats.Now;
         // The boxes a walker needs clear here, roads', decks' and staircases' alike: the one owner, which the carve reads too.
-        var boxes = RockClearances.Near(centre, radius, RoadRockCarve.GhostSpawned != null, ZoneSystem.instance.GetGroundHeight, out LastGroundMisses, out LastRoadHeightPoints);
+        var boxes = RockClearances.Near(centre, radius, new RoadRockCarve.GroundReader().At, out LastGroundMisses);
         RoadRockStats.LookupTicks += RoadRockStats.Now - lookup;
         var onDeck = new HashSet<GameObject>();
         RoadRockStats.Points += boxes.Count;
@@ -165,16 +159,12 @@ public static class RoadRockProbe
         }
 
         string outcome = Apply(hits, onDeck, deferCarves, centre, radius, lines, out clearedCount);
-        LastOtherZoneObjects = otherZone.Count;
-        string reach = (LastRoadHeightPoints > 0 ? $", {LastRoadHeightPoints} at the road's own height (outside the zone's terrain)" : "") +
-            (LastGroundMisses > 0 ? $", {LastGroundMisses} without ground skipped" : "") +
+        string reach = (LastGroundMisses > 0 ? $", {LastGroundMisses} on ground not known yet skipped" : "") +
             (otherZone.Count > 0 ? $"; {otherZone.Count} object(s) of other zones passed over" : "");
         lines.Insert(0, System.FormattableString.Invariant(
             $"Road rocks: {probed} road points probed within {radius:F0} m{reach}, {hits.Count} object(s) clip the road surface{outcome}"));
         return lines;
     }
-
-    private static string KeptForApproach(string why) => $"keep: the location's own rock ({why}), on its approach";
 
     /// <summary>Whether a rock in a location area is kept on an approach to the location, as planning keeps it
     /// (<see cref="LocationRock.KeptAt"/>, the rock's box as the reader makes it): a large one
@@ -202,7 +192,8 @@ public static class RoadRockProbe
         // the one rule planning asks of it (LocationRock.KeptAt): the same size, the same middle.
         var view = root.GetComponent<ZNetView>();
         var zdo = view != null && view.IsValid() ? view.GetZDO() : null;
-        GameObject? prefab = ZNetScene.instance.GetPrefab(Utils.GetPrefabName(root));
+        // Its prefab as the rock pass names it (RoadRockCarve.Prefab, from its ZDO): a fractured rock's object is renamed.
+        GameObject? prefab = RoadRockCarve.Prefab(root, view);
         if (prefab == null) return false;
         LocationRock box = LocationRock.Of(at, root.transform.rotation, (zdo != null ? PlacedLocationReader.SavedScale(zdo) : null) ?? Vector3.one,
             PlacedLocationReader.LocalBox(prefab), prefab.name);
@@ -212,25 +203,9 @@ public static class RoadRockProbe
         return true;
     }
 
-    /// <summary>What a judged object is to the road: cleared (and whether it stands in a location area), or kept, and kept
-    /// because another peer owns it. Decisions read this; <see cref="Hit.Verdict"/> is the log's wording.</summary>
-    private enum HitKind { Keep, KeepNotOwner, Clear, ClearInLocationArea }
-
-    /// <summary>What the probe decided about one object in the clearance.</summary>
-    private readonly struct Hit
-    {
-        public readonly string Name, Verdict;
-        public readonly float Size;
-        public readonly bool Listed;
-        public readonly HitKind Kind;
-        /// <summary>The name the clearing rules judged it by (a fractured rock's own rock).</summary>
-        public readonly string JudgedAs;
-        /// <summary>A deck's clearance takes it, whatever the road's rule (<see cref="RoadRockPolicy.DeckTakes"/>).</summary>
-        public readonly bool DeckTakes;
-        public Hit(string name, string verdict, float size, bool listed, HitKind kind = HitKind.Keep, string? judgedAs = null, bool deckTakes = false)
-        { Name = name; Verdict = verdict; Size = size; Listed = listed; Kind = kind; JudgedAs = judgedAs ?? name; DeckTakes = deckTakes; }
-        public bool Clears => Kind == HitKind.Clear || Kind == HitKind.ClearInLocationArea;
-    }
+    /// <summary>Why a rock is kept on an approach to its location (<see cref="KeptOnApproach"/>), or null.</summary>
+    private static string? KeptOnApproachWhy(GameObject root) => KeptOnApproach(root, out string why) ? why : null;
+    private static readonly System.Func<GameObject, string?> s_keptOnApproachWhy = KeptOnApproachWhy;
 
     /// <summary>Objects the last run kept because another peer owns them: the zone is not done until they are judged by
     /// their owner.</summary>
@@ -245,7 +220,7 @@ public static class RoadRockProbe
     /// another box decided.
     /// </summary>
     private static List<GameObject> Judge(RockClearance box, bool mist, bool cliffs,
-        HashSet<string> natural, Dictionary<GameObject, Hit> hits, HashSet<GameObject> otherZone, bool keepLocationRocks = false)
+        HashSet<string> natural, Dictionary<GameObject, RoadRockHit> hits, HashSet<GameObject> otherZone, bool keepLocationRocks = false)
     {
         var touchedHere = new List<GameObject>();
         long t = RoadRockStats.Now;
@@ -274,17 +249,18 @@ public static class RoadRockProbe
             // they are still here, and were found and cleared twice.
             if (RoadRockCarve.GhostSpawned != null && !RoadRockCarve.GhostSpawned.Contains(root)) { otherZone.Add(root); continue; }
             touchedHere.Add(root);
-            if (hits.TryGetValue(root, out Hit before))
+            if (hits.TryGetValue(root, out RoadRockHit before))
             {
-                if (keepLocationRocks && before.Kind == HitKind.ClearInLocationArea && KeptOnApproach(root, out string keptBefore))
-                    hits[root] = new Hit(before.Name, KeptForApproach(keptBefore), before.Size, before.Listed);
+                hits[root] = before.Revisited(keepLocationRocks, root, s_keptOnApproachWhy);
                 continue;
             }
-            // A rock in a zone explored before the road network is left
-            // whole, even when a neighbouring zone's pass reaches it.
-            if (!RoadRockPolicy.MayTouch(root.transform.position))
+            // A rock any of whose body is in a zone explored before the road network is left
+            // whole, even when a neighbouring zone's pass reaches it, and its root is over the border.
+            Bounds body = new Bounds(root.transform.position, Vector3.zero);
+            foreach (var part in root.GetComponentsInChildren<Collider>()) body.Encapsulate(part.bounds);
+            if (!RoadRockPolicy.MayTouch(body.min, body.max))
             {
-                hits[root] = new Hit(root.name, "keep: zone explored before the road network", 0f, false);
+                hits[root] = new RoadRockHit(root.name, "keep: zone explored before the road network", 0f, false);
                 continue;
             }
             long judging = RoadRockStats.Now;
@@ -297,48 +273,26 @@ public static class RoadRockProbe
             // location's protected area is kept unless the road is carved through it.
             bool locationChild = root.GetComponentInParent<Location>() != null;
             bool inLocationArea = false;
-            float size = 0f;
+            float size = RoadRockCarve.SurvivingSize(root);
             foreach (var part in root.GetComponentsInChildren<Collider>())
             {
                 var b = part.bounds;
-                size = Mathf.Max(size, b.size.magnitude);
                 if (RoadLocationProtection.BlocksSegment(new Vector2(b.center.x, b.center.z), new Vector2(b.center.x, b.center.z),
-                        new Vector2(b.extents.x, b.extents.z).magnitude, null, null)) inLocationArea = true;
+                        new Vector2(b.extents.x, b.extents.z).magnitude, default)) inLocationArea = true;
             }
-            bool piece = root.GetComponentInParent<Piece>() != null;
+            // A Location's stakes (LocationRock.ClearedForAWay) count as a player's piece only where a player placed them.
+            Piece? built = root.GetComponentInParent<Piece>();
+            bool stakes = LocationRock.ClearedForAWay(name);
+            bool piece = built != null && (!stakes || built.IsPlacedByPlayer());
             // Carving takes only what stands in the road's clearance, so a
             // location's protected area does not stop it: otherwise a 73 m boulder
             // was kept whole for one edge in an area, and chunks were left in
             // a road's last metres at a location. Parts of a location are still
             // never touched.
-            string keptWhy = "";
-            bool keptOnApproach = inLocationArea && keepLocationRocks && KeptOnApproach(root, out keptWhy);
-            bool protectedLocation = locationChild || keptOnApproach;
-            var biome = Heightmap.FindBiome(root.transform.position);
-            bool listed = false, ok = false, deckTakes = false;
-            string judgedAs = name;
-            foreach (string judged in RoadRockPolicy.PolicyNames(name, RoadRockCarve.FracturedFrom()))
-            {
-                if (RoadRockPolicy.IsResourceDeposit(judged)) judgedAs = judged;
-                listed |= RoadRockPolicy.IsNaturalBoulder(judged) || RoadRockPolicy.IsMistlandsRock(judged, mist, cliffs);
-                ok |= RoadRockPolicy.CanClear(judged, natural.Contains(judged), biome,
-                    protectedLocation, piece, view != null, view != null && view.IsValid(), view != null && view.IsOwner()) ||
-                    RoadRockPolicy.CanClearMistlands(judged, mist, cliffs, natural.Contains(judged), biome,
-                    protectedLocation, piece, view != null, view != null && view.IsValid(), view != null && view.IsOwner());
-                deckTakes |= RoadRockPolicy.DeckTakes(judged, mist, cliffs,
-                    protectedLocation, piece, view != null, view != null && view.IsValid(), view != null && view.IsOwner());
-            }
-            string verdict = ok ? (inLocationArea ? "boulder in a location area: carve the road through it" : "boulder: clear") :
-                !listed ? (RoadRockPolicy.IsMistlandsBoulder(name) ? "keep: Mistlands rock (add 'mist' to include)" :
-                    RoadRockPolicy.IsMistlandsCliff(name) ? "keep: Mistlands cliff (add 'cliffs' to include)" : "keep: not a listed natural boulder") :
-                locationChild ? "keep: part of a location" :
-                keptOnApproach ? KeptForApproach(keptWhy) :
-                protectedLocation ? "keep: protected location area" : piece ? "keep: player piece" :
-                view != null && !view.IsOwner() ? "keep: not owner" : "keep: biome or vegetation rule";
-            HitKind kind = ok ? (inLocationArea ? HitKind.ClearInLocationArea : HitKind.Clear)
-                : listed && !locationChild && !keptOnApproach && !protectedLocation && !piece && view != null && !view.IsOwner() ? HitKind.KeepNotOwner
-                : HitKind.Keep;
-            hits[root] = new Hit(name, verdict, size, listed, kind, judgedAs, deckTakes);
+            string? keptOnApproach = inLocationArea && keepLocationRocks && !stakes ? KeptOnApproachWhy(root) : null;
+            hits[root] = RoadRockHit.Judged(name, size, RoadRockPolicy.PolicyNames(name, RoadRockCarve.FracturedFrom()),
+                natural, mist, cliffs, locationChild, inLocationArea, keptOnApproach,
+                piece, view != null, view != null && view.IsValid(), view != null && view.IsOwner());
             RoadRockStats.JudgeTicks += RoadRockStats.Now - judging;
         }
         return touchedHere;
@@ -349,7 +303,7 @@ public static class RoadRockProbe
     /// boulder, log what changed and what was kept, and count item drops
     /// before and after. Returns the summary's outcome clause.
     /// </summary>
-    private static string Apply(Dictionary<GameObject, Hit> hits, HashSet<GameObject> onDeck,
+    private static string Apply(Dictionary<GameObject, RoadRockHit> hits, HashSet<GameObject> onDeck,
         List<PendingCarve>? deferCarves, Vector3 centre, float radius, List<string> lines, out int clearedCount)
     {
         int cleared = 0, carved = 0, deferred = 0;
@@ -360,37 +314,35 @@ public static class RoadRockProbe
         foreach (var kv in hits)
         {
             Vector3 p = kv.Key.transform.position;
-            Hit hit = kv.Value;
+            RoadRockHit hit = kv.Value;
             bool deck = onDeck.Contains(kv.Key) && hit.DeckTakes;
             string line = System.FormattableString.Invariant(
                 $"  {hit.Name} at ({p.x:F1},{p.y:F1},{p.z:F1}) size {hit.Size:F1} m -> {(deck ? "through a deck: remove whole" : hit.Verdict)}");
-            if (hit.Kind == HitKind.KeepNotOwner) LastNotOwner++;
-            bool mayRemoveWhole = RoadRockPolicy.MayRemoveWhole(hit.JudgedAs);
-            switch (RoadRockPolicy.HowTaken(hit.Clears, hit.DeckTakes, onDeck.Contains(kv.Key), hit.JudgedAs, hit.Size,
-                        kv.Key.GetComponent<ZNetView>() != null))
+            if (hit.Kind == RoadRockHitKind.KeepNotOwner) LastNotOwner++;
+            switch (RoadRockPolicy.HowTaken(hit.Clears, hit.DeckTakes, onDeck.Contains(kv.Key), hit.Size,
+                        kv.Key.GetComponent<ZNetView>() != null, hit.LocationStakes))
             {
                 case RoadRockPolicy.Taking.Carve:
                     if (deferCarves != null)
                     {
                         // Carved over the next frames (a carve is ~18 ms of the main thread): no carve below this
                         // pass sees another's result, and none needs to (each takes only its own rock's chunks).
-                        deferCarves.Add(new PendingCarve(kv.Key, line, mayRemoveWhole));
+                        deferCarves.Add(new PendingCarve(kv.Key, line));
                         lines.Add(line + "; carve: over the next frames");
                         deferred++;
                         continue;
                     }
-                    var (c, r) = CarveOne(kv.Key, line, mayRemoveWhole, lines);
+                    var (c, r, refused) = CarveOne(kv.Key, line, lines);
                     carved += c;
                     cleared += r;
+                    if (refused) LastNotOwner++;
                     continue;
                 case RoadRockPolicy.Taking.RemoveWhole:
-                    if (!deck && RoadRockPolicy.CarveRemovesWhole(hit.JudgedAs, hit.Size))
+                    if (!deck && !hit.LocationStakes && RoadRockPolicy.CarveRemovesWhole(hit.Size))
                         line += System.FormattableString.Invariant($"; small rock (under {RoadRockPolicy.CarveMinSize:F0} m): whole");
-                    cleared += RemoveWhole(kv.Key, line, mayRemoveWhole: true, lines);
+                    cleared += RemoveWhole(kv.Key, line, lines);
                     continue;
             }
-            // A rock the road takes but may not remove whole (an ore deposit with nothing to carve) stays, ore and all.
-            if (hit.Clears) line += "; ore deposit: kept, never removed whole";
             // A listed rock kept in the road (location part, owner, biome, a
             // partial block) says why, once.
             if (hit.Listed) LogOnce("Road rocks:" + line);
@@ -412,13 +364,21 @@ public static class RoadRockProbe
                 $"Road rocks: item drops near ({centre.x:F0},{centre.z:F0}) rose {dropsBefore} -> {dropsAfter} after clearing"));
     }
 
-    /// <summary>Carve one rock (<see cref="RoadRockCarve.Carve"/>), or remove it whole when it cannot be carved and the
-    /// rules allow; logs what changed. Returns (carved, removed whole), each 0 or 1.</summary>
-    private static (int carved, int removed) CarveOne(GameObject root, string line, bool mayRemoveWhole, List<string>? lines)
+    /// <summary>Carve one rock (<see cref="RoadRockCarve.Carve"/>), or remove it whole when it has no chunks to carve; logs
+    /// what changed. A carve refused because another peer owns the rock leaves it as it is (<c>refused</c>: its zone is
+    /// looked at again), never removed whole. Returns (carved, removed whole, refused).</summary>
+    private static (int carved, int removed, bool refused) CarveOne(GameObject root, string line, List<string>? lines)
     {
         long carving = RoadRockStats.Now;
         var r = RoadRockCarve.Carve(root);
         RoadRockStats.CarveTicks += RoadRockStats.Now - carving;
+        if (r.outcome == RoadRockCarve.Outcome.Refused)
+        {
+            line += $"; carve: refused ({r.note}), kept";
+            LogOnce("Road rocks:" + line);
+            lines?.Add(line);
+            return (0, 0, true);
+        }
         if (r.outcome != RoadRockCarve.Outcome.NotCarvable)
         {
             line += System.FormattableString.Invariant(
@@ -430,25 +390,19 @@ public static class RoadRockProbe
             // rock in the road with no trace of why.
             if (r.outcome != RoadRockCarve.Outcome.Untouched) Log("Road rocks:" + line);
             else LogOnce("Road rocks:" + line);
-            if (r.outcome == RoadRockCarve.Outcome.Untouched) return (0, 0);
+            if (r.outcome == RoadRockCarve.Outcome.Untouched) return (0, 0, false);
             RoadRockStats.Carved++;
-            return (1, 0);
+            return (1, 0, false);
         }
-        line += $"; carve: not carvable ({r.note})" + (mayRemoveWhole ? ", removed whole" : "");
-        return (0, RemoveWhole(root, line, mayRemoveWhole, lines));
+        line += $"; carve: not carvable ({r.note}), removed whole";
+        return (0, RemoveWhole(root, line, lines), false);
     }
 
-    /// <summary>Remove a rock whole, unless it is an ore deposit (never removed whole); logs it. Returns 1 when removed.</summary>
-    private static int RemoveWhole(GameObject root, string line, bool mayRemoveWhole, List<string>? lines)
+    /// <summary>Remove a rock whole, and the vegetation resting on it (<see cref="TakeWhatRestsOn"/>); logs it. Returns 1.</summary>
+    private static int RemoveWhole(GameObject root, string line, List<string>? lines)
     {
-        if (!mayRemoveWhole)
-        {
-            // An ore deposit the carve could not cut stays, ore and all.
-            line += "; ore deposit: kept, never removed whole";
-            LogOnce("Road rocks:" + line);
-            lines?.Add(line);
-            return 0;
-        }
+        // What stands on it goes with it, read while its colliders still hold it up.
+        TakeWhatRestsOn(root, lines);
         // ZNetScene.Destroy only schedules destruction: switch the colliders off now, so no
         // carve later in this pass sees a rock that is about to vanish holding the road.
         foreach (var c in root.GetComponentsInChildren<Collider>()) c.enabled = false;
@@ -458,6 +412,95 @@ public static class RoadRockProbe
         Log("Road rocks:" + line + "; removed whole");
         lines?.Add(line);
         return 1;
+    }
+
+    private static HashSet<string>? s_vegetation;
+    private static (ZoneSystem? zs, int count) s_vegetationKey;
+
+    /// <summary>The world's own vegetation, by prefab name, built once per world.</summary>
+    internal static HashSet<string> Vegetation()
+    {
+        var key = (ZoneSystem.instance, ZoneSystem.instance.m_vegetation.Count);
+        if (s_vegetation != null && s_vegetationKey.zs == key.instance && s_vegetationKey.count == key.Count) return s_vegetation;
+        var names = new HashSet<string>();
+        foreach (var veg in ZoneSystem.instance.m_vegetation)
+            if (veg.m_enable && veg.m_prefab != null) names.Add(veg.m_prefab.name);
+        s_vegetationKey = (ZoneSystem.instance, ZoneSystem.instance.m_vegetation.Count);
+        return s_vegetation = names;
+    }
+
+    private static int s_restMask;
+    /// <summary>What vegetation can stand on: the candidates' layers and the terrain.</summary>
+    private static int RestMask => s_restMask != 0 ? s_restMask : s_restMask = CandidateMask | LayerMask.GetMask("terrain");
+
+    /// <summary>
+    /// The world's vegetation resting on <paramref name="rock"/> (<see cref="RoadRockPolicy.RestsOn"/>: the first solid straight
+    /// under it, from the top of its own body, is the rock's) removed with it, each logged; one the policy keeps
+    /// (<see cref="RoadRockPolicy.KeptOffItsRock"/>) is logged and left. Looked for among the objects within the rock's body (its
+    /// colliders' bounds), which anything standing on it reaches into. The one place a rock is removed whole, for the client's pass
+    /// and the server's bake alike (<see cref="RunPass"/>), so both take the same vegetation. Returns how many went.
+    /// </summary>
+    private static int TakeWhatRestsOn(GameObject rock, List<string>? lines)
+    {
+        if (ZoneSystem.instance == null || ZNetScene.instance == null) return 0;
+        Collider[] rockParts = rock.GetComponentsInChildren<Collider>();
+        if (rockParts.Length == 0) return 0;
+        Bounds body = rockParts[0].bounds;
+        foreach (var part in rockParts) body.Encapsulate(part.bounds);
+        var near = new HashSet<GameObject>();
+        foreach (var collider in Physics.OverlapBox(body.center, body.extents, Quaternion.identity, CandidateMask, QueryTriggerInteraction.Ignore))
+        {
+            if (collider == null || collider.GetComponentInParent<Heightmap>() != null) continue;
+            var view = collider.GetComponentInParent<ZNetView>();
+            if (view == null || view.gameObject == rock || view.transform.IsChildOf(rock.transform)) continue;
+            if (RoadRockCarve.GhostSpawned != null && !RoadRockCarve.GhostSpawned.Contains(view.gameObject)) continue;
+            near.Add(view.gameObject);
+        }
+        HashSet<string> vegetation = Vegetation();
+        string rockName = RoadRockCarve.PrefabName(rock, rock.GetComponent<ZNetView>());
+        int taken = 0;
+        foreach (GameObject veg in near)
+        {
+            var view = veg.GetComponent<ZNetView>();
+            if (view == null || !view.IsValid()) continue;
+            Collider[] own = veg.GetComponentsInChildren<Collider>();
+            Vector3 at = veg.transform.position;
+            float top = at.y;
+            foreach (var c in own) top = Mathf.Max(top, c.bounds.max.y);
+            var down = Physics.RaycastAll(new Vector3(at.x, top, at.z), Vector3.down, top - body.min.y, RestMask, QueryTriggerInteraction.Ignore);
+            System.Array.Sort(down, (a, b) => a.distance.CompareTo(b.distance));
+            if (!RoadRockPolicy.RestsOn(down, h => System.Array.IndexOf(own, h.collider) >= 0, h => System.Array.IndexOf(rockParts, h.collider) >= 0))
+            {
+                if (RoadNetworkGenerator.RoadsLog && vegetation.Contains(RoadRockCarve.PrefabName(veg, view)))
+                {
+                    int first = System.Array.FindIndex(down, h => System.Array.IndexOf(own, h.collider) < 0);
+                    string under = first < 0 ? "nothing" : System.FormattableString.Invariant(
+                        $"{(down[first].collider.GetComponentInParent<Heightmap>() != null ? "the ground" : down[first].collider.transform.root.name)} at {down[first].point.y:F1}");
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(System.FormattableString.Invariant(
+                        $"Road rocks:  {RoadRockCarve.PrefabName(veg, view)} at ({at.x:F1},{at.y:F1},{at.z:F1}) over {rockName}, not resting on it: first under it {under}"));
+                }
+                continue;
+            }
+            string name = RoadRockCarve.PrefabName(veg, view);
+            Bounds vb = new Bounds(at, Vector3.zero);
+            foreach (var c in own) vb.Encapsulate(c.bounds);
+            string line = System.FormattableString.Invariant($"  {name} at ({at.x:F1},{at.y:F1},{at.z:F1}) resting on {rockName}");
+            string? kept = RoadRockPolicy.KeptOffItsRock(name, vegetation, veg.GetComponentInParent<Location>() != null,
+                veg.GetComponentInParent<Piece>() != null, RoadRockPolicy.MayTouch(vb.min, vb.max), view.IsOwner());
+            if (kept != null)
+            {
+                LogOnce("Road rocks:" + line + " -> keep: " + kept);
+                lines?.Add(line + " -> keep: " + kept);
+                continue;
+            }
+            foreach (var c in own) c.enabled = false;
+            ZNetScene.instance.Destroy(veg);
+            RoadRockStats.RemovedWithRocks++;
+            Log("Road rocks:" + line + " -> removed with it");
+            lines?.Add(line + " -> removed with it");
+            taken++;
+        }
+        return taken;
     }
 
     // Every rock actually changed goes to the BepInEx log: the automatic

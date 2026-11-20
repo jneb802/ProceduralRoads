@@ -17,8 +17,11 @@ public sealed class RailedBridgeTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
-    public RailedBridgeTests() { RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); }
-    public void Dispose() { RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); _scope.Dispose(); }
+    // The fixtures here are kits' structure cases whose water only raises a deck (standing it just under the deck, over ground
+    // above the sea) or lies under a valley deepened past the sea: none is water a ship is meant to sail, so no lane off a
+    // river here (BridgeLayout.DeepWaterLanes; ShipGapTests has the lanes, river or not).
+    public RailedBridgeTests() { RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); BridgeLayout.DeepWaterLanes = false; }
+    public void Dispose() { BridgeLayout.DeepWaterLanes = true; RoadNetworkGenerator.Reset(); RoadSpatialGrid.Clear(); _scope.Dispose(); }
 
     /// <summary>
     /// Kit A as built (pieces.txt), in the bridge's frame: prefab, along the deck from its centre, across it (to the right of
@@ -503,39 +506,102 @@ public sealed class RailedBridgeTests : IDisposable
     [Fact]
     public void AStairPostWhollyInTheGroundIsLeftOut()
     {
-        // A hillside beside the long stairs on their left (world +z) standing over the posts' tops there: none is laid on
-        // that side below the deck but under the bottom step, where the road cuts the hillside away; the right side keeps
-        // its posts.
+        // A hillside beside the long stairs on their left (world +z) standing over the posts' tops there: a post wholly in
+        // the game's terrain mesh (BuriedPieces.Buried, the one owner) is not laid; one whose grown box still meets the mesh
+        // where it falls away to the bank between its vertex rows is grounded by the game and laid. Fewer stand on that side
+        // than on the right, which keeps them all.
         var (c, w) = Reference();
         w.Bank = LongBank;
         w.Hill = (x, z) => z > 1.5f && Mathf.Abs(x) > 7f ? 36.5f : LongBank(Mathf.Abs(x));
-        var plan = BridgeLayout.SolveRailedComplete(c, w, 1, BridgeLayout.Rail).Select(Frame).ToList();
-        var stairPosts = plan.Where(p => p.Prefab == BridgeLayout.RailPostPrefab && Mathf.Abs(p.At.x) > 6.5f).ToList();
-        Assert.DoesNotContain(stairPosts, p => p.At.y < 0f && !UnderAJoint(c, w, p));
-        Assert.Contains(stairPosts, p => p.At.y > 0f);
+        List<StructurePiece> laid = BridgeLayout.SolveRailedComplete(c, w, 1, BridgeLayout.Rail);
+        Func<Vector2, float> ground = StructureGround.At(w);
+        Assert.DoesNotContain(laid, p => p.Prefab == BridgeLayout.RailPostPrefab
+            && BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (x, z) => ground(new Vector2(x, z))));
+        var stairPosts = laid.Select(Frame).Where(p => p.Prefab == BridgeLayout.RailPostPrefab && Mathf.Abs(p.At.x) > 6.5f).ToList();
+        Assert.True(stairPosts.Count(p => p.At.y < 0f) < stairPosts.Count(p => p.At.y > 0f),
+            $"{stairPosts.Count(p => p.At.y < 0f)} posts on the hillside, {stairPosts.Count(p => p.At.y > 0f)} on the open side");
+    }
+
+    /// <summary>The road to both of <paramref name="c"/>'s ends as generation lays it: levelled at each end's meeting height
+    /// over its apron and on under its joining piece to <see cref="StructureEnds.End.Joint"/>, the road's width, laid as the
+    /// network. The writer's levelling there is what cuts a bank away under the bottom step.</summary>
+    private static void LayTheRoadToTheEnds(RoadCrossing c, WorldGenerator w)
+    {
+        var (near, far) = BridgeStructures.Ends(c, w);
+        foreach (StructureEnds.End end in new[] { near, far })
+        {
+            var points = new List<Vector2>();
+            for (float along = -StructureEnds.ApronLength; along <= StructureEnds.JoinOverlap + 1e-3f; along += 0.5f)
+                points.Add(end.Meet + end.Up * along);
+            RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(points, points.ConvertAll(_ => end.MeetHeight),
+                points.ConvertAll(_ => default(RoadPointDebugInfo)), RoadConstants.DefaultRoadWidth, StructureEnds.ApronLength + StructureEnds.JoinOverlap, false));
+        }
+        RoadSpatialGrid.FinalizeRoadNetwork();
     }
 
     [Fact]
     public void AStairRailWhollyInTheGroundIsLeftOut()
     {
-        // A hillside beside the long stairs on their left (across -2, world +z), 0.3 m over the stair's line: each left
+        // A hillside beside the long stairs on their left (across -2, world +z), rising from 0.6 m over the stair's line, over
+        // the stringer's pitched box grown as the game grows it (0.6 m deep about its line, BuriedPieces.DataOf), steeply away
+        // from the stairs, so the game's mesh between its vertices stands over that box across its whole width: each left
         // stringer up the flight lies under the ground, out of sight, and is left out, but by the bottom step, where the
         // road cuts the hillside away; the handrails and the right side's stringers stand out of it.
         var (c, w) = Reference();
         w.Bank = LongBank;
         float Line(float x) => 34.9f - 0.5f * (Mathf.Abs(x) - 6f);
-        w.Hill = (x, z) => z > 1.5f ? Line(x) + 0.3f : LongBank(Mathf.Abs(x));
-        var plan = BridgeLayout.SolveRailedComplete(c, w, 1, BridgeLayout.Rail).Select(Frame).ToList();
+        w.Hill = (x, z) => z > 1.5f ? Line(x) + 0.6f + 3f * (z - 1.5f) : LongBank(Mathf.Abs(x));
+        LayTheRoadToTheEnds(c, w);
+        List<StructurePiece> laid = BridgeLayout.SolveRailedComplete(c, w, 1, BridgeLayout.Rail);
+        var plan = laid.Select(Frame).ToList();
         var rails = plan.Where(p => p.Prefab == BridgeLayout.StairRailPrefab).ToList();
         bool Stringer(FramePiece p) => Mathf.Abs(p.At.z - (Line(p.At.x) - 0.5f)) < 0.05f;
         bool Handrail(FramePiece p) => Mathf.Abs(p.At.z - (Line(p.At.x) + 0.5f)) < 0.05f;
         int steps = plan.Count(p => p.Prefab == BridgeLayout.StairPrefab) / 2;
         Assert.True(steps >= 12, $"{steps} steps in both ends' runs");
-        // The run's last stringers reach the road under the bottom step at their low end.
-        Assert.DoesNotContain(rails, p => Stringer(p) && p.At.y < 0f && Mathf.Abs(p.At.x) < 16f);
-        Assert.Contains(rails, p => Stringer(p) && p.At.y < 0f);
+        // Up the flight a left stringer wholly in the hillside is left out; those laid (the top step's, whose box reaches over
+        // the deck's end, and the run's lower ones, from the third step down, where the road's levelling, its end and the
+        // batter round it as the writer leaves it, cuts the hillside away) are not wholly in the ground (BuriedPieces.Buried,
+        // the one owner).
+        var left = rails.Where(p => Stringer(p) && p.At.y < 0f).ToList();
+        Assert.NotEmpty(left);
+        Assert.True(left.Count < steps, $"{left.Count} of the left stringers of {steps} steps laid");
+        // The second step's, wholly in the hillside between the deck's end and the road's cut: left out at both ends.
+        Assert.DoesNotContain(left, p => Mathf.Abs(Mathf.Abs(p.At.x) - 9f) < 0.5f);
+        Func<Vector2, float> ground = StructureGround.At(w);
+        Assert.DoesNotContain(laid, p => p.Prefab == BridgeLayout.StairRailPrefab
+            && BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (x, z) => ground(new Vector2(x, z))));
         Assert.Equal(steps, rails.Count(p => Stringer(p) && p.At.y > 0f));
         Assert.Equal(2 * steps, rails.Count(Handrail));
+    }
+
+    /// <summary>
+    /// A stair rail the ground covers only partly is laid, as the game shows it (decision Q5: nothing wholly buried, the rest
+    /// shown), by the one burial owner reading its pitched collider (BuriedPieces.Buried on BuriedPieces.DataOf's pitched
+    /// box). The hillside beside the long stairs' left stands 0.3 m over the stair's line, under the top of the stringer's
+    /// 0.6 m deep box (its top 0.34 m over its line, upright): every left stringer is laid, and every one laid or left out is
+    /// what the owner says. On the parent the sloped rails' own line test (the ground 0.15 m over the line at both ends) left
+    /// the left stringers up the flight out.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AStairRailTheGroundOnlyPartlyCoversIsLaid(bool braced)
+    {
+        var (c, w) = Reference();
+        w.Bank = LongBank;
+        float Line(float x) => 34.9f - 0.5f * (Mathf.Abs(x) - 6f);
+        w.Hill = (x, z) => z > 1.5f ? Line(x) + 0.3f : LongBank(Mathf.Abs(x));
+        LayTheRoadToTheEnds(c, w);
+        List<StructurePiece> laid = BridgeLayout.SolveRailedComplete(c, w, 1, braced ? BridgeLayout.Braced : BridgeLayout.Rail);
+        var plan = laid.Select(Frame).ToList();
+        bool Stringer(FramePiece p) => Mathf.Abs(p.At.z - (Line(p.At.x) - 0.5f)) < 0.05f;
+        int steps = plan.Count(p => p.Prefab == BridgeLayout.StairPrefab) / 2;
+        Assert.True(steps >= 12, $"{steps} steps in both ends' runs");
+        Assert.Equal(steps, plan.Count(p => p.Prefab == BridgeLayout.StairRailPrefab && Stringer(p) && p.At.y < 0f));
+        Func<Vector2, float> ground = StructureGround.At(w);
+        Assert.DoesNotContain(laid, p => p.Prefab is BridgeLayout.StairRailPrefab or BridgeLayout.BracePrefab
+            && BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, (x, z) => ground(new Vector2(x, z))));
     }
 
     // ------------------------------------------------- ends the road meets
@@ -816,7 +882,7 @@ public sealed class RailedBridgeTests : IDisposable
 
     /// <summary>A bank standing 0.1 m under the deck across its end station (+-6) and to +-6.5, the reference's ground
     /// beyond: the one step down lands on it, and the road, levelled to the step's foot, runs on under the step to the deck's
-    /// end, cutting the bank away there.</summary>
+    /// end, cutting the bank away there (the writer's levelling, <see cref="LayTheRoadToTheEnds"/>).</summary>
     private static float CutBank(float x, float z) => Mathf.Abs(x) <= 6.5f ? 34.8f : 33.9f;
 
     [Theory]
@@ -829,6 +895,7 @@ public sealed class RailedBridgeTests : IDisposable
         var (near, far) = BridgeStructures.Ends(c, w);
         Assert.Equal(1, near.Steps);
         Assert.Equal(1, far.Steps);
+        LayTheRoadToTheEnds(c, w);
         // The generator's bank stands within the ground's grip of the deck: no pole there on it. On the road's cut, one.
         var columns = Columns(BridgeLayout.SolveRailedComplete(c, w, 1, braced ? BridgeLayout.Braced : BridgeLayout.Rail));
         foreach (float along in new[] { -6f, 6f })
@@ -859,7 +926,8 @@ public sealed class RailedBridgeTests : IDisposable
         }
         // Built in it: a Mountain bridge's railing posts and handrails where it draws a railed kit.
         w.Biome = Heightmap.Biome.Mountain;
-        for (w.Seed = 76; BridgeStructures.KitFor(c, w) == BridgeStructures.Kit.Stone; w.Seed++) { }
+        for (w.Seed = 76; BridgeStructures.KitFor(c, w) == BridgeStructures.Kit.Stone; w.Seed++)
+            Assert.True(w.Seed < 276, "no seed in 200 draws a kit other than stone");
         Assert.Contains(BridgeStructures.Solve(c, w, 1), p => p.Prefab == BridgeLayout.RailPostPrefab);
         Assert.Contains(BridgeStructures.Solve(c, w, 1), p => p.Prefab == BridgeLayout.BeamPrefab && Mathf.Abs(p.Position.y - (34.9f + BridgeLayout.RailHeight)) < 0.01f);
         w.Biome = Heightmap.Biome.Mistlands;
@@ -1362,7 +1430,8 @@ public sealed class RailedBridgeTests : IDisposable
         var (c, w) = Reference();
         w.Biome = Heightmap.Biome.Mountain;
         var older = new[] { BridgeStructures.Kit.DvergrWood, BridgeStructures.Kit.WoodRail, BridgeStructures.Kit.WoodBraced };
-        for (w.Seed = 76; BridgeStructures.KitAmong(c, w, BridgeStructures.Installed) != BridgeStructures.Kit.Stone; w.Seed++) { }
+        for (w.Seed = 76; BridgeStructures.KitAmong(c, w, BridgeStructures.Installed) != BridgeStructures.Kit.Stone; w.Seed++)
+            Assert.True(w.Seed < 276, "no seed in 200 draws the stone kit");
         var built = ReferenceCrossing();
         var unbuilt = ReferenceCrossing();
         BridgeStructures.DecideKind(built, w);
@@ -1406,8 +1475,8 @@ public sealed class RailedBridgeTests : IDisposable
         }
     }
 
-    /// <summary>The record keeps an undecided kit as -1 (format 5) and a chosen one as its number and one; a record before
-    /// format 5 carrying -1 is refused, as any unknown kit is.</summary>
+    /// <summary>The record keeps an undecided kit as -1 and a chosen one as its number and one; a record in any
+    /// other format is refused.</summary>
     [Fact]
     public void AnUndecidedKitAndAChosenOneRoundTripTheRecord()
     {
@@ -1415,7 +1484,7 @@ public sealed class RailedBridgeTests : IDisposable
         c.Kit = BridgeStructures.Kit.Undecided;
         byte[] bytes = RoadNetworkPersistence.SerializeRoadCrossings(new[] { c });
         const int kitAt = 8 + 11 * 4;
-        Assert.Equal(5, BitConverter.ToInt32(bytes, 0));
+        Assert.Equal(RoadNetworkPersistence.CrossingsFormat, BitConverter.ToInt32(bytes, 0));
         Assert.Equal(RoadNetworkPersistence.UndecidedKit, BitConverter.ToInt32(bytes, kitAt));
         var loaded = new List<RoadCrossing>();
         Assert.True(RoadNetworkPersistence.DeserializeRoadCrossings(bytes, loaded));

@@ -17,7 +17,7 @@ public static class TerrainComp_Patch
         [HarmonyPostfix]
         public static void Postfix(TerrainComp __instance)
         {
-            if (!RoadNetworkGenerator.RoadsAvailable)
+            if (!RoadLifecycleManager.WritesTheNetwork)
                 return;
             RoadTerrainModifier.OnTerrainCompilerReady(__instance);
         }

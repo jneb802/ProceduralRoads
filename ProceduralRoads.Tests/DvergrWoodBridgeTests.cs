@@ -524,7 +524,7 @@ public sealed class DvergrWoodBridgeTests : IDisposable
             float ground = Ground(step, w);
             var under = posts.Where(p => Mathf.Abs(p.Position.x - step.Position.x) < 1e-3f && Mathf.Abs(p.Position.z - step.Position.z) < 1e-3f)
                 .OrderByDescending(p => p.Position.y).ToList();
-            if (step.Position.y <= ground + BridgeLayout.StairFootTolerance) { Assert.Empty(under); continue; }
+            if (SupportGraph.Against(ground, ground, step.Position.y, step.Position.y) != SupportGraph.Terrain.Over) { Assert.Empty(under); continue; }
             Assert.NotEmpty(under);
             // The column's top is the step's foot, each pile 4 m under the one above, the lowest one's foot in the ground.
             Assert.Equal(step.Position.y, under[0].Position.y + DvergrWoodBridge.PileLength * 0.5f, 3);
@@ -762,7 +762,7 @@ public sealed class DvergrWoodBridgeCutoffTests : IDisposable
             if (ZNetScene.instance!.GetPrefab(piece.Prefab) == null) ZNetScene.instance.AddPrefab(piece.Prefab);
         NetworkCutoff.Forget();
         NetworkCutoff.SnapshotWorld(new[] { zones[zones.Count - 1] });
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
         foreach (Vector2s zone in zones)
         {
             Assert.Equal(0, StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full));
@@ -773,7 +773,7 @@ public sealed class DvergrWoodBridgeCutoffTests : IDisposable
         // On a world with nothing explored the same bridge gets every planned piece, Dvergr planks among them.
         NetworkCutoff.Forget();
         NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
         Assert.Equal(StructurePlans.TotalPlannedPieces, zones.Sum(z => StructurePlacement.OnZoneSpawned(z, ZoneSystem.SpawnMode.Full)));
         Assert.Contains(ZDOMan.instance.Zdos, z => z.GetPrefab() == DvergrWoodBridge.Plank.GetStableHashCode());
     }

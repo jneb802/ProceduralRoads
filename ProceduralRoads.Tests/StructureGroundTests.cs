@@ -138,7 +138,7 @@ public sealed class StructureGroundTests : IDisposable
         var after = DvergrViaduct.SolveComplete(c!, w, 1);
         Assert.DoesNotContain(after, StepBlock);
         Assert.Equal(2, after.Count(p => p.Prefab == DvergrViaduct.StepPrefab && p.Position.x > w.HollowFrom - 0.5f));
-        AssertNothingWhollyBuried(after, w, c);
+        AssertNothingWhollyBuried(after, w);
     }
 
     // ------------------------------------------------------------- a cut under a column
@@ -335,10 +335,10 @@ public sealed class StructureGroundTests : IDisposable
         var viaductOnTheGenerators = DvergrViaduct.SolveComplete(v, valley, 1);
         foreach (var plan in plans!) RoadSpatialGrid.Commit(plan);
         RoadSpatialGrid.FinalizeRoadNetwork();
-        buriedOnTheGenerators += WhollyBuried(viaductOnTheGenerators, valley, v).buried.Count;
+        buriedOnTheGenerators += WhollyBuried(viaductOnTheGenerators, valley).buried.Count;
         var viaduct = DvergrViaduct.SolveComplete(v, valley, 1);
         laid += viaduct.Count;
-        var (viaductJudged, viaductBuried) = WhollyBuried(viaduct, valley, v);
+        var (viaductJudged, viaductBuried) = WhollyBuried(viaduct, valley);
         Assert.True(viaductBuried.Count == 0, $"viaduct: {string.Join("; ", viaductBuried)}");
         checkedPieces += viaductJudged;
         Assert.True(checkedPieces > laid / 3, $"only {checkedPieces} of {laid} pieces could be judged");
@@ -346,16 +346,16 @@ public sealed class StructureGroundTests : IDisposable
     }
 
     /// <summary>No piece of <paramref name="plan"/> wholly under the finished ground (<see cref="WhollyBuried"/>).</summary>
-    private static void AssertNothingWhollyBuried(List<StructurePiece> plan, WorldGenerator w, RoadCrossing? viaduct = null)
+    private static void AssertNothingWhollyBuried(List<StructurePiece> plan, WorldGenerator w)
     {
-        var (_, buried) = WhollyBuried(plan, w, viaduct);
+        var (_, buried) = WhollyBuried(plan, w);
         Assert.True(buried.Count == 0, string.Join("; ", buried));
     }
 
-    /// <summary>The pieces of <paramref name="plan"/> wholly under the finished ground: a stair kit's piece by its bounds
-    /// (<see cref="BuriedPieces.Buried"/>), a viaduct's by its extents (<see cref="DvergrViaduct.WhollyBuried(string, Vector2, Vector2, Vector2, float, Func{Vector2, float})"/>);
-    /// and how many pieces were judged (the others' bounds are not known here).</summary>
-    private static (int judged, List<string> buried) WhollyBuried(List<StructurePiece> plan, WorldGenerator w, RoadCrossing? viaduct = null)
+    /// <summary>The pieces of <paramref name="plan"/> wholly under the finished ground, by their measured bounds
+    /// (<see cref="BuriedPieces.Buried"/>, a viaduct's too); and how many pieces were judged (the others' bounds are not
+    /// known).</summary>
+    private static (int judged, List<string> buried) WhollyBuried(List<StructurePiece> plan, WorldGenerator w)
     {
         Func<Vector2, float> ground = StructureGround.At(w);
         Func<int, int, float> vertex = (x, z) => ground(new Vector2(x, z));
@@ -364,18 +364,152 @@ public sealed class StructureGroundTests : IDisposable
         foreach (StructurePiece p in plan)
         {
             if (p.Kind is StructurePieceKind.Flair or StructurePieceKind.Debris) continue;
-            bool under;
-            if (BuriedPieces.Known(p.Prefab))
-                under = BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, vertex, p.PitchDegrees);
-            else if (viaduct != null)
-            {
-                Vector2 dir = viaduct.Direction, side = new(-dir.y, dir.x);
-                under = DvergrViaduct.WhollyBuried(p.Prefab, new Vector2(p.Position.x, p.Position.z), dir, side, p.Position.y, ground);
-            }
-            else continue;
+            if (!BuriedPieces.Known(p.Prefab)) continue;
+            bool under = BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, vertex, p.PitchDegrees);
             judged++;
             if (under) buried.Add($"{p.Prefab} at {p.Position} lies wholly under the finished ground");
         }
         return (judged, buried);
+    }
+
+    // ------------------------------------------------------------- the game's mesh, not the generator's ground
+
+    /// <summary>Ground at 40 m with a 2 m saddle in every 1 m cell: high at the vertices of one diagonal, low at the other,
+    /// so the generator's ground inside a cell is nowhere near the game's mesh over its vertices.</summary>
+    private sealed class SaddleWorld : WorldGenerator
+    {
+        public override float GetHeight(float x, float z) => 40f + 2f * Mathf.Cos(Mathf.PI * x) * Mathf.Cos(Mathf.PI * z);
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
+        public override float GetBiomeHeight(Heightmap.Biome biome, float x, float z, out Color mask, bool preGeneration = false, bool riverPreDN = true)
+        {
+            mask = default;
+            return GetHeight(x, z);
+        }
+        public override int GetSeed() => 77;
+    }
+
+    /// <summary>
+    /// The structures' ground between vertices is the game's terrain mesh over the finished vertices
+    /// (<see cref="BuriedPieces.MeshHeight"/> over <see cref="StructureGround.Vertices"/>), with no earthwork, under a road
+    /// cut into the ground and under one filled over it, on the road's shoulder: the same ground the staircase ends are
+    /// audited on (<see cref="StairEnds.GroundOf"/>). It was the generator's ground there plus the writer's change spread
+    /// over the cell, 2 m off the mesh in a saddle cell.
+    /// </summary>
+    [Theory]
+    [InlineData(float.NaN)]
+    [InlineData(37f)]
+    [InlineData(43f)]
+    public void StructuresStandOnTheGamesMeshOverTheFinishedVertices(float roadAt)
+    {
+        var world = new SaddleWorld();
+        _scope.WithWorld(world).WithZoneSystem();
+        if (!float.IsNaN(roadAt))
+        {
+            var points = Enumerable.Range(-12, 25).Select(x => new Vector2(x, 0f)).ToList();
+            RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(points, points.Select(_ => roadAt).ToList(),
+                points.Select(_ => default(RoadPointDebugInfo)).ToList(), RoadConstants.DefaultRoadWidth, 24f, false));
+            RoadSpatialGrid.FinalizeRoadNetwork();
+        }
+        Func<int, int, float> finished = StructureGround.Vertices(world);
+        Func<Vector2, float> ground = StructureGround.At(world);
+        if (!float.IsNaN(roadAt))
+            Assert.NotEqual(BiomeBlendedHeight.GetBlendedHeight(0f, 2f, world), finished(0, 2), 2); // the shoulder is changed
+        var shoulder = new Vector2(0.5f, 2.5f);
+        float mesh = BuriedPieces.MeshHeight(shoulder.x, shoulder.y, finished);
+        Assert.Equal(mesh, ground(shoulder), 4);
+        Assert.Equal(mesh, StairEnds.GroundOf(new StairRun(), world)(shoulder.x, shoulder.y), 4);
+        foreach (var (x, z) in new[] { (0, 2), (1, 2), (0, 3), (1, 3) })
+            Assert.Equal(finished(x, z), ground(new Vector2(x, z)), 4);
+    }
+    // ------------------------------------------------------------- under a structure's ends: the writer's own levelling
+
+    /// <summary>A Mistlands valley (<see cref="RimValley"/>) whose far side rolls along the line and rises across it, a
+    /// metre a metre past 3.5 m from the line: a road there runs in a shallow cut.</summary>
+    private sealed class ShoulderValley : WorldGenerator
+    {
+        private readonly RimValley m_valley = new() { Far = x => -1f - 0.6f * Mathf.Sin(x) };
+        public float Rim => m_valley.Rim;
+        public override float GetHeight(float wx, float wy) =>
+            m_valley.GetHeight(wx, wy) + (wx > m_valley.Rim && Mathf.Abs(wy) < 100f ? Mathf.Max(0f, Mathf.Abs(wy) - 3.5f) : 0f);
+        public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mistlands;
+        public override int GetSeed() => 78;
+    }
+
+    /// <summary>
+    /// A viaduct over a valley whose far side rolls along its line and rises across it, the road planned to both ends as the
+    /// generator plans it and laid: under each end's joining piece the terrain writer itself levels the road's width to the
+    /// meeting height (the road runs on to <see cref="StructureEnds.End.Joint"/> at it), so that earthwork is in the
+    /// finished vertices, and the viaduct is laid on the game's mesh over them: the support rule grounds its pieces on it,
+    /// every piece it leaves out as buried is wholly under it, and none it lays is. Its ground was cut to the meeting height across its whole width under its ends,
+    /// a cut no writer makes: over the shoulder the bank the writer leaves stood higher.
+    /// </summary>
+    [Fact]
+    public void AViaductIsLaidOnTheWritersMeshUnderItsEnds()
+    {
+        var valley = new ShoulderValley();
+        _scope.WithWorld(valley);
+        float bank = valley.Rim + 1f;
+        RoadCrossing v = DvergrViaduct.ValleyCrossing(new Vector2(-bank, 0f), new Vector2(bank, 0f), valley, out string why)!;
+        Assert.True(v != null, why);
+        var path = new List<Vector2> { new(-100f, 0f), new(-bank - 20f, 0f), new(-bank, 0f), new(bank, 0f), new(bank + 20f, 0f), new(100f, 0f) };
+        v!.FromIndex = 2; v.ToIndex = 3;
+        var plans = MetEnds.Plan(path, new List<RoadCrossing> { v }, valley);
+        Assert.True(plans != null, RoadSpatialGrid.LastRefusal);
+        foreach (var plan in plans!) RoadSpatialGrid.Commit(plan);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+
+        Func<int, int, float> vertices = StructureGround.Vertices(valley);
+        var (near, far) = DvergrViaduct.Ends(v, valley);
+        int levelled = 0, higher = 0;
+        foreach (StructureEnds.End end in new[] { near, far })
+        {
+            Vector2 across = new(-end.Up.y, end.Up.x);
+            for (float along = 0f; along <= StructureEnds.JoinOverlap; along += 0.25f)
+                for (float off = -DvergrViaduct.HalfWidth; off <= DvergrViaduct.HalfWidth; off += 0.25f)
+                {
+                    Vector2 p = end.Meet + end.Up * along + across * off;
+                    float mesh = BuriedPieces.MeshHeight(p.x, p.y, vertices);
+                    // The writer's own levelling: on the road's width under the joining piece, at the meeting height.
+                    if (Mathf.Abs(off) <= 1f) { Assert.Equal(end.MeetHeight, mesh, 2); levelled++; }
+                    if (mesh > end.MeetHeight + 0.05f) higher++;
+                }
+        }
+        Assert.True(levelled > 0);
+        Assert.True(higher > 0, "nowhere under an end does the writer leave the ground over the meeting height: the case does not test the rule");
+
+        // The support rule grounds the viaduct's pieces on that mesh (ViaductSupport.Of): a block beside the road under an
+        // end's joining piece, its foot over the meeting height and under the bank the writer leaves round it, stands on the
+        // bank. Of the blocks whose mesh is made only of vertices under the joining piece, the one with the highest bank.
+        const string Small = "blackmarble_1x1";
+        Assert.True(BuriedPieces.DataOf(Small, out BuriedPieces.Measured block));
+        float grow = SupportGraph.Reach, bankOver = float.NegativeInfinity;
+        StructurePiece? onTheBank = null;
+        foreach (StructureEnds.End end in new[] { near, far })
+            for (float along = 0.5f; along <= 1.5f; along += 0.25f)
+                for (float off = -2.25f; off <= 2.25f; off += 0.25f)
+                {
+                    Vector2 at = end.Meet + end.Up * along + new Vector2(-end.Up.y, end.Up.x) * off;
+                    float x0 = at.x + block.Min.x - grow, x1 = at.x + block.Max.x + grow, z0 = at.y + block.Min.z - grow, z1 = at.y + block.Max.z + grow;
+                    bool under = true;
+                    for (int x = Mathf.FloorToInt(x0); x <= Mathf.CeilToInt(x1); x++)
+                        for (int z = Mathf.FloorToInt(z0); z <= Mathf.CeilToInt(z1); z++)
+                            under &= end.UnderTheJoint(new Vector2(x, z), DvergrViaduct.HalfWidth + grow);
+                    if (!under) continue;
+                    float most = float.NegativeInfinity;
+                    for (float x = x0; x <= x1 + 1e-3f; x += 0.25f)
+                        for (float z = z0; z <= z1 + 1e-3f; z += 0.25f)
+                            most = Mathf.Max(most, BuriedPieces.MeshHeight(x, z, vertices));
+                    if (most - end.MeetHeight <= bankOver) continue;
+                    bankOver = most - end.MeetHeight;
+                    onTheBank = new StructurePiece { Kind = StructurePieceKind.ViaductPier, Prefab = Small,
+                        Position = new Vector3(at.x, end.MeetHeight + 0.25f - block.Min.y, at.y) };
+                }
+        Assert.True(bankOver > 0.35f, $"the bank stands {bankOver:F2} over the meeting height at most: the case does not test the rule");
+        ViaductSupport.Held held = ViaductSupport.Of(v, valley, new List<StructurePiece> { onTheBank! })[0];
+        Assert.True(held.Support >= held.Min, $"the block on the bank at {onTheBank!.Position} holds {held.Support:F2} of {held.Min:F2}: not grounded");
+
+        List<StructurePiece> laid = DvergrViaduct.Solve(v, valley, 1, false, out DvergrViaduct.HoldReport report);
+        Assert.All(report.Buried, p => Assert.True(BuriedPieces.Buried(p.Prefab, p.Position, p.YawDegrees, vertices), $"{p.Prefab} at {p.Position} left out, not under the mesh"));
+        AssertNothingWhollyBuried(laid, valley);
     }
 }

@@ -369,8 +369,9 @@ public class BridgeRepairabilityTests
             for (int i = 0; i + 1 < column.Count; i++)
                 Assert.Equal(1, SharedSnaps(column[i], column[i + 1]));
             var lowest = column[column.Count - 1];
-            Assert.True(lowest.Position.y <= BiomeBlendedHeight.GetBlendedHeight(lowest.Position.x, lowest.Position.z, world) + BridgeLayout.PostSegment * 0.5f + 0.01f,
-                "a post column does not reach the ground");
+            // The ground the game shows: its mesh over the finished vertices, not the generator's ground between them.
+            float ground = BuriedPieces.MeshHeight(lowest.Position.x, lowest.Position.z, StructureGround.Vertices(world));
+            Assert.True(lowest.Position.y <= ground + BridgeLayout.PostSegment * 0.5f + 0.01f, "a post column does not reach the ground");
         }
 
         // 8. Cart clearance: between the deck's edge lines (where the stringers, rails, posts and columns stand), nothing

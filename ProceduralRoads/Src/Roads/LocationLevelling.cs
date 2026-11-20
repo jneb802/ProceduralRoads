@@ -53,8 +53,8 @@ public readonly struct LevelOp
 
     /// <summary>Whether this operation sits on the location's own centre, so
     /// its footprint is the same whichever way the location is turned.</summary>
-    public bool Concentric => Mathf.Abs(OffsetX) <= ConcentricTolerance
-                           && Mathf.Abs(OffsetZ) <= ConcentricTolerance;
+    public bool Concentric => FloatBits.Abs(OffsetX) <= ConcentricTolerance
+                           && FloatBits.Abs(OffsetZ) <= ConcentricTolerance;
 
     public const float ConcentricTolerance = 0.5f;
 }
@@ -159,7 +159,7 @@ public static class LocationLevelling
     {
         float? saved = PlacementHeightSource?.Invoke(centre);
         return saved.HasValue && !float.IsNaN(saved.Value) && !float.IsInfinity(saved.Value)
-            ? saved.Value : BiomeBlendedHeight.GetBlendedHeight(centre.x, centre.y, world);
+            ? saved.Value : NaturalGround.ForLevelling(centre.x, centre.y, world);
     }
 
     /// <summary>Whether any of a location's terrain modifiers levels (the others only smooth).</summary>
@@ -185,7 +185,7 @@ public static class LocationLevelling
             if (op.Radius <= 0f) continue;
             float candidate = centreGround + op.Height;
             if (float.IsNaN(candidate) || float.IsInfinity(candidate)) return null;
-            if (height.HasValue && Mathf.Abs(candidate - height.Value) > 0.25f) return null;
+            if (height.HasValue && FloatBits.Abs(candidate - height.Value) > 0.25f) return null;
             height = candidate;
         }
         return height;

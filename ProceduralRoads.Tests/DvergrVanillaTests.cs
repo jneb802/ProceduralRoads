@@ -92,7 +92,7 @@ public sealed class StructureRollTests : IDisposable
             if (ZNetScene.instance!.GetPrefab(piece.Prefab) == null) ZNetScene.instance.AddPrefab(piece.Prefab);
         NetworkCutoff.Forget();
         NetworkCutoff.SnapshotWorld(Array.Empty<Vector2s>());
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
         foreach (Vector2s zone in zones) StructurePlacement.OnZoneSpawned(zone, ZoneSystem.SpawnMode.Full);
         var spawned = ZDOMan.instance!.Zdos.Where(z => z.GetInt(StructurePlans.MarkerHash) == 1).ToList();
         foreach (StructurePiece p in planned)

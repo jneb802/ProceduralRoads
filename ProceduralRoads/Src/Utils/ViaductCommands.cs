@@ -15,7 +15,7 @@ public static class ViaductCommands
     {
         new Terminal.ConsoleCommand("road_viaducts",
             "The network's Dvergr viaducts, nearest first: road_viaducts [count, default 20]. Each row: its middle and deck height " +
-            "(a place to stand on it), its banks, span, how high the deck stands, its piers and tallest pier, over a valley or a river, its pieces.",
+            "(a location to stand on it), its banks, span, how high the deck stands, its piers and tallest pier, over a valley or a river, its pieces.",
             List, isCheat: true);
     }
 

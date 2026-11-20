@@ -201,7 +201,8 @@ public sealed class DvergrViaductParapetTests : IDisposable
 
     /// <summary>A viaduct at grade both ends: no stairs, so no stairs' parapet; only the parapet run on past each deck end
     /// onto the bank (DvergrViaduct.BankParapet), a parapet piece each side two modules out, on the level bank no black
-    /// marble under it.</summary>
+    /// marble under it but the deck's course carried on under its cap flush with the road (flush with the ground: the game
+    /// grounds it, so it is laid, BuriedPieces.Buried).</summary>
     [Fact]
     public void AViaductAtGradeHasOnlyItsBankParapet()
     {
@@ -213,7 +214,9 @@ public sealed class DvergrViaductParapetTests : IDisposable
         var (near, far) = DvergrViaduct.Ends(c, world);
         Assert.Equal((0, 0), (near.Steps, far.Steps));
         List<StructurePiece> pieces = DvergrViaduct.SolveComplete(c, world, world.GetSeed());
-        Assert.DoesNotContain(pieces, p => p.Prefab == StairRailing.ParapetHalfCoursePrefab);
+        foreach (StructurePiece p in pieces.Where(p => p.Prefab == StairRailing.ParapetHalfCoursePrefab))
+            Assert.True(Mathf.Abs(p.Position.y + DvergrViaduct.Extents(p.Prefab).y - near.Height) < 0.01f
+                || Mathf.Abs(p.Position.y + DvergrViaduct.Extents(p.Prefab).y - far.Height) < 0.01f, $"{p.Prefab} at {p.Position} under the road");
         List<StructurePiece> bases = pieces.FindAll(p => p.Prefab == StairRailing.ParapetPrefab);
         Assert.Equal(4, bases.Count);
         foreach (StructureEnds.End end in new[] { near, far })
@@ -257,7 +260,7 @@ public sealed class DvergrViaductParapetTests : IDisposable
         var lo = new Vector3(c.x - hu, c.y - hy, c.z - hv);
         var hi = new Vector3(c.x + hu, c.y + hy, c.z + hv);
         if (prefab == DvergrViaduct.StepPrefab) { lo.y = c.y; hi.y = c.y + 1f; }
-        return new SupportGraph.Piece(c, lo, hi, ViaductSupport.MaterialOf(prefab)!.Value, grounded);
+        return new SupportGraph.Piece(c, lo, hi, (BuriedPieces.DataOf(prefab, out BuriedPieces.Measured measured) ? measured.Material : null)!.Value, grounded);
     }
 
     /// <summary>Whether a piece's box meets the ground: its bottom within the game's reach of the highest ground under it.</summary>

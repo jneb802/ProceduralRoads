@@ -50,8 +50,9 @@ public static class RoadShoreFill
         {
             float a = i * Mathf.PI / 4f;
             var dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
-            for (float r = reach * 0.5f; r <= reach + 0.01f; r += reach * 0.5f)
+            for (int radius = 0; radius < 2; radius++)
             {
+                float r = radius == 0 ? reach * 0.5f : reach;
                 Vector2 q = p + dir * r;
                 if (buildable && FillDepth > 0f ? Unbuildable(world, q, here, wade) : Wet(world, q, wade)) return true;
             }

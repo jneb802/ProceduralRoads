@@ -6,9 +6,7 @@ using Xunit;
 namespace ProceduralRoads.Tests;
 
 /// <summary>
-/// Shallow water the road walks (swamp pools) is a ford in the river fords' style mix. Before, a
-/// generated world had 0 swamp fords of any style: the search wades swamp shallows as ordinary steps and
-/// the river detector only sees rivers, so every pool was waded, however long or deep.
+/// Standing water uses the crossing owner: natural-bed wades, raises, spans and bridges within their own limits.
 /// </summary>
 [Collection("RoadStatics")]
 public class ShallowFordTests
@@ -46,12 +44,16 @@ public class ShallowFordTests
     /// each other's ends.</summary>
     private sealed class TwoPools : WorldGenerator
     {
-        private readonly float m_x;
-        public TwoPools(float x) { m_x = x; }
+        private readonly float m_x, m_depth;
+        public TwoPools(float x, float depth = 0.5f) { m_x = x; m_depth = depth; }
         public override float GetHeight(float x, float z)
         {
             float d = x - m_x;
-            return (d > -22f && d < 0f) || (d > 1f && d < 9f) ? RoadConstants.SeaLevel - 0.5f : 31f;
+            // Continuous banks put the water line at the stated lengths; a jump from 31 to 29.5 between
+            // samples measures a shorter wet run when the water-line intersections are interpolated.
+            float first = Mathf.Max(-m_depth, Mathf.Max(-22f - d, d));
+            float second = Mathf.Max(-m_depth, Mathf.Max(1f - d, d - 9f));
+            return RoadConstants.SeaLevel + Mathf.Min(1f, Mathf.Min(first, second));
         }
         public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Swamp;
         public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = 0f; width = 0f; }
@@ -83,42 +85,55 @@ public class ShallowFordTests
     }
 
     [Fact]
-    public void PoolsComeInAMixOfRaisedWadedAndSpanned()
+    public void CrowdedDeepSpansRecoverThroughThePoolOwnerAfterOtherTreatmentsFail()
     {
-        // A third raised, a third waded, a third on a short span. Short, shallow pools
-        // allow all three; the site hash picks.
+        using var weights = StaticOverride.Keep(() => RoadCrossingDetector.ConfiguredWadeWeight)
+            .AndKeep(() => RoadCrossingDetector.ConfiguredRaiseWeight).AndKeep(() => RoadCrossingDetector.ConfiguredSpanWeight);
+        RoadCrossingDetector.SetFordStyleWeights(0f, 1f, 1f);
+        var crossings = RoadCrossingDetector.Detect(Line(0f), new TwoPools(0f, 0.8f), bridges: true);
+        Assert.Equal(2, crossings.Count);
+        Assert.All(crossings, c => Assert.False(c.Invalid));
+        var raised = Assert.Single(crossings.Where(c => c.Style == FordStyle.Raise));
+        Assert.Contains("recovery Raise", raised.ShallowNote!);
+    }
+
+    [Fact]
+    public void PoolsWithUnwalkableBanksAreSpannedInsteadOfRaisedDry()
+    {
+        // These abrupt banks cannot meet a raised wade within the grade cap. Only a span is eligible.
         var counts = new Dictionary<FordStyle, int>();
         for (int k = 0; k < 90; k++)
         {
             float cx = k * 157f;
-            var c = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 12f, 0.4f), bridges: true, fords: true));
+            var c = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 12f, 0.6f), bridges: true, fords: true));
             counts[c.Style] = counts.TryGetValue(c.Style, out int n) ? n + 1 : 1;
         }
-        foreach (var s in new[] { FordStyle.Raise, FordStyle.Wade, FordStyle.Span })
-            Assert.True(counts.TryGetValue(s, out int n) && n >= 18, $"{s}: {(counts.TryGetValue(s, out int m) ? m : 0)} of 90");
+        Assert.Single(counts);
+        Assert.Equal(90, counts[FordStyle.Span]);
     }
 
     [Fact]
-    public void ALongOrDeepPoolIsInvalidInEveryStyle()
+    public void ALongOrDeepPoolNeedsABridge()
     {
-        // One rule for every style: as far as a river ford reaches (48 m), no deeper than 3 m of
-        // fill. Past either the crossing is INVALID and the road must go round.
+        // Water beyond the ford limits needs a bridge rather than a causeway.
         for (int k = 0; k < 30; k++)
         {
             float cx = k * 211f;
             var longPool = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 60f, 0.4f), bridges: true, fords: true));
-            Assert.True(longPool.Invalid, "a 60 m pool");
+            Assert.False(longPool.Invalid);
+            Assert.Equal(CrossingKind.Bridge, longPool.Kind);
             var deep = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 12f, 3.5f), bridges: true, fords: true));
-            Assert.True(deep.Invalid, "a 3.5 m deep pool");
+            Assert.False(deep.Invalid);
+            Assert.Equal(CrossingKind.Bridge, deep.Kind);
             var metre = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 12f, 1.5f), bridges: true, fords: true));
-            Assert.False(metre.Invalid, "a 1.5 m deep pool: a wade is built up to wading depth");
+            Assert.False(metre.Invalid, "a 1.5 m deep pool");
             var fine = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 30f, 0.6f), bridges: true, fords: true));
             Assert.False(fine.Invalid, "a 30 m pool 0.6 m deep");
         }
     }
 
     [Fact]
-    public void AValidPoolMayBeWadedWhateverItsLengthUnderTheRule()
+    public void APoolsNaturalBedIsNeverWadedPastKneeDepth()
     {
         int waded = 0;
         for (int k = 0; k < 60; k++)
@@ -127,7 +142,7 @@ public class ShallowFordTests
             var c = Assert.Single(RoadCrossingDetector.Detect(Line(cx), new SwampPool(cx, 40f, 0.6f), bridges: true, fords: true));
             if (c.Style == FordStyle.Wade) waded++;
         }
-        Assert.True(waded >= 10, $"{waded} of 60 forty-metre pools waded");
+        Assert.Equal(0, waded);
     }
 
     [Fact]

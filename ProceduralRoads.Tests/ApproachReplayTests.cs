@@ -103,6 +103,12 @@ public class ApproachReplayTests
         Assert.DoesNotContain(aims, a => a.name == "joined edge" && Vector2.Distance(InCaveFrame(a.at, file.Yaw), HandFinishedLanding) <= 4f);
     }
 
+    /// <summary>The search-cost guard's margin over the facing pass's own allowance (RoadStairRuns.FacingStalls x the stall): the
+    /// steps the approach may spend laid not facing in once that allowance is spent. 10000, approved by the owner on 18 Nov 2026
+    /// ("for now"), in place of a fixed 25000 cap that the ring's off-square price (SkewWeight = TurnWeight, 17 Nov) passed by
+    /// 558 steps.</summary>
+    private const int SearchMargin = 10000;
+
     [Fact]
     public void AimedAtTheJoinedEdgeARoadsStaircaseAllowanceClimbsOntoTheShelf()
     {
@@ -117,9 +123,11 @@ public class ApproachReplayTests
         Vector2 top = new(joined.Plan.End.x, joined.Plan.End.z);
         Assert.Contains(file.Aims(), a => Vector2.Distance(a.at, top) <= RoadStairRuns.LedgeReach + RoadStairRuns.FinishReach);
         Assert.Contains(file.Landings(), l => Mathf.Abs(l.height - joined.Plan.End.y) <= StairLayout.StairFitsFrom);
-        // 8046 steps, laid at the east edge on its first try (21757 with the ground read bilinearly: the east edge's first layout
-        // had no way off its top, and the west edge was searched as well).
-        Assert.True(file.Steps <= 25000, $"{file.Steps} steps");
+        // The facing pass spends its whole allowance (FacingStalls x the stall, 16000): its first layout at the east edge reaches
+        // but has no way off its top, and the second is not reached within what is left. Laid not facing in, the east edge is then
+        // reached: 9558 steps under the ring's off-square price (SkewWeight = TurnWeight), 5494 before it, 25558 in all.
+        Assert.True(file.Steps <= RoadStairRuns.FacingStalls * stall + SearchMargin,
+            $"{file.Steps} steps, against the facing allowance {RoadStairRuns.FacingStalls * stall} + {SearchMargin}");
         // Aimed at the landings in front only, the same allowance searches the face under the overhang: once stalled there,
         // aimed now at the lip nearest each (LandingRegion.AtLip), it climbs on round to the lip in several times the steps
         // (about 43600 against 14600 once the search refuses wedge fillers and floors nothing holds up, 2 Nov 2026).

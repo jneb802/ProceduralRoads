@@ -148,13 +148,14 @@ public sealed class ConnectedLandingStairTests : IDisposable
     {
         var f=CapturedLandingFile.Tower();var r=f.Record;var shape=Shape(f);
         Assert.Equal("2c4cd8bbdf0c9e03c0de8ecffeaf7d8b9d85305a40db3e07c67c512f8547e77d",f.InputHash);
-        // The native capture omitted the global footprint index; all-protected cuts are a conservative diagnostic boundary.
+        // The native capture omitted the global footprint index: the tower's footprint as TowerPlacedFirstTests sets it.
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(r.Centre, 30f) });
         // A staircase from the captured road's end, set off from its ring (RoadEndRing), or where none is laid there, from where
         // the road is cut back for it (RoadNetworkGenerator.EntryCutBacks), over the captured ground carried on past its edge,
         // where a staircase from there may search. Before the ring every one from the road's end crossed it.
         float Carried(float x,float z)=>f.Ground(Mathf.Clamp(x,r.X0,r.X0+r.W-1.001f),Mathf.Clamp(z,r.Z0,r.Z0+r.H-1.001f));
-        RoadStairSpan? Lay(LocationApproachRequest q,Func<float,float,float> ground,out string refused)=>RoadStairRuns.PlanPlacedLocationApproach(q,r.Yaw,r.Ops,ground,(_,_)=>Heightmap.Biome.Mountain,f.Seed,out refused,
-            r.RockRadius,inFootprint:_=>true,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root);
+        RoadStairSpan? Lay(LocationApproachRequest q,Func<float,float,float> ground,out string refused)=>RoadStairRuns.PlanPlacedLocationApproach(q,r.Yaw,r.Ops,TestLattice.Of(ground),(_,_)=>Heightmap.Biome.Mountain,f.Seed,out refused,
+            r.RockRadius,inFootprint:RoadLocationProtection.Contains,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root);
         var span=Lay(f.Request,f.Ground,out string why);
         var from=f.Request;
         if(span==null){from=f.CutBack(RoadNetworkGenerator.EntryCutBacks[1]);span=Lay(from,Carried,out why);}
@@ -230,10 +231,11 @@ public sealed class ConnectedLandingStairTests : IDisposable
     private static StairPlan? TowerApproach(CapturedLandingFile f,PlacedLocationShape shape,float arriving,out string why)
     {
         var r=f.Record;Vector2 end=new Vector2(-4790.98f,1751.43f);
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(r.Centre, 30f) });
         var request=new LocationApproachRequest { Centre=r.Centre,RoadEnd=end,RoadHeight=f.Ground(end.x,end.y),Arriving=arriving,Reach=f.Request.Reach,
             TotalExpansions=f.Request.TotalExpansions,Stall=f.Request.Stall,Leg=f.Request.Leg,RoadTail=new List<Vector2>{end-StairLayout.Forward(arriving)*30f,end} };
-        return RoadStairRuns.PlanPlacedLocationApproach(request,r.Yaw,r.Ops,f.Ground,(_,_)=>Heightmap.Biome.Mountain,f.Seed,out why,
-            r.RockRadius,inFootprint:_=>true,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root,placed:shape)?.Plan;
+        return RoadStairRuns.PlanPlacedLocationApproach(request,r.Yaw,r.Ops,TestLattice.Of(f.Ground),(_,_)=>Heightmap.Biome.Mountain,f.Seed,out why,
+            r.RockRadius,inFootprint:RoadLocationProtection.Contains,rocks:r.Rocks,keepSmallRocks:r.KeepSmallRocks,root:r.Root,placed:shape)?.Plan;
     }
 
     /// <summary>The tower's own pieces as the game placed them, read beside its staircase (stone_wall_2x1 courses along
@@ -378,7 +380,7 @@ public sealed class ConnectedLandingStairTests : IDisposable
         var end=new Vector2(0,26);
         var request=new LocationApproachRequest { Centre=new Vector2(),RoadEnd=end,RoadHeight=Extended(end.x,end.y),Arriving=180,
             RoadTail=new List<Vector2> { new Vector2(0,56),end } };
-        var span=RoadStairRuns.PlanPlacedLocationApproach(request,0,Ops,Extended,(_,_)=>Heightmap.Biome.Mountain,77,out string why,root:40);
+        var span=RoadStairRuns.PlanPlacedLocationApproach(request,0,Ops,TestLattice.Of(Extended),(_,_)=>Heightmap.Biome.Mountain,77,out string why,root:40);
         Assert.True(span!=null,why);
         Assert.NotEmpty(span!.Plan.Pieces);
         Assert.Equal((true,true),RoadStairRuns.RaisedLandingWalk(span.Plan,Extension().ConnectedLanding(Extended,1f)));

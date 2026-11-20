@@ -67,8 +67,12 @@ public class JunctionAtGradeTests : System.IDisposable
             Assert.Equal(44f, world.GetHeight(0f, 0f));
             Assert.Equal(40f, RoadSpatialGrid.JunctionGround(new Vector2(0f, 0f), world), 3);
             var finder = new RoadPathfinder(world) { TerrainVarianceThreshold = 1000f, Meander = 0f };
-            finder.FindPathToNetwork(new Vector2(0f, 0f), RoadPathfinder.CellSize);
-            Assert.True(finder.AlreadyOnNetwork, "the road 6 m off is at grade with the ground the game renders here");
+            // Not served (the caller's test): the junction at the first cell is one the search finds, a road from the start to it.
+            var path = finder.FindPathToNetwork(new Vector2(0f, 0f), RoadPathfinder.CellSize, served: () => false);
+            Assert.False(finder.AlreadyOnNetwork);
+            Assert.NotNull(path);
+            Assert.True(path!.Count == 2 && Mathf.Abs(path[1].y - 6f) < 0.01f,
+                $"the road 6 m off is at grade with the ground the game renders here, a junction at the first cell: {string.Join(" ", path)}");
         }
         finally { RoadPathfinder.JunctionStep = step; }
     }

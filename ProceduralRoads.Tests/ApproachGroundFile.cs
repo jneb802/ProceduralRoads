@@ -34,9 +34,9 @@ public sealed class ApproachGroundFile
 
     private static float F(string v) => float.Parse(v, CultureInfo.InvariantCulture);
 
-    /// <param name="prefabOps">The location's prefab levelling (road_sites_dump), for a file that names only
+    /// <param name="prefabOps">The location's prefab levelling (road_locations_dump), for a file that names only
     /// its kept parts' offsets: each part is matched to the prefab's operation at that offset.</param>
-    /// <param name="footprintRadius">The location's terrain reach (road_sites_dump terrainRadius), for a file without it.</param>
+    /// <param name="footprintRadius">The location's terrain reach (road_locations_dump terrainRadius), for a file without it.</param>
     public static ApproachGroundFile Parse(string text, IReadOnlyList<LevelOp>? prefabOps = null, float? root = null,
         float? rockRadius = null, bool? keepSmallRocks = null, float? footprintRadius = null)
     {
@@ -120,7 +120,7 @@ public sealed class ApproachGroundFile
         };
         Vector2 c = Request.Centre;
         float reach = FootprintRadius;
-        RoadStairSpan? span = RoadStairRuns.PlanPlacedLocationApproach(request, Yaw, Ops, Ground, (x, z) => Heightmap.Biome.Mountain, 0, out why, RockRadius,
+        RoadStairSpan? span = RoadStairRuns.PlanPlacedLocationApproach(request, Yaw, Ops, TestLattice.Of(Ground), (x, z) => Heightmap.Biome.Mountain, 0, out why, RockRadius,
             p => reach > 0f && Vector2.Distance(p, c) <= reach, Rocks, KeepSmallRocks, Root, useTop ? top ?? Top : null, joinedAims);
         Steps = RoadStairRuns.LastApproachSteps;
         return span;

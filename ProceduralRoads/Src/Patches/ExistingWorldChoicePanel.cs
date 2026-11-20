@@ -21,18 +21,15 @@ internal static class ExistingWorldChoicePanel
     private static bool VanillaModal => Menu.IsActive() || Menu.IsVisible() || UnifiedPopup.IsVisible()
         || TextInput.IsVisible() || ZNet.IsPasswordDialogShowing();
 
-    /// <summary>The choices, the recommended one (the default where nobody is asked) first and selected.</summary>
+    /// <summary>The choices, the recommended one (the default where nobody is asked) first and selected; their words are
+    /// the answers' own (ExistingWorldFirstLoad.Label, ExistingWorldFirstLoad.Detail), which road_generate lists too.</summary>
     private static readonly (string label, string detail, Action choose)[] Choices =
     {
-        ("Build roads through explored land too (recommended)",
-            "Roads are built everywhere except the zones with your buildings or terrain edits, which they go round. " +
-            "The world is backed up first. Use road_connect afterwards to join your builds to the network.",
+        (ExistingWorldFirstLoad.Label(ExistingWorldFirstLoad.Recommended) + " (recommended)", ExistingWorldFirstLoad.Detail(ExistingWorldFirstLoad.Recommended),
             () => RoadLifecycleManager.Answer(ExistingWorldFirstLoad.Recommended)),
-        ("Build roads in new land only",
-            "Roads are built, but only in land explored from now on. Everything explored so far stays as it is.",
+        (ExistingWorldFirstLoad.Label(ExistingWorldRoads.NewZonesOnly), ExistingWorldFirstLoad.Detail(ExistingWorldRoads.NewZonesOnly),
             () => RoadLifecycleManager.Answer(ExistingWorldRoads.NewZonesOnly)),
-        ("Skip road building",
-            "No road network. The world stays exactly as it is. You can still build one later with road_generate.",
+        (ExistingWorldFirstLoad.Label(ExistingWorldRoads.Skip), ExistingWorldFirstLoad.Detail(ExistingWorldRoads.Skip),
             () => RoadLifecycleManager.Answer(ExistingWorldRoads.Skip)),
         ("Back to the menu",
             "Decide nothing now. You are asked again the next time this world loads.",

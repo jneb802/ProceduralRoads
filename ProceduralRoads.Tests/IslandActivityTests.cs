@@ -38,7 +38,7 @@ public sealed class IslandActivityTests
         var owner=new RoadIslandActivity(1,1); var token=owner.Claim(4,3);
         world.Steps=()=>owner.Snapshot()[0].SearchSteps;
         var finder=new RoadPathfinder(world) { Activity=token };
-        var search=Task.Run(()=>toNetwork ? finder.FindPathToNetwork(new Vector2(0,0), RoadPathfinder.CellSize) : finder.FindPath(new Vector2(0,0),new Vector2(20000,20000),1024));
+        var search=Task.Run(()=>toNetwork ? finder.FindPathToNetwork(new Vector2(0,0), RoadPathfinder.CellSize,()=>RoadNetworkGenerator.Reached(new Vector2(0,0),null)) : finder.FindPath(new Vector2(0,0),new Vector2(20000,20000),1024));
         try
         {
             Assert.True(world.First.Wait(3000)); var first=owner.Snapshot()[0];
@@ -232,7 +232,7 @@ public sealed class IslandActivityTests
     [Fact]
     public void ALocationALaterRoadServesLeavesUnreached()
     {
-        var owner=new RoadIslandActivity(1,1); var token=owner.Claim(3,1);
+        var owner=new RoadIslandActivity(1,1); var token=owner.Claim(3,3);
         token.Settled(0,false); token.Settled(1,true);
         Assert.Equal(1,owner.Snapshot()[0].Unreached);
         token.Measured(new[]{true,true,false});
@@ -251,16 +251,5 @@ public sealed class IslandActivityTests
         Assert.Equal("Crypt4",owner.Snapshot()[0].Destination);
         token.Stage("Fitting");
         Assert.Null(owner.Snapshot()[0].Destination);
-    }
-
-    [Fact]
-    public void SettlingSecondsStartWhenConnectingStartsNotAtTheClaim()
-    {
-        var owner=new RoadIslandActivity(1,1); var token=owner.Claim(1,2);
-        token.Pricing(4); Thread.Sleep(40);
-        Assert.Equal(0,owner.Snapshot()[0].SettlingSeconds);
-        token.Connecting("A",10);
-        var row=owner.Snapshot()[0];
-        Assert.True(row.SettlingSeconds<row.IslandSeconds-.03,"pricing time must not count toward the estimate");
     }
 }

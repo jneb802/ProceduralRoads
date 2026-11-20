@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace ProceduralRoads;
@@ -9,8 +10,11 @@ namespace ProceduralRoads;
 /// Tries arrival directions around the location over the last 64 metres.
 /// Scores the actual smoothed, grade-limited profile across the road's width;
 /// keeps the old route unless a candidate materially reduces earthworks.
-/// This is not entrance detection: candidates remain outside the protected footprint and never introduce a
-/// water crossing. Contour arcs can reach a lower side of a hillside location.
+/// This is not entrance detection. Its candidate restrictions are its own (a candidate stays outside the location's
+/// keep-out edge, crosses no water, and arrives within the reached test's reach), but they are not a statement of what
+/// road may be built: a candidate that ranks better replaces the old route only where the whole road with it is built
+/// by the shared planner (the <c>builds</c> evaluator, RoadNetworkGenerator.PlanCandidate). Contour arcs can reach a lower
+/// side of a hillside location. The one owner of the approach's bounded proposals and their ranking (docs/OWNERS.md).
 /// </summary>
 public static class RoadLocationApproach
 {
@@ -33,7 +37,7 @@ public static class RoadLocationApproach
             ? (float)Math.Acos(r / from.magnitude) : 0f;
         float sign = delta < 0f ? -1f : 1f;
         float straight = (float)Math.Sqrt(Math.Max(0f, from.sqrMagnitude - r*r));
-        float arc = Mathf.Max(0f, Mathf.Abs(delta) - tangentAngle) * r;
+        float arc = Mathf.Max(0f, FloatBits.Abs(delta) - tangentAngle) * r;
         Vector2 finish = centre + to.normalized * r;
         if (arc <= 0f) return anchor * (1f-t) + finish*t;
         float ta = a + sign*tangentAngle;
@@ -44,9 +48,15 @@ public static class RoadLocationApproach
         return centre + new Vector2(Mathf.Cos(theta),Mathf.Sin(theta))*r;
     }
 
+    /// <summary>The road <paramref name="path"/> with a better approach to the location at <paramref name="centre"/>, or
+    /// <paramref name="path"/> itself. A route, never a verdict: the candidates that rank better than the old approach are
+    /// offered best first to <paramref name="builds"/> (the whole road with that approach, as the shared planner builds it),
+    /// and the first it builds is taken. With none built, the old route is returned unchanged and goes on to the same
+    /// planning, which refuses it where it is not built either. No <paramref name="builds"/>: the best-ranked is taken.</summary>
     public static List<Vector2> Improve(List<Vector2> path, Vector2 centre, float radius,
         float width, WorldGenerator world, bool atStart,
-        Func<Vector2, float?> target, Func<Vector2, float> ground, float? desiredHeight = null)
+        Func<Vector2, float?> target, Func<Vector2, float> ground, float? desiredHeight = null,
+        Func<List<Vector2>, bool>? builds = null)
     {
         if (radius <= 0f || radius > Reach || path.Count < 3) return path;
         var oriented = new List<Vector2>(path);
@@ -64,11 +74,13 @@ public static class RoadLocationApproach
         float arrivalRadius = Vector2.Distance(oldEnd, centre);
         if (arrivalRadius < radius - 0.1f || arrivalRadius > radius + 16f) return path;
         var oldTail = oriented.GetRange(join, oriented.Count - join);
+        // The tail arrives at the location (its last point, oriented): the one location whose clearance its end may graze.
+        var arriving = new RoadLocationProtection.Targets(null, centre);
         // Keep authored ground separate from procedural profile heights.
         // Both caches are bounded and die with this decision, including errors.
         var groundSamples = new ApproachTerrainSamples(ground);
         var profileSamples = new ApproachTerrainSamples(
-            p => BiomeBlendedHeight.GetBlendedHeight(p.x, p.y, world));
+            p => NaturalGround.ForSearch(p.x, p.y, world));
         float Ground(Vector2 p) => groundSamples.Get(p);
         float anchorHeight = Ground(anchor);
         string lastRejection = "";
@@ -78,8 +90,8 @@ public static class RoadLocationApproach
             worst = 0f; lastRejection = "";
             // Trial profiles do not contribute to the network's grade report.
             RoadSpatialGrid.PlannedPath? plan = RoadGrade.Trial(() => requireClear
-                ? RoadSpatialGrid.PlanRoadPath(tail, width, world, anchorHeight, target(tail[tail.Count - 1]), terrainHeight: profileSamples.Get)
-                : RoadSpatialGrid.PlanComparisonProfile(tail, width, world, anchorHeight, target(tail[tail.Count - 1]), profileSamples.Get));
+                ? RoadSpatialGrid.PlanRoadPath(tail, width, world, anchorHeight, target(tail[tail.Count - 1]), terrainHeight: profileSamples.Get, locations: arriving)
+                : RoadSpatialGrid.PlanComparisonProfile(tail, width, world, anchorHeight, target(tail[tail.Count - 1]), profileSamples.Get, arriving));
             if (plan == null) return Reject("profile unavailable");
             double sum = 0;
             for (int i = 0; i < plan.Points.Count; i++)
@@ -87,11 +99,9 @@ public static class RoadLocationApproach
                 Vector2 point = plan.Points[i];
                 if (float.IsNaN(plan.Heights[i]) || float.IsInfinity(plan.Heights[i])) return Reject("non-finite profile");
                 // Inspect the spline, not just the control points. Its turn
-                // must not cut through the location or sneak across water.
+                // must not cut inside the keep-out edge or sneak across water: candidate restrictions, the road's
+                // location clearance being PlanRoadPath's own final check.
                 if (requireClear && Vector2.Distance(point, centre) < radius - 0.1f) return Reject("spline enters footprint");
-                Vector2 previous = plan.Points[Math.Max(0, i - 1)];
-                if (requireClear && RoadLocationProtection.BlocksRoad(previous, point, width, tail[0], tail[tail.Count - 1]))
-                    return Reject("spline enters protected clearance");
                 world.GetRiverWeight(point.x, point.y, out float river, out _);
                 if (!RoadWater.BuiltDry(Ground(point), river))
                     return Reject("water or river");
@@ -102,21 +112,43 @@ public static class RoadLocationApproach
                 {
                     float h = Ground(point + side * j);
                     if (float.IsNaN(h) || float.IsInfinity(h)) return Reject("non-finite ground");
-                    float cut = Mathf.Abs(plan.Heights[i] - h);
+                    float cut = FloatBits.Abs(plan.Heights[i] - h);
                     worst = Mathf.Max(worst, cut);
                     sum += cut;
                 }
             }
-            float mismatch = desiredHeight.HasValue ? Mathf.Abs(Ground(tail[tail.Count - 1]) - desiredHeight.Value) : 0f;
+            float mismatch = desiredHeight.HasValue ? FloatBits.Abs(Ground(tail[tail.Count - 1]) - desiredHeight.Value) : 0f;
             return (float)(sum / (plan.Points.Count * 3)) + worst * 0.5f + plan.TotalLength * 0.015f + mismatch * 2f;
         }
         // The old spline can already graze the protected edge. That must not
         // prevent searching for a valid replacement; clearance gates candidates.
         float oldScore = Score(oldTail, out float oldWorst, false);
-        float oldMismatch = desiredHeight.HasValue ? Mathf.Abs(Ground(oldEnd) - desiredHeight.Value) : 0f;
+        float oldMismatch = desiredHeight.HasValue ? FloatBits.Abs(Ground(oldEnd) - desiredHeight.Value) : 0f;
         if (float.IsInfinity(oldScore) || (oldWorst < 2f && oldMismatch <= StairLayout.StairFitsFrom)) return path;
         float bestScore = oldScore;
         List<Vector2>? best = null;
+        // The whole road with a candidate's approach in place of the old one.
+        List<Vector2> Substituted(List<Vector2> tail)
+        {
+            var road = oriented.GetRange(0, join);
+            road.AddRange(tail);
+            if (atStart) road.Reverse();
+            return road;
+        }
+        // The candidates that rank better, best first (in the order found where they tie): the first whose road is built.
+        var ranked = new List<(float score, List<Vector2> tail)>();
+        List<Vector2>? chosen = null;
+        void TakeBuilt()
+        {
+            foreach (var (score, tail) in ranked.OrderBy(c => c.score))
+            {
+                var road = Substituted(tail);
+                if (builds != null && !builds(road)) continue;
+                (best, bestScore, chosen) = (tail, score, road);
+                break;
+            }
+            ranked.Clear();
+        }
         Vector2 radial = oldEnd - centre;
         for (int turn = -8; turn <= 8; turn++)
         {
@@ -143,14 +175,14 @@ public static class RoadLocationApproach
                 if (length > oldLength + Mathf.PI * radius) continue;
                 // This was already an acceptance rule. Apply it before
                 // smoothing, grading and sampling an unusable trial profile.
-                if (desiredHeight.HasValue && Mathf.Abs(Ground(candidate[candidate.Count - 1]) - desiredHeight.Value) > StairLayout.StairFitsFrom) continue;
+                if (desiredHeight.HasValue && FloatBits.Abs(Ground(candidate[candidate.Count - 1]) - desiredHeight.Value) > StairLayout.StairFitsFrom) continue;
                 float score = Score(candidate, out float worst);
                 float limit = oldMismatch > StairLayout.StairFitsFrom ? Mathf.Max(2f, oldWorst + oldMismatch * 0.5f) : oldWorst - 0.5f;
                 if (worst > limit || score >= bestScore || score > oldScore * 0.8f) continue;
-                bestScore = score;
-                best = candidate;
+                ranked.Add((score, candidate));
             }
         }
+        TakeBuilt();
         // Geometric arcs can still cut across a ridge. When a location's height
         // is missed, search the local ground itself for a walkable contour.
         // One bounded search serves all possible arrival directions; it never
@@ -169,7 +201,7 @@ public static class RoadLocationApproach
             var origin = new Vector2i(0,0);
             costs[origin]=0f; frontier.Add((0f,0,0));
             float maxRadius = Mathf.Min(192f, Vector2.Distance(anchor,centre)+Reach);
-            float maxGrade = RoadGrade.Configured > 0f ? RoadGrade.Configured : RoadConstants.DefaultMaxRoadGrade;
+            float maxGrade = RoadGrade.Configured;
             Vector2 Point(Vector2i node) => anchor + new Vector2(node.x*step,node.y*step);
             int visited=0, goals=0;
             while (frontier.Count > 0 && visited++ < 4096 && goals < 8)
@@ -180,7 +212,7 @@ public static class RoadLocationApproach
                 Vector2 here=Point(key); float height=Ground(here);
                 float distanceToLocation=Vector2.Distance(here,centre);
                 if (parents.ContainsKey(key) && distanceToLocation >= radius+margin && distanceToLocation <= Mathf.Min(radius+margin+9f,farthest) &&
-                    Mathf.Abs(height-desiredHeight.Value) <= StairLayout.StairFitsFrom)
+                    FloatBits.Abs(height-desiredHeight.Value) <= StairLayout.StairFitsFrom)
                 {
                     goals++;
                     var candidate=new List<Vector2> { here };
@@ -191,7 +223,7 @@ public static class RoadLocationApproach
                     ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                         $"Location arrival {centre}: {here} ground {height:F2}, score {score:F2}/{oldScore:F2}, earthwork {worst:F2}/{oldWorst:F2}, {lastRejection}");
                     if (worst <= Mathf.Max(2f,oldWorst+oldMismatch*0.5f) && score < bestScore && score <= oldScore*0.8f)
-                    { best=candidate; bestScore=score; }
+                        ranked.Add((score, candidate));
                 }
                 foreach (var direction in RoadPathfinder.Directions)
                 {
@@ -201,11 +233,11 @@ public static class RoadLocationApproach
                     if (nextRadius < radius+margin || nextRadius > maxRadius) continue;
                     float t=Mathf.Clamp01(((centre.x-here.x)*delta.x+(centre.y-here.y)*delta.y)/delta.sqrMagnitude);
                     if (Vector2.Distance(here+delta*t,centre) < radius+margin ||
-                        RoadLocationProtection.BlocksFinalSegment(here,there,RoadLocationProtection.Clearance(width)+margin,anchor,there,out _)) continue;
+                        RoadLocationProtection.BlocksFinalSegment(here,there,RoadLocationProtection.Clearance(width)+margin,anchor,there,arriving,out _)) continue;
                     float nextHeight=Ground(there), middleHeight=Ground((here+there)*0.5f);
                     if (float.IsNaN(nextHeight) || float.IsInfinity(nextHeight) ||
                         float.IsNaN(middleHeight) || float.IsInfinity(middleHeight) || !RoadWater.BuiltDry(nextHeight)) continue;
-                    float slope=Mathf.Max(Mathf.Abs(nextHeight-middleHeight),Mathf.Abs(middleHeight-height))*2f/delta.magnitude;
+                    float slope=Mathf.Max(FloatBits.Abs(nextHeight-middleHeight),FloatBits.Abs(middleHeight-height))*2f/delta.magnitude;
                     if (slope > maxGrade) continue;
                     world.GetRiverWeight(there.x,there.y,out float river,out _);
                     if (RoadWater.River(river)) continue;
@@ -214,15 +246,13 @@ public static class RoadLocationApproach
                     costs[next]=cost; parents[next]=key; frontier.Add((cost,next.x,next.y));
                 }
             }
+            TakeBuilt();
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Location contour {centre}: margin {margin}m, {visited} nodes, {goals} arrivals near platform, accepted={best != null}");
         }
-        if (best == null) return path;
+        if (best == null || chosen == null) return path;
         ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
             $"Location approach {centre}: end {oldEnd} -> {best[best.Count - 1]}, earthwork score {oldScore:F2} -> {bestScore:F2}");
-        var result = oriented.GetRange(0, join);
-        result.AddRange(best);
-        if (atStart) result.Reverse();
-        return result;
+        return chosen;
     }
 }

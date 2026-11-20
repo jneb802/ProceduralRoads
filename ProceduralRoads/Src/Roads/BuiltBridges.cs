@@ -120,7 +120,8 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
     }
 
     /// <summary>A site's pieces as laid now saved with <paramref name="ground"/>, which is held from now on. A site saved
-    /// already keeps what it has; null where none may be saved (<see cref="StructureSites.Saving"/>).</summary>
+    /// already keeps what it has; null where none may be saved (<see cref="StructureSites.Saving"/>), and where the structure
+    /// is not in the world (<see cref="StructureSites.SpatialFault"/>): none of it is saved, as a load refuses its record.</summary>
     internal T? Keep(Vector2 from, Vector2 to, int kit, IEnumerable<StructurePiece> pieces, IEnumerable<GroundPin> ground)
     {
         if (!StructureSites.Saving) return null;
@@ -130,6 +131,12 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
             var site = new T { From = from, To = to, KitNumber = kit };
             foreach (StructurePiece p in pieces) site.Pieces.Add(BuiltSite.Copy(p));
             site.Ground.AddRange(ground);
+            if (StructureSites.SpatialFault(site.From, site.To, site.Pieces, site.Ground) is string fault)
+            {
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(System.FormattableString.Invariant(
+                    $"The {_what} ({from.x:F1}, {from.y:F1}) -> ({to.x:F1}, {to.y:F1}) not saved: {fault}"));
+                return null;
+            }
             _sites.Add(site);
             StructureGround.Hold(site.Ground);
             return site;
@@ -209,8 +216,6 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
             site.KitNumber = kit;
             site.Layout = reader.ReadInt32();
             if (site.Layout < 0) throw new InvalidDataException($"Invalid {_what} layout.");
-            if (!ManualRoadDraft.ValidPoint(site.From) || !ManualRoadDraft.ValidPoint(site.To))
-                throw new InvalidDataException($"Invalid {_what} ends.");
             int pieces = reader.ReadInt32();
             if (pieces < 0 || (total += pieces) > 1_000_000) throw new InvalidDataException($"Invalid {_what} piece count.");
             for (int j = 0; j < pieces; j++)
@@ -220,7 +225,7 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
                 var pos = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                 float pitch = reader.ReadSingle(), yaw = reader.ReadSingle(), roll = reader.ReadSingle(), health = reader.ReadSingle();
                 if (prefab.Length > RoadNetworkPersistence.MaxSavedPrefabName || !Enum.IsDefined(typeof(StructurePieceKind), kind) ||
-                    !ManualRoadDraft.ValidPoint(new Vector2(pos.x, pos.z)) || !ManualRoadDraft.IsFinite(pos.y) ||
+                    !ManualRoadDraft.IsFinite(pos.y) ||
                     !ManualRoadDraft.IsFinite(pitch) || !ManualRoadDraft.IsFinite(yaw) || !ManualRoadDraft.IsFinite(roll) ||
                     !ManualRoadDraft.IsFinite(health) || health < 0f || health > 1f)
                     throw new InvalidDataException($"Invalid {_what} piece.");
@@ -231,6 +236,8 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
                 });
             }
             GroundPin.ReadAll(reader, site.Ground);
+            if (StructureSites.SpatialFault(site.From, site.To, site.Pieces, site.Ground) is string fault)
+                throw new InvalidDataException($"Invalid {_what}: {fault}.");
             loaded.Add(site);
         }
         if (stream.Position != stream.Length) throw new InvalidDataException($"Trailing {_what} data.");
@@ -245,8 +252,51 @@ public sealed class BuiltSites<T> where T : BuiltSite, new()
 /// </summary>
 public static class StructureSites
 {
-    /// <summary>Whether sites may be saved: not on a network a released build saved, which keeps its format and its records.</summary>
-    public static bool Saving => !RoadSpatialGrid.LoadedFromReleasedFormat;
+    /// <summary>Whether sites may be saved: not on a network a released build saved, which keeps its format and its records
+    /// (<see cref="RoadNetworkPersistence.AllowsNetworkChanges"/>).</summary>
+    public static bool Saving => RoadNetworkPersistence.AllowsNetworkChanges;
+
+    /// <summary>
+    /// Why a structure is not in the world, or null when it is: its two ends, every piece's origin and every vertex of
+    /// ground it holds, each by the world's one rule (<see cref="RoadConstants.InWorld"/>). The one verdict over a whole
+    /// bridge or staircase, the same when it is built (<see cref="BuiltSites{T}.Keep"/>, before anything is saved) and when
+    /// its saved records are read (<see cref="BuiltSites{T}.Parse"/>, <see cref="StairStructures.Parse"/>), whatever zones
+    /// are loaded. A structure it refuses is refused whole: no piece of it is kept or read.
+    /// </summary>
+    public static string? SpatialFault(Vector2 from, Vector2 to, IReadOnlyList<StructurePiece> pieces, IReadOnlyList<GroundPin> ground)
+    {
+        static string At(float x, float z) => System.FormattableString.Invariant($"({x}, {z})");
+        if (!RoadConstants.InWorld(from) || !RoadConstants.InWorld(to)) return $"an end outside the world at {At(from.x, from.y)} -> {At(to.x, to.y)}";
+        foreach (StructurePiece piece in pieces)
+            if (!RoadConstants.InWorld(new Vector2(piece.Position.x, piece.Position.z)))
+                return $"a piece outside the world at {At(piece.Position.x, piece.Position.z)}";
+        foreach (GroundPin pin in ground)
+            if (!RoadConstants.InWorld(new Vector2(pin.X, pin.Z))) return $"held ground outside the world at {At(pin.X, pin.Z)}";
+        return null;
+    }
+
+    /// <summary>The structures refused as not in the world whole (<see cref="Refuses"/>), each said once.</summary>
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> s_refused = new();
+
+    /// <summary>
+    /// Whether a structure solved to be laid is not in the world whole (<see cref="SpatialFault"/> over its ends, its pieces and
+    /// <paramref name="ground"/>, the ground its record would hold): the one verdict that decides both whether it is laid and
+    /// whether it is saved, asked where its pieces are made (BridgeStructures.Solve, StairStructures.Dresser), so a structure
+    /// refused at build lays nothing, in any zone, as it saves nothing (<see cref="BuiltSites{T}.Keep"/> asks the same).
+    /// Said once per structure as a warning. The verdict is the point rule's: a piece's extent past its origin is not judged.
+    /// </summary>
+    internal static bool Refuses(object structure, string what, Vector2 from, Vector2 to, IReadOnlyList<StructurePiece> pieces, IReadOnlyList<GroundPin> ground)
+    {
+        if (SpatialFault(from, to, pieces, ground) is not string fault) return false;
+        lock (s_refused)
+        {
+            if (s_refused.TryGetValue(structure, out _)) return true;
+            s_refused.Add(structure, structure);
+        }
+        ProceduralRoadsPlugin.ProceduralRoadsLogger?.LogWarning(System.FormattableString.Invariant(
+            $"The {what} ({from.x:F1}, {from.y:F1}) -> ({to.x:F1}, {to.y:F1}) refused, nothing of it laid or saved: {fault}"));
+        return true;
+    }
 
     /// <summary>
     /// The sites these planned pieces of a zone built for the first time belong to saved (<see cref="PlannedSite.Keep"/>),
@@ -384,18 +434,25 @@ public static class BuiltStairs
     {
         if (!StructureSites.Saving) return null;
         if (Store.Of(run.From, run.To) is BuiltStair known) return known;
+        return Store.Keep(run.From, run.To, kit.Number, pieces, GroundOf(run, pieces, world != null ? StructureGround.Vertices(world) : null));
+    }
+
+    /// <summary>The ground a staircase's record holds (<see cref="Keep"/>): the ground its layout was settled on, and the
+    /// finished ground (<paramref name="vertex"/>) under any piece its kit adds to the layout, each vertex once; with no
+    /// ground to read, its layout's alone. What the structure's verdict reads (StairStructures.Dresser).</summary>
+    internal static List<GroundPin> GroundOf(StairRun run, List<StructurePiece> pieces, Func<int, int, float>? vertex)
+    {
         var ground = new List<GroundPin>(run.Ground);
         // What the kit lays over the layout's pieces: its supports (StairSupport) and anything not of the layout's kinds.
         List<StructurePiece> added = pieces.FindAll(p => p.Kind == StructurePieceKind.StairSupport || !StairStructures.IsLayoutKind(p.Kind));
-        if (added.Count > 0 && world != null)
+        if (added.Count > 0 && vertex != null)
         {
-            Func<int, int, float> vertex = StructureGround.Vertices(world);
             var pinned = new HashSet<(int, int)>();
             foreach (GroundPin pin in ground) pinned.Add((pin.X, pin.Z));
             foreach (GroundPin pin in StructureGround.Measure(added, vertex))
                 if (pinned.Add((pin.X, pin.Z))) ground.Add(pin);
         }
-        return Store.Keep(run.From, run.To, kit.Number, pieces, ground);
+        return ground;
     }
 
     public static byte[] Serialize() => Store.Serialize();

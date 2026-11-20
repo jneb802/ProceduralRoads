@@ -12,7 +12,7 @@ namespace ProceduralRoads;
 /// </summary>
 internal static class RoadRockStats
 {
-    internal static long Passes, Skipped, NotReady, Points, Queries, Colliders, Judged, Carved, Removed;
+    internal static long Passes, Skipped, NotReady, Points, Queries, Colliders, Judged, Carved, Removed, RemovedWithRocks;
     /// <summary>Frames that applied carves a pass left for later (RoadRockClearing), and the longest of them.</summary>
     internal static long CarveFrames, MaxCarveFrameTicks;
     internal static long TotalTicks, MaxPassTicks, LookupTicks, ClearanceTicks, GroundTicks, QueryTicks, JudgeTicks, CarveTicks, SyncTicks;
@@ -52,9 +52,9 @@ internal static class RoadRockStats
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Road rocks timing ({Period:F0} s): {Passes} pass(es) ({Skipped} zone(s) skipped as done, {NotReady} not ready yet), {MsText(TotalTicks)} ms (worst pass {MsText(MaxPassTicks)} ms); " +
                 $"lookup {MsText(LookupTicks)} ms; ground {MsText(GroundTicks)} ms for {Points} road points; clearance boxes {MsText(ClearanceTicks)} ms; overlap {MsText(QueryTicks)} ms for {Queries} queries returning {Colliders} colliders; " +
-                $"judging {MsText(JudgeTicks)} ms for {Judged} objects; carving {MsText(CarveTicks)} ms ({Carved} carved, {Removed} removed whole; {CarveFrames} frame(s) carving after their pass, the longest {MsText(MaxCarveFrameTicks)} ms); " +
+                $"judging {MsText(JudgeTicks)} ms for {Judged} objects; carving {MsText(CarveTicks)} ms ({Carved} carved, {Removed} removed whole, {RemovedWithRocks} vegetation resting on them with them; {CarveFrames} frame(s) carving after their pass, the longest {MsText(MaxCarveFrameTicks)} ms); " +
                 $"transform sync {MsText(SyncTicks)} ms");
-        Passes = Skipped = NotReady = Points = Queries = Colliders = Judged = Carved = Removed = CarveFrames = MaxCarveFrameTicks = 0;
+        Passes = Skipped = NotReady = Points = Queries = Colliders = Judged = Carved = Removed = RemovedWithRocks = CarveFrames = MaxCarveFrameTicks = 0;
         TotalTicks = MaxPassTicks = LookupTicks = ClearanceTicks = GroundTicks = QueryTicks = JudgeTicks = CarveTicks = SyncTicks = 0;
     }
 }

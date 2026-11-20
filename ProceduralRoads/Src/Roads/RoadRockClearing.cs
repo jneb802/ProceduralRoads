@@ -5,8 +5,11 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// Automatic rock clearing: the rocks clipping the road are looked for over
-/// the loaded zones, one heightmap every half second, so a road is walkable
-/// without anyone clearing it by hand. Natural boulders in every supported
+/// the loaded zones, every half second, the zone nearest the
+/// player (ZNet's reference position) first of those that need a look and are
+/// ready, then the next nearest while a probe leaves nothing to carve and the bake's frame budget lasts (<see cref="RoadRockPolicy.ProbeNearestFirst"/>), so a road is walkable
+/// without anyone clearing it by hand and the zone a fast explorer stands in
+/// is not left waiting behind others. Natural boulders in every supported
 /// biome, and Mistlands rocks and cliffs, are cleared as
 /// <see cref="Mode"/> says; never location parts, player pieces or objects
 /// another peer owns (their zone is looked at again on the next pass, once
@@ -16,7 +19,9 @@ namespace ProceduralRoads;
 public static class RoadRockClearing
 {
     private static float s_next;
-    private static int s_cursor;
+    private static readonly List<Heightmap> s_candidates = new List<Heightmap>();
+    private static readonly List<float> s_distances = new List<float>();
+    private static readonly List<int> s_order = new List<int>();
     /// <summary>
     /// Loaded zones the pass has finished with, by heightmap instance id and the
     /// road network they were checked against. Carved and removed rocks stay
@@ -58,12 +63,16 @@ public static class RoadRockClearing
         public int Version, Cleared, GroundMisses, NotOwner, Skipped;
     }
 
-    public static void Reset() { s_next = 0f; s_cursor = 0; s_done.Clear(); s_retryAt.Clear(); s_waiting.Clear(); s_carves.Clear(); s_carveNext = 0; s_pass = null; }
+    public static void Reset() { s_next = 0f; s_done.Clear(); s_retryAt.Clear(); s_waiting.Clear(); s_carves.Clear(); s_carveNext = 0; s_pass = null; }
+
+    /// <summary>A structure was laid with no change to the network (VegetationClearing.Reached): every loaded zone is looked at
+    /// again, as after an append, its new clearances with the rest.</summary>
+    internal static void LookAgain() => s_done.Clear();
 
     public static void Tick()
     {
         RoadRockStats.MaybeLog();
-        if (!RoadNetworkGenerator.RoadsAvailable || ZoneSystem.instance == null || ZNetScene.instance == null) return;
+        if (!RoadLifecycleManager.WritesTheNetwork || ZoneSystem.instance == null || ZNetScene.instance == null) return;
         if (s_pass != null) { CarveSome(s_pass); return; }
         if (Time.unscaledTime < s_next) return;
         s_next = Time.unscaledTime + 0.5f;
@@ -71,33 +80,53 @@ public static class RoadRockClearing
         if (maps == null || maps.Count == 0) return;
         int version = RoadSpatialGrid.RoadNetworkVersion;
         ReleaseWaiting(version);
-        // One probe per tick, but finished zones cost nothing: move past them to
-        // the next zone that needs a look, so a newly loaded zone is reached in
-        // half a second rather than after a turn through every loaded one.
-        Heightmap? map = null;
-        Vector2s zone = default;
-        for (int looked = 0; looked < maps.Count && map == null; looked++)
+        // Of the zones that still need a look, the one nearest the player (ZNet's reference position, the one the game
+        // simulates round) first, so the zone a fast explorer stands in does not wait behind others; a probe that leaves
+        // no carves lets the next nearest ready zone be probed in the same tick, inside the bake's frame budget (at least
+        // one probe), and one that leaves carves ends the tick. Finished and distant-LOD zones cost nothing and are left
+        // out before the order is taken.
+        s_candidates.Clear();
+        s_distances.Clear();
+        Vector3 reference = ZNet.instance != null ? ZNet.instance.GetReferencePosition() : Vector3.zero;
+        for (int i = 0; i < maps.Count; i++)
         {
-            if (s_cursor >= maps.Count) s_cursor = 0;
-            var candidate = maps[s_cursor++];
+            var candidate = maps[i];
             if (candidate == null) continue;
             if (s_done.TryGetValue(candidate.GetInstanceID(), out int doneFor) && doneFor == version) { RoadRockStats.Skipped++; continue; }
             // A distant low-detail heightmap has no collider and no objects: nothing to probe.
             if (candidate.IsDistantLod) continue;
-            zone = ZoneSystem.GetZone(candidate.transform.position);
-            // A zone with road or any structure in reach is looked at; a zone explored before
-            // the road network keeps its rocks (NetworkCutoff).
-            if (!RoadRockPolicy.ZoneNeedsLook(zone, candidate.transform.position)) { MarkDone(candidate, version); continue; }
-            // Not yet: every saved object round the zone must have its instance
-            // (the game creates them over several frames) and the terrain its
-            // collider, and its road terrain must be written, or the road is
-            // judged on the ungraded ground. Looked at again when it is ready.
-            if (s_retryAt.TryGetValue(candidate.GetInstanceID(), out float retry) && Time.unscaledTime < retry) { RoadRockStats.NotReady++; continue; }
-            if (!TerrainWritten(candidate, candidate.transform.position, zone, orRoadless: false) ||
-                !ZNetScene.instance.IsAreaReady(candidate.transform.position)) { RoadRockStats.NotReady++; continue; }
-            map = candidate;
+            Vector3 at = candidate.transform.position;
+            s_candidates.Add(candidate);
+            s_distances.Add(RoadRockPolicy.FlatDistanceSquared(at.x - reference.x, at.z - reference.z));
         }
-        if (map == null) return;
+        long tickStart = RoadRockStats.Now;
+        RoadRockPolicy.ProbeNearestFirst(s_distances, s_order, i => IsReady(s_candidates[i], version),
+            i => Probe(s_candidates[i], version), () => RoadRockStats.Ms(RoadRockStats.Now - tickStart), ServerTerrainBake.FrameBudgetMs);
+    }
+
+    /// <summary>Whether a zone is to be probed now (the order of the checks is the pass's): it needs a look (else it is marked
+    /// done), is not waiting on its retry time, its terrain is written and its area is ready.</summary>
+    private static bool IsReady(Heightmap candidate, int version)
+    {
+        Vector2s candidateZone = ZoneSystem.GetZone(candidate.transform.position);
+        // A zone with road or any structure in reach is looked at; a zone explored before
+        // the road network keeps its rocks (NetworkCutoff).
+        if (!RoadRockPolicy.ZoneNeedsLook(candidateZone, candidate.transform.position)) { MarkDone(candidate, version); return false; }
+        // Not yet: every saved object round the zone must have its instance
+        // (the game creates them over several frames) and the terrain its
+        // collider, and its road terrain must be written, or the road is
+        // judged on the ungraded ground. Looked at again when it is ready.
+        if (s_retryAt.TryGetValue(candidate.GetInstanceID(), out float retry) && Time.unscaledTime < retry) { RoadRockStats.NotReady++; return false; }
+        if (!TerrainWritten(candidate, candidate.transform.position) ||
+            !ZNetScene.instance.IsAreaReady(candidate.transform.position)) { RoadRockStats.NotReady++; return false; }
+        return true;
+    }
+
+    /// <summary>One zone's pass. True when it left carves to run over the next frames (the zone is judged when they are done);
+    /// false when it was judged here.</summary>
+    private static bool Probe(Heightmap map, int version)
+    {
+        Vector2s zone = ZoneSystem.GetZone(map.transform.position);
         // Objects created or moved since the last physics step are not where the
         // overlap queries look until the transforms are synced (the server's
         // pass for peers does the same).
@@ -113,18 +142,18 @@ public static class RoadRockClearing
             GroundMisses = RoadRockProbe.LastGroundMisses, NotOwner = RoadRockProbe.LastNotOwner,
         };
         // The carves go over the next frames; the zone is judged once they are done.
-        if (s_carves.Count > 0) { s_pass = pass; return; }
+        if (s_carves.Count > 0) { s_pass = pass; return true; }
         Finish(pass);
+        return false;
     }
 
     /// <summary>Whether a zone's road terrain is written, the one owner of the test: its heightmap <paramref name="map"/> has
-    /// no rebuild queued, and the road's terrain at <paramref name="zonePos"/> is written
-    /// (<see cref="RoadTerrainModifier.TerrainSettled"/>) or, <paramref name="orRoadless"/>, <paramref name="zone"/> has no
-    /// road point for it to write. The pass asks it without (and waits for the zone's objects too); the carve's fragment
-    /// ground with it. The one owner of terrain settled, and whether the world is held (docs/OWNERS.md).</summary>
-    internal static bool TerrainWritten(Heightmap map, Vector3 zonePos, Vector2s zone, bool orRoadless) =>
-        !map.HaveQueuedRebuild() &&
-        (RoadTerrainModifier.TerrainSettled(zonePos) || orRoadless && RoadSpatialGrid.GetRoadPointsInZone(zone).Count == 0);
+    /// no rebuild queued, and the zone at <paramref name="zonePos"/> owes no road write
+    /// (<see cref="RoadTerrainModifier.TerrainSettled"/>: none reaches it, or its compiler has it). The pass and the carve's
+    /// fragment ground ask it alike; the pass waits for the zone's objects too. The one owner of terrain settled, and
+    /// whether the world is held (docs/OWNERS.md).</summary>
+    internal static bool TerrainWritten(Heightmap map, Vector3 zonePos) =>
+        !map.HaveQueuedRebuild() && RoadTerrainModifier.TerrainSettled(zonePos);
 
     /// <summary>This frame's share of the pending carves, then the zone judged once the last is done. A zone unloaded
     /// meanwhile (its heightmap gone) drops what is left: its next heightmap is a new zone to the pass.</summary>
@@ -266,7 +295,7 @@ public static class RoadRockClearing
             {
                 count++;
                 float due = s_updateTime != null ? (float)s_updateTime.GetValue(physics) : Time.time + 20f;
-                float fall = Mathf.Abs(physics.transform.position.y - (physics.IsFalling ? physics.transform.position.y : to)) / 0.2f * 0.05f;
+                float fall = FloatBits.Abs(physics.transform.position.y - (physics.IsFalling ? physics.transform.position.y : to)) / 0.2f * 0.05f;
                 settledBy = Mathf.Max(settledBy, Mathf.Max(due, Time.time) + fall + 0.5f);
             }
             else unsimulated++;
@@ -293,7 +322,7 @@ public static class RoadRockClearing
         y = p.y;
         float floor = physics.GetFallHeight();
         if (physics.m_fall && p.y > floor + 0.05f) { y = floor; return true; }
-        if (physics.m_pushUp && ZoneSystem.instance.GetGroundHeight(p, out float under) && p.y < under - 0.05f) { y = under; return true; }
+        if (physics.m_pushUp && NaturalGround.Live(p, out float under) && p.y < under - 0.05f) { y = under; return true; }
         return false;
     }
 
@@ -307,7 +336,7 @@ public static class RoadRockClearing
         var zone = ZoneSystem.GetZone(point);
         var map = Heightmap.FindHeightmap(point);
         int version = RoadSpatialGrid.RoadNetworkVersion;
-        lines.Add($"zone {zone}: roads available {RoadNetworkGenerator.RoadsAvailable}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
+        lines.Add($"zone {zone}: roads available {RoadLifecycleManager.HasNetwork}, network {version}, road points in zone {RoadSpatialGrid.GetRoadPointsInZone(zone).Count}");
         if (map == null) { lines.Add("no heightmap here"); return lines; }
         bool listed = Heightmap.GetAllHeightmaps().Contains(map);
         bool done = s_done.TryGetValue(map.GetInstanceID(), out int doneFor);
@@ -315,7 +344,7 @@ public static class RoadRockClearing
                   $"area ready {(ZNetScene.instance != null && ZNetScene.instance.IsAreaReady(map.transform.position))}, terrain settled {RoadTerrainModifier.TerrainSettled(map.transform.position)}, " +
                   $"done {(done ? (doneFor == version ? "yes" : $"for network {doneFor}") : "no")}, still to settle {Settling(map.transform.position, out int outside)} (and {outside} outside the active area round the player, " +
                   $"waiting {s_waiting.Contains(map.GetInstanceID())}); {s_done.Count} zones marked; " +
-                  $"{Heightmap.GetAllHeightmaps().Count} heightmaps listed, cursor {s_cursor}");
+                  $"{Heightmap.GetAllHeightmaps().Count} heightmaps listed");
         Settling(map.transform.position, lines, out float by, out _);
         lines.Add($"  settled by t={by:F1} (now {Time.time:F1})");
         return lines;

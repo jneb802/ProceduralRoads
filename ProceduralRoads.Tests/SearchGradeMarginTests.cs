@@ -72,26 +72,38 @@ public class SearchGradeMarginTests
         Assert.InRange(SteepestAlong(path!, world), 0.39f, 0.41f);
     }
 
-    [Fact]
-    public void GroundBeyondTheMarginIsStillRefused()
+    [Theory]
+    [InlineData(0.40f, true)]   // over the 0.35 cap, inside the 0.45 ceiling
+    [InlineData(0.50f, false)]  // past cap + margin, and on a one-cell causeway there is no shallower heading
+    public void EverySearchJudgesTheCausewayAlike(float grade, bool crossed)
     {
-        // 0.50 is past cap + margin, and on a one-cell causeway there is no
-        // shallower heading to take instead.
-        var world = new Causeway(0.50f);
-        var path = Finder(world, 0.35f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
+        // The same causeway, the same cap, through each way into the search: point to point (FindPath), between end
+        // sets (FindPathBetween) and back to a road already laid (FindPathToNetwork). They share one step price
+        // (RoadPathfinder.RoadMoveCost), so they must agree on which side of the ceiling a slope sits; the two grades
+        // differ only in that.
+        var world = new Causeway(grade);
+        Vector2 from = new(0f, 0f), to = new(240f, 0f);
+        Assert.Equal(crossed, Finder(world, 0.35f).FindPath(from, to) != null);
+        Assert.Equal(crossed, Finder(world, 0.35f).FindPathBetween(new[] { (from, 0f) }, new[] { (to, 0f) }, null, null) != null);
 
-        Assert.Null(path);
-    }
-
-    [Fact]
-    public void TheSameCausewayInsideTheMarginIsCrossed()
-    {
-        // The control for the refusal above: same corridor, 0.40 instead of
-        // 0.50, so the only difference is which side of the ceiling it sits on.
-        var world = new Causeway(0.40f);
-        var path = Finder(world, 0.35f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
-
-        Assert.NotNull(path);
+        // reach is the radius that already counts as joined, NOT how far the search may travel: pass the 240 m
+        // separation here and the start is "already on network" before a step is taken.
+        const float JoinRadius = 16f;
+        // Across the causeway, not along it: at a constant x the ground is level, so the seed road is storable under
+        // the finished cap. Along it the seed would itself be steep ground and the cap would refuse it, leaving no
+        // network for the search to find.
+        RoadSpatialGrid.Clear();
+        try
+        {
+            Assert.True(RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(240f, -4f), new(240f, 4f) }, 8f, world),
+                "seed road was not stored, so this test would prove nothing");
+            var finder = Finder(world, 0.35f);
+            var joined = finder.FindPathToNetwork(from, JoinRadius, served: () => false); // no road within reach of the start
+            // Null for the right reason: refused on grade, not counted as joined.
+            Assert.False(finder.AlreadyOnNetwork);
+            Assert.Equal(crossed, joined != null);
+        }
+        finally { RoadSpatialGrid.Clear(); }
     }
 
     [Fact]
@@ -102,43 +114,6 @@ public class SearchGradeMarginTests
         var path = Finder(world, 0f).FindPath(new Vector2(0f, 0f), new Vector2(240f, 0f));
 
         Assert.NotNull(path);
-    }
-
-    [Fact]
-    public void TheReverseSearchUsesTheSameMargin()
-    {
-        // reach is the radius that already counts as joined, NOT how far the
-        // search may travel: pass the 240 m separation here and the start is
-        // "already on network" before a step is taken.
-        const float JoinRadius = 16f;
-
-        var inside = new Causeway(0.40f);
-        var beyond = new Causeway(0.50f);
-
-        // Across the causeway, not along it: at a constant x the ground is
-        // level, so the seed road is storable under the finished cap. Along it
-        // the seed would itself be 0.40 ground and the cap would refuse it,
-        // leaving no network for the reverse search to find.
-        RoadSpatialGrid.Clear();
-        Assert.True(RoadSpatialGrid.AddRoadPath(
-            new List<Vector2> { new Vector2(240f, -4f), new Vector2(240f, 4f) },
-            8f, inside), "seed road was not stored, so this test would prove nothing");
-
-        var insideFinder = Finder(inside, 0.35f);
-        var reached = insideFinder.FindPathToNetwork(new Vector2(0f, 0f), JoinRadius, null);
-        bool reachedWasAlreadyThere = insideFinder.AlreadyOnNetwork;
-
-        var beyondFinder = Finder(beyond, 0.35f);
-        var refused = beyondFinder.FindPathToNetwork(new Vector2(0f, 0f), JoinRadius, null);
-        bool refusedWasAlreadyThere = beyondFinder.AlreadyOnNetwork;
-
-        RoadSpatialGrid.Clear();
-
-        Assert.NotNull(reached);
-        Assert.False(reachedWasAlreadyThere);
-        // Null for the right reason: refused on grade, not counted as joined.
-        Assert.Null(refused);
-        Assert.False(refusedWasAlreadyThere);
     }
 
     [Fact]

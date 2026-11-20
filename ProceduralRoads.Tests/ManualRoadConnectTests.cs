@@ -5,6 +5,7 @@ using UnityEngine;
 using Valheim.Testing;
 using Valheim.Testing.Doubles;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace ProceduralRoads.Tests;
 
@@ -31,9 +32,12 @@ public sealed class ManualRoadConnectTests : IDisposable
     private readonly int _joinRetries = RoadNetworkGenerator.JoinRetries;
     private readonly float _junctionStep = RoadPathfinder.JunctionStep;
 
-    public ManualRoadConnectTests()
+    private readonly ITestOutputHelper _output;
+
+    public ManualRoadConnectTests(ITestOutputHelper output)
     {
-        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); PlacedLocations.Reset();
+        _output = output;
+        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); PlacedLocations.Reset(); StructureGround.Rebuild();
         RoadNetworkGenerator.MarkLocationsReady(); RoadNetworkGenerator.RoadWidth = RoadConstants.DefaultRoadWidth;
         RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
         RoadPathfinder.JunctionStep = RoadPathfinder.DefaultJunctionStep;
@@ -48,7 +52,7 @@ public sealed class ManualRoadConnectTests : IDisposable
         RoadPathfinder.JunctionStep = _junctionStep;
         RoadNetworkGenerator.ConfigureFinders(null);
         RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>());
-        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); PlacedLocations.Reset();
+        RoadNetworkGenerator.Reset(); RoadTerrainModifier.ResetForWorld(); PlacedLocations.Reset(); StructureGround.Rebuild();
         _world.Dispose();
     }
 
@@ -74,6 +78,121 @@ public sealed class ManualRoadConnectTests : IDisposable
     }
 
     private static bool HasStack(string line) => line.Contains("   at ") || line.Contains("Exception");
+
+    private const string AlreadyConnected = "Already connected to a road on this island. Nothing added.";
+
+    private enum Connection { AlreadyConnected, Built, Refused }
+
+    private static Connection Said(string line) =>
+        line == AlreadyConnected ? Connection.AlreadyConnected
+        : line.StartsWith("Road added: ") ? Connection.Built
+        : line.StartsWith("Road not added: ") ? Connection.Refused
+        : throw new InvalidOperationException($"not a road_connect result: {line}");
+
+    /// <summary>The shared join (RoadNetworkGenerator.JoinTo) from a plain point, planned and not stored, as road_connect
+    /// plans it: already served, a road to the network, or refused.</summary>
+    private static Connection ThroughTheSharedJoin(Vector2 mark)
+    {
+        var world = WorldGenerator.instance!;
+        var finder = RoadNetworkGenerator.NewFinder(world, RoadLocationProtection.Clearance(RoadNetworkGenerator.RoadWidth));
+        var hints = RoadNetworkGenerator.JoinTargets(_ => true);
+        var capture = new RoadNetworkGenerator.RoadCapture();
+        bool joined;
+        using (RoadNetworkGenerator.PlanningWith(finder, capture))
+            joined = RoadNetworkGenerator.JoinTo(finder, mark, hints, "road_connect", new Vector3(mark.x, 0f, mark.y), 0f, null, null, null);
+        return !joined ? Connection.Refused : capture.Road == null ? Connection.AlreadyConnected : Connection.Built;
+    }
+
+    /// <summary>
+    /// A mound under a pier (StructureGround.Mound) is ground, not network: a mark on one, a step from its top, is not
+    /// served by it (RoadNetworkGenerator.Reached, road_connect's test), nor is a location or a junction point there reached by
+    /// it (the automatic reachability), nor is it a junction a road's search may join (RoadSpatialGrid.TryGetRoadWithin,
+    /// TryGetRoadAtGradeWithin) or a join target (RoadNetworkGenerator.JoinTargets); road_connect does not say already
+    /// connected. Before, the mound's points were road a mark at a pier's foot was "already connected" by.
+    /// </summary>
+    [Fact]
+    public void AMoundIsNoNetworkToConnectTo()
+    {
+        float ground = WorldGenerator.instance!.GetHeight(0f, 60f);
+        var mark = new Vector2(0f, 60f);
+        var crossing = new RoadNetworkGenerator.CrossingGround();
+        crossing.Mounds.Add(new StructureGround.Mound(new List<Vector2> { mark + new Vector2(-1f, 0f), mark, mark + new Vector2(1f, 0f) }, ground + 0.1f));
+        crossing.CommitGround();
+        RoadSpatialGrid.FinalizeRoadNetwork(); RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+        Assert.NotEmpty(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(mark.x, 0f, mark.y), 0.01f));
+
+        Assert.False(RoadNetworkGenerator.Reached(mark, null), "the mark is served by the mound");
+        Assert.False(RoadNetworkGenerator.Reached(new Vector3(mark.x, 0f, mark.y), 0f), "a point on the mound is reached by it");
+        Assert.False(RoadNetworkGenerator.Reached(new Vector3(mark.x, 0f, mark.y + 6f), 4f), "a location by the mound is reached by it");
+        Assert.False(RoadSpatialGrid.TryGetRoadWithin(mark, 4f, out _), "the mound is a junction");
+        Assert.False(RoadSpatialGrid.TryGetRoadAtGradeWithin(mark, 4f, ground, RoadPathfinder.JunctionStep, out _), "the mound is a junction at grade");
+        Assert.Empty(RoadNetworkGenerator.JoinTargets(_ => true));
+        Assert.NotEqual(Connection.AlreadyConnected, ThroughTheSharedJoin(mark));
+    }
+
+    /// <summary>
+    /// road_connect says already connected only where the mark walks onto the road: a road on it or within one path cell
+    /// past its edge (no shorter road can be built), whose surface is a step from the marked ground; beside an at-grade road
+    /// just off its edge too. Beside a road raised or cut two junction steps off that ground, or one junction step off (a
+    /// junction the search may plan at grade, not a step a player walks), it builds a road or refuses with its reason, and
+    /// never says already connected. The marked ground is held by a saved structure (StructureGround.Hold): otherwise the
+    /// road's levelling could grade it to the road. The terminal command and the shared join give the same verdict.
+    /// </summary>
+    [Theory]
+    [InlineData(0f, 1f)]
+    [InlineData(2f, 1f)]
+    [InlineData(-2f, 1f)]
+    [InlineData(1f, 1f)]
+    [InlineData(0f, 3f)]
+    public void RoadConnectIsAlreadyConnectedOnlyWhereTheMarkWalksOntoTheRoad(float junctionSteps, float markZ)
+    {
+        var world = WorldGenerator.instance!;
+        float natural = world.GetHeight(0f, 0f);
+        float surface = natural + junctionSteps * RoadPathfinder.JunctionStep;
+        var mark = new Vector2(0f, markZ);
+        RoadSpatialGrid.Commit(Laid(new Vector2(-12f, 0f), new Vector2(12f, 0f), surface));
+        RoadSpatialGrid.FinalizeRoadNetwork(); RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+        StructureGround.Hold(new[] { new GroundPin(0, Mathf.RoundToInt(markZ), natural) });
+
+        float ground = StructureGround.At(world)(mark);
+        Assert.Equal(natural, ground);
+        float reach = RoadNetworkGenerator.RoadWidth / 2f + RoadNetworkGenerator.ReachPastEdge;
+        bool near = RoadSpatialGrid.TryGetRoadHeightWithin(mark, reach, out float nearest);
+        Assert.Equal(markZ <= reach, near);
+        bool walks = near && StairLayout.Walkable(ground, nearest);
+        Assert.Equal(junctionSteps == 0f && near, walks);
+        // The search's own candidate test, at the mark and at the first cell: a junction it may plan, not proof of a walk.
+        Assert.Equal(Mathf.Abs(junctionSteps) <= 1f, RoadSpatialGrid.TryGetRoadAtGradeWithin(mark, RoadPathfinder.CellSize,
+            RoadSpatialGrid.JunctionGround(mark, world), RoadPathfinder.JunctionStep, out _));
+
+        Connection shared = ThroughTheSharedJoin(mark);
+        int appends = RoadSpatialGrid.AppendCount;
+        string[] output = Run(FormattableString.Invariant($"road_connect {mark.x} {mark.y}"));
+        Connection said = Said(output.Last());
+        _output.WriteLine($"shared join: {shared}; road_connect: {string.Join(" | ", output)}");
+        if (walks)
+        {
+            Assert.Equal(Connection.AlreadyConnected, said);
+            Assert.Equal(appends, RoadSpatialGrid.AppendCount);
+        }
+        else
+        {
+            Assert.NotEqual(Connection.AlreadyConnected, said);
+            if (said == Connection.Refused)
+            {
+                Assert.EndsWith("Nothing added.", output.Last());
+                Assert.Equal(appends, RoadSpatialGrid.AppendCount);
+            }
+            else
+            {
+                // Built: one road, and from the mark it now walks onto the network.
+                Assert.Equal(appends + 1, RoadSpatialGrid.AppendCount);
+                Assert.Equal(AlreadyConnected, Run(FormattableString.Invariant($"road_connect {mark.x} {mark.y}")).Last());
+                Assert.Equal(appends + 1, RoadSpatialGrid.AppendCount);
+            }
+        }
+        Assert.Equal(shared, said);
+    }
 
     [Fact]
     public void ARoadToTheFirstJunctionThatIsRefusedIsTriedAgainToTheNext()
@@ -170,6 +289,60 @@ public sealed class ManualRoadConnectTests : IDisposable
             m_position = new Vector3(RuinAt.x, WorldGenerator.instance!.GetHeight(RuinAt.x, RuinAt.y), RuinAt.y),
         });
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(RuinAt, RuinRadius) });
+    }
+
+    [Fact]
+    public void ACustomLocationsCentreOnlyArrivalKeepsItsStandOffAfterLoading()
+    {
+        using var height = StaticOverride.Keep(() => LocationLevelling.PlacementHeightSource);
+        LocationLevelling.PlacementHeightSource = c => c == RuinAt ? 48f : null;
+        RoadNetworkGenerator.RegisterLocation(Ruin);
+        try
+        {
+            ARuin();
+            RoadNetworkGenerator.NoteCustomLocation(Ruin, new Vector3(RuinAt.x, 0f, RuinAt.y));
+            Vector2 toward = RuinAt + new Vector2(40f, 0f);
+            float expected = RoadNetworkGenerator.OffLevelStandOff(RuinAt, RuinRadius, toward);
+            Assert.True(expected > 0f);
+            RoadSpatialGrid.FinalizeRoadNetwork();
+            RoadNetworkPersistence.EnsureMetadataInstance();
+            RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
+            RoadNetworkGenerator.Reset();
+            Assert.Equal(0f, RoadNetworkGenerator.OffLevelStandOff(RuinAt, RuinRadius, toward));
+            Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData());
+            Assert.Equal(expected, RoadNetworkGenerator.OffLevelStandOff(RuinAt, RuinRadius, toward));
+        }
+        finally { RoadNetworkGenerator.UnregisterLocation(Ruin); }
+    }
+
+    [Fact]
+    public void ALocationReachedOffLevelStaysConnectedAfterSavingAndLoading()
+    {
+        ARuin();
+        float ring = RoadNetworkGenerator.KeepOutEdge(RuinAt, RuinRadius, RoadNetworkGenerator.RoadWidth);
+        Vector2 end = RuinAt + new Vector2(ring, 0f);
+        float under = WorldGenerator.instance!.GetHeight(end.x, end.y) - 2f;
+        RoadSpatialGrid.Commit(Laid(end, end + new Vector2(40f, 0f), under));
+        RoadSpatialGrid.FinalizeRoadNetwork(); RoadNetworkGenerator.MarkRoadsLoadedFromZDO();
+        Assert.False(RoadNetworkGenerator.Reached(RuinAt, RuinRadius, Ruin));
+        Assert.True(RoadNetworkGenerator.ReachOffLevel(Ruin, new Vector3(RuinAt.x, 0f, RuinAt.y), RuinRadius, () => false));
+        string line = FormattableString.Invariant($"road_connect {RuinAt.x} {RuinAt.y}");
+        string connected = $"{Ruin} at (80, 80) is already served by a road. Nothing added.";
+        Assert.StartsWith("Not built yet: ", Assert.Single(Run(line)));
+        Assert.Equal(connected, Run(line).Last());
+
+        RoadNetworkPersistence.EnsureMetadataInstance();
+        RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
+        RoadNetworkGenerator.Reset();
+        Assert.True(RoadNetworkGenerator.HeightNeeded(RuinAt));
+        Assert.True(RoadNetworkGenerator.TryLoadGlobalRoadData());
+        RoadNetworkGenerator.MarkRoadsLoadedFromZDO(); RoadNetworkGenerator.MarkLocationsReady();
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(RuinAt, RuinRadius) });
+
+        Assert.True(RoadNetworkGenerator.Reached(RuinAt, RuinRadius, Ruin));
+        Assert.StartsWith("Not built yet: ", Assert.Single(Run(line)));
+        Assert.Equal(connected, Run(line).Last());
+        Assert.Equal(0, RoadSpatialGrid.AppendCount);
     }
 
     [Fact]

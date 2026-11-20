@@ -209,4 +209,19 @@ public class ServerBakeBuilderRequestsTests
         Assert.Equal(new[] { 0, 1, 2, 3, 4, 5, 6, 7 }, worked.ConvertAll(z => (int)z.x).ToArray());
         Assert.Equal(8, next);
     }
+
+    /// <summary>A new append's zones join the bake's queue (ServerBakeBuilderRequests.Admit, as ServerTerrainBake.EnqueueAppend
+    /// asks it): a zone the queue worked already is owed again, a completed zone still owing a new append; one still to be
+    /// worked, holding a request or held for a deferral is not queued twice, and takes the new work when it is worked.</summary>
+    [Fact]
+    public void AWorkedZoneIsQueuedAgainForANewAppendAndAPendingOneIsNotQueuedTwice()
+    {
+        var requests = Requests();
+        Vector2s worked = new(0, 0), pending = new(1, 0), asked = new(2, 0), deferred = new(3, 0), fresh = new(4, 0);
+        var queue = new List<Vector2s> { worked, pending };
+        requests.Ask(asked, () => false);
+        int added = requests.Admit(queue, 1, new[] { worked, pending, asked, deferred, fresh }, zone => zone == deferred);
+        Assert.Equal(2, added);
+        Assert.Equal(new[] { worked, pending, worked, fresh }, queue);
+    }
 }

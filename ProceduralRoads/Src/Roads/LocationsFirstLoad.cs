@@ -97,17 +97,18 @@ public static class LocationsFirstLoad
         s_placing.Clear();
     }
 
-    /// <summary>One destination: placed first, already placed (read only), or neither.</summary>
+    /// <summary>One destination: placed first, already placed (read only), or neither. Its location is resolved once by the one
+    /// resolver (LocationPrefabLevelling.LocationAt: none, or two there, is no location to place; PlacedLocations.FindNotPlaced
+    /// gives the second its reason) and carried from then on by its identity and its own zone.</summary>
     private static void List(Vector3 position, ref int already)
     {
-        var centre = new Vector2(position.x, position.z);
-        Vector2s zone = ZoneSystem.GetZone(position);
-        if (!ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance instance)) return;
-        if (Vector2.Distance(new Vector2(instance.m_position.x, instance.m_position.z), centre) > 1f) return;
+        if (!LocationPrefabLevelling.LocationAt(new Vector2(position.x, position.z), out ZoneSystem.LocationInstance instance, out _)) return;
+        Vector2 centre = LocationPrefabLevelling.Centre(instance);
+        Vector2s zone = ZoneSystem.GetZone(instance.m_position);
         // A zone explored before the road network is left exactly as it is (NetworkCutoff): nothing is laid
         // onto a landing there, so its location gets no road (PlacedLocations.NotPlaced).
         if (NetworkCutoff.Excludes(zone)) { PlacedLocations.NoteWhyNotPlaced(centre, PlacedLocations.ZoneLeftAlone); return; }
-        if (!PlacedLocations.NeedsPlacing(instance, WorldGenerator.instance)) return;
+        if (!PlacedLocations.PlacesFirst(instance, WorldGenerator.instance)) return;
         if (PlacedLocationReader.Placed(zone, centre, out _)) { already++; s_placing.Add((centre, zone)); return; }
         if (instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone))
         {
@@ -155,16 +156,12 @@ public static class LocationsFirstLoad
         IReadOnlyList<LevelOp>? ops = PlacedLocationReader.KeptOps(centre, proxy);
         if (ops == null) return false;
         float rock = PlacedLocationReader.RockRadius(centre);
-        // The ground the road onto its landing may be laid over: out to the road's trim ring and round
-        // its rock (a staircase from behind is led round it), and a margin beyond.
-        float ring = RoadNetworkGenerator.DoorRing(centre, rock, RoadNetworkGenerator.RoadWidth, placed: true);
-        float half = Mathf.Max(ring, rock + RoadStairRuns.RockMargin + RoadStairRuns.RockClearance) + PlacedLocationReader.Margin;
+        // The ground the road onto its landing may be laid over (PlacedLocationReader.ReadHalf).
+        float half = PlacedLocationReader.ReadHalf(centre, rock);
         int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
-        string prefab = ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";
-        // One that levels no flat but smooths round it is landed on the level ground beside it (PlacedLocationShape.OnLevelGround),
-        // clear of its own pieces: read with its boulders.
-        bool pieces = PlacedLocations.FlatFor(prefab, ops) == null && PlacedLocations.SmoothsItsGround(ops);
-        List<LocationRock> rocks = PlacedLocationReader.LocationRocks(x0, z0, w, w, centre, root, yaw, out _, pieces);
+        string prefab = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";
+        // Its own built pieces are read with its boulders: every approach keeps clear of them (PlacedLocationShape.Refusal: the walker's own body).
+        List<LocationRock> rocks = PlacedLocationReader.LocationRocks(x0, z0, w, w, centre, root, yaw, out _);
         PlacedLocations.Remember(new PlacedLocationRecord
         {
             Prefab = prefab,

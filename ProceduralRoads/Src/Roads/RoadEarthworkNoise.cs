@@ -43,26 +43,22 @@ internal static class RoadEarthworkNoise
     internal static float FlatGround = 0.15f;
     internal static bool Enabled => Amplitude > 0f;
 
-    /// <summary>The most the noise and fill spread can add to a side slope's
-    /// reach, for padding the zone gather.</summary>
-    internal static float MaxExtraReach =>
-        (Enabled ? RoadConstants.TerrainBlendMargin * WidthVariation : 0f) + (FillSpread > 0f ? FillSpreadMax : 0f);
-
     /// <summary>How much wider or narrower the side slope is at this road point.</summary>
     internal static float MarginFactor(Vector2 roadPoint) =>
         Enabled ? 1f + WidthVariation * (2f * Perlin01((roadPoint.x + 1013f) / 32f, (roadPoint.y - 2027f) / 32f) - 1f) : 1f;
 
     /// <summary>Extra side-slope width for one road point on fill over flat
-    /// ground; <paramref name="ground"/> samples the natural ground.</summary>
+    /// ground; <paramref name="ground"/> samples the ground the writer levels from (RoadTerrainModifier.FillExtras). A
+    /// sample not known (NaN: a location's footprint whose ground is not read yet) judges no fill and no flat ground: no spread.</summary>
     internal static float FillExtra(Vector2 p, float roadHeight, System.Func<float, float, float> ground)
     {
         if (FillSpread <= 0f) return 0f;
         float here = ground(p.x, p.y);
         float fill = roadHeight - here;
-        if (fill <= 1f) return 0f;
-        float sx = Mathf.Abs(ground(p.x + 6f, p.y) - ground(p.x - 6f, p.y)) / 12f;
-        float sz = Mathf.Abs(ground(p.x, p.y + 6f) - ground(p.x, p.y - 6f)) / 12f;
-        if (Mathf.Max(sx, sz) > FlatGround) return 0f;
+        if (!(fill > 1f)) return 0f;
+        float sx = FloatBits.Abs(ground(p.x + 6f, p.y) - ground(p.x - 6f, p.y)) / 12f;
+        float sz = FloatBits.Abs(ground(p.x, p.y + 6f) - ground(p.x, p.y - 6f)) / 12f;
+        if (!(sx <= FlatGround && sz <= FlatGround)) return 0f;
         return Mathf.Min(FillSpreadMax, FillSpread * (fill - 1f));
     }
 
@@ -71,8 +67,9 @@ internal static class RoadEarthworkNoise
     /// <summary>The fine octave's frequency, per metre (vanilla's 0.4: a 2.5 m wave).</summary>
     internal const float FineFrequency = 0.4f;
 
-    /// <summary>Vanilla's fine terrain detail at a point, in metres about zero.</summary>
-    internal static float Detail(float x, float z, bool mistlands) => Detail(x, z, mistlands, float.PositiveInfinity);
+    /// <summary>Vanilla's fine terrain detail at a point, in metres about zero, as <paramref name="biome"/> carries it
+    /// (RoadRules.FaceDetailCoarse, RoadRules.FaceDetailFine).</summary>
+    internal static float Detail(float x, float z, RoadRules.Rules biome) => Detail(x, z, biome, float.PositiveInfinity);
 
     /// <summary>
     /// The detail as a face <paramref name="faceWidth"/> metres wide carries it: each octave scaled by the face's width
@@ -81,9 +78,13 @@ internal static class RoadEarthworkNoise
     /// Mistlands wave on a 2 m face stood as a wall. Scaled, each octave's wave is squeezed onto the face no more than the
     /// face is narrower than it, so the long wave that made the wall is mostly gone and the short one nearly whole.
     /// </summary>
-    internal static float Detail(float x, float z, bool mistlands, float faceWidth)
+    internal static float Detail(float x, float z, RoadRules.Rules biome, float faceWidth) =>
+        Detail(x, z, biome.FaceDetailCoarse, biome.FaceDetailFine, faceWidth);
+
+    /// <summary><see cref="Detail(float, float, RoadRules.Rules, float)"/> with the octaves' heights given: as the ground
+    /// carries them at the vertex (<see cref="DetailHere"/>).</summary>
+    private static float Detail(float x, float z, float coarse, float fine, float faceWidth)
     {
-        float coarse = mistlands ? 6f : 2f, fine = mistlands ? 2f : 0.6f;
         coarse *= OnFace(faceWidth, CoarseFrequency);
         fine *= OnFace(faceWidth, FineFrequency);
         return coarse * (Perlin01(x * CoarseFrequency, z * CoarseFrequency) - 0.5f)
@@ -102,12 +103,31 @@ internal static class RoadEarthworkNoise
     internal static float FaceBump(Vector2 vertex, float blend, float earthwork, float faceWidth)
     {
         if (!Enabled || blend <= 0f || blend >= 1f) return 0f;
-        var wg = WorldGenerator.instance;
-        bool mist = wg != null && wg.GetBiome(vertex.x, vertex.y) == Heightmap.Biome.Mistlands;
+        var (coarse, fine) = DetailHere(vertex);
         float shape = 4f * blend * (1f - blend);
-        float scale = Mathf.Min(1f, Mathf.Abs(earthwork) / 2f);
-        return Amplitude * Detail(vertex.x, vertex.y, mist, faceWidth) * shape * scale;
+        float scale = Mathf.Min(1f, FloatBits.Abs(earthwork) / 2f);
+        return Amplitude * Detail(vertex.x, vertex.y, coarse, fine, faceWidth) * shape * scale;
     }
+
+    /// <summary>
+    /// The coarse and fine detail heights (RoadRules.FaceDetailCoarse, RoadRules.FaceDetailFine and their biome overrides)
+    /// the ground carries at <paramref name="vertex"/>: each biome's, mixed as the game mixes the biomes its ground is built
+    /// from there (<see cref="RoadBiome.GroundAt"/>, the heightmap corners and weights of the blended height), so a face across
+    /// a biome border changes its detail as smoothly as the ground beside it does, not in one step at the border. The global
+    /// values with no world.
+    /// </summary>
+    internal static (float coarse, float fine) DetailHere(Vector2 vertex)
+    {
+        var wg = WorldGenerator.instance;
+        if (wg == null) return (RoadRules.Global.FaceDetailCoarse, RoadRules.Global.FaceDetailFine);
+        // One heightmap's corners serve every vertex of a zone; the memo is the thread's own (Corners is one thread's).
+        BiomeBlendedHeight.Ground ground = RoadBiome.GroundAt(wg, vertex, t_corners ??= new BiomeBlendedHeight.Corners());
+        return (ground.Of(s_coarse), ground.Of(s_fine));
+    }
+
+    [System.ThreadStatic] private static BiomeBlendedHeight.Corners? t_corners;
+    private static readonly System.Func<Heightmap.Biome, float> s_coarse = b => RoadRules.For(b).FaceDetailCoarse;
+    private static readonly System.Func<Heightmap.Biome, float> s_fine = b => RoadRules.For(b).FaceDetailFine;
 
     // Ken Perlin's improved noise in 2D, mapped to [0, 1] like Unity's
     // Mathf.PerlinNoise (vanilla's DUtils.PerlinNoise), with a fixed table so

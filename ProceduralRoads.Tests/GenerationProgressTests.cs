@@ -14,7 +14,8 @@ namespace ProceduralRoads.Tests;
 
 public sealed class GenerationProgressTests : IDisposable
 {
-    // The real generator sees two disjoint islands. Only worker terrain reads are gated; preparation is real and completes.
+    // The real generator sees two disjoint islands. Only the islands' terrain reads are gated; preparation is real and
+    // completes (its terrain mapping reads on the workers, ungated).
     private sealed class Islands : WorldGenerator
     {
         internal readonly ManualResetEventSlim Entered = new(false), Release = new(false), RightRelease = new(false), PricingEntered=new(false), PricingRelease=new(false);
@@ -22,15 +23,20 @@ public sealed class GenerationProgressTests : IDisposable
         internal readonly int MainThread = Thread.CurrentThread.ManagedThreadId;
         internal bool Gate, Fail, Reverse, HoldCancellation;
         internal int ActiveReads, MainReads;
+        /// <summary>Every thread's reads (the terrain mapping reads on the island workers).</summary>
+        internal int AllReads;
         public override float GetHeight(float x, float z)
         {
+            Interlocked.Increment(ref AllReads);
             if(Thread.CurrentThread.ManagedThreadId==MainThread) MainReads++;
             if(Thread.CurrentThread.ManagedThreadId!=MainThread && PricingGate?.Invoke()==true)
             {
                 PricingEntered.Set();
                 while(!PricingRelease.Wait(10)) RoadLifecycleManager.ThrowIfCancellationRequested();
             }
-            if (Gate && Thread.CurrentThread.ManagedThreadId != MainThread)
+            // An island's reads (its worker's CrossIslandReads.Current), not the preparation's terrain mapping, which reads on
+            // the workers too and finishes ungated.
+            if (Gate && Thread.CurrentThread.ManagedThreadId != MainThread && CrossIslandReads.Current > 0)
             {
                 Interlocked.Increment(ref ActiveReads);
                 try
@@ -44,8 +50,11 @@ public sealed class GenerationProgressTests : IDisposable
             }
             return Math.Abs(z) < 400 && (Math.Abs(x + 1800) < 400 || Math.Abs(x - 1800) < 400) ? 45f : -50f;
         }
+        /// <summary>The west island's western half is Mistlands (GenerationMemoryTests: the start order).</summary>
+        internal bool MistWest;
         public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
-            Math.Abs(z) < 400 && (Math.Abs(x + 1800) < 400 || Math.Abs(x - 1800) < 400) ? Heightmap.Biome.Meadows : Heightmap.Biome.Ocean;
+            !(Math.Abs(z) < 400 && (Math.Abs(x + 1800) < 400 || Math.Abs(x - 1800) < 400)) ? Heightmap.Biome.Ocean
+            : MistWest && x < -1800 ? Heightmap.Biome.Mistlands : Heightmap.Biome.Meadows;
         public override void GetRiverWeight(float x, float z, out float weight, out float width) { weight = width = 0; }
     }
     private sealed class FaultingPrime : IEnumerable<bool>, IEnumerator<bool>
@@ -77,6 +86,45 @@ public sealed class GenerationProgressTests : IDisposable
                 { m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>(location.Item1), m_exteriorRadius = 12 } });
         RoadLifecycleManager.OnZoneSystemStart(ZoneSystem.instance!);
     }
+    [Fact]
+    public void APlanningExceptionRefusesOnlyItsRoadAndTheIslandContinues()
+    {
+        RoadParallel.Configured = 1;
+        TestLocations.Add(ZoneSystem.instance!, new ZoneSystem.LocationInstance
+        { m_position = new Vector3(-1950f, 45f, 200f), m_location = new ZoneSystem.ZoneLocation
+            { m_prefab = new SoftReferenceableAssets.SoftReference<GameObject>("WoodVillage1"), m_exteriorRadius = 12 } });
+        int planned = 0;
+        byte[]? beforeFailure = null;
+        bool continued = false;
+        var log = scope.CaptureLog();
+        RoadNetworkGenerator.BeforeRoadStorage = () =>
+        {
+            planned++;
+            if (planned == 2)
+            {
+                Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+                beforeFailure = RoadSpatialGrid.SerializeAllRoadPoints();
+                throw new InvalidOperationException("controlled road planning failure");
+            }
+            if (planned == 3)
+            {
+                Assert.Equal(beforeFailure, RoadSpatialGrid.SerializeAllRoadPoints());
+                continued = true;
+            }
+        };
+        try
+        {
+            Begin(); Finish();
+            Assert.Equal("Complete", RoadLifecycleManager.Progress.Phase);
+            Assert.True(continued);
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+            Assert.Single(log.Where(l => l.Contains("controlled road planning failure")));
+            Assert.Contains(log, l => l.Contains("1 planning exception"));
+            Assert.NotEqual(beforeFailure, RoadSpatialGrid.SerializeAllRoadPoints());
+        }
+        finally { RoadNetworkGenerator.BeforeRoadStorage = null; }
+    }
+
     private static void Begin()
     {
         ZoneSystem.instance!.LocationsGenerated = true;
@@ -138,8 +186,11 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.Empty(RoadLifecycleManager.Progress.PreparationStage);
         int reads=world.MainReads;
         RoadLifecycleManager.Tick(); Assert.Equal(1,menus);
+        // The cancelling tick ends the mapping and waits for its runs: no thread reads the world after it.
+        int allReads=world.AllReads;
         for(int frame=0;frame<4;frame++) RoadLifecycleManager.Tick();
-        Assert.Equal(reads,world.MainReads); Assert.Equal(0,world.ActiveReads);
+        Thread.Sleep(50);
+        Assert.Equal(reads,world.MainReads); Assert.Equal(allReads,world.AllReads); Assert.Equal(0,world.ActiveReads);
         Assert.False(LocationLevelling.Sealed); Assert.False(RoadNetworkGenerator.RoadsAvailable);
         Assert.Empty(RoadLifecycleManager.Progress.PreparationStage);
     }
@@ -443,6 +494,83 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.Equal("Complete", RoadLifecycleManager.Progress.Phase);
         Assert.Equal(2, RoadLifecycleManager.Progress.Completed);
     }
+    /// <summary>Ground no staircase can climb: a pillar 500 m high at the goal, flat round it. A layout to its top spends its
+    /// whole search budget, the longest a stair layout runs.</summary>
+    private static float Pillar(float x, float z) => Vector2.Distance(new Vector2(x, z), new Vector2(40f, 0f)) < 3f ? 500f : 0f;
+
+    /// <summary>A stair layout of a generation that is cancelled stops at its next check, as the road's own search does
+    /// (RoadPathfinder: every 256 steps), and does not run on to the end of its budget: a stop while the workers lay
+    /// staircases waited for every layout still in hand, and each one after it.</summary>
+    [Fact]
+    public void ACancelledGenerationsStairLayoutStopsAtItsNextCheck()
+    {
+        // Uncancelled, on its own (no generation), the layout spends its budget: many checks' worth of steps.
+        StairPlan whole = StairLayout.Build(new Vector2(0f, 0f), new Vector2(40f, 0f), Pillar);
+        Assert.False(whole.Reached);
+        Assert.True(whole.Expansions > 4 * 256, $"the layout ran only {whole.Expansions} steps");
+        world.Gate = true;
+        Begin(); AdvanceToCompute(); Assert.True(world.Entered.Wait(3000));
+        long run = RoadLifecycleManager.Progress.RunId;
+        int reads = 0;
+        float Ground(float x, float z)
+        {
+            // Cancelled once the layout is under way: as the panel's Cancel or a quit arrives, at any step.
+            if (++reads == 1000) Assert.True(RoadLifecycleManager.RequestCancel(run));
+            return Pillar(x, z);
+        }
+        Assert.Throws<OperationCanceledException>(() => StairLayout.Build(new Vector2(0f, 0f), new Vector2(40f, 0f), Ground));
+        world.Release.Set(); RoadLifecycleManager.CancelAndDrain();
+        Assert.Equal("Cancelled", RoadLifecycleManager.Progress.Phase);
+    }
+
+    /// <summary>A quit (Game.Shutdown, CancelAndDrain) while a worker lays a staircase returns once the layout reaches its next
+    /// check: the worker's layout ends cancelled, not at the end of its budget, and the drain does not wait for it.</summary>
+    [Fact]
+    public async Task AQuitWhileAWorkerLaysAStaircaseDrainsAtTheLayoutsNextCheck()
+    {
+        RoadParallel.Configured = 1;
+        StairPlan whole = StairLayout.Build(new Vector2(0f, 0f), new Vector2(40f, 0f), Pillar);
+        Assert.False(whole.Reached);
+        var inLayout = new ManualResetEventSlim(false);
+        var quitting = new ManualResetEventSlim(false);
+        string ended = "not laid";
+        int laid = 0;
+        RoadNetworkGenerator.BeforeRoadStorage = () =>
+        {
+            if (Interlocked.Increment(ref laid) != 1) return;
+            int reads = 0;
+            float Ground(float x, float z)
+            {
+                // The quit arrives while the layout is under way.
+                if (++reads == 1000) { inLayout.Set(); quitting.Wait(10000); }
+                return Pillar(x, z);
+            }
+            try { StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(40f, 0f), Ground); ended = $"ran to its end ({plan.Expansions} steps)"; }
+            catch (OperationCanceledException) { ended = "cancelled"; throw; }
+        };
+        try
+        {
+            Begin(); AdvanceToCompute();
+            Assert.True(inLayout.Wait(30000), "no worker laid the staircase");
+            var drain = Task.Run(() =>
+            {
+                // The quit's own order: the token is cancelled first (CancelAndDrain), then the layout goes on.
+                var clock = Stopwatch.StartNew();
+                var gen = typeof(RoadLifecycleManager).GetField("m_generation", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+                ((CancellationTokenSource)gen.GetType().GetField("Cancellation", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(gen)!).Cancel();
+                quitting.Set();
+                RoadLifecycleManager.CancelAndDrain();
+                return clock.Elapsed.TotalMilliseconds;
+            });
+            Assert.True(await Task.WhenAny(drain, Task.Delay(60000)) == drain, "CancelAndDrain did not return within 60 s");
+            double ms = await drain;
+            Assert.True(ended == "cancelled", $"the worker's layout {ended}; CancelAndDrain took {ms:F0} ms");
+            Assert.False(RoadLifecycleManager.IsGenerating);
+            Assert.Equal("Cancelled", RoadLifecycleManager.Progress.Phase);
+            Assert.False(RoadNetworkGenerator.RoadsAvailable);
+        }
+        finally { RoadNetworkGenerator.BeforeRoadStorage = null; quitting.Set(); }
+    }
     [Fact]
     public void LocationRegistrationDuringGenerationIsQueuedNotRefused()
     {
@@ -666,25 +794,65 @@ public sealed class GenerationProgressTests : IDisposable
         Assert.Equal(starts, RoadNetworkGenerator.GetRoadStartPoints().Select(p => p.ToString()).OrderBy(p => p, StringComparer.Ordinal).ToArray());
         Assert.Equal(crossings, RoadNetworkPersistence.SerializeRoadCrossings(RoadNetworkGenerator.GetRoadCrossings()));
     }
+    /// <summary>The network keeping less in memory (GenerationMemory.Low) and started Mistlands first is the serial one: the
+    /// island with Mistlands, chosen second, starts first and keeps its number.</summary>
+    [Fact]
+    public void ANetworkKeepingLessAndStartedMistlandsFirstMatchesSerialBytes()
+    {
+        bool low = GenerationMemory.Low;
+        world.MistWest = true;
+        try
+        {
+            RoadParallel.Configured = 1;
+            RoadLifecycleManager.DisableActivityForTests=true;
+            RoadNetworkGenerator.GenerateRoads();
+            byte[] serial = RoadSpatialGrid.SerializeAllRoadPoints()!;
+            var starts = RoadNetworkGenerator.GetRoadStartPoints().Select(p => p.ToString()).OrderBy(p => p, StringComparer.Ordinal).ToArray();
+            var crossings = RoadNetworkPersistence.SerializeRoadCrossings(RoadNetworkGenerator.GetRoadCrossings());
+            Assert.True(RoadSpatialGrid.TotalRoadPoints > 0);
+            RoadLifecycleManager.DisableActivityForTests=false;
+            foreach (bool keepLess in new[] { false, true })
+            {
+                RoadNetworkGenerator.Reset();
+                RoadParallel.Configured = 2;
+                GenerationMemory.Low = keepLess;
+                Begin(); AdvanceToCompute();
+                var run=typeof(RoadLifecycleManager).GetField("m_generation",BindingFlags.NonPublic|BindingFlags.Static)!.GetValue(null)!;
+                var work=(RoadNetworkGenerator.GenerationWork)run.GetType().GetField("Work",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(run)!;
+                Finish();
+                Assert.Equal(2, work.Islands.Count);
+                int mist = work.Islands.FindIndex(i => i.Island.Center.x < 0);
+                Assert.Equal(1, mist);
+                Assert.Equal(mist, work.StartOrder(work.World)[0]);
+                Assert.Equal(CanonicalRecords(serial), CanonicalRecords(RoadSpatialGrid.SerializeAllRoadPoints()!));
+                Assert.Equal(starts, RoadNetworkGenerator.GetRoadStartPoints().Select(p => p.ToString()).OrderBy(p => p, StringComparer.Ordinal).ToArray());
+                Assert.Equal(crossings, RoadNetworkPersistence.SerializeRoadCrossings(RoadNetworkGenerator.GetRoadCrossings()));
+            }
+        }
+        finally { GenerationMemory.Low = low; world.MistWest = false; }
+    }
     private static string[] CanonicalRecords(byte[] bytes)
     {
         using var input = new BinaryReader(new MemoryStream(bytes));
-        int envelope=input.ReadInt32();
-        Assert.Equal(4,envelope);
-        // A road-only network saves format 2; one with a road carried on into a location (a location's edge, RoadNetworkGenerator
-        // CarryOnToEdges) format 5, its into-location flag per point (RoadSpatialGrid.SerializeAllRoadPoints).
-        int format = input.ReadInt32();
-        Assert.Contains(format, new[] { 2, 5 });
-        int size = format == 5 ? 23 : 17;
+        // The one current format (RoadSpatialGrid.SerializeAllRoadPoints): every point carries its flags and its addition,
+        // an into-location point its location (a road carried on into a location, RoadNetworkGenerator CarryOnToEdges).
+        Assert.Equal(RoadSpatialGrid.SavedFormat,input.ReadInt32());
+        Assert.Equal(RoadSpatialGrid.SavedEncoding,input.ReadInt32());
         int cells = input.ReadInt32();
         var records = new List<string>();
         for (int c = 0; c < cells; c++)
         {
             int x = input.ReadInt32(), z = input.ReadInt32(), points = input.ReadInt32();
             for (int p = 0; p < points; p++)
-                records.Add(x + ":" + z + ":" + Convert.ToBase64String(input.ReadBytes(size)));
+            {
+                var record = new List<byte>(input.ReadBytes(21));
+                bool into = record[18] != 0;
+                if (into) record.AddRange(input.ReadBytes(8));
+                record.AddRange(input.ReadBytes(4));
+                records.Add(x + ":" + z + ":" + Convert.ToBase64String(record.ToArray()));
+            }
         }
-        if (format >= 3) { int parents = input.ReadInt32(); for (int i = 0; i < parents; i++) input.ReadInt32(); }
+        { int parents = input.ReadInt32(); for (int i = 0; i < parents; i++) input.ReadInt32(); }
         Assert.Equal(1,input.ReadByte()); input.ReadSingle(); // Separate statistics tests assert exact length persistence.
         Assert.Equal(input.BaseStream.Length, input.BaseStream.Position);
         return records.OrderBy(r => r, StringComparer.Ordinal).ToArray();

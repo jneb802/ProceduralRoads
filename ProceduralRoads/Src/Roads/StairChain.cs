@@ -32,6 +32,14 @@ public static class StairChain
     /// <paramref name="endB"/> is crossed level.</summary>
     public static bool CrossesLevel(float bottom, float endA, float endB) => bottom > Mathf.Min(endA, endB) - ValleyDepth - 1e-3f;
 
+    /// <summary>Whether ground lying lowest at <paramref name="bottom"/> between ends on ground at <paramref name="endA"/> and
+    /// <paramref name="endB"/> is a dip a level walkway carries the road over: a valley crossed level (<see cref="CrossesLevel"/>)
+    /// lying at least <see cref="CrestRise"/> under the lower of its ends. An approach lays its walkway over such a dip
+    /// (RoadStairRuns.Turn), and a staircase's level run over one is a walkway, not a staircase's rest (StairLayout.PastARest).
+    /// Flat ground, or ground falling away and not coming back, is no dip.</summary>
+    public static bool OverADip(float bottom, float endA, float endB) =>
+        CrossesLevel(bottom, endA, endB) && bottom < Mathf.Min(endA, endB) - CrestRise;
+
     /// <summary>Furthest apart two stairs at one height on the two legs of a chain stand to be passing each other (the knoll's
     /// flights passed 3.7 m apart at 38.5 and 5.2 m at 37.5).</summary>
     public const float PassClose = 2f * StairLayout.PieceRun + 1.5f;
@@ -40,6 +48,15 @@ public static class StairChain
     /// back by more than 135 degrees between them. Legs that turn 135 or less go off away from each other (over a sharp
     /// ridge, up one face on 135 and down the other on 0, 5.3 m apart across the crest).</summary>
     public const float BackTrackYaw = 45f;
+
+    /// <summary>The slack a bound on two yaws is read with (<see cref="BackTrackYaw"/>, <see cref="TurnsBack"/>): float error in a
+    /// piece's yaw, never a looser bound.</summary>
+    internal const float YawSlack = 0.1f;
+
+    /// <summary>Whether two headings face less than <see cref="BackTrackYaw"/> apart: the same way, as a chain doubling back
+    /// beside itself reads its two stairs (<see cref="BackTracks"/>) and a way over a crest its two legs
+    /// (RoadStairRuns.LegsCarryOnTheSameWay).</summary>
+    internal static bool FaceTheSameWay(float a, float b) => YawApart(a, b) < BackTrackYaw - YawSlack;
 
     /// <summary>
     /// Where a chain doubles back alongside itself (the invariant every chain laid keeps; tests read it too). Across
@@ -61,8 +78,8 @@ public static class StairChain
             {
                 if (a.Kind != StairPieceKind.Stair) continue;
                 foreach (StairPiece b in second)
-                    if (b.Kind == StairPieceKind.Stair && Mathf.Abs(a.Position.y - b.Position.y) < 0.05f
-                        && YawApart(a.YawDegrees, b.YawDegrees) < BackTrackYaw - 0.1f && Vector2.Distance(At(a), At(b)) <= PassClose)
+                    if (b.Kind == StairPieceKind.Stair && FloatBits.Abs(a.Position.y - b.Position.y) < 0.05f
+                        && FaceTheSameWay(a.YawDegrees, b.YawDegrees) && Vector2.Distance(At(a), At(b)) <= PassClose)
                         faults.Add(FormattableString.Invariant(
                             $"stairs from {a.Position.y:F2} pass {Vector2.Distance(At(a), At(b)):F1} m apart: ({a.Position.x:F1}, {a.Position.z:F1}) yaw {a.YawDegrees} and ({b.Position.x:F1}, {b.Position.z:F1}) yaw {b.YawDegrees}"));
             }
@@ -76,10 +93,10 @@ public static class StairChain
             {
                 StairPiece a = floors[i], b = floors[j];
                 float h = Surface(a);
-                if (Mathf.Abs(h - Surface(b)) > 0.05f || YawApart(a.YawDegrees, b.YawDegrees) > 0.1f) continue;
+                if (FloatBits.Abs(h - Surface(b)) > 0.05f || YawApart(a.YawDegrees, b.YawDegrees) > 0.1f) continue;
                 Vector2 d = At(b) - At(a);
-                if (Mathf.Abs(Vector2.Dot(d, StairLayout.Forward(a.YawDegrees))) > 0.1f
-                    || Mathf.Abs(Mathf.Abs(Vector2.Dot(d, StairLayout.Right(a.YawDegrees))) - StairLayout.PieceRun) > 0.1f) continue;
+                if (FloatBits.Abs(Vector2.Dot(d, StairLayout.Forward(a.YawDegrees))) > 0.1f
+                    || FloatBits.Abs(FloatBits.Abs(Vector2.Dot(d, StairLayout.Right(a.YawDegrees))) - StairLayout.PieceRun) > 0.1f) continue;
                 // A pad: the leg behind each floor (a flight leaving it may bend a step off straight back).
                 int? Leg(StairPiece pad)
                 {
@@ -87,8 +104,8 @@ public static class StairChain
                     foreach (StairPiece p in all)
                     {
                         if (p == a || p == b || (p.Kind != StairPieceKind.Stair && p.Kind != StairPieceKind.Landing)
-                            || Vector2.Distance(At(p), behind) > 1f || Mathf.Abs(Surface(p) - h) > StairLayout.PieceRise) continue;
-                        return p.Kind == StairPieceKind.Landing ? (Mathf.Abs(Surface(p) - h) < 0.05f ? 0 : (int?)null) : Surface(p) > h ? 1 : -1;
+                            || Vector2.Distance(At(p), behind) > 1f || FloatBits.Abs(Surface(p) - h) > StairLayout.PieceRise) continue;
+                        return p.Kind == StairPieceKind.Landing ? (FloatBits.Abs(Surface(p) - h) < 0.05f ? 0 : (int?)null) : Surface(p) > h ? 1 : -1;
                     }
                     return null;
                 }
@@ -105,10 +122,10 @@ public static class StairChain
     /// however wide the loop its flights make. Over a ridge crossed on, or turned off it, it turns less (the knoll at
     /// -6955,3372: in on 243, up west to a landing at 40 and back down east 8.7 m from the way up, out on 26: 143 degrees).
     /// </summary>
-    public static bool TurnsBack(float into, float outOf) => YawApart(into, outOf) > 180f - BackTrackYaw + 0.1f;
+    public static bool TurnsBack(float into, float outOf) => YawApart(into, outOf) > 180f - BackTrackYaw + YawSlack;
 
     /// <summary>How far apart two yaws are, 0 to 180 degrees.</summary>
-    public static float YawApart(float a, float b) => Mathf.Abs(StairLayout.Wrap(a - b + 180f) - 180f);
+    public static float YawApart(float a, float b) => FloatBits.Abs(StairLayout.Wrap(a - b + 180f) - 180f);
 
     /// <summary>One line per chain that doubled back alongside itself (<see cref="BackTracks"/>), once per location and outcome:
     /// a crest or a pit, and whether it was joined where its flights pass, laid as one staircase, or refused.</summary>
@@ -126,7 +143,7 @@ public static class StairChain
         int floors = 0;
         foreach (StairPiece p in plan.Pieces)
         {
-            if (p.Kind != StairPieceKind.Landing || Mathf.Abs(p.Position.y + kit.FloorTop - height) > 0.05f) continue;
+            if (p.Kind != StairPieceKind.Landing || FloatBits.Abs(p.Position.y + kit.FloorTop - height) > 0.05f) continue;
             floors++;
             most = Mathf.Max(most, height - ground(p.Position.x, p.Position.z));
         }

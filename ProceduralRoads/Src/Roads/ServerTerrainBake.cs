@@ -1172,14 +1172,20 @@ public static class ServerTerrainBake
     /// <summary>The road clear areas generation hands PlaceVegetation for this zone.</summary>
     private static List<VegetationClearing.Area> ClearAreasFor(Vector2s zone) => ToAreas(RoadClearAreaManager.GetOrCreateClearAreas(zone));
 
-    /// <summary>The structures' clear areas (bridges, staircases) generation hands PlaceVegetation for this zone.</summary>
-    private static List<VegetationClearing.Area> StructureClearAreasFor(Vector2s zone) => ToAreas(StructurePlacement.GetClearAreas(zone));
+    /// <summary>The structures' clear areas (bridges, staircases) generation hands PlaceVegetation for this zone: a staircase's
+    /// leaves a rock the rock clearing takes to it (VegetationClearing.Area.LeavesRocks), as generation does.</summary>
+    private static List<VegetationClearing.Area> StructureClearAreasFor(Vector2s zone)
+    {
+        List<VegetationClearing.Area> areas = ToAreas(StructurePlacement.GetClearAreas(zone, staircases: false));
+        areas.AddRange(ToAreas(StructurePlacement.GetClearAreas(zone, staircases: true), leavesRocks: true));
+        return areas;
+    }
 
-    private static List<VegetationClearing.Area> ToAreas(List<ZoneSystem.ClearArea> clearAreas)
+    private static List<VegetationClearing.Area> ToAreas(List<ZoneSystem.ClearArea> clearAreas, bool leavesRocks = false)
     {
         var areas = new List<VegetationClearing.Area>();
         foreach (ZoneSystem.ClearArea area in clearAreas)
-            areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius));
+            areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius, leavesRocks));
         return areas;
     }
 

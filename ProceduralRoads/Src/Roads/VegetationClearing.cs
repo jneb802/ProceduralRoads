@@ -35,11 +35,15 @@ public static class VegetationClearing
     {
         public readonly Vector2 Centre;
         public readonly float Radius;
+        /// <summary>A staircase's area: it keeps vegetation out, but a rock the rock clearing takes there is left to it, which
+        /// clears only the staircase's walking box (StairLayout.AddClearance) as it clears a road's.</summary>
+        public readonly bool LeavesRocks;
 
-        public Area(Vector2 centre, float radius)
+        public Area(Vector2 centre, float radius, bool leavesRocks = false)
         {
             Centre = centre;
             Radius = radius;
+            LeavesRocks = leavesRocks;
         }
     }
 
@@ -537,10 +541,11 @@ public static class VegetationClearing
         s_rockClearingRocks.TryGetValue(prefab, out string? name) && RoadRockPolicy.ClearingTakes(name, biome, mode);
 
     /// <summary>ZoneSystem.InsideClearArea, the test PlaceVegetation uses: strict, and square.</summary>
-    public static bool InsideClearArea(IReadOnlyList<Area> areas, Vector2 point)
+    public static bool InsideClearArea(IReadOnlyList<Area> areas, Vector2 point, bool leftToRockClearing = false)
     {
         foreach (Area area in areas)
         {
+            if (leftToRockClearing && area.LeavesRocks) continue;
             if (point.x > area.Centre.x - area.Radius && point.x < area.Centre.x + area.Radius &&
                 point.y > area.Centre.y - area.Radius && point.y < area.Centre.y + area.Radius)
                 return true;
@@ -566,7 +571,8 @@ public static class VegetationClearing
     /// </summary>
     /// <param name="road">the road points near the object, for a grown tree (<see cref="TrunkReachesRoad"/>)</param>
     /// <param name="scale">the object's scale</param>
-    /// <param name="structureAreas">the structures' clear areas (bridges, staircases), which keep every rock out as well</param>
+    /// <param name="structureAreas">the structures' clear areas (bridges, staircases): a bridge's keeps every rock out as well, a
+    /// staircase's (<see cref="Area.LeavesRocks"/>) leaves a rock the rock clearing takes to it</param>
     /// <param name="rockClearing">the Roads/RockClearing setting; Off leaves no rock to the rock clearing</param>
     /// <param name="biomeAt">the biome at a position, asked for a large rock only (<see cref="LeftToRockClearing"/>)</param>
     public static bool ShouldRemove(int prefab, Vector2 position, bool playerCreated,
@@ -593,9 +599,10 @@ public static class VegetationClearing
         // Somebody's own object, whatever it is: never ours to take.
         if (playerCreated || !vegetationPrefabs.Contains(prefab))
             return Lying.Clear;
-        bool inside = structureAreas != null && InsideClearArea(structureAreas, position) ||
-            InsideClearArea(clearAreas, position) &&
-            !(IsRock(prefab) && LeftToRockClearing(prefab, biomeAt?.Invoke(position) ?? Heightmap.Biome.None, rockClearing));
+        bool leftToRocks = IsRock(prefab) && LeftToRockClearing(prefab, biomeAt?.Invoke(position) ?? Heightmap.Biome.None, rockClearing);
+        // A staircase's area (Area.LeavesRocks) leaves such a rock to the rock clearing, as a road's does.
+        bool inside = structureAreas != null && InsideClearArea(structureAreas, position, leftToRocks) ||
+            InsideClearArea(clearAreas, position) && !leftToRocks;
         Lying verdict = OnRoad(inside, prefab, scale, road ?? Array.Empty<RoadCentre>(), position, yaw, out turned,
             IsLying(prefab) ? KeptBy(structureAreas, locations, playerGround) : null, lean);
         // Left to the location, and left to the player who built there.

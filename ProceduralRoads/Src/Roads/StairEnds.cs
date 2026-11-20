@@ -241,12 +241,16 @@ public static class StairEnds
             var buried = new List<Foot>();
             if (!end.Top)
                 // A foot's stairs sunk under the ground on purpose: their high edge at or under it (a road's surface where its
-                // road comes onto it, WithRoads), within a step. A walker steps off onto the ground over them.
+                // road comes onto it, WithRoads), within a step, and their low edge under it by more than a step (their slope
+                // in the ground). A walker steps off onto the ground over them. A stair on ground cut to just under its walk
+                // (StairStructures.CutFloor) is walked, not sunk: read as sunk, the foot at -3088.6,920.6, level with its
+                // road, was read off the stair above it, a rise over the road.
                 while (seq.Count > 1 && seq[0].Stair)
                 {
-                    Vector2 hi = seq[0].At(seq[0].Depth, 0f);
-                    float g = ground(hi.x, hi.y);
+                    Vector2 hi = seq[0].At(seq[0].Depth, 0f), lo = seq[0].At(0f, 0f);
+                    float g = ground(hi.x, hi.y), gl = ground(lo.x, lo.y);
                     if (float.IsNaN(g) || seq[0].Walk(seq[0].Depth) > g + StairLayout.StepUp) break;
+                    if (!float.IsNaN(gl) && gl - seq[0].Walk(0f) <= StairLayout.StepUp) break;
                     buried.Add(seq[0]);
                     seq = seq.Skip(1).ToList();
                 }
@@ -302,7 +306,11 @@ public static class StairEnds
                     Vector2 middle = at[1] + o * StairLayout.EndReach;
                     if (walked.Any(w => !ReferenceEquals(w, p) && !buried.Contains(w) && w.Covers(middle, hs[1]))) continue;
                     float over = p.Stair && e == 1 ? StairLayout.PieceRise : StairLayout.StepUp;
-                    Vector2 from = laidPast ? at[1] - o * StairLayout.PieceRun : at[1];
+                    // Over a foot's stairs sunk in the ground, the walker steps off its low edge onto the ground over them
+                    // there, at the edge (their high edge), as off what is laid past: read a floor's size out, the ground at
+                    // the sunk stairs' own low end (a road falling away, the sunk slope) was read instead.
+                    bool overSunk = buried.Count > 0 && p.Stair && e == 1 && last >= 0 && ReferenceEquals(p, seq[last]);
+                    Vector2 from = laidPast || overSunk ? at[1] - o * StairLayout.PieceRun : at[1];
                     if (StepsOff(from, o, hs[1], length, over, ground, out float off)) { steps = true; best = 0f; walkOff = off; }
                     else if (!float.IsNaN(off) && !steps)
                     {

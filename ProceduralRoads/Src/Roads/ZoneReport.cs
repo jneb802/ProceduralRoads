@@ -27,6 +27,7 @@ public static class ZoneReport
         lines.Add($"ZONE {zone.x},{zone.y} network {version} generated {ZoneSystem.instance.IsZoneGenerated(zone)} " +
                   $"loadedHere {ZoneSystem.instance.m_zones.ContainsKey(zone)} roadPoints {roadPoints.Count}");
         lines.Add(TerrainLine(zone));
+        lines.Add(BridgeLine(zone));
         lines.Add(VegetationLine(zone, version));
         return lines;
     }
@@ -55,6 +56,40 @@ public static class ZoneReport
             ? $"TERRAIN compilers 1 stamp {stamp} bytes {data.Length} {summary}"
             : $"TERRAIN compilers 1 stamp {stamp} bytes {data.Length} unreadable: {error}";
     }
+
+    private static string BridgeLine(Vector2s zone)
+    {
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        var pieces = new List<string>();
+        foreach (ZDO zdo in zdos)
+        {
+            if (zdo.GetInt(StructurePlans.MarkerHash) != 1)
+                continue;
+            Vector3 p = zdo.GetPosition();
+            Vector3 euler = zdo.GetRotation().eulerAngles;
+            // Sorted below, so the order objects come back in cannot change the hash.
+            pieces.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "{0}|{1:F2},{2:F2},{3:F2}|{4:F1},{5:F1},{6:F1}|{7:F2}",
+                zdo.GetPrefab(), p.x, p.y, p.z, euler.x, euler.y, euler.z, zdo.GetFloat("health", 0f)));
+        }
+        pieces.Sort(System.StringComparer.Ordinal);
+        uint hash = 2166136261u;
+        foreach (string piece in pieces)
+        {
+            foreach (char c in piece)
+            {
+                unchecked
+                {
+                    hash ^= c;
+                    hash *= 16777619u;
+                }
+            }
+        }
+        return $"BRIDGES pieces {pieces.Count} planned {StructurePlans.PlannedPieceCount(zone)} " +
+               $"spawned {StructurePlans.IsSpawned(zone)} hash {hash:x8}";
+    }
+
     private static string VegetationLine(Vector2s zone, int version)
     {
         HashSet<int> vegetation = ServerTerrainBake.VegetationPrefabs();

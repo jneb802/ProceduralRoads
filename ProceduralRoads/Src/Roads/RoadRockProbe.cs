@@ -119,14 +119,13 @@ public static class RoadRockProbe
         var touched = new Dictionary<GameObject, List<(RoadSpatialGrid.RoadPoint point, float surface)>>();
         long lookup = RoadRockStats.Now;
         var points = RoadSpatialGrid.GetRoadPointsNearPosition(centre, radius);
-        // Bridge decks are not road points, so rocks on a bridge were never
-        // looked at. Each span in reach is walked every metre at deck height;
-        // a rock there goes whole: bridges are few, and no rock is missed.
-        var decks = DeckPoints(centre, radius);
+        // Structures (bridge decks) are not road points: each source says where
+        // a walker on it needs rock cleared (StructurePlans).
+        var structures = StructurePlans.ClearancesNear(centre, radius);
         RoadRockStats.LookupTicks += RoadRockStats.Now - lookup;
         var onDeck = new HashSet<GameObject>();
         int probed = 0;
-        var all = new List<(RoadSpatialGrid.RoadPoint point, float surface, bool deck)>();
+        var all = new List<(RoadSpatialGrid.RoadPoint point, float surface, float height, List<RoadSpatialGrid.RoadPoint> line, bool deck)>();
         long t = RoadRockStats.Now;
         foreach (var point in points)
         {
@@ -134,17 +133,16 @@ public static class RoadRockProbe
             bool ground = ZoneSystem.instance.GetGroundHeight(new Vector3(point.p.x, 0f, point.p.y), out float surface);
             if (!RoadRockPolicy.ClearanceSurface(ground, surface, point.h, RoadRockCarve.GhostSpawned != null, out surface)) { LastGroundMisses++; continue; }
             if (!ground) LastRoadHeightPoints++;
-            all.Add((point, surface, false));
+            all.Add((point, surface, ClearanceHeight, points, false));
         }
-        foreach (var (point, deckHeight) in decks) all.Add((point, deckHeight - DeckBelow, true));
+        foreach (var s in structures) all.Add((s.Point, s.Surface, s.Height, s.Line, s.WholeOnly));
         RoadRockStats.GroundTicks += RoadRockStats.Now - t;
         RoadRockStats.Points += all.Count;
-        foreach (var (point, surface, deck) in all)
+        foreach (var (point, surface, height, line, deck) in all)
         {
             probed++;
             long clearance = RoadRockStats.Now;
-            RoadClearance(point, surface, deck ? decks.ConvertAll(d => d.point) : points, out var boxCentre, out var boxHalf, out var boxTurn,
-                deck ? DeckBelow + ClearanceHeight : ClearanceHeight);
+            RoadClearance(point, surface, line, out var boxCentre, out var boxHalf, out var boxTurn, height);
             RoadRockStats.ClearanceTicks += RoadRockStats.Now - clearance;
             t = RoadRockStats.Now;
             int count = Physics.OverlapBoxNonAlloc(boxCentre, boxHalf, s_overlap, boxTurn, CandidateMask, QueryTriggerInteraction.Ignore);
@@ -341,40 +339,9 @@ public static class RoadRockProbe
 
     public const int Slots = 5;
 
-    /// <summary>How far below a deck the deck clearance starts, metres: the
-    /// deck's own beams and a rock the deck runs into.</summary>
-    public const float DeckBelow = 1f;
-
-    /// <summary>Points every metre along each bridge span within reach, with
-    /// the deck height: the road's stored height at each bank, interpolated.</summary>
-    internal static List<(RoadSpatialGrid.RoadPoint point, float deck)> DeckPoints(Vector3 centre, float radius)
-    {
-        var result = new List<(RoadSpatialGrid.RoadPoint, float)>();
-        var c = new Vector2(centre.x, centre.z);
-        foreach (var crossing in RoadNetworkGenerator.GetRoadCrossings())
-        {
-            if (crossing.Kind != CrossingKind.Bridge) continue;
-            Vector2 a = crossing.FromBank, b = crossing.ToBank;
-            float length = Vector2.Distance(a, b);
-            if (length < 1f) continue;
-            // Nearest point of the span to the probe centre.
-            float t0 = Mathf.Clamp01(Vector2.Dot(c - a, b - a) / (length * length));
-            if (Vector2.Distance(a + (b - a) * t0, c) > radius) continue;
-            if (!RoadSpatialGrid.TryGetRoadHeightWithin(a, 4f, out float ha)) ha = RoadConstants.SeaLevel + BridgeLayout.DeckFreeboard;
-            if (!RoadSpatialGrid.TryGetRoadHeightWithin(b, 4f, out float hb)) hb = ha;
-            int n = Mathf.CeilToInt(length);
-            for (int i = 0; i <= n; i++)
-            {
-                float t = i / (float)n;
-                result.Add((new RoadSpatialGrid.RoadPoint(a + (b - a) * t, RoadSpatialGrid.DefaultRoadWidth, Mathf.Lerp(ha, hb, t)), Mathf.Lerp(ha, hb, t)));
-            }
-        }
-        return result;
-    }
-
     /// <summary>Height of the clearance over the road: a player's. It is the
     /// painted width (or a little less) wide.</summary>
-    public const float ClearanceHeight = 2f;
+    public const float ClearanceHeight = RoadRockPolicy.ClearanceHeight;
     /// <summary>Half the clearance's length along the road: road points are
     /// stored about 1 m apart, so neighbouring boxes overlap.</summary>
     public const float ClearanceHalfLength = 0.6f;

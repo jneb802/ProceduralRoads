@@ -1,6 +1,5 @@
 using System.Collections.Generic;
 using ProceduralRoads;
-using ProceduralRoads.Tests;
 using UnityEngine;
 using Valheim.Testing.Doubles;
 using Xunit;
@@ -12,8 +11,8 @@ public class EmptySaveTests : System.IDisposable
         RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear();
         _world.Dispose();
     }
-    static void Save() => RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>());
-    static bool Load() => RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2, string)>());
+    static void Save() => RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
+    static bool Load() => RoadNetworkPersistence.TryLoadGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
     void Begin()
     {
         _world.WithZdos();
@@ -22,7 +21,7 @@ public class EmptySaveTests : System.IDisposable
     }
     static void AddRoad()
     {
-        RoadSpatialGrid.AddRoadPath(new List<Vector2> { new(0,0), new(8,0), new(16,0) }, 4f, new SyntheticWorld());
+        RoadSpatialGrid.CommitLevelled(new List<Vector2> { new(0,0), new(8,0), new(16,0) }, new List<float> {40,40,40}, 4f);
         RoadSpatialGrid.FinalizeRoadNetwork();
         Assert.True(RoadSpatialGrid.GridCellsWithRoads > 0);
     }

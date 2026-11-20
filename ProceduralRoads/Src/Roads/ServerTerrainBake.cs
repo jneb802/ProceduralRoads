@@ -71,7 +71,7 @@ public static class ServerTerrainBake
 
     private struct Counts
     {
-        public int Zones, Created, Rewritten, LiveWritten, Current, Ungenerated, BeforeNetwork, Loaded, Duplicates, Failed;
+        public int Zones, Created, Rewritten, LiveWritten, Current, Ungenerated, BeforeNetwork, Loaded, Duplicates, Failed, BridgeZones;
         public int NothingToWrite, VegetationZones, VegetationRemoved, SavedRocks, GhostRocks, GhostSettled;
         public int GhostCreated, GhostRewritten, GhostFailed;
         public long Bytes;
@@ -132,7 +132,8 @@ public static class ServerTerrainBake
                 sample = $" (nearest the centre: {rp.p.x:F1} {rp.p.y:F1} at h {rp.h:F2}, {rp.w:F0} m wide{(rp.paintOnly ? ", paint only" : "")})";
             }
         }
-        List<ZDO> saved = FindSavedCompilers(zone);
+        int pieces = StructurePlans.PlannedPieceCount(zone);
+        List<ZDO> saved = RoadTerrainModifier.SavedTerrainCompilers(zone);
         List<ServerBakePlanner.Compiler> facts = Describe(saved, zone);
         var described = new List<string>();
         long me = ZDOMan.GetSessionID();
@@ -150,6 +151,7 @@ public static class ServerTerrainBake
         else if (s_faults.IsPaused)
             next = "queue paused after an error; fix the cause, then road_bake again";
         return $"Zone {zone}: generated {generated}, loaded here {loadedHere}, {points} road points{sample}, " +
+               $"{pieces} bridge pieces planned{(StructurePlans.IsSpawned(zone) ? " (spawned)" : "")}; " +
                $"vegetation {(VegetationClearing.IsCleared(zone, RoadSpatialGrid.RoadNetworkVersion) ? "matches the roads" : "not cleared yet")}, " +
                $"{CountVegetationOnRoad(zone)} vegetation objects inside its road's clear areas; " +
                $"{saved.Count} terrain compiler(s){(described.Count > 0 ? ": " + string.Join("; ", described) : "")}; " +
@@ -267,6 +269,8 @@ public static class ServerTerrainBake
             return lines;
         }
         HashSet<Vector2s> zones = RoadSpatialGrid.GetZonesWithRoadPoints();
+        foreach (Vector2s zone in StructurePlans.PlannedZones)
+            zones.Add(zone);
         var found = new List<KeyValuePair<int, Vector2s>>();
         int total = 0;
         foreach (Vector2s zone in zones)
@@ -545,7 +549,7 @@ public static class ServerTerrainBake
                $"{c.Current} already current, {c.Ungenerated} left to generation, " +
                $"{c.BeforeNetwork} explored before the network (left as they are), {c.Loaded} loaded here without one, " +
                $"{c.Duplicates} with duplicate compilers, {c.NothingToWrite} with nothing to write, {c.Failed} failed, " +
-               $"{s_ghostRepair.Count} deferred, {pending} pending; " +
+               $"{s_ghostRepair.Count} deferred, {pending} pending; bridge pieces into {c.BridgeZones} zones; " +
                $"vegetation removed from {c.VegetationZones} zones ({c.VegetationRemoved} objects), {c.SavedRocks} rock(s) cleared; {c.Bytes / 1024} KiB written; " +
                $"{s_busyMs / 1000.0:F1} s of frame time over {s_wall.Elapsed.TotalSeconds:F1} s. " +
                $"Generated for peers: {c.GhostCreated} compilers created, {c.GhostRewritten} saved ones written, " +
@@ -566,6 +570,8 @@ public static class ServerTerrainBake
         RoadClearAreaManager.ClearCache();
         HashSet<Vector2s> zones = RoadSpatialGrid.GetZonesWithRoadPoints();
         int roadZones = zones.Count;
+        foreach (Vector2s zone in StructurePlans.PlannedZones)
+            zones.Add(zone);
         s_queue.AddRange(zones);
         // Nearest the world centre first, where players start.
         s_queue.Sort((a, b) => (a.x * a.x + a.y * a.y).CompareTo(b.x * b.x + b.y * b.y));
@@ -679,6 +685,12 @@ public static class ServerTerrainBake
     private static Outcome ProcessTerrain(Vector2s zone, bool generated, bool loadedHere)
     {
 
+        // Bridge pieces need no terrain: a generated zone the server does not
+        // have loaded gets them as ZDOs now. (Ungenerated zones get them when
+        // generated, loaded ones from the zone-spawn hook.)
+        if (generated && !loadedHere && StructurePlans.PlanFor(zone) != null &&
+            StructurePlacement.SpawnGhostInZone(zone) > 0)
+            s_counts.BridgeZones++;
 
         // Terrain has spent its attempts on this zone for this network: stop
         // without touching the ledger (a vegetation deferral must not hand it
@@ -913,6 +925,8 @@ public static class ServerTerrainBake
         var areas = new List<VegetationClearing.Area>();
         foreach (ZoneSystem.ClearArea area in RoadClearAreaManager.GetOrCreateClearAreas(zone))
             areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius));
+        foreach (ZoneSystem.ClearArea area in StructurePlacement.GetClearAreas(zone))
+            areas.Add(new VegetationClearing.Area(new Vector2(area.m_center.x, area.m_center.z), area.m_radius));
         return areas;
     }
 
@@ -1023,7 +1037,7 @@ public static class ServerTerrainBake
             if (!VegetationClearing.ShouldRemove(zdo.GetPrefab(), new Vector2(position.x, position.z),
                     IsPlayerCreated(zdo), vegetation, areas, locations, playerGround))
                 continue;
-            // As BridgePlacement.ClearSpawnedPieces: through the scene when the
+            // As StructurePlacement.ClearSpawnedPieces: through the scene when the
             // object is alive here, straight from the ZDOs otherwise.
             ZNetView instance = ZNetScene.instance.FindInstance(zdo);
             if (instance != null)

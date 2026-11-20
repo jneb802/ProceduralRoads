@@ -2,9 +2,11 @@ using UnityEngine;
 
 namespace ProceduralRoads.Tests;
 
+/// <summary>
 /// Deterministic pseudo-Valheim world: an island with a gaussian hill profile,
 /// a mountain ridge, and an optional river channel crossing it. Heights use
 /// the same conventions as the game (sea level 30, deep water below 28).
+/// </summary>
 public class LegacySyntheticWorldFixture : WorldGenerator
 {
     public bool HasRiver = true;

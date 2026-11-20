@@ -41,7 +41,8 @@ internal static class PlainRoads
         ("junction step", () => RoadPathfinder.JunctionStep, v => RoadPathfinder.JunctionStep = (float)v, 0f),
         ("earthwork cap", () => RoadNetworkGenerator.EarthworkCap, v => RoadNetworkGenerator.EarthworkCap = (float)v, 0f),
         ("bridge ends to water", () => RoadCrossingDetector.ToWater, v => RoadCrossingDetector.ToWater = (bool)v, false),
-        ("decline tall climbs", () => RoadCrossingDetector.DeclineTallClimbs, v => RoadCrossingDetector.DeclineTallClimbs = (float)v, 0f),
+        ("decline tall climbs", () => RoadCrossingDetector.DeclineTallClimbs, v => RoadCrossingDetector.DeclineTallClimbs = (bool)v, false),
+        ("viaducts", () => RoadPathfinder.ConfiguredViaducts, v => RoadPathfinder.ConfiguredViaducts = (bool)v, false),
     };
 
     /// <summary>The mod's own values, captured before the plain ones replaced them.</summary>

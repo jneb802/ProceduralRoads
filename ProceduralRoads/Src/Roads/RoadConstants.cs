@@ -8,6 +8,11 @@ public static class RoadConstants
     public const float ZoneSize = 64f;
     public const float HalfZoneSize = ZoneSize / 2f;
     public const float SeaLevel = 30f;
+    /// <summary>No road on land (and no raised shallow ford) stands lower than this: a cut into
+    /// ground at the water line would flood (measured: a swamp road cut 4.8 m into a
+    /// hummock ran 105 m under up to 4 m of water). A constant floor never steepens a profile,
+    /// so it keeps the grade cap.</summary>
+    public const float DryRoadFloor = SeaLevel + 0.5f;
     public const float DeepWaterHeight = 28f;
     public const float ShallowWaterHeight = 30.5f;
     public const float TerrainDeltaMin = -8f;
@@ -29,6 +34,111 @@ public static class RoadConstants
     public const float DefaultTerrainVariancePenalty = 1000f;
     public const float DefaultTerrainVarianceThreshold = 5f;
 
+    // River fords. With
+    // fords on, the pathfinder may jump a river core in a straight line to
+    // dry ground within MaxRiverCrossingCells (measured in metres, so a
+    // diagonal scan does not stretch it) when the water under the jump is
+    // no deeper than FordWadeDepth, at RiverCrossingPenalty on top of the
+    // distance; banks may differ in height by MaxFordBankDelta, and a step
+    // pays BankDeltaPenalty * delta^2 on top, so near-level banks are
+    // preferred. The ford is WADED (painted at ground height, only where
+    // the water is at most FordWadeMaxDepth deep, always in a swamp) or
+    // RAISED (leveled up to the bank clearance), by the Fords/* weights.
+    // Banks, landings and a raised ford's surface stand BankClearance above
+    // the shallow-water line. Swamp roads wade their shallows down to
+    // DeepWaterHeight at SwampShallowWaterPenalty per cell. A jump whose
+    // both ends already carry road is an existing crossing: it costs
+    // SharedCrossingCostFraction of the crossing price, so a later road
+    // detours to share it when the detour costs less than the saving and
+    // makes its own crossing beyond that.
+    public const int MaxRiverCrossingCells = 6; // 6 * 8 m = 48 m max ford
+    public const float RiverCrossingPenalty = 5000f;
+    public const float FordWadeDepth = 0.8f;
+    public const float FordWadeMaxDepth = 0.5f;
+    // In swamps a sailable stretch shorter than a boat is a pothole, not a
+    // fairway: a wading-depth swamp channel with no longer sailable stretch
+    // is still a ford.
+    public const float SwampFordMaxFairway = 8f;
+    public const float MaxFordBankDelta = 4f;
+    public const float BankDeltaPenalty = 1250f;
+    public const float BankClearance = 0.75f;
+    public const float DefaultFordStyleWeight = 1f;
+    public const float DefaultSwampShallowWaterPenalty = 500f;
+    public const float SharedCrossingCostFraction = 0.5f;
+
+    // Bridges. A jump
+    // longer than a ford or over water deeper than wading is a BRIDGE, up
+    // to MaxBridgeCrossingCells (measured in metres), at BridgeCostFixed +
+    // BridgeCostPerMeter per metre (config Bridges/CostFixed and
+    // Bridges/CostPerMeter), between banks within MaxBridgeBankDelta of
+    // each other. For scale in this cost model: easy ground costs about 1
+    // per metre of road, rough or steep ground 1000-2000 per cell, so the
+    // defaults make a 100 m bridge worth roughly 1 km of rough detour; a
+    // bridge appears where the way around is long or there is none.
+    public const int MaxBridgeCrossingCells = 16; // 16 * 8 m = 128 m, dry cell to dry cell
+    public const float MaxBridgeBankDelta = 2.5f;
+    public const float DefaultBridgeCostFixed = 60000f;
+    public const float DefaultBridgeCostPerMeter = 600f;
+
+    /// <summary>
+    /// A Mistlands viaduct over a dry valley (DvergrViaduct): what the search pays
+    /// to jump the valley at the high level, against the staircase down and the staircase up
+    /// it would otherwise buy. Bridges are preferred over stairs in the Mistlands. The
+    /// stair multipliers (2 / Mistlands 1 / Mountain 0.5) are NOT touched. A valley pair costs
+    /// at least one staircase start (1000 x the Mistlands' 1, varied +-30 %: 700 at the
+    /// cheapest site) plus 10 per metre climbed down and up, so 820 and up at the 6 m least.
+    /// <para>The viaduct's own price, this plus <see cref="DefaultViaductCostPerMeter"/> per
+    /// metre of span, is what it costs on piers 10 m tall (DvergrViaduct.PriceHeight); lower it
+    /// goes in inverse to the height, higher it falls steeply to a tenth at the 20 m ceiling
+    /// (DvergrViaduct.HeightFactor: the price falls as the piers get taller,
+    /// up to the pier ceiling, so a deep valley crossed high beats a shallow one crossed low).
+    /// 250 + 4 x 64 = 506 for a 64 m valley at 10 m, 843 at the 6 m least, 201 at 14 m, 51 at
+    /// the ceiling: a tall viaduct is priced low, so a high crossing wins where it fits. On top come the end stairs
+    /// (<see cref="DefaultViaductEndStairCostPerMeter"/>) and the road's own 1 per metre. Easy
+    /// road (about 1 per metre) keeps a valley the road can walk through.</para>
+    /// </summary>
+    public const float DefaultViaductCostFixed = 250f;
+    /// <summary>Per metre of a viaduct's span, on top of the road's own price per metre; scaled with
+    /// <see cref="DefaultViaductCostFixed"/> by the piers' height.</summary>
+    public const float DefaultViaductCostPerMeter = 4f;
+    /// <summary>Per metre of a viaduct's end stairs, bank to deck, each end (stairs to or from a
+    /// viaduct cost much more than ordinary stairs, so viaducts whose banks are both at about deck height are preferred): ten
+    /// times an ordinary staircase's metre (<see cref="DefaultStairCostPerMeterClimbed"/>), so the 3 m most at both
+    /// ends (DvergrViaduct.MaxEndStairRise) adds 600, about a 64 m viaduct's own price, and a level pair of banks is
+    /// bought over a stepped one wherever there is a choice.</summary>
+    public const float DefaultViaductEndStairCostPerMeter = 100f;
+
+    // A ford may also be SPANNED (Fords/SpanWeight): a short low footbridge
+    // with a step at each end, where the crossing is at least
+    // FordSpanMinWidth wide; its deck stands FordSpanDeckClearance above
+    // the water and FordSpanDeckRise above the higher bank. A swamp BRIDGE
+    // walks its banks outward over the wade shelf up to SwampBridgeDryReach
+    // to find ground above the waterline.
+    public const float FordSpanMinWidth = 6f;
+    public const float FordSpanDeckClearance = 1f;
+    public const float FordSpanDeckRise = 1f;
+    public const float SwampBridgeDryReach = 120f;
+
+    // High bridge: when the ground within HighBankReach of each bank along
+    // the road stands at least HighBankRise above that bank, the deck
+    // springs from the bank tops (abutments there, piers taller, the road
+    // stopping at the top) instead of from the water's edge.
+    public const float HighBankReach = 12f;
+    public const float HighBankRise = 2.5f;
+
+    // The tallest a wooden pier may stand above the channel bed. Not a taste
+    // limit: vanilla's structural support decays geometrically up a column of
+    // poles, and above this height the deck's support falls under the
+    // material's minimum and the bridge collapses some time after it is built.
+    // Derived from the decompiled rule in BridgeSupport rather than chosen, so
+    // that a Valheim patch moves it by moving the material table.
+    //
+    // This is applied where the height is OPTIONAL. The bank-top climb is an
+    // adjustment the crossing does not need - "the crossing is sound either
+    // way" - so a climb that would put the deck out of the support rule's
+    // reach is declined and the water's-edge deck stands instead. Lower deck,
+    // longer approach, a bridge that is still there next week.
+    public static float MaxBridgePierHeight => BridgeSupport.MaxPierHeight();
 
     // The steepest a road may climb, as rise over run, or 0 for no cap.
     // Without a cap every steep step is a large but finite price and never a

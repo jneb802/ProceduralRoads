@@ -31,7 +31,32 @@ public static class ZoneSystem_Patch
 
             List<ZoneSystem.ClearArea> roadClearAreas = RoadClearAreaManager.GetOrCreateClearAreas(zoneID);
             clearAreas.AddRange(roadClearAreas);
+
+            // Generated with the road's clear areas: its vegetation matches the
+            // network from the start, and the server never clears it later.
+            if (roadClearAreas.Count > 0)
+                VegetationClearing.MarkCleared(zoneID, RoadSpatialGrid.RoadNetworkVersion);
         }
+
+        /// <summary>
+        /// A zone generated for a remote peer (ghost mode) is torn down as
+        /// soon as it has been populated and only its ZDOs remain, so its road
+        /// terrain has to go into a ZDO now, while its heightmap still exists.
+        /// SpawnZone's postfix is too late: the zone root is gone by then.
+        /// </summary>
+        [HarmonyPostfix]
+        public static void Postfix(Vector2s zoneID, Heightmap hmap, ZoneSystem.SpawnMode mode)
+        {
+            if (mode == ZoneSystem.SpawnMode.Ghost)
+                ServerTerrainBake.OnGhostZoneGenerated(zoneID, hmap);
+        }
+    }
+
+    [HarmonyPatch(typeof(ZoneSystem), "Update")]
+    public static class ZoneSystem_Update_Patch
+    {
+        [HarmonyPostfix]
+        public static void Postfix() => ServerTerrainBake.Tick();
     }
 
     [HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.SpawnZone))]
@@ -64,6 +89,7 @@ public static class ZoneSystem_Patch
         [HarmonyPrefix]
         public static void Prefix(ZoneSystem __instance)
         {
+            ServerTerrainBake.Reset();
             RoadLifecycleManager.OnZoneSystemDestroy(__instance);
         }
     }

@@ -145,7 +145,9 @@ public static class RoadLifecycleManager
         {
             RoadNetworkGenerator.SaveGlobalRoadData();
         }
-        // Either way, the zones generated with this network in place.
+        // Either way, the zones whose vegetation now matches the roads, and
+        // the zones generated with this network in place.
+        RoadNetworkGenerator.SaveClearedZones();
         RoadNetworkGenerator.SaveNetworkCutoff();
     }
 }

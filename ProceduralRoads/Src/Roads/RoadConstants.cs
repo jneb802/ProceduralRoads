@@ -43,5 +43,4 @@ public static class RoadConstants
     public const float MinBlendForModification = 0.5f;
     
     public const float VegetationClearMultiplier = 0.6f;
-    public const float VegetationClearSampleInterval = 4f;
 }

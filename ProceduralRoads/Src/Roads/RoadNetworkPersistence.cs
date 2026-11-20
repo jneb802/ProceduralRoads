@@ -31,6 +31,12 @@ public static class RoadNetworkPersistence
     /// </summary>
     private static readonly int RoadStartPointsHash = "ProceduralRoads_StartPoints".GetStableHashCode();
 
+    /// <summary>
+    /// Hash key for the zones whose vegetation matches the network (see VegetationClearing).
+    /// </summary>
+    private static readonly int ClearedZonesHash = "ProceduralRoads_ClearedZones".GetStableHashCode();
+
+
     /// <summary>Hash key for storing global road network data on the ZDO.</summary>
     private static readonly int GlobalRoadDataHash = "ProceduralRoads_GlobalData".GetStableHashCode();
 
@@ -177,6 +183,58 @@ public static class RoadNetworkPersistence
 
 
     /// <summary>
+    /// Save the zones whose vegetation matches the network (VegetationClearing),
+    /// with the network version they belong to, or write back the record kept unread.
+    /// Format: [format=1][network version][count] then [x][y] per zone, 32-bit ints.
+    /// </summary>
+    public static void SaveClearedZones(int networkVersion, IReadOnlyCollection<Vector2s> zones)
+    {
+        ZDO? metadataZdo = GetMetadataZDO();
+        if (metadataZdo == null)
+        {
+            Log.LogWarning("[SAVE] No metadata ZDO: cleared zones not saved");
+            return;
+        }
+        if (!metadataZdo.IsOwner())
+            metadataZdo.SetOwner(ZDOMan.instance.m_sessionID);
+
+        WriteRecord(metadataZdo, ClearedZonesHash, () =>
+        {
+            using var ms = new MemoryStream();
+            using var writer = new BinaryWriter(ms);
+            writer.Write(1);
+            writer.Write(networkVersion);
+            writer.Write(zones.Count);
+            foreach (Vector2s zone in zones)
+            {
+                writer.Write((int)zone.x);
+                writer.Write((int)zone.y);
+            }
+            return ms.ToArray();
+        });
+        Log.LogDebug($"[SAVE] Saved {zones.Count} zones cleared of vegetation for network {networkVersion}");
+    }
+
+    /// <summary>The saved cleared-zone record into <see cref="VegetationClearing"/>; a save without one has cleared nothing.</summary>
+    private static void ReadClearedZones(byte[]? data)
+    {
+        VegetationClearing.Reset();
+        if (data == null || data.Length == 0) return;
+        using var ms = new MemoryStream(data);
+        using var reader = new BinaryReader(ms);
+        int format = reader.ReadInt32();
+        if (format != 1) throw new InvalidDataException($"unknown cleared zone data format {format}");
+        int version = reader.ReadInt32();
+        int count = reader.ReadInt32();
+        if (count < 0 || count > 1_000_000) throw new InvalidDataException($"invalid cleared zone count {count}");
+        var zones = new List<Vector2s>(count);
+        for (int i = 0; i < count; i++)
+            zones.Add(new Vector2s((short)reader.ReadInt32(), (short)reader.ReadInt32()));
+        if (ms.Position != ms.Length) throw new InvalidDataException("cleared zone data runs past its zones");
+        VegetationClearing.Load(version, zones, RoadSpatialGrid.RoadNetworkVersion);
+    }
+
+    /// <summary>
     /// Try to load the entire road network from persisted ZDO.
     /// </summary>
     /// <param name="roadStartPoints">List to populate with loaded start points</param>
@@ -221,6 +279,8 @@ public static class RoadNetworkPersistence
                 // NetworkCutoff reads it when the network is used, and unread excludes every generated zone; kept, a
                 // save cannot put that fallback over the zones the record says are the network's.
                 ReadOrKeep(metadataZdo, ZonesWithNetworkHash, "zones generated with the network", CheckZonesWithNetwork, () => { });
+                // Unread, which zones were cleared is not known, not none: none is cleared again on a guess.
+                ReadOrKeep(metadataZdo, ClearedZonesHash, "zones cleared of vegetation", ReadClearedZones, VegetationClearing.HistoryUnread);
             }
             catch (Exception ex)
             {

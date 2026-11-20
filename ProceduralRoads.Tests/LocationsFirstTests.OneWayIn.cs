@@ -36,9 +36,9 @@ public partial class LocationsFirstTests
         SetPathfinder(new RoadPathfinder(slope) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
         if (approachRoad != null)
             RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(approachRoad, approachRoad.ConvertAll(p => slope.GetHeight(p.x, p.y)),
-                approachRoad.ConvertAll(_ => default(RoadPointDebugInfo)), 4f, Vector2.Distance(approachRoad[0], approachRoad[approachRoad.Count - 1]), true));
+                approachRoad.ConvertAll(_ => default(RoadPointDebugInfo)), 4f, Vector2.Distance(approachRoad[0], approachRoad[approachRoad.Count - 1]), false));
         // Laid as an earlier road laid it (the network may keep a trimmed copy of it: told by its pieces below).
-        if (approach != null) StairStructures.Add(approach);
+        if (approach != null) { StairStructures.Add(approach); StairStructures.MarkStanding(approach); }
         bool built = fromTheLocation
             ? RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 0f), 10f, new Vector2(150f, 0f), 0f, 4f, "from the cave")
             : RoadNetworkGenerator.GenerateRoad(new Vector2(150f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave");
@@ -53,21 +53,25 @@ public partial class LocationsFirstTests
     }
 
     /// <summary>A location has one way in up a face: a road whose way onto a placed location's landing would climb beside the approach
-    /// another road laid up that face (the corridor rule, RoadStairRuns.ArrivalBesideAnApproach) is ended on that approach's
-    /// road instead, at a junction where the approach's road meets it (RoadNetworkGenerator.ReEndOnAWayIn), and lays no way
-    /// in of its own. The approach here is laid 8 m beside the way the road comes in on its own, at its heights, up the
-    /// same slope, its own road leaving its foot to the south; or 15 m to its side, past the corridor's reach (a layout
-    /// refused in the corridor laid just outside it is beside the first all the same). Two ways in going opposite ways are
-    /// allowed: the same approach on the far side of the location, climbing to it the other way, leaves the road its own way in.</summary>
+    /// another road laid up that face (the corridor rule, RoadStairRuns.ArrivalBesideAnApproach) is a duplicate of that way in
+    /// (RoadNetworkGenerator.ReEndOnAWayIn), dropped. The project owner's decisions (18 Nov 2026): "We should not allow that
+    /// second road on the same side for that ridge staircase example", and "A duplicate is just dropped: it is not built and
+    /// nothing replaces it. The Location is already reached, so nothing is lost." The approach here is laid 8 m beside the way the road comes in on its own, at its heights, up the
+    /// same slope, its own road leaving its foot to the north, levelled as generation stores a road; or 15 m to its side, past
+    /// the corridor's reach (a layout refused in the corridor laid just outside it is beside the first all the same). The
+    /// approach stands as generation leaves a laid one (StairStructures.MarkStanding): no road is searched through it, nor
+    /// snapped onto it. Two ways in going opposite ways are allowed: the same approach on the far side of the location,
+    /// climbing to it the other way, leaves the road its own way in.</summary>
     /// <remarks>Either way along: the road set off from the location (the planner builds a location's road from a location already
-    /// reached) or arriving at it.</remarks>
+    /// reached) or arriving at it. Before, set off from the location it was ended at the approach's foot instead; arriving, it
+    /// was ended there too and refused for its turn under the flight.</remarks>
     [Theory]
     [InlineData(false, 8f, false)]
     [InlineData(true, 8f, false)]
     [InlineData(true, 15f, false)]
     [InlineData(true, 8f, true)]
     [InlineData(false, 8f, true)]
-    public void ARoadUpTheFaceAnApproachClimbsEndsOnThatApproachsRoad(bool fromTheLocation, float across, bool farSide)
+    public void ASecondRoadUpTheFaceAnApproachClimbsIsDropped(bool fromTheLocation, float across, bool farSide)
     {
         var slope = new SlopeBelowTheLanding();
         _scope.WithWorld(slope);
@@ -101,34 +105,32 @@ public partial class LocationsFirstTests
 
         var (built, arrival) = RoadFromTheEast(slope, approach, itsRoad, fromTheLocation);
 
-        Assert.True(built, "beside the approach: " + RoadSpatialGrid.LastRefusal);
         if (farSide)
         {
+            Assert.True(built, "beside the approach: " + RoadSpatialGrid.LastRefusal);
             // Its own way in, as on its own: up the slope onto the landing, nowhere near the other approach's foot.
             Assert.Contains(arrival, p => p.x > 0f && p.x < 20f);
             Assert.DoesNotContain(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(foot.x, 0f, foot.y), 6f), q => q.IsRoad && Vector2.Distance(q.p, foot) <= 3f
                 && !itsRoad.Exists(a => Vector2.Distance(a, q.p) < 1.5f));
             return;
         }
-        // One way in up a face: none of the road's own ways into the cave (by staircase or as road) arrives the way the
-        // approach does.
-        LocationWaysIn.Way first = LocationWaysIn.Of(approach, new Vector2(0f, 0f))!;
-        foreach (LocationWaysIn.Way w in LocationWaysIn.There(new Vector2(0f, 0f)))
-            if (w.Approach == null || !w.Approach.Pieces.Exists(p => approach.Pieces.Exists(q => Vector3.Distance(q.Position, p.Position) < 0.1f)))
-                Assert.False(LocationWaysIn.SameWay(w, first), $"arrives as the approach does: {w.Outer}->{w.Inner}");
-        // Set off from the location the road joins the approach's road at its foot (its door there is the one the approach
-        // climbs to); arriving, it may come in at a door up another face instead (a level way in from the north east here).
-        if (fromTheLocation)
-            Assert.Contains(RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(foot.x, 0f, foot.y), 6f), q => q.IsRoad && Vector2.Distance(q.p, foot) <= 3f);
+        // On this side, either way along, a duplicate of the approach's way in: dropped, nothing of it built, nothing in its place
+        // (it used to be searched again to end at the approach's foot).
+        Assert.False(built, "a second road up the face the approach climbs was built");
+        Assert.Equal(RoadNetworkGenerator.BesideItsApproachRefusal, RoadSpatialGrid.LastRefusal);
+        Assert.DoesNotContain(RoadSpatialGrid.SnapshotAllRoadPoints(), q => q.IsRoad && !itsRoad.Exists(a => Vector2.Distance(a, q.p) < 0.5f));
+        Assert.Single(LocationWaysIn.There(new Vector2(0f, 0f)));
     }
 
-    /// <summary>A road arriving at a place as road is a way into it too (LocationWaysIn.Record): a second road from the same side,
-    /// up the same slope, does not build a second way in beside it; it ends on the first's road (ReEndOnAWayIn) or rides it.
-    /// One from the far side keeps its own way in.</summary>
+    /// <summary>A road arriving at a location as road is a way into it too (LocationWaysIn.Record). The project owner's decisions
+    /// (18 Nov 2026): "Same side: a second road on the same side as the serving road or staircase is a duplicate. It is dropped";
+    /// "Far side: a far-side road keeps its own way in, unless it would join the same serving road straight away". A second
+    /// road from the same side, up the same slope, is dropped: not built, nothing in its place, one way in. One from the far
+    /// side keeps its own way in.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ASecondRoadUpTheSameFaceJoinsTheFirstRoad(bool farSide)
+    public void ASecondRoadUpTheSameFaceIsDropped(bool farSide)
     {
         var slope = new SlopeBelowTheLanding();
         _scope.WithWorld(slope);
@@ -138,14 +140,57 @@ public partial class LocationsFirstTests
         RoadFromTheEast(slope, null, null, fromTheLocation: true);
         var first = LocationWaysIn.There(new Vector2(0f, 0f));
         Assert.True(first.Count == 1, $"{first.Count} ways in after the first road");
+        int firstRoad = RoadSpatialGrid.SnapshotAllRoadPoints().Count(q => q.IsRoad);
 
         Vector2 from = farSide ? new Vector2(-150f, 30f) : new Vector2(150f, -40f);
         bool built = RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 0f), 10f, from, 0f, 4f, "from the cave again");
 
-        Assert.True(built, "the second road: " + RoadSpatialGrid.LastRefusal);
         var ways = LocationWaysIn.There(new Vector2(0f, 0f));
         foreach (LocationWaysIn.Way w in ways)
             if (w != first[0]) Assert.False(LocationWaysIn.SameWay(w, first[0]), $"a second way in as the first arrives: {w.Outer}->{w.Inner}");
-        if (farSide) Assert.True(ways.Count == 2, $"{ways.Count} ways in: the far side's is its own");
+        if (farSide)
+        {
+            Assert.True(built, "the far side's road: " + RoadSpatialGrid.LastRefusal);
+            Assert.True(ways.Count == 2, $"{ways.Count} ways in: the far side's is its own");
+            return;
+        }
+        Assert.False(built, "the same side's second road was built");
+        Assert.Equal(RoadNetworkGenerator.BesideItsApproachRefusal, RoadSpatialGrid.LastRefusal);
+        Assert.True(ways.Count == 1, $"{ways.Count} ways in");
+        Assert.Equal(firstRoad, RoadSpatialGrid.SnapshotAllRoadPoints().Count(q => q.IsRoad));
+    }
+
+    /// <summary>The same side's second road, its other end a Location not reached (a planner road from a served Location X to an
+    /// unreached Y; the case above ends at a junction, which counts as reached). The project owner's decision (19 Nov 2026), on
+    /// the same side as on the far side: "drop only the duplicate part". Its stretch at the cave, beside the first road's way in,
+    /// is not built and no second way in is added; the road to Y is still built, from the first road (it was dropped whole, Y
+    /// left unconnected).</summary>
+    [Fact]
+    public void ASecondRoadUpTheSameFaceToALocationNotReachedIsBuiltFromTheServingRoad()
+    {
+        var slope = new SlopeBelowTheLanding();
+        _scope.WithWorld(slope);
+        using var corridor = StaticOverride.Keep(() => RoadNetworkGenerator.RoadSnap).AndKeep(() => RoadNetworkGenerator.CorridorSnap);
+        RoadNetworkGenerator.RoadSnap = 6f;
+        RoadNetworkGenerator.CorridorSnap = 14f;
+        RoadFromTheEast(slope, null, null, fromTheLocation: true);
+        var first = LocationWaysIn.There(new Vector2(0f, 0f));
+        Assert.True(first.Count == 1, $"{first.Count} ways in after the first road");
+        var firstRoad = RoadSpatialGrid.SnapshotAllRoadPoints().Where(q => q.IsRoad).Select(q => q.p).ToList();
+
+        Vector2 y = new(150f, -40f);
+        const float yRadius = 5f;
+        Assert.False(RoadNetworkGenerator.EndReached(y, yRadius), "the other end is reached already");
+        bool built = RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 0f), 10f, y, yRadius, 4f, "from the cave to a location not reached");
+
+        Assert.True(built, "the road to the location not reached: " + RoadSpatialGrid.LastRefusal);
+        Assert.True(RoadNetworkGenerator.EndReached(y, yRadius), "the location is not reached");
+        var ways = LocationWaysIn.There(new Vector2(0f, 0f));
+        Assert.True(ways.Count == 1, $"{ways.Count} ways in: a second way in at the cave");
+        var second = RoadSpatialGrid.SnapshotAllRoadPoints().Where(q => q.IsRoad && !firstRoad.Exists(a => Vector2.Distance(a, q.p) < 0.5f)).Select(q => q.p).ToList();
+        // It sets off on the first road: its point nearest the cave is on it, not at the cave's ring beside it.
+        Vector2 nearest = second.OrderBy(p => p.magnitude).First();
+        float off = firstRoad.Min(a => Vector2.Distance(a, nearest));
+        Assert.True(off <= RoadNetworkGenerator.RoadSnap, $"its nearest point to the cave, {nearest} ({nearest.magnitude:F1} m), is {off:F1} m off the first road");
     }
 }

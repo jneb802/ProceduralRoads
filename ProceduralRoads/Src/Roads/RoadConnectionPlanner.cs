@@ -17,7 +17,12 @@ public static class RoadConnectionPlanner
         { Name=name; Position=position; Radius=radius; }
     }
 
-    /// <summary>The one owner of which places get a road and which connect (docs/OWNERS.md).</summary>
+    /// <summary>How many nearest locations each location is paired with for pricing.</summary>
+    internal const int PairNeighbours = 8;
+    /// <summary>The farthest two locations are paired for pricing, in metres.</summary>
+    internal const float PairReach = 2200f;
+
+    /// <summary>The one owner of which candidate edges are tried, each once, and what each outcome reports (docs/OWNERS.md).</summary>
     public static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority, Action<Location,string> report) =>
@@ -26,15 +31,16 @@ public static class RoadConnectionPlanner
     internal static void Connect(IReadOnlyList<Location> locations,
         Func<Location,Location,float?> price, Func<Location,Location,bool> build,
         Func<Location,bool> joinNetwork, Func<string,int> priority,
-        Action<Location,string> report, Action<int>? settled = null, Action<int>? pricing = null, Action? pricedOne = null, Action? connecting = null)
+        Action<Location,string> report, Action<int>? settled = null, Action<int>? pricing = null, Action? pricedOne = null, Action? connecting = null,
+        Action<int,bool>? attempted = null)
     {
         if (locations.Count < 2) return;
         static (int,int) Key(int a,int b) => a<b ? (a,b) : (b,a);
         var pairs = new HashSet<(int,int)>();
         for (int a=0; a<locations.Count; a++)
             foreach (int b in Enumerable.Range(0,locations.Count).Where(b => b!=a)
-                .OrderBy(b => Vector3.SqrMagnitude(locations[a].Position-locations[b].Position)).ThenBy(b=>b).Take(8))
-                if (Vector3.Distance(locations[a].Position,locations[b].Position)<=2200)
+                .OrderBy(b => Vector3.SqrMagnitude(locations[a].Position-locations[b].Position)).ThenBy(b=>b).Take(PairNeighbours))
+                if (Vector3.Distance(locations[a].Position,locations[b].Position)<=PairReach)
                     pairs.Add(Key(a,b));
         // Pricing is the one pass that reads no committed road: it is a search
         // over raw terrain between two locations, so the answer does not depend on
@@ -83,6 +89,8 @@ public static class RoadConnectionPlanner
             .ThenBy(t => Vector3.SqrMagnitude(locations[location].Position-locations[t].Position))
             .ThenBy(t => t)
             .ToList();
+        // A Location's failed attempts (a priced edge's join and build, a join with no priced edge, an unpriced edge) are
+        // reported to `attempted` (the destination log); every remaining edge is still tried.
         while (remaining.Count>0)
         {
             RoadLifecycleManager.ThrowIfCancellationRequested();
@@ -97,12 +105,14 @@ public static class RoadConnectionPlanner
                 bool joined = joinNetwork(locations[next]);
                 if (!joined)
                 {
+                    attempted?.Invoke(next,false);
                     // A pricing probe runs at a reduced budget and the open-sea
                     // test is a straight line. Neither may be the thing that
                     // decides a location cannot be reached, so the candidate edges
                     // that were never priced are tried once at the build budget.
                     foreach (int other in Unpriced(next))
-                        if (BuildOnce(other,next))
+                        if (!BuildOnce(other,next)) attempted?.Invoke(next,false);
+                        else
                         {
                             joined=true;
                             // This road serves both ends even if neither end
@@ -117,12 +127,14 @@ public static class RoadConnectionPlanner
                             break;
                         }
                 }
+                if (joined) attempted?.Invoke(next,true);
                 report(locations[next],joined ? "joined without a priced edge" : "new component; no priced connection to network");
                 tree.Add(next); remaining.Remove(next); settled?.Invoke(next);
                 continue;
             }
             if (joinNetwork(locations[to]) || BuildOnce(from,to))
             {
+                attempted?.Invoke(to,true);
                 tree.Add(to); remaining.Remove(to); settled?.Invoke(to);
                 report(locations[to],"connected");
             }
@@ -132,6 +144,7 @@ public static class RoadConnectionPlanner
                 // can still connect it; every edge is attempted at most once.
                 costs.Remove(Key(from,to));
                 report(locations[to],$"build from {locations[from].Name} failed; trying remaining candidates");
+                attempted?.Invoke(to,false);
             }
         }
     }

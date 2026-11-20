@@ -12,8 +12,133 @@ namespace ProceduralRoads;
 /// </summary>
 public static partial class RoadStairRuns
 {
-    /// <summary>Road staircase tops finished out over a lip with a crest this generation (<see cref="TopOntoSurface"/>).</summary>
-    public static int RoadTopsCrested;
+    /// <summary>
+    /// A ridge pair's top (<paramref name="up"/> climbing to it, <paramref name="down"/> the next stretch coming down from it):
+    /// the ground the road may follow over the crest, read along the path from the first's foot to the second's a stair's run
+    /// (<see cref="StairLayout.PieceRun"/>) at a time, out from its highest reading each way to the last reading the road
+    /// reaches from the one before within the grade cap (<see cref="RoadGrade.Configured"/>): each face's rim, with the last
+    /// path index on its stretch's foot's side of it, and the top's width (no more than its length between the two rims along the road).
+    /// </summary>
+    internal static (Vector2 upRim, int upFootSide, Vector2 downRim, int downFootSide, float width) RidgeTop(List<Vector2> path,
+        (int from, int to) up, (int from, int to) down, Func<Vector2, float> ground)
+    {
+        float cap = RoadGrade.Configured;
+        var at = new List<Vector2> { path[up.from] };
+        var along = new List<float> { 0f };
+        var segment = new List<int> { up.from };
+        for (int j = up.from + 1; j <= down.to; j++)
+        {
+            float length = Vector2.Distance(path[j - 1], path[j]);
+            int pieces = Mathf.Max(1, Mathf.CeilToInt(length / StairLayout.PieceRun));
+            for (int i = 1; i <= pieces; i++)
+            {
+                at.Add(Vector2.Lerp(path[j - 1], path[j], (float)i / pieces));
+                along.Add(along[along.Count - 1] + length / pieces);
+                segment.Add(j);
+            }
+        }
+        var height = at.ConvertAll(p => ground(p));
+        int crest = 0;
+        for (int i = 1; i < at.Count; i++) if (height[i] > height[crest]) crest = i;
+        bool Walkable(int i, int j) => FloatBits.Abs(height[j] - height[i]) <= cap * Mathf.Max(along[j] - along[i], 1e-4f);
+        int left = crest, right = crest;
+        while (left > 0 && Walkable(left - 1, left)) left--;
+        while (right < at.Count - 1 && Walkable(right, right + 1)) right++;
+        // The rim's reading lies on the path's segment ending at segment[i]: the up stretch's foot side ends at its start, the
+        // down stretch's starts at its end.
+        int upFoot = Mathf.Clamp(segment[left] - 1, up.from, up.to);
+        int downFoot = Mathf.Clamp(segment[right], down.from, down.to);
+        // Its width: the shortest chord across it through the crest's reading, on any of the search's headings
+        // (RoadPathfinder.Directions), each way to the last reading within the cap of the one before: crossed on a slant, a top
+        // reads wider along the road than across (an 8 m top crossed on a knight's heading read 9 m).
+        float reach = along[along.Count - 1], width = along[right] - along[left];
+        float Out(Vector2 heading)
+        {
+            Vector2 p = at[crest];
+            float h = height[crest], walked = 0f;
+            while (walked < reach)
+            {
+                Vector2 next = p + heading * StairLayout.PieceRun;
+                float g = ground(next);
+                if (FloatBits.Abs(g - h) > cap * StairLayout.PieceRun) break;
+                (p, h) = (next, g);
+                walked += StairLayout.PieceRun;
+            }
+            return walked;
+        }
+        foreach (Vector2Int d in RoadPathfinder.Directions)
+        {
+            Vector2 heading = new Vector2(d.x, d.y).normalized;
+            width = Mathf.Min(width, Out(heading) + Out(-heading));
+        }
+        return (at[left], upFoot, at[right], downFoot, width);
+    }
+
+    /// <summary>Whether a ridge pair's top (<see cref="RidgeTop"/>) is wider than a rest: longer between its rims than
+    /// <see cref="StairLayout.RestFloors"/> rows of <see cref="StairLayout.PieceRun"/>. Asked where the two were met top to top or
+    /// could not be (<see cref="Lay"/>): a top within a rest stays a staircase's, met top to top or not at all.</summary>
+    internal static bool TopWiderThanARest(List<Vector2> path, (int from, int to) up, (int from, int to) down, Func<Vector2, float> ground) =>
+        RidgeTop(path, up, down, ground).width > StairLayout.RestFloors * StairLayout.PieceRun;
+
+    /// <summary>
+    /// The ridge pairs of <paramref name="stretches"/> crossed by road over their top: each first stretch of <paramref name="pairs"/>,
+    /// climbing to a crest the next comes down from (<see cref="RidgePair"/>), over a top wider than a rest
+    /// (<see cref="TopWiderThanARest"/>; <see cref="Lay"/>): met top to top there, the two would be a boardwalk across a top a road
+    /// can cross, or they could not be met within the rules at all. Where the road over the top then cannot be laid, a pair that
+    /// was met stays met as the lay that passed laid it, judged by the road's final check as before (<see cref="Lay"/>). Each is laid instead to its own
+    /// rim (<see cref="RidgeTop"/>) and the road crosses the top between them. Keyed by
+    /// stretch: its top at its rim, and the last path index on its foot's side of it.
+    /// </summary>
+    internal static Dictionary<int, (Vector2 at, int footSide)> RoadOverRidgeTops(List<Vector2> path, List<(int from, int to)> stretches,
+        Func<Vector2, float> ground, IReadOnlyCollection<int> pairs)
+    {
+        var tops = new Dictionary<int, (Vector2, int)>();
+        foreach (int k in pairs)
+        {
+            if (k + 1 >= stretches.Count || !RidgePair(path, stretches[k], stretches[k + 1], ground)) continue;
+            var top = RidgeTop(path, stretches[k], stretches[k + 1], ground);
+            tops[k] = (top.upRim, top.upFootSide);
+            tops[k + 1] = (top.downRim, top.downFootSide);
+        }
+        return tops;
+    }
+
+    /// <summary>
+    /// A stair stretch of <paramref name="path"/> ended higher, the staircase taking the height its road cannot: where the
+    /// road leaving its top (its upper end) cannot climb on from it following its ground as it is built to (its ground more
+    /// than <see cref="ApproachFill"/> over the line climbing on from the top, <see cref="ApproachOver"/>: a face's rim the
+    /// search's step from the top cell crossed at under the cap end to end), the top moves on along the road to the nearest
+    /// path point whose own way on is within it, so the flight is laid to the rim and the road leaves it at the ground. The
+    /// mirror of <see cref="StartLower"/> at the foot, with its limits: not onto the path's ends, past a crossing, nor within
+    /// <see cref="StoneGap"/> of the stretch before (<paramref name="before"/>, its last index, -1 for none) or after
+    /// (<paramref name="after"/>, its first index, the path's count for none); nor for a run an earlier road laid between the
+    /// stretch's ends. The stretch as it was where no such point is; the layout then lays it within its rules or refuses it.
+    /// </summary>
+    internal static (int from, int to) EndHigher(List<Vector2> path, (int from, int to) stretch, int before, int after,
+        IReadOnlyList<RoadCrossing> crossings, Func<Vector2, float> ground)
+    {
+        var (from, to) = stretch;
+        if (StairStructures.Between(path[from], path[to], SameRunReach) != null || StairStructures.Carrying(path[from], path[to], OnStairReach).HasValue)
+            return stretch;
+        float cap = RoadGrade.Configured;
+        bool up = ground(path[to]) >= ground(path[from]);
+        int top = up ? to : from, step = up ? 1 : -1;
+        // The way on runs to the structure after it: the stretch's neighbour, a crossing, or the path's end.
+        int stop = up ? Mathf.Min(path.Count - 1, after) : Mathf.Max(0, before);
+        bool neighbour = up ? after < path.Count : before >= 0;
+        foreach (RoadCrossing c in crossings)
+        {
+            if (up && c.FromIndex >= top && c.FromIndex < stop) { stop = c.FromIndex; neighbour = true; }
+            if (!up && c.ToIndex <= top && c.ToIndex > stop) { stop = c.ToIndex; neighbour = true; }
+        }
+        if (ApproachOver(path, top, step, stop, ground, cap) <= ApproachFill) return stretch;
+        for (int j = top + step; up ? j < stop && j <= path.Count - 2 : j > stop && j >= 1; j += step)
+        {
+            if (neighbour && Along(path, j, stop) < StoneGap) break;
+            if (ApproachOver(path, j, step, stop, ground, cap) <= ApproachFill) return up ? (from, j) : (j, to);
+        }
+        return stretch;
+    }
 
     /// <summary>
     /// A road staircase whose top stops under the ground it leads onto (more than a step-up under it at the end reader's corners, the
@@ -47,15 +172,17 @@ public static partial class RoadStairRuns
             // What it adds past the top passes the staircase's own checks (<paramref name="fits"/>, given the plan and the index
             // of the first piece added: Lay's TopFits), or that finish is not laid and the next is tried; none fitting, the top
             // stays as it is (unchecked, a climb, crest or floor past the top could land on another road or
-            // staircase, in water or a location).
-            StairLayout.TopFinish finish = StairLayout.FinishTop(plan, ground, Width, StairCover.RoadStaircase, p => fits == null || fits(p, pieces), out _);
+            // staircase, in water or a location). A floor is kept only where the end reader finds it finished with a way off (TopFinished,
+            // as an approach's top asks it), else the top's other case is tried, and with none the top stays as laid; a top left
+            // unfinished then refuses its road at the end gate (NoWayOff, TopUnfinished), as an unfinished foot does.
+            StairLayout.TopFinish finish = StairLayout.FinishTop(plan, ground, Width, StairCover.RoadStaircase, p => fits == null || fits(p, pieces), out _,
+                wayOff: p => TopFinished(p, ground));
             if (finish == StairLayout.TopFinish.TopFloor)
             {
                 Vector2 floorEnd = new Vector2(plan.End.x, plan.End.z) + StairLayout.Forward(plan.EndHeading) * StairLayout.PieceRun;
                 past = floorEnd;
                 pastHeight = plan.End.y;
                 plan.TopCrested = new Vector3(past.x, pastHeight, past.y);
-                System.Threading.Interlocked.Increment(ref RoadTopsCrested);
                 System.Threading.Interlocked.Increment(ref TopFloors);
                 return true;
             }
@@ -75,7 +202,6 @@ public static partial class RoadStairRuns
                 : new Vector2(plan.End.x, plan.End.z) + StairLayout.Forward(plan.EndHeading) * StairLayout.PieceRun;
             pastHeight = down != null ? down.Edge.y : ground(past.x, past.y);
             plan.TopCrested = new Vector3(past.x, pastHeight, past.y);
-            System.Threading.Interlocked.Increment(ref RoadTopsCrested);
             return true;
         }
     }
@@ -89,19 +215,34 @@ public static partial class RoadStairRuns
     /// </summary>
     internal static bool TopFits(StairPlan plan, int added, List<Vector2> path, int from, int to, WorldGenerator world, List<RoadStairSpan> before, Vector2? meet)
     {
-        var extra = new StairPlan { Kit = plan.Kit, Reached = true };
-        for (int i = added; i < plan.Pieces.Count; i++) extra.Pieces.Add(plan.Pieces[i]);
+        var extra = new List<StairPiece>();
+        for (int i = added; i < plan.Pieces.Count; i++) extra.Add(plan.Pieces[i]);
         // The stretch and the road past its top as far as the additions reach (the road starts again past them), and as far
         // again as a piece may stand off the road and still be on it: the road starting again at the last piece's far edge is
         // the one it meets, not one it lands on (a top climbed on two stairs and floored, its floor against the next stretch).
         int top = plan.Reversed ? from : to, step = plan.Reversed ? -1 : 1;
         float reach = 0f;
-        foreach (StairPiece piece in extra.Pieces)
+        foreach (StairPiece piece in extra)
             reach = Mathf.Max(reach, Vector2.Distance(new Vector2(piece.Position.x, piece.Position.z), path[top]) + StairLayout.PieceRun / 2f + OnRoad);
         int end = top + step;
         while (end + step >= 0 && end + step < path.Count && Vector2.Distance(path[end], path[top]) < reach) end += step;
         end = Mathf.Clamp(end, 0, path.Count - 1);
         int low = plan.Reversed ? end : from, high = plan.Reversed ? to : end;
+        return AddedFits(extra, path, low, high, world, before, meet, plan.Kit);
+    }
+
+    /// <summary>
+    /// Whether pieces added to a staircase over path[low..high] past where its layout was judged (a top's finish,
+    /// <see cref="TopFits"/>; a foot's with no road past it, <see cref="FinishFootOntoNothing"/>) may be laid, by the checks a
+    /// staircase's own pieces pass in <see cref="Usable"/>: no walked piece in water or a location, on another road, on its own
+    /// road away from that stretch, nor inside another staircase. Its own road is not in the grid yet, so every road the grid
+    /// holds there is another.
+    /// </summary>
+    internal static bool AddedFits(List<StairPiece> added, List<Vector2> path, int low, int high, WorldGenerator world, List<RoadStairSpan> before,
+        Vector2? meet, string kit = "")
+    {
+        var extra = new StairPlan { Kit = kit, Reached = true };
+        extra.Pieces.AddRange(added);
         // In water or a location: the one test every staircase gets (Blocked), on the ground it is laid on.
         if (Blocked(extra, world, null, (x, z) => GroundAt(x, z, world)) != "") { LastRefusal = Refusal.WaterOrLocation; return false; }
         foreach (StairPiece piece in extra.Pieces)
@@ -137,10 +278,11 @@ public static partial class RoadStairRuns
     /// taking over the road itself). Null where neither side lays.
     /// </summary>
     private static StairPlan? TopBesideItsRoad(List<Vector2> path, int from, int to, Vector2 a, Vector2 b, StairKit kit,
-        Func<float, float, float> ground, List<Vector2> corridor, int tops, float? facing, float? topFacing, WorldGenerator world,
-        List<RoadStairSpan> spans)
+        LayoutGround laidOn, List<Vector2> corridor, int tops, float? facing, float? topFacing, WorldGenerator world,
+        List<RoadStairSpan> spans, StretchAnswers? answers)
     {
         if (topFacing is not float leave) return null;
+        Func<float, float, float> ground = laidOn.Read;
         bool reversed = ground(b.x, b.y) < ground(a.x, a.y);
         Vector2 top = reversed ? a : b, foot = reversed ? b : a;
         // The side it comes in from: the foot's side of the road leaving the top.
@@ -154,13 +296,10 @@ public static partial class RoadStairRuns
             var line = new List<Vector2>(corridor);
             line[reversed ? 0 : line.Count - 1] = beside;
             StairPlan again = reversed
-                ? Plan(beside, b, kit, ground, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing, ring: FootRingOf(path, from, to, beside, b, ground))
-                : Plan(a, beside, kit, ground, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing, ring: FootRingOf(path, from, to, a, beside, ground));
-            if (Usable(again, path, from, to, world, spans, null)) { System.Threading.Interlocked.Increment(ref TopsBeside); return again; }
+                ? Plan(beside, b, kit, laidOn, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing, ring: FootRingOf(path, from, to, beside, b, ground), answers: answers)
+                : Plan(a, beside, kit, laidOn, null, null, line, topLandings: tops, retried: true, facing: facing, topFacing: topFacing, ring: FootRingOf(path, from, to, a, beside, ground), answers: answers);
+            if (Usable(again, path, from, to, world, spans, null)) return again;
         }
         return null;
     }
-
-    /// <summary>Staircase tops laid again beside the road they hand to this generation (<see cref="TopBesideItsRoad"/>).</summary>
-    public static int TopsBeside;
 }

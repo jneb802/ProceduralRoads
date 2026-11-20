@@ -20,17 +20,16 @@ public partial class LocationsFirstTests
         RoadNetworkGenerator.Reset();
         PlacedLocation cave = Cave();
         Func<float, float, float> ground = PlacedLocationGround.Sampler(cave.Record.Ground((x, z) => sea.GetHeight(x, z)), cave.Record.X0, cave.Record.Z0, cave.Record.W, cave.Record.H);
-        var placedLocation = new PlacedLocation { Record = cave.Record, Ground = ground, Shape = PlacedLocationShape.Of(cave.Centre, 90f, CaveFloor[0], 0f, null, ground, false, cave.Record.Root) };
-        PlacedLocations.Ready(placedLocation);
+        var location = new PlacedLocation { Record = cave.Record, Ground = ground, Shape = PlacedLocationShape.Of(cave.Centre, 90f, CaveFloor[0], 0f, null, ground, false, cave.Record.Root) };
+        PlacedLocations.Ready(location);
         LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
         var finder = new RoadPathfinder(sea) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f };
         SetPathfinder(finder);
-        float ring = RoadNetworkGenerator.KeepOutEdge(placedLocation.Centre, 10f, 4f, placed: true);
-        Vector2 LeadIn(Vector2 a) => a + (a - placedLocation.Centre).normalized * RoadNetworkGenerator.LeadInLength;
-        Vector2 aim = RoadNetworkGenerator.DoorsOf(placedLocation.Centre, 10f, 4f).OrderBy(d => d.Price).First().At;
+        Vector2 LeadIn(Vector2 a) => a + (a - location.Centre).normalized * RoadNetworkGenerator.LeadInLength;
+        Vector2 aim = RoadNetworkGenerator.DoorsOf(location.Centre, 10f, 4f).OrderBy(d => d.Price).First().At;
 
-        var retry = RoadNetworkGenerator.Replan(finder, new Vector2(-20f, 120f), LeadIn(aim), new Vector2(-20f, 120f), 0f, placedLocation.Centre, ring, 4f, null, aim,
-            startReached: true, endReached: RoadNetworkGenerator.EndReached(placedLocation.Centre, 10f));
+        var retry = RoadNetworkGenerator.Replan(finder, new Vector2(-20f, 120f), LeadIn(aim), new Vector2(-20f, 120f), 0f, location.Centre, 10f, 4f, null, aim,
+            startReached: true, endReached: RoadNetworkGenerator.EndReached(location.Centre, 10f));
 
         Assert.NotNull(retry);
         Vector2 end = retry!.Value.path[retry.Value.path.Count - 1];

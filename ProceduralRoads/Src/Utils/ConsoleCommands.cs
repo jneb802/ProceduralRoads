@@ -21,7 +21,7 @@ namespace ProceduralRoads;
 public static class ConsoleCommands
 {
     /// <summary>PROCEDURALROADS_DEV_COMMANDS: register the developer commands (<see cref="RegisterDevCommands"/>,
-    /// <see cref="StairCommands"/>, <see cref="LocationCommands"/>, <see cref="ViaductCommands"/>). Off by default.</summary>
+    /// <see cref="StairCommands"/>, <see cref="LocationCommands"/>, <see cref="ViaductCommands"/>, <see cref="RailingCatalogueCommands"/>). Off by default.</summary>
     internal static readonly bool DevCommands = DebugSwitches.Flag("DEV_COMMANDS", false);
 
     private static bool s_commandsRegistered = false;
@@ -45,11 +45,11 @@ public static class ConsoleCommands
 
     /// <summary>road_generate's help, its confirm said by its owner (RoadLifecycleManager.AsksFirstHelp).</summary>
     private static string GenerateHelp =>
-        "Generate roads for an existing world. Use after adding mod to existing save." + RoadLifecycleManager.AsksFirstHelp;
+        "road_generate " + ExistingWorldFirstLoad.CommandWords + ": generate the whole road network, also for a world explored before it had roads." + RoadLifecycleManager.AsksFirstHelp;
 
     /// <summary>road_regen_island's help, its confirm as road_generate's.</summary>
     private static string RegenIslandHelp =>
-        "Clear all roads and regenerate ONLY the island at your position (or road_regen_island <x> <z>), then apply terrain to the loaded zones. Its places are placed first, then its roads built, with the world held still; much faster than a whole-world generation when iterating on one site." + RoadLifecycleManager.AsksFirstHelp;
+        "road_regen_island [<x> <z>] " + ExistingWorldFirstLoad.CommandWords + ": clear all roads and regenerate ONLY the island at your position (or at x z), then apply terrain to the loaded zones it may write; land off the island is left as it is. Its locations are placed first, then its roads built, with the world held still; much faster than a whole-world generation when iterating on one location." + RoadLifecycleManager.AsksFirstHelp;
 
     /// <summary>
     /// Register console commands. Called from Terminal.InitTerminal patch.
@@ -72,6 +72,7 @@ public static class ConsoleCommands
             StairCommands.Register();
             LocationCommands.Register();
             ViaductCommands.Register();
+            RailingCatalogueCommands.Register();
         }
         new Terminal.ConsoleCommand(
             "road_regen_island",
@@ -201,8 +202,17 @@ public static class ConsoleCommands
     private static void RegisterDevCommands()
     {
         new Terminal.ConsoleCommand(
+            "road_owner",
+            "Which road stored the road points near you or x z: road_owner [x z] [radius=10]. Generated and manual roads, their junction fills and start pads; staircases are not listed (structures, not road points). Kept only for a network generated in this process with PROCEDURALROADS_ROADS_LOG on, until the network is replaced (road_generate, road_regen_island) or loaded.",
+            args => RoadOwnerAt(args),
+            isCheat: true,
+            isNetwork: false,
+            onlyServer: false,
+            isSecret: false,
+            allowInDevBuild: true);
+        new Terminal.ConsoleCommand(
             "road_bake",
-            "Road terrain the server writes for players without the mod: what it has written so far; road_bake again to go over every road zone of the current network once more (zones already carrying it are left alone); road_bake zone [x z] for what the server knows and would do about one zone (default: where you stand); road_bake vegetation for the road zones still holding vegetation on the road, most first; road_bake find [x z [radius]] for road zones not generated yet near a point; road_bake server for the server's own zone machinery -- reference position, live zone count, and each peer's zone.",
+            "Road terrain the server writes for players without the mod: what it has written so far; road_bake again to go over every road zone of the current network once more (zones already carrying it are left alone); road_bake zone [x z] for what the server knows and would do about one zone (default: where you stand); road_bake vegetation for the road zones whose owed clearing would still remove vegetation, most first; road_bake find [x z [radius]] for road zones not generated yet near a point; road_bake server for the server's own zone machinery -- reference position, live zone count, and each peer's zone.",
             (args) =>
             {
                 if (GenerationBusy(args)) return;
@@ -386,9 +396,9 @@ public static class ConsoleCommands
     private static void ShowRoadStartPins(Terminal.ConsoleEventArgs args)
     {
         // Debug: show current state
-        Log.LogDebug($"[road_pins] RoadsGenerated={RoadNetworkGenerator.RoadsGenerated}, RoadsLoadedFromZDO={RoadNetworkGenerator.RoadsLoadedFromZDO}, RoadsAvailable={RoadNetworkGenerator.RoadsAvailable}");
+        Log.LogDebug($"[road_pins] RoadsGenerated={RoadNetworkGenerator.RoadsGenerated}, RoadsLoadedFromZDO={RoadNetworkGenerator.RoadsLoadedFromZDO}, HasNetwork={RoadLifecycleManager.HasNetwork}");
         
-        if (!RoadNetworkGenerator.RoadsAvailable)
+        if (!RoadLifecycleManager.HasNetwork)
         {
             args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
             return;
@@ -458,10 +468,10 @@ public static class ConsoleCommands
             ZoneSystem.instance == null || WorldGenerator.instance == null)
         { args.Context.AddString("Usage: road_location <x> <z> in a loaded world"); return; }
         ZoneSystem.LocationInstance? best = null; float distance = 64f;
-        foreach (var location in ZoneSystem.instance.GetLocationList())
+        foreach (var locationInstance in ZoneSystem.instance.GetLocationList())
         {
-            float d=Vector2.Distance(new Vector2(x,z),new Vector2(location.m_position.x,location.m_position.z));
-            if (d < distance) { best=location; distance=d; }
+            float d=Vector2.Distance(new Vector2(x,z),new Vector2(locationInstance.m_position.x,locationInstance.m_position.z));
+            if (d < distance) { best=locationInstance; distance=d; }
         }
         if (best == null) { args.Context.AddString("No location within 64m"); return; }
         var centre=new Vector2(best.Value.m_position.x,best.Value.m_position.z);
@@ -502,7 +512,7 @@ public static class ConsoleCommands
         var sb = new System.Text.StringBuilder("name,x,z,roadHeight,terrainAtEnd,ringMean,ringMin,ringMax,deltaEnd,deltaRing,sampleKind,ringRadius,locationX,locationZ,loadedGround,roadMinusLoadedGround\n");
         foreach (var r in rows)
         {
-            bool loaded = ZoneSystem.instance.GetGroundHeight(new Vector3(r.Point.x, 0f, r.Point.y), out float ground);
+            bool loaded = NaturalGround.Live(new Vector3(r.Point.x, 0f, r.Point.y), out float ground);
             string liveGround = loaded ? ground.ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "";
             string liveDelta = loaded ? (r.RoadHeight - ground).ToString("F3", System.Globalization.CultureInfo.InvariantCulture) : "";
             sb.Append(System.FormattableString.Invariant($"{r.Name},{r.Point.x:F1},{r.Point.y:F1},{r.RoadHeight:F2},{r.TerrainAtEnd:F2},{r.RingMean:F2},{r.RingMin:F2},{r.RingMax:F2},{r.DeltaEnd:F2},{r.DeltaRing:F2},nearest-road-point/procedural,{r.RingRadius:F2},{r.LocationCentre.x:F1},{r.LocationCentre.y:F1},{liveGround},{liveDelta}\n"));
@@ -522,6 +532,27 @@ public static class ConsoleCommands
     /// Debug road points near player position.
     /// Shows detailed info about road points, heights, and terrain.
     /// </summary>
+    /// <summary>road_owner [x z] [radius]: <see cref="RoadOwners.Near"/>, said and logged.</summary>
+    private static void RoadOwnerAt(Terminal.ConsoleEventArgs args)
+    {
+        float x, z, radius = 10f;
+        int next = 1;
+        if (args.Length >= 3 && float.TryParse(args[1], NumberStyles.Float, CultureInfo.InvariantCulture, out x)
+            && float.TryParse(args[2], NumberStyles.Float, CultureInfo.InvariantCulture, out z))
+            next = 3;
+        else if (Player.m_localPlayer is Player player) { x = player.transform.position.x; z = player.transform.position.z; }
+        else { args.Context.AddString("road_owner: give x z (no local player)"); return; }
+        if (args.Length > next && float.TryParse(args[next], NumberStyles.Float, CultureInfo.InvariantCulture, out float r) && r > 0f) radius = r;
+        if (!RoadLifecycleManager.HasNetwork) { args.Context.AddString("road_owner: no road network yet"); return; }
+        if (!RoadOwners.Enabled) { args.Context.AddString("road_owner: no record (PROCEDURALROADS_ROADS_LOG is off)"); return; }
+        var lines = RoadOwners.Near(x, z, radius);
+        string head = string.Format(CultureInfo.InvariantCulture, "road_owner ({0:F1}, {1:F1}) within {2:F0} m: {3} piece(s) of {4} recorded",
+            x, z, radius, lines.Count, RoadOwners.Count);
+        args.Context.AddString(head);
+        Log.LogInfo(head);
+        foreach (string line in lines) { args.Context.AddString("  " + line); Log.LogInfo("  " + line); }
+    }
+
     private static void DebugRoadPoints(Terminal.ConsoleEventArgs args)
     {
         Player player = Player.m_localPlayer;
@@ -546,7 +577,7 @@ public static class ConsoleCommands
         float terrainHeight = 0f;
         if (WorldGenerator.instance != null)
         {
-            terrainHeight = BiomeBlendedHeight.GetBlendedHeight(playerPos.x, playerPos.z, WorldGenerator.instance);
+            terrainHeight = NaturalGround.ForDiagnostics(playerPos.x, playerPos.z, WorldGenerator.instance);
             args.Context.AddString($"Natural ground at position: {terrainHeight:F2}m");
             Log.LogInfo($"Natural ground at position: {terrainHeight:F2}m");
         }
@@ -594,7 +625,7 @@ public static class ConsoleCommands
             var rp = nearbyPoints[i];
             float dist = Vector2.Distance(rp.p, playerPos2D);
             float localTerrain = WorldGenerator.instance != null 
-                ? BiomeBlendedHeight.GetBlendedHeight(rp.p.x, rp.p.y, WorldGenerator.instance)
+                ? NaturalGround.ForDiagnostics(rp.p.x, rp.p.y, WorldGenerator.instance)
                 : 0f;
             float delta = rp.h - localTerrain;
             
@@ -618,7 +649,7 @@ public static class ConsoleCommands
             
             if (posDist > 0 && posDist < 3f) // Only check nearby points
             {
-                float gradient = Mathf.Abs(p2.h - p1.h) / posDist;
+                float gradient = FloatBits.Abs(p2.h - p1.h) / posDist;
                 if (gradient > maxGradient) maxGradient = gradient;
                 if (gradient > 0.5f) discontinuities++; // More than 0.5m per 1m = steep
             }
@@ -666,19 +697,23 @@ public static class ConsoleCommands
         Log.LogInfo("Manual road generation triggered via console command");
         // As at load: locations placed before their roads, over frames, then the roads built by workers. This command
         // returns at once; the panel and road_progress show how it goes, and the console hears how it ended.
-        if (RoadLifecycleManager.BeginForOperator(null, args.Context.AddString, command: "road_generate", force: HasForce(args)) is string refused)
+        // The run says how it starts (RoadLifecycleManager.StartText), or why not.
+        const string usage = "Usage: road_generate " + ExistingWorldFirstLoad.CommandWords;
+        string? bad = ExistingWorldFirstLoad.ReadCommand(args.Args.Skip(1).ToArray(), out ExistingWorldRoads? answer, out bool force, out List<string> rest);
+        if (bad == null && rest.Count > 0) bad = $"unknown word '{rest[0]}'";
+        if (bad != null)
+        {
+            args.Context.AddString($"{usage}: {bad}");
+            return;
+        }
+        if (RoadLifecycleManager.BeginForOperator(null, args.Context.AddString, command: "road_generate", force: force, answer: answer) is string refused)
             args.Context.AddString(refused);
-        else
-            args.Context.AddString("Generating roads..." + " " + RoadGeneration_Patch.HeldWhileBuilding);
     }
-
-    /// <summary>Whether the command's words (after its name) end in force (ManualRoads.EndsInForce).</summary>
-    private static bool HasForce(Terminal.ConsoleEventArgs args) => ManualRoads.EndsInForce(args.Args.Skip(1).ToArray());
 
     /// <summary>road_crossings [count] lists the river crossings nearest the player.</summary>
     private static void CrossingsCommand(Terminal.ConsoleEventArgs args)
     {
-        if (!RoadNetworkGenerator.RoadsAvailable)
+        if (!RoadLifecycleManager.HasNetwork)
         {
             args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
             return;
@@ -715,7 +750,7 @@ public static class ConsoleCommands
     /// older layout built.</summary>
     private static void BridgesCommand(Terminal.ConsoleEventArgs args)
     {
-        if (!RoadNetworkGenerator.RoadsAvailable)
+        if (!RoadLifecycleManager.HasNetwork)
         {
             args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
             return;
@@ -753,7 +788,7 @@ public static class ConsoleCommands
     /// </summary>
     private static void BridgeRepairsCommand(Terminal.ConsoleEventArgs args)
     {
-        if (!RoadNetworkGenerator.RoadsAvailable)
+        if (!RoadLifecycleManager.HasNetwork)
         {
             args.Context.AddString("Error: No roads available. Run 'road_generate' first.");
             return;
@@ -855,7 +890,17 @@ public static class ConsoleCommands
     private static void RegenerateIslandHere(Terminal.ConsoleEventArgs args)
     {
         Vector3 pos;
-        if (!ManualRoadCommands.TryTypedPoint(args, "Usage: road_regen_island [<x> <z>] [force]", out Vector2? typed)) return;
+        const string usage = "Usage: road_regen_island [<x> <z>] " + ExistingWorldFirstLoad.CommandWords;
+        string? bad = ExistingWorldFirstLoad.ReadCommand(args.Args.Skip(1).ToArray(), out ExistingWorldRoads? answer, out bool force, out List<string> rest);
+        if (bad == null && rest.Count != 0 && rest.Count != 2) bad = "give both x and z, or neither";
+        if (bad != null)
+        {
+            args.Context.AddString($"{usage}: {bad}");
+            return;
+        }
+        Vector2? typed = null;
+        try { if (rest.Count == 2) typed = ManualRoadDraft.ParsePoint(rest[0], rest[1]); }
+        catch (System.ArgumentException e) { args.Context.AddString($"{usage}: {e.Message}"); return; }
         if (typed is Vector2 point)
         {
             pos = new Vector3(point.x, 0f, point.y);
@@ -871,10 +916,10 @@ public static class ConsoleCommands
         }
 
         // The same generation road_generate runs, for one island: its locations placed before their roads, over frames.
-        if (RoadLifecycleManager.BeginForOperator(pos, args.Context.AddString, command: "road_regen_island", force: HasForce(args)) is string refused)
+        if (RoadLifecycleManager.BeginForOperator(pos, args.Context.AddString, command: "road_regen_island", force: force, answer: answer) is string refused)
             args.Context.AddString(refused);
         else
-            args.Context.AddString($"Regenerating island at ({pos.x:F0},{pos.z:F0})... " + RoadGeneration_Patch.HeldWhileBuilding);
+            args.Context.AddString($"Regenerating the island at ({pos.x:F0},{pos.z:F0}).");
     }
 
 
@@ -1068,9 +1113,9 @@ public static class ConsoleCommands
             
             // Get current terrain height for comparison (both raw and blended). Raw on purpose: the row shows the
             // point biome's height beside the rendered one, so a gap between them can be seen.
-            float rawTerrain = WorldGenerator.instance?.GetHeight(rp.p.x, rp.p.y) ?? 0f;
+            float rawTerrain = WorldGenerator.instance is WorldGenerator wgRaw ? NaturalGround.PointBiomeFormula(rp.p.x, rp.p.y, wgRaw) : 0f;
             float blendedTerrain = WorldGenerator.instance != null 
-                ? BiomeBlendedHeight.GetBlendedHeight(rp.p.x, rp.p.y, WorldGenerator.instance) 
+                ? NaturalGround.ForDiagnostics(rp.p.x, rp.p.y, WorldGenerator.instance) 
                 : 0f;
             float deviation = rp.h - blendedTerrain;
             
@@ -1129,12 +1174,12 @@ public static class ConsoleCommands
 
         // Get WorldGenerator height at player position. Raw on purpose, here and in the grids below: this command
         // compares the generator's point-biome height with the live heightmap.
-        float wgHeight = WorldGenerator.instance?.GetHeight(playerPos.x, playerPos.z) ?? 0f;
+        float wgHeight = WorldGenerator.instance is WorldGenerator wgRaw ? NaturalGround.PointBiomeFormula(playerPos.x, playerPos.z, wgRaw) : 0f;
         sb.AppendLine($"WorldGenerator.GetHeight at player: {wgHeight:F2}m");
 
         // Try to get Heightmap height at player position (static method with out parameter)
         float hmHeight = 0f;
-        bool foundHeightmap = Heightmap.GetHeight(playerPos, out hmHeight);
+        bool foundHeightmap = NaturalGround.Loaded(playerPos, out hmHeight);
         if (foundHeightmap)
         {
             sb.AppendLine($"Heightmap.GetHeight at player: {hmHeight:F2}m");
@@ -1146,7 +1191,7 @@ public static class ConsoleCommands
         }
 
         // Also try ZoneSystem.GetGroundHeight
-        float groundHeight = ZoneSystem.instance?.GetGroundHeight(playerPos) ?? 0f;
+        float groundHeight = ZoneSystem.instance != null ? NaturalGround.Live(playerPos) : 0f;
         sb.AppendLine($"ZoneSystem.GetGroundHeight: {groundHeight:F2}m");
         sb.AppendLine();
 
@@ -1164,21 +1209,21 @@ public static class ConsoleCommands
                 float z = playerPos.z + dz * 5f;
                 Vector3 samplePos = new Vector3(x, 0, z);
                 
-                float wg = WorldGenerator.instance?.GetHeight(x, z) ?? 0f;
+                float wg = WorldGenerator.instance is WorldGenerator wgAt ? NaturalGround.PointBiomeFormula(x, z, wgAt) : 0f;
                 string hmStr = "N/A";
                 string diffStr = "";
                 
-                if (Heightmap.GetHeight(samplePos, out float hm))
+                if (NaturalGround.Loaded(samplePos, out float hm))
                 {
                     hmStr = $"{hm:F1}m";
                     float diff = hm - wg;
                     diffStr = $"{diff:+0.0;-0.0}m";
-                    if (Mathf.Abs(diff) > 2f)
+                    if (FloatBits.Abs(diff) > 2f)
                         largeDiscrepancies++;
                 }
                 
                 // Only log corners and center to reduce spam
-                if ((dx == 0 && dz == 0) || (Mathf.Abs(dx) == 2 && Mathf.Abs(dz) == 2))
+                if ((dx == 0 && dz == 0) || (FloatBits.Abs(dx) == 2 && FloatBits.Abs(dz) == 2))
                 {
                     sb.AppendLine($"({x:F0},{z:F0}) | {wg:F1}m | {hmStr} | {diffStr}");
                 }
@@ -1203,11 +1248,11 @@ public static class ConsoleCommands
                     if (shown >= 10) break;
                     
                     Vector3 rpPos = new Vector3(rp.p.x, 0, rp.p.y);
-                    float wg = WorldGenerator.instance?.GetHeight(rp.p.x, rp.p.y) ?? 0f;
+                    float wg = WorldGenerator.instance is WorldGenerator wgPoint ? NaturalGround.PointBiomeFormula(rp.p.x, rp.p.y, wgPoint) : 0f;
                     string hmStr = "N/A";
                     string diffStr = "";
                     
-                    if (Heightmap.GetHeight(rpPos, out float hm))
+                    if (NaturalGround.Loaded(rpPos, out float hm))
                     {
                         hmStr = $"{hm:F1}m";
                         float diff = wg - hm;
@@ -1258,10 +1303,10 @@ public static class ConsoleCommands
         sb.AppendLine();
 
         // Use the new debug info API for comprehensive data
-        var debugInfo = BiomeBlendedHeight.GetBlendDebugInfo(wx, wz, worldGen);
+        var debugInfo = NaturalGround.BlendDebug(wx, wz, worldGen);
         
         // Get biome at center
-        Heightmap.Biome centerBiome = worldGen.GetBiome(wx, wz);
+        Heightmap.Biome centerBiome = RoadBiome.At(worldGen, wx, wz);
         sb.AppendLine($"Center biome: {centerBiome}");
         sb.AppendLine();
 
@@ -1286,7 +1331,7 @@ public static class ConsoleCommands
 
         // Get actual rendered terrain height from Heightmap
         float heightmapHeight = 0f;
-        bool hasHeightmap = Heightmap.GetHeight(playerPos, out heightmapHeight);
+        bool hasHeightmap = NaturalGround.Loaded(playerPos, out heightmapHeight);
         
         sb.AppendLine("Height comparison:");
         sb.AppendLine($"  Player position Y:            {playerPos.y:F2}m");
@@ -1303,9 +1348,9 @@ public static class ConsoleCommands
         {
             float ourError = debugInfo.BlendedHeight - heightmapHeight;
             sb.AppendLine($"  ERROR (our blend vs actual): {ourError:+0.00;-0.00}m");
-            if (Mathf.Abs(ourError) > 1f)
+            if (FloatBits.Abs(ourError) > 1f)
                 sb.AppendLine($"  ** WARNING: Blending doesn't match rendered terrain! **");
-            else if (Mathf.Abs(ourError) < 0.5f)
+            else if (FloatBits.Abs(ourError) < 0.5f)
                 sb.AppendLine($"  ✓ Good match with rendered terrain");
         }
         sb.AppendLine();
@@ -1340,18 +1385,18 @@ public static class ConsoleCommands
         sb.AppendLine("  X direction:");
         foreach (float offset in offsets)
         {
-            float raw = worldGen.GetHeight(wx + offset, wz);
-            float blended = BiomeBlendedHeight.GetBlendedHeight(wx + offset, wz, worldGen);
-            Heightmap.Biome biome = worldGen.GetBiome(wx + offset, wz);
+            float raw = NaturalGround.PointBiomeFormula(wx + offset, wz, worldGen);
+            float blended = NaturalGround.ForDiagnostics(wx + offset, wz, worldGen);
+            Heightmap.Biome biome = RoadBiome.At(worldGen, wx + offset, wz);
             sb.AppendLine($"    X+{offset:+00;-00}m: raw={raw:F1}m, blended={blended:F1}m, diff={blended-raw:+0.0;-0.0}m [{biome}]");
         }
         
         sb.AppendLine("  Z direction:");
         foreach (float offset in offsets)
         {
-            float raw = worldGen.GetHeight(wx, wz + offset);
-            float blended = BiomeBlendedHeight.GetBlendedHeight(wx, wz + offset, worldGen);
-            Heightmap.Biome biome = worldGen.GetBiome(wx, wz + offset);
+            float raw = NaturalGround.PointBiomeFormula(wx, wz + offset, worldGen);
+            float blended = NaturalGround.ForDiagnostics(wx, wz + offset, worldGen);
+            Heightmap.Biome biome = RoadBiome.At(worldGen, wx, wz + offset);
             sb.AppendLine($"    Z+{offset:+00;-00}m: raw={raw:F1}m, blended={blended:F1}m, diff={blended-raw:+0.0;-0.0}m [{biome}]");
         }
 

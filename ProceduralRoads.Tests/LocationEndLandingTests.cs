@@ -95,7 +95,7 @@ public class LocationEndLandingTests : IDisposable
     /// <summary>The live numbers: the end held at 38.83 at x = 0, the ground 39.8 there, then rising at 44 % (over the
     /// 35 % cap) to 50.4 at 30 m and level past it; 11.5 m up over the first 36 m. Without the landing the profile is one
     /// climb at the cap from the end; with it the last 6 m into the location are at or under 5 %, and the road is still built
-    /// within the cap (its pitches beside the landing at most PitchGrade).</summary>
+    /// within the cap on every edge.</summary>
     [Fact]
     public void ALocationEndHeldAtItsGroundEndsOnALevelLandingWithinTheCap()
     {
@@ -125,14 +125,14 @@ public class LocationEndLandingTests : IDisposable
         Assert.True(a.LocationLandingStart, "the location end was not marked as landed");
         Assert.False(a.LocationLandingEnd, "the free end got a landing");
         Assert.True(Steepest(a, 0f, landing) <= RoadPitches.JunctionLandingGrade + 1e-3f, $"landing at {Steepest(a, 0f, landing):P1}");
-        // The pitch beside it and the rest of the climb within the cap's allowance; the crest still met.
-        Assert.True(Steepest(a, 0f, 64f) <= RoadPitches.PitchGrade + 1e-3f, $"steepest {Steepest(a, 0f, 64f):P1}");
+        // The climb beside it and the rest of the road within the cap; the crest still met.
+        Assert.True(Steepest(a, 0f, 64f) <= RoadGrade.Configured + 1e-3f, $"steepest {Steepest(a, 0f, 64f):P1}");
         Assert.True(Steepest(a, 14f, 64f) <= RoadGrade.Configured + 1e-3f, $"past the pitch {Steepest(a, 14f, 64f):P1}");
         Assert.InRange(a.Heights[a.Heights.Count - 1], 50.0f, 50.8f);
     }
 
     /// <summary>A location end whose landing leaves the climb too little room: 6.8 m up over 20 m between two held ends fits
-    /// at the 35 % cap (7.0 m), but not after a 6 m landing at 5 % and an 8 m pitch at 50 % (6.4 m). The road is refused
+    /// at the 35 % cap (7.0 m), but not after a 6 m landing at 5 % (5.2 m). The road is refused
     /// (RoadGrade.Limit, "ends too far apart"), never kept with its end over spec.</summary>
     [Fact]
     public void ALocationEndWhoseLandingLeavesTooLittleRoomIsRefused()

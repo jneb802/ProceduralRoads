@@ -3,7 +3,7 @@ using UnityEngine;
 namespace ProceduralRoads;
 
 /// <summary>
-/// The vanilla ship a bridge over a river makes way for: the one owner of how wide a boat's way under a bridge is, in its
+/// The vanilla ship a bridge over a river or other deep water makes way for (BridgeLayout.NavigationChannel decides where): the one owner of how wide a boat's way under a bridge is, in its
 /// deck and between its piers (<see cref="NavigationGapWidth"/>, read by the wooden kit, the Dvergr wood bridge and the
 /// Dvergr viaduct alike), and how high a deck has to stand to pass over one (<see cref="Clears"/>).
 ///
@@ -52,7 +52,7 @@ public static class Ships
     public static readonly Ship Longship = new("Longship", 21.6f,
         new Band(-1f, 4f, 5.8f), new Band(4f, 8f, 1.3f), new Band(8f, 9f, 9.2f), new Band(9f, 11f, 1.3f));
 
-    /// <summary>The ship a bridge over a river makes way for.</summary>
+    /// <summary>The ship a bridge over a river or deep water makes way for.</summary>
     public static readonly Ship RiverShip = Longship;
 
     /// <summary>

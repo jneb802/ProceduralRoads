@@ -81,15 +81,14 @@ public sealed class RoadGenerationPanelTests
 
     private static RoadIslandProgress Row(string stage = "Connecting", int processed = 18, int destinations = 40, int reached = 15,
         double metres = 12400, int pricesCompleted = 0, int pricesTotal = 0, double seconds = 252, int unreached = 3,
-        int bridges = 6, int staircases = 9, string? destination = "Crypt4", double destinationMetres = 340, double? settling = null) =>
+        int bridges = 6, int staircases = 9, string? destination = "Crypt4", double destinationMetres = 340) =>
         new(0, 3, 1, true, stage, processed, destinations, reached, metres, pricesCompleted, pricesTotal, 0, 0, seconds,
-            unreached, bridges, staircases, destination, destinationMetres, settling ?? seconds);
+            unreached, bridges, staircases, destination, destinationMetres);
 
     [Fact]
-    public void RowTextSaysWhatTheIslandIsDoingWhatItHasDoneAndHowLong()
+    public void RowTextSaysWhatTheIslandIsDoingAndWhatItHasDoneAndHowLongItHasRun()
     {
-        // 252 s over 18 locations, 22 left: 308 s, about 5 minutes.
-        Assert.Equal("Island 3 · Building roads to Crypt4 (340 m)\n<size=85%>18 of 40 locations · 15 reached · 3 unreached\n12.4 km · 6 bridges · 9 staircases · 4m 12s · ~5m left</size>",
+        Assert.Equal("Island 3 · Building roads to Crypt4 (340 m)\n<size=85%>18 of 40 locations · 15 reached · 3 unreached\n12.4 km · 6 bridges · 9 staircases · 4m 12s</size>",
             RoadGenerationPanel.RowText(Row()));
     }
 
@@ -105,20 +104,14 @@ public sealed class RoadGenerationPanelTests
     [Theory]
     [InlineData(0)]
     [InlineData(2)]
-    public void NoEstimateUntilEnoughLocationsAreSettled(int processed)
+    [InlineData(3)]
+    [InlineData(30)]
+    public void NoTimeLeftIsShownAtAnyProgress(int processed)
     {
-        var row = Row(processed: processed);
-        Assert.Null(RoadGenerationPanel.RemainingSeconds(row));
-        Assert.Contains("— left", RoadGenerationPanel.RowText(row));
-    }
-
-    [Fact]
-    public void EstimateAppearsAtThreeSettledLocations()
-    {
-        var left = RoadGenerationPanel.RemainingSeconds(Row(processed: 3, destinations: 13, seconds: 30));
-        Assert.Equal(100, left!.Value, 6);
-        Assert.Contains("~2m left", RoadGenerationPanel.RowText(Row(processed: 3, destinations: 13, seconds: 30)));
-        Assert.Contains("under 1m left", RoadGenerationPanel.RowText(Row(processed: 30, destinations: 40, seconds: 60)));
+        string text = RoadGenerationPanel.RowText(Row(processed: processed, destinations: 40, seconds: 90));
+        Assert.DoesNotContain("left", text);
+        Assert.DoesNotContain("~", text);
+        Assert.EndsWith("1m 30s</size>", text);
     }
 
     [Fact]
@@ -151,16 +144,43 @@ public sealed class RoadGenerationPanelTests
         Assert.Equal(expected, RoadGenerationPanel.FriendlyName(prefab));
 
     [Fact]
-    public void TheEstimateIgnoresTimeSpentPlanningRoutes()
-    {
-        // 60 s on the island, 9 s of it connecting 3 locations: 3 s a location, 10 left.
-        Assert.Equal(30, RoadGenerationPanel.RemainingSeconds(Row(processed: 3, destinations: 13, seconds: 69, settling: 9))!.Value, 6);
-    }
-
-    [Fact]
     public void TheBarFractionIsSettledOverLocations()
     {
         Assert.Equal(.45f, RoadGenerationPanel.Fraction(Row()), 3);
         Assert.Equal(0f, RoadGenerationPanel.Fraction(Row(processed: 0, destinations: 0)));
+    }
+
+    [Fact]
+    public void ReplacementRoundsLeaveTheTotalsAndTheBarConsistentAndNeverBackwards()
+    {
+        // Production path: the island's activity as RouteIsland drives it. Four chosen destinations settle (two end unreached),
+        // then ReplaceUnreachedRounds appends picks to the same list and the planner measures after each one, as the rounds do.
+        var owner = new RoadIslandActivity(1, 1);
+        var token = owner.Claim(1, 4);
+        var locations = Enumerable.Range(0, 4).Select(i => ($"L{i}", new UnityEngine.Vector3(100f * i, 0f, 0f), 20f)).ToList();
+        var reachedNames = new System.Collections.Generic.HashSet<string> { "L0", "L1" };
+        var seen = new System.Collections.Generic.List<RoadIslandProgress>();
+        void Observe() => seen.Add(owner.Snapshot()[0]);
+        void Measure() { token.Measured(locations.Select(d => reachedNames.Contains(d.Item1)).ToArray()); Observe(); }
+        for (int i = 0; i < 4; i++) { token.Settled(i, reachedNames.Contains(locations[i].Item1)); Measure(); }
+        int picked = 0;
+        RoadNetworkGenerator.ReplaceUnreachedRounds(locations, d => reachedNames.Contains(d.name),
+            (kept, tried, count) => Enumerable.Range(0, count).Select(_ => ($"R{picked++}", new UnityEngine.Vector3(5000f + 100f * picked, 0f, 0f), 20f)).ToList(),
+            (picks, kept, number) =>
+            {
+                Measure();
+                if (number == 1) reachedNames.Add(picks[0].name);   // one replacement reached, one not: a second round follows
+                Measure();
+            });
+        Measure();
+        Assert.True(locations.Count > 4, "the rounds must have added picks");
+        Assert.All(seen, row => Assert.Equal(4, row.Destinations));
+        Assert.All(seen, row => Assert.InRange(row.Reached + row.Unreached, 0, row.Destinations));
+        Assert.All(seen, row => Assert.True(row.Processed <= row.Destinations));
+        for (int i = 1; i < seen.Count; i++)
+            Assert.True(RoadGenerationPanel.Fraction(seen[i]) >= RoadGenerationPanel.Fraction(seen[i - 1]), $"the bar went back at observation {i}");
+        var last = seen[seen.Count - 1];
+        Assert.Equal(1f, RoadGenerationPanel.Fraction(last));
+        Assert.Contains("4 of 4 locations · 2 reached · 2 unreached", RoadGenerationPanel.RowText(last));
     }
 }

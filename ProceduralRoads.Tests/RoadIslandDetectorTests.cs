@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using Xunit;
 
@@ -11,7 +13,9 @@ public class RoadIslandDetectorTests
         public bool River;
         public bool Swamp;
         public float Water = 20;
-        public override float GetHeight(float x, float z) => Math.Abs(x) < 24 ? Water : 40;
+        /// <summary>A channel 16 m wide (a ford's span) instead of 48.</summary>
+        public bool Narrow;
+        public override float GetHeight(float x, float z) => Math.Abs(x) < (Narrow ? 8 : 24) ? Water : 40;
         public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Swamp ? Heightmap.Biome.Swamp : Heightmap.Biome.Meadows;
         public override void GetRiverWeight(float x, float z, out float weight, out float width)
         { weight=River && Math.Abs(x)<24 ? 1 : 0; width=48; }
@@ -137,6 +141,20 @@ public class RoadIslandDetectorTests
         Assert.Single(RoadIslandDetector.Detect(new ChannelWorld { Swamp=true,Water=29 }, worldRadius:128, minArea:1));
     }
 
+    /// <summary>A river ford's bed half a metre under the sea level is a ford to the crossing (RoadCrossingDetector.IsFord) and so
+    /// joins its banks into one island: the island detector measures a ford's depth from the same baseline
+    /// (RoadWater.AtFordDepth, the sea level), not from the landing floor 1.25 m higher, which left such a bed 1.75 m deep and the
+    /// banks two islands.</summary>
+    [Fact]
+    public void AFordBedTheCrossingWadesJoinsItsBanksIntoOneIsland()
+    {
+        const float bed = RoadConstants.SeaLevel - 0.5f;
+        Assert.True(RoadCrossingDetector.IsFord(RoadConstants.MaxFordSpan * 0.5f, false, bed, 0f));
+        var world = new ChannelWorld { Water = bed, Narrow = true };
+        var island = Assert.Single(RoadIslandDetector.Detect(world, worldRadius: 128, minArea: 1));
+        Assert.True(island.ContainsPoint(-64, 0) && island.ContainsPoint(64, 0));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -148,4 +166,154 @@ public class RoadIslandDetectorTests
     [Fact]
     public void MinimumAreaFiltersSmallGroups() =>
         Assert.Empty(RoadIslandDetector.Detect(new ChannelWorld(),worldRadius:128,minArea:1000000));
+
+    /// <summary>Round islands of low land (<see cref="Land"/> m, a shore landings can be read on), and strips, in deep
+    /// water.</summary>
+    private sealed class Archipelago : WorldGenerator
+    {
+        public readonly List<(Vector2 centre, float radius)> Islands = new();
+        public readonly List<(float x0, float z0, float x1, float z1)> Strips = new();
+        /// <summary>Shallow water (wet, not deep, <see cref="Shelf"/> m) this far out round every island: a shore's water
+        /// approach reads that far and more before it reaches deep water.</summary>
+        public float ShelfWidth;
+        public const float Land = 33f, Shelf = 29f;
+        public override float GetHeight(float x, float z)
+        {
+            if (Strips.Any(r => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1)) return Land;
+            float edge = Islands.Min(i => (new Vector2(x, z) - i.centre).magnitude - i.radius);
+            return edge < 0f ? Land : edge < ShelfWidth ? Shelf : -50f;
+        }
+    }
+
+    private static List<Island> Generations(WorldGenerator world)
+    {
+        List<Island>? islands = null;
+        using var preparation = new RoadPreparation(p => IslandDetector.DetectRoadIslandsSteps(world, new RoadNetworkOptions(), p, value => islands = value));
+        preparation.Drain();
+        return islands!;
+    }
+
+    private static List<Island> WholeWorlds(WorldGenerator world)
+    {
+        List<Island>? islands = null;
+        using var preparation = new RoadPreparation(p => RoadIslandDetector.DetectSteps(world, p, value => islands = value, options: new RoadNetworkOptions()));
+        preparation.Drain();
+        return islands!;
+    }
+
+    /// <summary>Everything an island tells its readers, its cells by where they stand in the world.</summary>
+    private static string Read(List<Island> islands) => string.Join("\n", islands.Select(i => FormattableString.Invariant(
+        $"{i.Id} {i.CellCount} {i.Center.x:R},{i.Center.y:R} {i.Min.x:R},{i.Min.y:R} {i.Max.x:R},{i.Max.y:R} {i.ApproxArea:R} {i.CellSize:R} | ")
+        + string.Join(" ", i.Cells.Select(c => { Vector2 w = i.CellToWorld(c); return FormattableString.Invariant($"{w.x:R},{w.y:R}"); }))
+        + " | " + string.Join(" ", i.CoastalLandings.Select(l => FormattableString.Invariant($"{l.x:R},{l.y:R},{l.z:R}")))));
+
+    /// <summary>
+    /// Generation's island scan bounded to the world's land (the suite's, IslandDetector.BoundedScan) finds exactly the whole
+    /// world's islands, cells, ids, centres and shore landings. It reads the world for land every fourth cell and scans out to
+    /// the farthest land read, with room for all the grouping reads from it (a bridge's span, the coast's raster): with
+    /// another island beside the first or far off, it scans less than the world; with a strip of land narrower than the
+    /// probes' spacing between them, near the bound's edge, it scans the whole world. The game scans the whole world.
+    /// </summary>
+    [Theory]
+    [InlineData("beside", false)]
+    [InlineData("far", false)]
+    [InlineData("strip between the probes", true)]
+    public void ABoundedIslandScanFindsTheWholeWorldsIslands(string second, bool wholeWorld)
+    {
+        Assert.False((bool)PlainRoads.ModDefaults["bounded island scan"]);
+        Assert.True(IslandDetector.BoundedScan);
+        // The far island's shores read 120 m of shallows before deep water, past the land as far as the bound must reach: its
+        // landing is drawn on its western shore, the far side from the centre.
+        // Landings are off as shipped; this test turns the search on so the bound is checked against them too.
+        Func<Heightmap.Biome, bool> given = RoadCoastalLandings.GivenIn;
+        RoadCoastalLandings.GivenIn = _ => true;
+        try { ABoundedIslandScanFindsTheWholeWorldsIslandsWithLandings(second, wholeWorld); }
+        finally { RoadCoastalLandings.GivenIn = given; }
+    }
+
+    private static void ABoundedIslandScanFindsTheWholeWorldsIslandsWithLandings(string second, bool wholeWorld)
+    {
+        var world = new Archipelago { ShelfWidth = second == "far" ? 120f : 0f };
+        world.Islands.Add((new Vector2(-150f, 40f), 300f));
+        world.Islands.Add(second == "far" ? (new Vector2(-6000f, 0f), 240f) : (new Vector2(420f, -60f), 240f));
+        // 8 m wide, between the probe columns at x = 768 and 800 and off their rows but z = 0: past the land the probes read
+        // (out to about 650 m), inside the bound (888 m).
+        if (second == "strip between the probes") world.Strips.Add((772f, -12f, 780f, 12f));
+        List<Island> bounded = Generations(world), whole = WholeWorlds(world);
+        Assert.Equal(2, whole.Count);
+        Assert.NotEmpty(whole.SelectMany(i => i.CoastalLandings));
+        Assert.Equal(Read(whole), Read(bounded));
+        Assert.All(bounded, i => Assert.True(wholeWorld == (i.WorldOffset == RoadConstants.WorldRadius), FormattableString.Invariant($"scanned to {i.WorldOffset} m")));
+    }
+
+    /// <summary>Land in blobs and channels, with biomes in patches and a river, so the scan's runs of columns cross them all.
+    /// Each read is counted with the thread that made it.</summary>
+    private sealed class BlobWorld : WorldGenerator
+    {
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<int, int> ReadsByThread = new();
+        private void Count() => ReadsByThread.AddOrUpdate(Environment.CurrentManagedThreadId, 1, (_, n) => n + 1);
+        public override float GetHeight(float x, float z)
+        {
+            Count();
+            return 31f + 9f * Mathf.Sin(x * 0.021f) * Mathf.Cos(z * 0.017f) + 4f * Mathf.Sin((x + z) * 0.05f);
+        }
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
+            Mathf.Sin(x * 0.004f) > 0.3f ? Heightmap.Biome.Swamp : Mathf.Cos(z * 0.006f) > 0.5f ? Heightmap.Biome.BlackForest : Heightmap.Biome.Meadows;
+        public override void GetRiverWeight(float x, float z, out float weight, out float width)
+        { weight = Mathf.Abs(x - 100f) < 10f ? 1f : 0f; width = 20f; }
+    }
+
+    /// <summary>The terrain is mapped by runs of columns on the island workers, off the preparation's thread: the islands
+    /// several workers map are those one worker maps, cell for cell, ids, centres, bounds and shore landings alike.</summary>
+    [Fact]
+    public void IslandsMappedOnSeveralThreadsAreThoseOneThreadMaps()
+    {
+        int configured = RoadParallel.Configured;
+        try
+        {
+            List<Island> Map(int workers, out int offThread)
+            {
+                RoadParallel.Configured = workers;
+                var world = new BlobWorld();
+                var islands = RoadIslandDetector.Detect(world, worldRadius: 768, minArea: 1, options: new RoadNetworkOptions());
+                offThread = world.ReadsByThread.Where(t => t.Key != Environment.CurrentManagedThreadId).Sum(t => t.Value);
+                return islands;
+            }
+            var one = Map(1, out int oneOff);
+            var several = Map(6, out int severalOff);
+            Assert.True(one.Count > 3, $"{one.Count} islands");
+            Assert.True(oneOff > 0 && severalOff > 0, $"heights read off the preparation thread: {oneOff}, {severalOff}");
+            Assert.Equal(Read(one), Read(several));
+        }
+        finally { RoadParallel.Configured = configured; }
+    }
+
+    private sealed class MappingFault : Exception
+    {
+        public MappingFault(string message) : base(message) { }
+    }
+
+    /// <summary>A world whose heights fail east of x = 200, on whichever thread reads them.</summary>
+    private sealed class FaultingWorld : WorldGenerator
+    {
+        public override float GetHeight(float x, float z) => x > 200f ? throw new MappingFault($"no height at ({x:F0},{z:F0})") : 40f;
+    }
+
+    /// <summary>A read that fails on an island worker during the mapping reaches the detection's caller as itself, its own
+    /// type and message, not wrapped in the workers' AggregateException.</summary>
+    [Fact]
+    public void AMappingRunsFailureIsThrownAsItself()
+    {
+        int configured = RoadParallel.Configured;
+        try
+        {
+            foreach (int workers in new[] { 1, 6 })
+            {
+                RoadParallel.Configured = workers;
+                var error = Assert.Throws<MappingFault>(() => RoadIslandDetector.Detect(new FaultingWorld(), worldRadius: 768, minArea: 1));
+                Assert.StartsWith("no height at", error.Message);
+            }
+        }
+        finally { RoadParallel.Configured = configured; }
+    }
 }

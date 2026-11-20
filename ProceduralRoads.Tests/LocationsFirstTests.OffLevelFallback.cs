@@ -32,14 +32,13 @@ public partial class LocationsFirstTests
         Assert.True(RoadNetworkGenerator.HeightNeeded(new Vector2(0f, 0f)));
     }
 
-    /// <summary>A placed location whose network ends at its ring 8 m under its landing is not reached at first, in any biome. On
-    /// its second attempt it is reached off level by the network already there, no road built, outside the Mountains; in the
-    /// Mountains it is never tried again and stays unserved.</summary>
+    /// <summary>A prepared ring arrival eight metres under its landing is exempt in Mistlands. Elsewhere it remains
+    /// unreached even on the fallback; a vanilla Mountains location never falls back.</summary>
     [Theory]
     [InlineData(Heightmap.Biome.Mistlands, true)]
-    [InlineData(Heightmap.Biome.BlackForest, true)]
+    [InlineData(Heightmap.Biome.BlackForest, false)]
     [InlineData(Heightmap.Biome.Mountain, false)]
-    public void APlacedLocationWhoseNetworkEndsUnderItsLandingIsReachedOffLevelOnlyOutsideTheMountains(Heightmap.Biome biome, bool reached)
+    public void APlacedRingArrivalRetainsItsHeightLimitOutsideMistlands(Heightmap.Biome biome, bool reached)
     {
         _world.Biome = biome;
         PlacedLocation cave = OnAPlateau();
@@ -50,13 +49,13 @@ public partial class LocationsFirstTests
         try
         {
             Assert.True(Vector2.Distance(landing, new Vector2(0f, 26f)) > RoadNetworkGenerator.LandingReach, "the road is on the landing");
-            Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-            bool attempted = false;
-            Assert.Equal(reached, RoadNetworkGenerator.ReachOffLevel("MountainCave02", Vector3.zero, 10f, () => attempted = true));
-            Assert.False(attempted, "a road was searched for");
             Assert.Equal(reached, RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-            Assert.Equal(reached, !RoadNetworkGenerator.HeightNeeded(new Vector2(0f, 0f)));
-            Assert.Equal(reached ? 1 : 0, RoadNetworkGenerator.ReachedOffLevelCount);
+            bool attempted = false;
+            Assert.False(RoadNetworkGenerator.ReachOffLevel("MountainCave02", Vector3.zero, 10f, () => attempted = true));
+            Assert.Equal(biome == Heightmap.Biome.BlackForest, attempted);
+            Assert.Equal(reached, RoadNetworkGenerator.Reached(Vector3.zero, 10f));
+            Assert.True(RoadNetworkGenerator.HeightNeeded(new Vector2(0f, 0f)));
+            Assert.Equal(0, RoadNetworkGenerator.ReachedOffLevelCount);
         }
         finally { RoadSpatialGrid.Clear(); }
     }
@@ -68,7 +67,7 @@ public partial class LocationsFirstTests
     [InlineData("MwlFixtureCave", 8f, true, true)]
     [InlineData("MwlFixtureCave", 11.5f, true, true)]
     [InlineData("MwlFixtureCave", 11.5f, false, false)]
-    [InlineData("MwlFixtureCave", -7.5f, false, true)]
+    [InlineData("MwlFixtureCave", -7.5f, false, false)]
     [InlineData("MountainCave02", 8f, true, false)]
     public void ACustomMountainsLocationFallsBackToOffLevelAtItsStandOffAndAVanillaOneDoesNot(string name, float below, bool atStandOff, bool reached)
     {
@@ -114,29 +113,24 @@ public partial class LocationsFirstTests
         Assert.True(RoadNetworkGenerator.HeightNeeded(new Vector2(0f, 0f)));
     }
 
-    /// <summary>A location on a plateau whose landing only a staircase climbs to (none outside the Mountains): its first
-    /// attempt is refused (its road would end at its ring 10 m under its landing, <see cref="RoadNetworkGenerator.NotLevelRefusal"/>),
-    /// and its second, without height, builds that road, and the location is reached off level. In the Black Forest and the
-    /// Mistlands alike (without height, the Mistlands one was reached at its first attempt).</summary>
+    /// <summary>A plateau ten metres over its ring: where no road climbs onto its landing a staircase does, in every biome (the arrival
+    /// ladder's stairs before an end kept at its ring, RoadNetworkGenerator.ApproachStairsAt), and the Location is landed and reached
+    /// level, never off level.</summary>
     [Theory]
     [InlineData(Heightmap.Biome.BlackForest)]
     [InlineData(Heightmap.Biome.Mistlands)]
-    public void ALocationNoRoadArrivesLevelWithIsReachedOnTheFallback(Heightmap.Biome biome)
+    public void APlateauNoRoadClimbsIsReachedByAStaircaseInEveryBiome(Heightmap.Biome biome)
     {
         _world.Biome = biome;
         PlacedLocation cave = OnAPlateau();
 
         Routed("MountainCave02", 10f);
 
-        Assert.False(PlacedLocations.Landed(cave.Centre));
-        Assert.Empty(StairStructures.Runs);
-        float landing = cave.Ground(cave.Shape.Landing.x, cave.Shape.Landing.y);
-        var road = RoadSpatialGrid.GetRoadPointsNearPosition(Vector3.zero, 40f).Where(p => p.IsRoad).ToList();
-        Assert.NotEmpty(road);
-        Assert.True(road.Min(p => Mathf.Abs(p.h - landing)) > RoadNetworkGenerator.ReachRise, "the road came level with the landing");
+        Assert.True(PlacedLocations.Landed(cave.Centre));
+        Assert.Single(StairStructures.Runs);
         Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-        Assert.Equal(1, RoadNetworkGenerator.ReachedOffLevelCount);
-        Assert.False(RoadNetworkGenerator.HeightNeeded(new Vector2(0f, 0f)));
+        Assert.Equal(0, RoadNetworkGenerator.ReachedOffLevelCount);
+        Assert.True(RoadNetworkGenerator.HeightNeeded(new Vector2(0f, 0f)));
     }
 
     /// <summary>A crypt is reached at its door, at its first attempt, as before; and network under its door's landing does
@@ -391,8 +385,8 @@ public partial class LocationsFirstTests
         });
     }
 
-    /// <summary>A location mod's placed Mountains location on the fallback is reached by network on its landing, 8 m under it: the
-    /// stand-off is a test at its ring only, never at its landing.</summary>
+    /// <summary>A custom Mountains location with network eight metres under its landing has no landing entry.
+    /// Only a built entry reaches it without the ring's stand-off.</summary>
     [Fact]
     public void ACustomPlacedLocationNeedsABuiltLandingEntryToBypassItsStandOff()
     {
@@ -406,7 +400,9 @@ public partial class LocationsFirstTests
         try
         {
             Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
-            Assert.True(RoadNetworkGenerator.ReachOffLevel("MwlFixtureCave", Vector3.zero, 10f, () => false));
+            Assert.False(RoadNetworkGenerator.ReachOffLevel("MwlFixtureCave", Vector3.zero, 10f, () => false));
+            Assert.False(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
+            PlacedLocations.MarkLanded(cave.Centre);
             Assert.True(RoadNetworkGenerator.Reached(Vector3.zero, 10f));
         }
         finally { RoadSpatialGrid.Clear(); RoadNetworkGenerator.UnregisterLocation("MwlFixtureCave"); }

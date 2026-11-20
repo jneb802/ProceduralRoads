@@ -14,13 +14,12 @@ public sealed class ManualRoadDraft
     private readonly List<Vector2> points = new();
     public IReadOnlyList<Vector2> Points => points.AsReadOnly();
     public static bool IsFinite(float x) => !float.IsNaN(x) && !float.IsInfinity(x);
-    public static bool ValidPoint(Vector2 p) => IsFinite(p.x) && IsFinite(p.y) && p.sqrMagnitude < RoadConstants.WorldRadius * RoadConstants.WorldRadius;
 
     public static Vector2 ParsePoint(string x, string z)
     {
         if (!float.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out float px) ||
             !float.TryParse(z, NumberStyles.Float, CultureInfo.InvariantCulture, out float pz) ||
-            !ValidPoint(new Vector2(px, pz)))
+            !RoadConstants.InWorld(new Vector2(px, pz)))
             throw new ArgumentException("Coordinates must be finite X,Z values inside the playable world.");
         return new Vector2(px, pz);
     }
@@ -42,7 +41,7 @@ public sealed class ManualRoadDraft
             throw new ArgumentException($"A road needs 2–{MaxPoints} waypoints.");
         for (int i = 0; i < path.Count; i++)
         {
-            if (!ValidPoint(path[i])) throw new ArgumentException($"Waypoint {i + 1} is outside the playable world or not finite.");
+            if (!RoadConstants.InWorld(path[i])) throw new ArgumentException($"Waypoint {i + 1} is outside the playable world or not finite.");
             if (i > 0 && Vector2.Distance(path[i - 1], path[i]) < 1f)
                 throw new ArgumentException($"Waypoints {i} and {i + 1} are less than one metre apart.");
         }
@@ -50,7 +49,7 @@ public sealed class ManualRoadDraft
     public void Add(Vector2 point)
     {
         if (points.Count >= MaxPoints) throw new ArgumentException($"At most {MaxPoints} marks are supported.");
-        if (!ValidPoint(point)) throw new ArgumentException("The mark must be inside the playable world.");
+        if (!RoadConstants.InWorld(point)) throw new ArgumentException("The mark must be inside the playable world.");
         if (points.Count > 0 && Vector2.Distance(points[points.Count - 1], point) < 1f)
             throw new ArgumentException("This mark is less than one metre from the previous mark.");
         points.Add(point);

@@ -25,8 +25,22 @@ public static class RoadIslandDetector
         preparation.Drain(); return result!;
     }
 
+    /// <summary>How far apart a scan bounded to the world's land (<see cref="DetectSteps"/>'s <c>toLand</c>) first reads the
+    /// world for land: every fourth cell.</summary>
+    internal const float LandProbeSpacing = 4 * SampleSpacing;
+
+    /// <summary>The farthest from land the grouping reads the scan's cells (a bridge's span across water, the coast's raster,
+    /// <see cref="RoadCoastalLandings.RasterReach"/>), and a cell either side.</summary>
+    internal static float GroupingReach => Mathf.Max(RoadConstants.MaxBridgeSpan, RoadCoastalLandings.RasterReach) + 2f * SampleSpacing;
+
+    /// <summary>The islands of the disc of <paramref name="worldRadius"/> round the world's centre. With
+    /// <paramref name="toLand"/> (the unit suite's small worlds, <see cref="IslandDetector.BoundedScan"/>) the scan first reads
+    /// the disc for land every <see cref="LandProbeSpacing"/> and scans only out to the farthest land it read, two probes and
+    /// <see cref="GroupingReach"/> beyond. Its cells stand where the whole disc's do (the bound a whole number of cells), so it
+    /// finds the same islands; where land it did not read stands nearer the bound's edge than <see cref="GroupingReach"/>, it
+    /// scans the whole disc after all.</summary>
     internal static IEnumerable<bool> DetectSteps(WorldGenerator wg, RoadPreparation preparation, System.Action<List<Island>> complete,
-        float minArea=MinIslandArea,float worldRadius=RoadConstants.WorldRadius,RoadNetworkOptions? options=null)
+        float minArea=MinIslandArea,float worldRadius=RoadConstants.WorldRadius,RoadNetworkOptions? options=null,bool toLand=false)
     {
         if (wg == null)
         {
@@ -37,6 +51,35 @@ public static class RoadIslandDetector
         const float cellSize = SampleSpacing;
         if (float.IsNaN(worldRadius) || worldRadius <= 0 || worldRadius > RoadConstants.WorldRadius)
             throw new System.ArgumentOutOfRangeException(nameof(worldRadius));
+        float wholeRadius = worldRadius;
+        int wholeGrid = Mathf.CeilToInt(wholeRadius * 2f / cellSize);
+        preparation.BeginStage("Mapping island terrain",(long)wholeGrid*wholeGrid,"cells"); yield return true;
+        float edge2 = float.MaxValue;
+        if (toLand && wholeRadius % cellSize == 0f)
+        {
+            // The land's reach, read every LandProbeSpacing over the whole disc.
+            var probeCorners = BiomeBlendedHeight.Corners.ForColumnScan(wholeRadius);
+            int probes = Mathf.FloorToInt(wholeRadius / LandProbeSpacing);
+            float farthest2 = 0f;
+            for (int i = -probes; i <= probes; i++)
+                for (int j = -probes; j <= probes; j++)
+                {
+                    float px = i * LandProbeSpacing, pz = j * LandProbeSpacing;
+                    float r2 = px * px + pz * pz;
+                    if (r2 > wholeRadius * wholeRadius || r2 <= farthest2) continue;
+                    if (preparation.Checkpoint(0)) yield return true;
+                    if (RoadWater.OnLand(wg, new Vector2(px, pz), NaturalGround.ForIslands(px, pz, wg, probeCorners)))
+                        farthest2 = r2;
+                }
+            float inner = Mathf.Sqrt(farthest2) + 2f * LandProbeSpacing;
+            float bound = Mathf.CeilToInt((inner + GroupingReach) / cellSize) * cellSize;
+            if (bound < wholeRadius)
+            {
+                worldRadius = bound;
+                edge2 = inner * inner;
+            }
+        }
+        bool bounded = worldRadius < wholeRadius;
         int gridSize = Mathf.CeilToInt(worldRadius * 2f / cellSize);
         float worldOffset = worldRadius;
         int n = gridSize * gridSize;
@@ -44,46 +87,129 @@ public static class RoadIslandDetector
         Log.LogDebug($"IslandDetector: walkable+crossable, scanning {gridSize}x{gridSize} " +
                      $"grid (cellSize={cellSize}m)");
 
-        preparation.BeginStage("Mapping island terrain",n,"cells"); yield return true;
         bool[] walkable = new bool[n];
         float[] height = new float[n];
         int landCells = 0;
-        // The scan runs down whole columns: one column's heightmap corners, and the next's, read once each.
-        var corners = BiomeBlendedHeight.Corners.ForColumnScan(worldRadius);
-        for (int x = 0; x < gridSize; x++)
+        // The scan runs down whole columns: one column's heightmap corners, and the next's, read once each. Each cell is the
+        // world's alone (its rendered height, whether a road can stand there), so runs of columns are read on the island
+        // workers at once, each run with its own memo of corners, while this preparation waits a frame at a time and counts
+        // the columns done; the cells are the same whichever thread reads them. The river weights under the heights are read
+        // as the island workers read them (RiverWeightReads).
+        int runs = Mathf.Max(1, Mathf.Min(gridSize, RoadParallel.IslandWorkers));
+        int[] land = new int[runs];
+        long scanned = 0;
+        // Set by a run that finds land the probes did not read near the bound's edge (the whole disc is then scanned), by a
+        // run that fails, or by this preparation as it ends early: every run stops at its next column.
+        int stop = 0;
+        int beyondFound = 0;
+        float beyondX = 0f, beyondY = 0f;
+        var failures = new System.Exception?[runs];
+        var cancel = preparation.Cancellation;
+        void Scan(int run)
         {
-            for (int y = 0; y < gridSize; y++)
+            var corners = BiomeBlendedHeight.Corners.ForColumnScan(worldRadius);
+            int from = (int)((long)gridSize * run / runs), to = (int)((long)gridSize * (run + 1) / runs);
+            for (int x = from; x < to; x++)
             {
-                float wx = x * cellSize - worldOffset;
-                float wy = y * cellSize - worldOffset;
-                if (wx * wx + wy * wy > worldRadius * worldRadius)
+                if (System.Threading.Volatile.Read(ref stop) != 0) return;
+                cancel.ThrowIfCancellationRequested();
+                for (int y = 0; y < gridSize; y++)
                 {
-                    height[x * gridSize + y] = float.MinValue;
-                    if(preparation.Checkpoint()) yield return true;
-                    continue;
-                }
+                    float wx = x * cellSize - worldOffset;
+                    float wy = y * cellSize - worldOffset;
+                    if (wx * wx + wy * wy > worldRadius * worldRadius)
+                    {
+                        height[x * gridSize + y] = float.MinValue;
+                        continue;
+                    }
 
-                // The mod's own answer to "can a road stand here": the
-                // shallow-water line plus the bank clearance, except in a swamp,
-                // which a road wades down to the deep-water line. Using a
-                // threshold of my own here would have quietly excluded every
-                // swamp in the world - and the generator builds roads through
-                // swamps. The height is the natural ground the game renders
-                // (BiomeBlendedHeight), which the road search walks too: the
-                // biome at the point alone (WorldGenerator.GetHeight) reads that
-                // biome's formula wherever it reaches between four corners of
-                // another: a swamp or ocean formula there reads water metres under
-                // dry rendered land, a line that can cut one landmass in two.
-                float h = BiomeBlendedHeight.GetBlendedHeight(wx, wy, wg, corners);
-                height[x * gridSize + y] = h;
-                if (RoadWater.OnLand(wg, new Vector2(wx, wy), h))
-                {
-                    walkable[x * gridSize + y] = true;
-                    landCells++;
+                    // The mod's own answer to "can a road stand here": the
+                    // shallow-water line plus the bank clearance, except in a swamp,
+                    // which a road wades down to the deep-water line. Using a
+                    // threshold of my own here would have quietly excluded every
+                    // swamp in the world - and the generator builds roads through
+                    // swamps. The height is the natural ground the game renders
+                    // (BiomeBlendedHeight), which the road search walks too: the
+                    // biome at the point alone (WorldGenerator.GetHeight) reads that
+                    // biome's formula wherever it reaches between four corners of
+                    // another: a swamp or ocean formula there reads water metres under
+                    // dry rendered land, a line that can cut one landmass in two.
+                    float h = NaturalGround.ForIslands(wx, wy, wg, corners);
+                    height[x * gridSize + y] = h;
+                    if (RoadWater.OnLand(wg, new Vector2(wx, wy), h))
+                    {
+                        if (bounded && wx * wx + wy * wy > edge2)
+                        {
+                            if (System.Threading.Interlocked.CompareExchange(ref beyondFound, 1, 0) == 0) { beyondX = wx; beyondY = wy; }
+                            System.Threading.Volatile.Write(ref stop, 1);
+                            return;
+                        }
+                        walkable[x * gridSize + y] = true;
+                        land[run]++;
+                    }
                 }
-                if(preparation.Checkpoint()) yield return true;
+                System.Threading.Interlocked.Add(ref scanned, gridSize);
             }
         }
+        // The river window is opened and closed on the scan's own thread (its checks read the world too), and the scan is
+        // waited for before this preparation ends, so the window never outlives the reads.
+        void Map()
+        {
+            bool rivers = RiverWeightReads.Begin(wg);
+            try
+            {
+                System.Threading.Tasks.Parallel.For(0, runs, new System.Threading.Tasks.ParallelOptions { MaxDegreeOfParallelism = runs }, run =>
+                {
+                    try { Scan(run); }
+                    catch (System.Exception error)
+                    {
+                        // One run's failure stops the others at their next column; the lowest run's failure is the one thrown.
+                        failures[run] = error;
+                        System.Threading.Volatile.Write(ref stop, 1);
+                    }
+                });
+            }
+            finally { if (rivers) RiverWeightReads.End(wg); }
+        }
+        var scan = System.Threading.Tasks.Task.Run(Map);
+        try
+        {
+            long told = 0;
+            // Polled, never waited on: the frame goes back to the game at once.
+            while (!scan.IsCompleted)
+            {
+                long now = System.Threading.Interlocked.Read(ref scanned);
+                preparation.Checkpoint((int)(now - told)); told = now;
+                preparation.EndSlice();
+                yield return true;
+            }
+            cancel.ThrowIfCancellationRequested();
+            if (scan.Exception != null)
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(scan.Exception.Flatten().InnerExceptions[0]).Throw();
+            foreach (var failure in failures)
+                if (failure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+            preparation.Checkpoint((int)(System.Threading.Interlocked.Read(ref scanned) - told));
+        }
+        finally
+        {
+            // Ended early (cancelled, or its reader gone): the runs stop at their next column and are waited for, so no
+            // thread reads the world, and the river window is closed, once the preparation is over. A failure seen only
+            // here is observed, not left to the finalizer.
+            if (!scan.IsCompleted)
+            {
+                System.Threading.Volatile.Write(ref stop, 1);
+                ((System.IAsyncResult)scan).AsyncWaitHandle.WaitOne();
+            }
+            _ = scan.Exception;
+        }
+        if (beyondFound != 0)
+        {
+            // Land the probes did not read, near the bound's edge: the whole disc, as without the bound.
+            Log.LogDebug($"IslandDetector: land at ({beyondX:F0},{beyondY:F0}), near the {worldRadius:F0} m bound: the whole disc is scanned");
+            foreach (var step in DetectSteps(wg, preparation, complete, minArea, wholeRadius, options)) yield return step;
+            yield break;
+        }
+        foreach (int count in land) landCells += count;
 
         // Pieces of walkable ground, before any crossing is considered.
         preparation.BeginStage("Labeling island terrain",n,"cells"); yield return true;
@@ -165,15 +291,15 @@ public static class RoadIslandDetector
 
                 // Two shores meet in this cell: the gap is both walks plus it.
                 float gap = (d + 1 + steps[nb]) * cellSize;
-                float depth = RoadWater.LandingFloor - height[nb];
-                bool ford = gap <= fordMetres && depth <= RoadConstants.FordWadeDepth;
+                // A ford's bed at wading depth, measured as the crossing measures it (RoadWater.AtFordDepth, from the sea level).
+                bool ford = gap <= fordMetres && RoadWater.AtFordDepth(height[nb]);
                 bool bridge = false;
                 if (!ford && gap <= bridgeMetres)
                 {
                     float wx = (nb / gridSize) * cellSize - worldOffset;
                     float wy = (nb % gridSize) * cellSize - worldOffset;
                     wg.GetRiverWeight(wx, wy, out float weight, out _);
-                    bridge = weight > 0f;
+                    bridge = RoadWater.AnyRiver(weight);
                 }
                 if (!ford && !bridge) return;
                 Union(owner[nb], owner[c]);
@@ -206,7 +332,7 @@ public static class RoadIslandDetector
         // Landings filter by the options' biomes; without options (a bare grouping) there are none.
         if (options != null)
             foreach (var island in islands)
-                foreach(var step in RoadCoastalLandings.FindSteps(island,height,gridSize,(x,z)=>wg.GetBiome(x,z),options,
+                foreach(var step in RoadCoastalLandings.FindSteps(island,height,gridSize,(x,z)=>RoadBiome.At(wg,x,z),options,
                     preparation,landings=>island.CoastalLandings=landings)) yield return step;
 
         Log.LogDebug($"IslandDetector: {landCells} walkable cells, {pieces.Count} pieces, " +

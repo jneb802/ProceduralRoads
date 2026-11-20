@@ -105,6 +105,45 @@ public class IslandRegenerationTests : System.IDisposable
         finally { TearDown(); }
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    public void OperatorGenerationKeepsCapturedOptionsWhenLiveOptionsChange(bool oneIsland, bool capturedQuestLocations)
+    {
+        SetUp(("StartTemple", 0f, 0f, 25f), ("Eikthyrnir", 260f, 40f, 10f), ("Hildir_cave", -220f, 150f, 18f));
+        RoadNetworkOptions previous = RoadNetworkGenerator.NetworkOptions;
+        try
+        {
+            RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions { HildirQuestLocations = capturedQuestLocations };
+            List<string>? chosen = null;
+            bool? duringPlacing = null;
+            IEnumerable<bool> Record(RoadNetworkGenerator.GenerationWork work)
+            {
+                chosen = work.AllSelected.Select(d => d.name).ToList();
+                duringPlacing = RoadNetworkGenerator.HildirRoads("Hildir_cave");
+                yield break;
+            }
+            RoadNetworkGenerator.LocationsFirst = (work, _) => Record(work);
+            Assert.Null(RoadLifecycleManager.BeginForOperator(oneIsland ? Vector3.zero : null, _ => { },
+                answer: ExistingWorldRoads.NewZonesOnly));
+            RoadNetworkGenerator.NetworkOptions.HildirQuestLocations = !capturedQuestLocations;
+            FinishLoad();
+
+            Assert.True(RoadNetworkGenerator.RoadsAvailable);
+            Assert.NotNull(chosen);
+            Assert.Equal(capturedQuestLocations, chosen!.Contains("Hildir_cave"));
+            Assert.Equal(capturedQuestLocations, duringPlacing);
+        }
+        finally
+        {
+            RoadNetworkGenerator.LocationsFirst = null;
+            RoadNetworkGenerator.NetworkOptions = previous;
+            TearDown();
+        }
+    }
+
     [Fact]
     public void LoadTimeGenerationCanBeSwitchedOffAndIslandRegenerationStillWorks()
     {

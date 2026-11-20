@@ -53,8 +53,8 @@ public readonly struct LevelOp
 
     /// <summary>Whether this operation sits on the location's own centre, so
     /// its footprint is the same whichever way the location is turned.</summary>
-    public bool Concentric => Mathf.Abs(OffsetX) <= ConcentricTolerance
-                           && Mathf.Abs(OffsetZ) <= ConcentricTolerance;
+    public bool Concentric => FloatBits.Abs(OffsetX) <= ConcentricTolerance
+                           && FloatBits.Abs(OffsetZ) <= ConcentricTolerance;
 
     public const float ConcentricTolerance = 0.5f;
 }
@@ -159,7 +159,7 @@ public static class LocationLevelling
     {
         float? saved = PlacementHeightSource?.Invoke(centre);
         return saved.HasValue && !float.IsNaN(saved.Value) && !float.IsInfinity(saved.Value)
-            ? saved.Value : BiomeBlendedHeight.GetBlendedHeight(centre.x, centre.y, world);
+            ? saved.Value : NaturalGround.ForLevelling(centre.x, centre.y, world);
     }
 
     /// <summary>Whether any of a location's terrain modifiers levels (the others only smooth).</summary>
@@ -185,7 +185,7 @@ public static class LocationLevelling
             if (op.Radius <= 0f) continue;
             float candidate = centreGround + op.Height;
             if (float.IsNaN(candidate) || float.IsInfinity(candidate)) return null;
-            if (height.HasValue && Mathf.Abs(candidate - height.Value) > 0.25f) return null;
+            if (height.HasValue && FloatBits.Abs(candidate - height.Value) > 0.25f) return null;
             height = candidate;
         }
         return height;
@@ -198,6 +198,26 @@ public static class LocationLevelling
     {
         float? level = PlatformHeight(rootHeight, ops);
         return level.HasValue ? Mathf.Max(rootHeight, level.Value) : null;
+    }
+
+    /// <summary>How far from the location's centre one of its terrain modifiers reaches: its offset, and its
+    /// <paramref name="reach"/> (a square one's to its corner). The one formula for the footprint index's whole reach
+    /// (LocationPrefabLevelling, paint included) and the ground the level operations shape (<see cref="GroundReach"/>).</summary>
+    public static float ModifierReach(float offsetX, float offsetZ, float reach, bool square) =>
+        new Vector2(offsetX, offsetZ).magnitude + (square ? reach * Mathf.Sqrt(2f) : reach);
+
+    /// <summary>
+    /// How far from a location's centre its level operations shape the ground: each operation's reach
+    /// (<see cref="ModifierReach"/> of the larger of its level and smooth radius), as the footprint index reads a prefab's
+    /// terrain modifiers but without their paint, which does not move the ground. For a location placed before its roads it
+    /// is read from its saved record, so no prefab is loaded (RoadNetworkGenerator.ArrivalReach). 0 for none.
+    /// </summary>
+    public static float GroundReach(IReadOnlyList<LevelOp> ops)
+    {
+        float reach = 0f;
+        foreach (LevelOp op in ops)
+            reach = Mathf.Max(reach, ModifierReach(op.OffsetX, op.OffsetZ, Mathf.Max(op.Radius, op.SmoothRadius), op.Square));
+        return reach;
     }
 
     /// <summary>

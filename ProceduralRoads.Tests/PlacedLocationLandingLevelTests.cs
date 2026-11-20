@@ -100,7 +100,7 @@ public class PlacedLocationLandingLevelTests : IDisposable
             Centre = new Vector2(0f, 0f), RoadTail = new List<Vector2> { before, end },
         };
 
-        RoadSpatialGrid.PlannedPath? road = RoadLocationEntry.Plan(request, Tower(), 4f, TowerGround, world, out string why);
+        RoadSpatialGrid.PlannedPath? road = RoadLocationEntry.Plan(request, Tower(), 4f, TowerGround, out string why);
 
         // No road gets past the boulders onto the flat from here: none is laid, and the planner tries a staircase onto it
         // (the Mountains) or its other routes. Before, the road was laid onto the shelf, ending at 102.67 m.
@@ -131,7 +131,7 @@ public class PlacedLocationLandingLevelTests : IDisposable
             Assert.NotNull(plan);
             return ((string refusal, string why)?)endNotLevel.Invoke(null, new object[] {
                 path, new List<RoadSpatialGrid.PlannedPath> { plan }, new List<RoadStairSpan>(), new List<RoadStairSpan>(),
-                path[0], 0f, new Vector2(0f, 0f), 26f, false, true }) is (_, string why) ? why : null;
+                path[0], 0f, new Vector2(0f, 0f), 26f, false, true, true }) is (_, string why) ? why : null;
         }
 
         Assert.Equal(63.2f, RoadNetworkGenerator.ArrivalHeight(new Vector2(0f, 0f), 26f, new Vector2(-10f, 24.5f))!.Value, 2);

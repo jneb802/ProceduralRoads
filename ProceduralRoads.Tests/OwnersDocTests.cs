@@ -79,7 +79,8 @@ public class OwnersDocTests
     {
         var tokens = OwnerTokens();
         Assert.True(tokens.Count > 100, $"only {tokens.Count} owners parsed from docs/OWNERS.md");
-        var missing = tokens.Where(t => AllTypes.Any(x => x.Name == t.type) ? !InCompiledTypes(t.type, t.member) : !InSource(t.type, t.member))
+        // A partial class the tests compile only part of (LocationPrefabLevelling) declares the rest in its other files.
+        var missing = tokens.Where(t => AllTypes.Any(x => x.Name == t.type) ? !InCompiledTypes(t.type, t.member) && !InSource(t.type, t.member) : !InSource(t.type, t.member))
             .Select(t => $"docs/OWNERS.md:{t.line}: {t.type}.{t.member}").Distinct().ToList();
         Assert.True(missing.Count == 0,
             "These owners in docs/OWNERS.md do not exist in the code (renamed or deleted? update the list):\n" + string.Join("\n", missing));

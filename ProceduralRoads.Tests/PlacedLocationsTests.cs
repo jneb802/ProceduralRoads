@@ -58,7 +58,9 @@ public class PlacedLocationsTests
         PlacedLocations.Load(PlacedLocations.Read(PlacedLocations.Write(new[] { cave, tower })));
 
         Assert.Equal(2, PlacedLocations.Count);
-        Assert.True(PlacedLocations.TryGet(new Vector2(3527f, 6472f), out PlacedLocationRecord found));
+        // Each by its identity, its centre exactly (decision 6d): a coordinate near it is not the location.
+        Assert.True(PlacedLocations.TryGet(new Vector2(3527.4f, 6471.8f), out PlacedLocationRecord found));
+        Assert.False(PlacedLocations.TryGet(new Vector2(3527f, 6472f), out _));
         Assert.Equal("Mistlands_GuardTower1_new", found.Prefab);
         Assert.Empty(found.Ops);
         Assert.Empty(found.Rocks);

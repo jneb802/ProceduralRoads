@@ -13,9 +13,10 @@ namespace ProceduralRoads;
 /// <see cref="SameSideAngle"/> (90 degrees, not the road corridor's 25) of it, over its last stretch or as it steps onto the location
 /// (<see cref="Way.Arrival"/>: a staircase's last flight onto its top, wherever its foot and its road lie), and climbing,
 /// coming down or level as it does, is that way built
-/// twice (two staircases side by side up one face to one landing; a road up beside the staircase): it is not built, and
-/// its road ends on the first way's road (<see cref="Joining"/>, RoadNetworkGenerator.ReEndOnAWayIn), at the approach's foot
-/// or where that road's arrival passes nearest. Two ways going opposite ways (one up to the landing and one down to it, or
+/// twice (two staircases side by side up one face to one landing; a road up beside the staircase): a duplicate, dropped
+/// (<see cref="Joining"/>, RoadNetworkGenerator.ReEndOnAWayIn): not built, and nothing replaces it where its other end is reached too (the location is reached
+/// already; the project owner's decision, 18 Nov 2026); else only its stretch there, the road to its other end searched again from that way's road (RoadNetworkGenerator.DuplicateWhole, 19 Nov 2026). A road that joins a way in there straight away is one too
+/// (<see cref="OnAWayIn"/>). Two ways going opposite ways (one up to the landing and one down to it, or
 /// in from the other side; two close ones, one up and one down, are two) and ways 90 degrees or more apart (other faces) are other ways in. Off with the corridor snap, as the rest of the
 /// corridor rule. The road corridor snap for roads not arriving at a location is its own rule (RoadNetworkGenerator.SnapToNetwork).
 /// </summary>
@@ -35,7 +36,10 @@ public static class LocationWaysIn
         public readonly List<float> Heights;
         /// <summary>The approach staircase it is, if it is one: joined at its foot (<see cref="RoadStairRuns.RoadEndOf"/>).</summary>
         public readonly StairRun? Approach;
-        internal Way(List<Vector2> line, List<float> heights, StairRun? approach) { Line = line; Heights = heights; Approach = approach; }
+        /// <summary>The road's last <see cref="RoadStairRuns.LocationReach"/> along it to a staircase's foot at the location: part of
+        /// that staircase's way in (<see cref="OnAWayIn"/>), never a way of its own (<see cref="There"/> and <see cref="Twins"/> leave it out).</summary>
+        public readonly bool Foot;
+        internal Way(List<Vector2> line, List<float> heights, StairRun? approach, bool foot = false) { Line = line; Heights = heights; Approach = approach; Foot = foot; }
         public Vector2 Outer => Line[0];
         public Vector2 Inner => Line[Line.Count - 1];
         /// <summary>How it steps onto the location: its heading over its last <see cref="RoadStairRuns.MeetReach"/> along it to
@@ -68,7 +72,9 @@ public static class LocationWaysIn
         }
     }
 
-    private static readonly List<(Vector2 location, Way way, byte island)> s_roads = new();
+    private static readonly List<(Vector2 location, Way way, int island)> s_roads = new();
+    /// <summary>The roads' last stretches to a staircase's foot at a location (<see cref="Way.Foot"/>), recorded as laid.</summary>
+    private static readonly List<(Vector2 location, Way way, int island)> s_feet = new();
 
     /// <summary>Whether the rule is read at all: off where the corridor snap is off (plain roads, tests).</summary>
     internal static bool On => RoadNetworkGenerator.CorridorSnap > RoadNetworkGenerator.RoadSnap;
@@ -80,7 +86,7 @@ public static class LocationWaysIn
     /// The one owner of ways into a location, and twin ways (docs/OWNERS.md).
     /// </summary>
     public static Way? Of(IReadOnlyList<Vector2> points, IReadOnlyList<float> heights, Vector2 location, bool whole = false, StairRun? approach = null,
-        bool? locationEndIsLast = null)
+        bool? locationEndIsLast = null, bool foot = false)
     {
         if (points.Count < 2) return null;
         // Which end is the location end: a staircase says so itself (locationEndIsLast, from its own ends); a plain road has no better
@@ -103,7 +109,7 @@ public static class LocationWaysIn
         }
         line.Reverse();
         hs.Reverse();
-        return line.Count < 2 || Vector2.Distance(line[0], line[line.Count - 1]) < 1e-3f ? null : new Way(line, hs, approach);
+        return line.Count < 2 || Vector2.Distance(line[0], line[line.Count - 1]) < 1e-3f ? null : new Way(line, hs, approach, foot);
     }
 
     /// <summary>A staircase's walked pieces (steps and floors) as a way into <paramref name="location"/>, whole. Its location end is
@@ -155,7 +161,7 @@ public static class LocationWaysIn
             && Math.Acos(Math.Max(-1.0, Math.Min(1.0, Vector2.Dot(a.normalized, b.normalized)))) * 180.0 / Math.PI < SameSideAngle - 1e-3f;
         if (!Heads(mine.Inner - mine.Outer, theirs.Inner - theirs.Outer) && !Heads(mine.Arrival, theirs.Arrival)) return false;
         bool Meet(Vector2 p, float hp, Vector2 q, float hq) =>
-            Vector2.Distance(p, q) <= RoadStairRuns.MeetReach && Mathf.Abs(hp - hq) <= StairLayout.PieceRise;
+            Vector2.Distance(p, q) <= RoadStairRuns.MeetReach && FloatBits.Abs(hp - hq) <= StairLayout.PieceRise;
         return !Meet(mine.Outer, mine.Heights[0], theirs.Inner, theirs.Heights[theirs.Heights.Count - 1])
             && !Meet(mine.Inner, mine.Heights[mine.Heights.Count - 1], theirs.Outer, theirs.Heights[0]);
     }
@@ -199,10 +205,34 @@ public static class LocationWaysIn
         return null;
     }
 
-    /// <summary>A road arriving at <paramref name="location"/> as road (no staircase at that end), recorded as it is laid.</summary>
+    /// <summary>
+    /// Whether <paramref name="p"/>, where a road joins the network, meets a way into <paramref name="location"/> there already:
+    /// the serving road's last <see cref="RoadStairRuns.LocationReach"/> along it by the location (<see cref="Record"/>), or its
+    /// road's last <see cref="RoadStairRuns.LocationReach"/> along it to a staircase's foot (<see cref="Way.Foot"/>); one
+    /// definition, measured along the road. Meeting is the junction's own test (RoadNetworkGenerator.DropStubs' MergeWithin: a
+    /// road point within <see cref="RoadBeside.OnRoad"/>, <see cref="RoadSpatialGrid.TryGetRoadWithin"/>), held to that stretch's
+    /// points. The project owner's decision (18 Nov 2026): a road that joins the serving road there straight away is a
+    /// duplicate, dropped. The one owner of ways into a location (docs/OWNERS.md).
+    /// </summary>
+    public static bool OnAWayIn(Vector2 location, Vector2 p)
+    {
+        if (!On) return false;
+        Vector2 into = RoadStairRuns.IntoTheLocation(location);
+        int me = CrossIslandReads.Me;
+        var wayIn = new HashSet<Vector2>();
+        foreach (var list in new[] { s_roads, s_feet })
+            lock (list)
+                foreach (var (at, way, island) in list)
+                    if ((RoadStairRuns.IntoTheLocation(at) - into).sqrMagnitude < 1f && CrossIslandReads.Sees(me, island)) wayIn.UnionWith(way.Line);
+        return wayIn.Count > 0 && RoadSpatialGrid.TryGetRoadWithin(p, RoadBeside.OnRoad, out _, wayIn.Contains);
+    }
+
+    /// <summary>A road arriving at <paramref name="location"/> as road (no staircase at that end), or its last stretch to a
+    /// staircase's foot there (<see cref="Way.Foot"/>), recorded as it is laid.</summary>
     public static void Record(Vector2 location, Way way)
     {
-        lock (s_roads) s_roads.Add((location, way, CrossIslandReads.Tag));
+        var list = way.Foot ? s_feet : s_roads;
+        lock (list) list.Add((location, way, CrossIslandReads.Tag));
     }
 
     /// <summary>
@@ -243,5 +273,6 @@ public static class LocationWaysIn
     public static void Reset()
     {
         lock (s_roads) s_roads.Clear();
+        lock (s_feet) s_feet.Clear();
     }
 }

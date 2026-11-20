@@ -14,10 +14,11 @@ namespace ProceduralRoads;
 /// (97, 41 and 17 m waves, weighted 0.5/0.33/0.17), phased by where the road
 /// starts, so no two roads sway alike and nothing repeats: a repeating
 /// period is noticed. It is at most <see cref="Amplitude"/> metres,
-/// scaled by the biome (the meander's table: none in mountains or Mistlands),
+/// scaled by the biome (the meander's table: none in mountains or Mistlands; faded along the road over
+/// <see cref="ShareFade"/> before a biome with less, <see cref="FadeAcrossBiomes"/>),
 /// eased on climbs (full up to 0.12 grade, then down to <see cref="SlopeFloor"/>
 /// of it at the road's grade cap, never to nothing), faded in over the first
-/// and last 24 m, round a structure end's held foot and apron, and wherever the swayed point would be wet or inside a location. On a sidehill
+/// and last 24 m, round a structure end's held foot and apron, and wherever the swayed point would be wetter than where it was (wet and lower) or inside a location. On a sidehill
 /// it follows the hillside's contour instead of crossing it (<see cref="FollowContour"/>). A short swing (out and
 /// back within <see cref="ShortWave"/> m: a tight wave, a short piece between two ends, a gully followed) is
 /// eased to half its size, a long one kept (<see cref="EaseShortWaves"/>). The shaped road
@@ -64,7 +65,7 @@ public static class RoadWiggle
     public static float GradeFactor(float grade, float cap)
     {
         if (cap <= 0f) cap = RoadConstants.DefaultMaxRoadGrade;
-        grade = Mathf.Abs(grade);
+        grade = FloatBits.Abs(grade);
         if (grade <= Flat) return 1f;
         if (cap <= Flat || grade >= cap) return SlopeFloor;
         return Mathf.Lerp(1f, SlopeFloor, (grade - Flat) / (cap - Flat));
@@ -72,7 +73,7 @@ public static class RoadWiggle
 
     private static readonly (float wave, float weight)[] Octaves = { (97f, 0.5f), (41f, 0.33f), (17f, 0.17f) };
 
-    /// <summary>The sway in [-1,1] at a distance along a road with this phase. The one owner of sway and meander (docs/OWNERS.md).</summary>
+    /// <summary>The sway in [-1,1] at a distance along a road with this phase. The one owner of post-search sway (docs/OWNERS.md).</summary>
     internal static float Sway(float along, float phase)
     {
         float sum = 0f;
@@ -92,16 +93,82 @@ public static class RoadWiggle
     /// sideways; the ends stay where they are, and so do the waypoints in
     /// <paramref name="keep"/> (a structure end's stair foot and apron), the
     /// sway held round each as round a point in <see cref="HeldAt"/>.
-    /// The one owner of sway and meander (docs/OWNERS.md).
+    /// Where a leg of the unswayed resample cuts a corner the search kept round a location's clearance or an avoided zone
+    /// (<see cref="KeepClearOfLocations"/>), the path's own waypoints along that leg are kept too (<see cref="ResampleKeeping"/>),
+    /// the sway held round them as round any kept waypoint, and the path is swayed again: the sway is lost round that corner
+    /// only. The path comes back untouched, not even resampled, where it is too short to sway or where a blocked leg has no
+    /// waypoint of the path along it (the search's own line is blocked there). Where no point of it may sway (every hold none:
+    /// the biome's meander none, as in the Mistlands, or shared road all along) it is still resampled as before, its offsets
+    /// none (<see cref="Outcome.ResampledNothingSwayed"/>). <see cref="LastOutcome"/> says which.
+    /// The one owner of post-search sway (docs/OWNERS.md).
     /// </summary>
     public static List<Vector2> Apply(List<Vector2> path, Func<Vector2, float> ground, Func<Vector2, bool> wet,
-        Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad = null, List<Vector2>? keep = null)
+        Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad = null, List<Vector2>? keep = null,
+        RoadLocationProtection.Targets locations = default)
     {
+        LastOutcome = Outcome.None;
         if (!Enabled || path.Count < 2) return path;
-        var even = keep != null && keep.Count > 0 ? ResampleKeeping(path, Spacing, keep) : Resample(path, Spacing);
-        if (even.Count < 4) return path;
-        float total = (even.Count - 1) * Spacing;
-        if (total < 2f * EndFade + Spacing) return path;
+        List<Vector2>? keeping = keep;
+        // Each round keeps at least one more waypoint of the path, so this ends.
+        for (bool roundCorner = false; ; roundCorner = true)
+        {
+            var swayed = SwayOnce(path, ground, wet, biome, width, onRoad, keeping, locations, out var even, out int blocked, out Outcome early, out bool anySway);
+            if (swayed != null)
+            {
+                LastOutcome = !anySway ? Outcome.ResampledNothingSwayed : roundCorner ? Outcome.SwayedRoundCorner : Outcome.Swayed;
+                return swayed;
+            }
+            if (blocked < 0)
+            {
+                LastOutcome = roundCorner ? Outcome.DroppedByKeepClear : early;
+                return path;
+            }
+            var more = WaypointsAlong(path, even, blocked);
+            if (keeping != null) more.RemoveAll(keeping.Contains);
+            if (more.Count == 0) { LastOutcome = Outcome.DroppedByKeepClear; return path; }
+            keeping = keeping != null ? new List<Vector2>(keeping) : new List<Vector2>();
+            keeping.AddRange(more);
+        }
+    }
+
+    /// <summary>What the last <see cref="Apply"/> on this thread did with its path (RoadSpatialGrid.PlanRoadPath counts the
+    /// swayed plans by it).</summary>
+    internal enum Outcome
+    {
+        /// <summary>Not swayed: the sway is off, or the path has one point.</summary>
+        None,
+        /// <summary>Swayed.</summary>
+        Swayed,
+        /// <summary>Swayed, the sway held round corners of the path a resampled leg cut into a location's clearance.</summary>
+        SwayedRoundCorner,
+        /// <summary>Resampled, nothing swayed: no point of the path may sway (every hold none), so the line is the resample, or
+        /// the resample with the corners a leg cut kept. Not counted as a kept sway.</summary>
+        ResampledNothingSwayed,
+        /// <summary>Too short to sway: the path comes back as it was.</summary>
+        TooShort,
+        /// <summary>The sway dropped to keep the line clear of a location (<see cref="KeepClearOfLocations"/>): the path comes
+        /// back as it was.</summary>
+        DroppedByKeepClear,
+    }
+    /// <summary>What the last <see cref="Apply"/> on this thread did.</summary>
+    [ThreadStatic] internal static Outcome LastOutcome;
+
+    /// <summary>One sway of <paramref name="path"/>, its waypoints in <paramref name="keep"/> kept: the swayed line; or null,
+    /// with the reason in <paramref name="early"/> (too short) and -1 in <paramref name="blocked"/>, or with
+    /// the leg of the unswayed resample <paramref name="even"/> that still comes into a location's clearance in
+    /// <paramref name="blocked"/>.</summary>
+    private static List<Vector2>? SwayOnce(List<Vector2> path, Func<Vector2, float> ground, Func<Vector2, bool> wet,
+        Func<Vector2, Heightmap.Biome> biome, float width, Func<Vector2, bool>? onRoad, List<Vector2>? keep,
+        RoadLocationProtection.Targets locations, out List<Vector2> even, out int blocked, out Outcome early, out bool anySway)
+    {
+        blocked = -1;
+        anySway = false;
+        early = Outcome.TooShort;
+        even = keep != null && keep.Count > 0 ? ResampleKeeping(path, Spacing, keep) : Resample(path, Spacing);
+        var points = even;
+        if (points.Count < 4) return null;
+        float total = (points.Count - 1) * Spacing;
+        if (total < 2f * EndFade + Spacing) return null;
         // Phase from where the road starts: deterministic, and different per road.
         float seed = path[0].x * 0.0137f + path[0].y * 0.0291f;
         float phase = seed - 97f * Mathf.Floor(seed / 97f);
@@ -112,71 +179,128 @@ public static class RoadWiggle
         List<Vector2>? held = HeldAt;
         bool Near(List<Vector2>? spots, Vector2 p) => spots != null && spots.Exists(h => (h - p).sqrMagnitude <= HoldRadius * HoldRadius);
         bool Still(Vector2 p) => (onRoad != null && onRoad(p)) || Near(held, p) || Near(keep, p);
-        var shareFade = new float[even.Count];
+        var shareFade = new float[points.Count];
         {
             int since = int.MaxValue / 2;
-            for (int i = 0; i < even.Count; i++)
+            for (int i = 0; i < points.Count; i++)
             {
-                since = Still(even[i]) ? 0 : since + 1;
+                since = Still(points[i]) ? 0 : since + 1;
                 shareFade[i] = Mathf.Clamp01(since * Spacing / ShareFade);
             }
             since = int.MaxValue / 2;
-            for (int i = even.Count - 1; i >= 0; i--)
+            for (int i = points.Count - 1; i >= 0; i--)
             {
-                since = Still(even[i]) ? 0 : since + 1;
+                since = Still(points[i]) ? 0 : since + 1;
                 shareFade[i] = Mathf.Min(shareFade[i], Mathf.Clamp01(since * Spacing / ShareFade));
             }
         }
-        int n = even.Count;
+        int n = points.Count;
+        var meander = new float[n];
+        for (int i = 0; i < n; i++) meander[i] = RoadRules.For(biome(points[i])).Meander;
+        FadeAcrossBiomes(meander, Spacing);
+        var hold = new float[n];
+        for (int i = 1; i < n - 1; i++)
+        {
+            float along = i * Spacing;
+            hold[i] = Mathf.Clamp01(Mathf.Min(along, total - along) / EndFade) * meander[i] * shareFade[i];
+        }
+        for (int i = 1; i < n - 1; i++) if (hold[i] > 0f) { anySway = true; break; }
+        // Where no point may sway (the biome's meander none, as in the Mistlands, or shared road all along) every offset is none:
+        // the path still comes back resampled, as before, and is judged as a swayed line is.
         var across = new Vector2[n];
         var offset = new float[n];
-        var hold = new float[n];
         var cross = new float[n];
         for (int i = 1; i < n - 1; i++)
         {
-            Vector2 p = even[i];
-            Vector2 tangent = (even[i + 1] - even[i - 1]).normalized;
+            Vector2 p = points[i];
+            Vector2 tangent = (points[i + 1] - points[i - 1]).normalized;
             across[i] = new Vector2(-tangent.y, tangent.x);
             float along = i * Spacing;
-            hold[i] = Mathf.Clamp01(Mathf.Min(along, total - along) / EndFade)
-                * RoadPathfinder.MeanderBiome(biome(p)) * shareFade[i];
-            float grade = Mathf.Abs(ground(even[i + 1]) - ground(even[i - 1])) / (2f * Spacing);
+            float grade = FloatBits.Abs(ground(points[i + 1]) - ground(points[i - 1])) / (2f * Spacing);
             offset[i] = Amplitude * hold[i] * GradeFactor(grade, RoadGrade.Configured) * Sway(along, phase);
             cross[i] = (ground(p + across[i] * CrossProbe) - ground(p - across[i] * CrossProbe)) / (2f * CrossProbe);
         }
-        FollowContour(even, across, offset, hold, cross, ground);
+        FollowContour(points, across, offset, hold, cross, ground);
         EaseShortWaves(offset, Spacing);
-        var result = new List<Vector2>(n) { even[0] };
+        var result = new List<Vector2>(n) { points[0] };
         for (int i = 1; i < n - 1; i++)
         {
-            Vector2 p = even[i], q = p + across[i] * offset[i];
-            if (hold[i] > 0f && wet(q)) q = p;
+            Vector2 p = points[i], q = p + across[i] * offset[i];
+            // Never onto wetter ground: a point may move onto wet ground only as dry as where it was or drier (a waded swamp
+            // point onto shallower water or a bank), never from dry ground into water.
+            if (hold[i] > 0f && wet(q) && !(wet(p) && ground(q) >= ground(p))) q = p;
             result.Add(q);
         }
-        result.Add(even[n - 1]);
-        return KeepClearOfLocations(result, even, path, width) ?? path;
+        result.Add(points[n - 1]);
+        return KeepClearOfLocations(result, points, path, width, out blocked, locations);
+    }
+
+    /// <summary>The waypoints of <paramref name="path"/> its resample <paramref name="even"/> (every point of which lies on
+    /// the path, in order) passes between its points <paramref name="leg"/> - 1 and <paramref name="leg"/>: the corners that
+    /// leg cuts. None where the leg runs along one stretch of the path.</summary>
+    internal static List<Vector2> WaypointsAlong(List<Vector2> path, List<Vector2> even, int leg)
+    {
+        // The stretch of the path each resampled point lies on, walked in order; a point at a waypoint is on the stretch
+        // before it. Resampled points are interpolated, so "on" is within a centimetre.
+        int stretch = 0;
+        int On(Vector2 p)
+        {
+            for (int j = stretch; j < path.Count - 1; j++)
+            {
+                Vector2 a = path[j], ab = path[j + 1] - a;
+                float l2 = ab.sqrMagnitude;
+                float t = l2 > 0f ? Mathf.Clamp01(Vector2.Dot(p - a, ab) / l2) : 0f;
+                if ((a + ab * t - p).sqrMagnitude <= 1e-4f) return stretch = j;
+            }
+            return stretch;
+        }
+        int from = 0;
+        for (int i = 0; i < leg; i++) from = On(even[i]);
+        int to = On(even[leg]);
+        var corners = new List<Vector2>();
+        for (int j = from + 1; j <= to; j++) corners.Add(path[j]);
+        return corners;
+    }
+
+    /// <summary>
+    /// The sway's biome factor (<see cref="RoadRules.For"/>'s <see cref="RoadRules.Meander"/> at each resampled point,
+    /// <paramref name="spacing"/> apart) faded along the road where it changes: each point keeps at most its neighbour's
+    /// factor plus the share of <see cref="ShareFade"/> between them, so the factor falls to a biome's lower value over
+    /// <see cref="ShareFade"/> before its border, as the sway fades back after a shared stretch. Only ever lowered: a point
+    /// never sways more than its own biome lets it. Before, the factor was read at each point alone, and a road swaying into
+    /// a biome with less (the Mountains, the Mistlands) jogged sideways by its whole offset within one resample step.
+    /// </summary>
+    internal static void FadeAcrossBiomes(float[] meander, float spacing)
+    {
+        float step = spacing / ShareFade;
+        for (int i = 1; i < meander.Length; i++) meander[i] = Mathf.Min(meander[i], meander[i - 1] + step);
+        for (int i = meander.Length - 2; i >= 0; i--) meander[i] = Mathf.Min(meander[i], meander[i + 1] + step);
     }
 
     /// <summary>
     /// The swayed line held to the location clearance the final road is checked against
     /// (<see cref="RoadLocationProtection.BlocksRoad"/>, the road's width and its planned ends): the sway is taken back at
     /// both ends of each leg that would come into a location's clearance, until none does. A leg that still does runs between
-    /// resampled points of the unswayed line, which cut a corner the search kept round a location: null then, and the road
-    /// keeps its line unswayed. Before, only the sideways step from each point was checked, and the legs between swayed
-    /// points were refused at the final check.
+    /// resampled points of the unswayed line, which cut a corner the search kept round a location: null then, with that leg
+    /// in <paramref name="blocked"/> (-1 otherwise), and <see cref="Apply"/> keeps the path's own waypoints along it and sways
+    /// again. Before, only the sideways step from each point was checked, and the legs between swayed
+    /// points were refused at the final check. A leg that enters a zone the network goes round
+    /// (<see cref="NetworkCutoff.AvoidsSegment"/>, the search's own rule) is taken back alike.
     /// </summary>
-    internal static List<Vector2>? KeepClearOfLocations(List<Vector2> swayed, List<Vector2> even, List<Vector2> path, float width)
+    internal static List<Vector2>? KeepClearOfLocations(List<Vector2> swayed, List<Vector2> even, List<Vector2> path, float width,
+        out int blocked, RoadLocationProtection.Targets locations = default)
     {
+        blocked = -1;
         Vector2 start = path[0], end = path[path.Count - 1];
         for (int round = 0; round <= swayed.Count; round++)
         {
             bool changed = false;
             for (int i = 1; i < swayed.Count; i++)
             {
-                if (!RoadLocationProtection.BlocksRoad(swayed[i - 1], swayed[i], width, start, end)) continue;
+                if (!NetworkGround.BlocksRoad(swayed[i - 1], swayed[i], width, start, end, locations)) continue;
                 if (swayed[i - 1] != even[i - 1]) { swayed[i - 1] = even[i - 1]; changed = true; }
                 if (swayed[i] != even[i]) { swayed[i] = even[i]; changed = true; }
-                if (!changed) return null;
+                if (!changed) { blocked = i; return null; }
             }
             if (!changed) return swayed;
         }
@@ -242,7 +366,7 @@ public static class RoadWiggle
     /// 0 up to <see cref="SidehillFrom"/>, 1 from <see cref="SidehillFull"/>.</summary>
     public static float SidehillShare(float crossFall)
     {
-        float t = Mathf.Clamp01((Mathf.Abs(crossFall) - SidehillFrom) / (SidehillFull - SidehillFrom));
+        float t = Mathf.Clamp01((FloatBits.Abs(crossFall) - SidehillFrom) / (SidehillFull - SidehillFrom));
         return t * t * (3f - 2f * t);
     }
 
@@ -272,7 +396,7 @@ public static class RoadWiggle
                 {
                     int j = i + k;
                     if (j < 0 || j >= n) continue;
-                    float w = ContourWindow + 1 - Mathf.Abs(k);
+                    float w = ContourWindow + 1 - FloatBits.Abs(k);
                     sum += w * swayed[j]; weights += w;
                 }
                 smooth[i] = sum / weights;
@@ -325,24 +449,27 @@ public static class RoadWiggle
     /// <summary>Earthwork a swayed plan may add to its deepest cut or fill, metres.</summary>
     public const float EarthSlack = 0.5f;
 
+    /// <summary>The plain plan's earthwork, as the sway's comparison reads it: <see cref="RoadNetworkGenerator.EarthworkAcross"/>
+    /// against the shaped limit (<see cref="RoadNetworkGenerator.ShapedLimit"/>). Measured once per plain plan and compared
+    /// with each swayed plan planned against it (<see cref="NoMoreEarth"/>, <see cref="MoreEarthAt"/>).</summary>
+    internal static RoadNetworkGenerator.Earthwork EarthOf(RoadSpatialGrid.PlannedPath plan, Func<Vector2, float> ground) =>
+        RoadNetworkGenerator.EarthworkAcross(plan, ground, RoadNetworkGenerator.ShapedLimit);
+
     /// <summary>
-    /// The points of a swayed plan that move more earth than the plain plan allows (past its deepest cut or fill
-    /// by more than <see cref="EarthSlack"/>, or past the earthwork cap (<see cref="RoadNetworkGenerator.ShapedLimit"/>) where the plain one is not), at least
-    /// <see cref="HoldRadius"/> apart: where its sway is to be held.
+    /// The points of a swayed plan that move more earth than the plain plan (<paramref name="plain"/>, <see cref="EarthOf"/>)
+    /// allows: past its deepest cut or fill by more than <see cref="EarthSlack"/>, or past the earthwork cap
+    /// (<see cref="RoadNetworkGenerator.ShapedLimit"/>) where the plain one is not, anywhere across the road's width
+    /// (<see cref="RoadNetworkGenerator.EarthworkAcross"/>); at least <see cref="HoldRadius"/> apart: where its sway is to be held.
     /// </summary>
-    public static List<Vector2> MoreEarthAt(IList<Vector2> swayed, IList<float> swayedHeights,
-        IList<Vector2> plain, IList<float> plainHeights, Func<Vector2, float> ground)
+    internal static List<Vector2> MoreEarthAt(RoadSpatialGrid.PlannedPath swayed, RoadNetworkGenerator.Earthwork plain, Func<Vector2, float> ground)
     {
-        float deepest = 0f;
-        for (int i = 0; i < plain.Count; i++) deepest = Mathf.Max(deepest, Mathf.Abs(plainHeights[i] - ground(plain[i])));
+        float deepest = plain.Worst;
         float allowed = Mathf.Min(deepest + EarthSlack, Mathf.Max(deepest, RoadNetworkGenerator.ShapedLimit));
         var spots = new List<Vector2>();
-        for (int i = 0; i < swayed.Count; i++)
+        RoadNetworkGenerator.EarthworkAcross(swayed, ground, allowed, p =>
         {
-            if (Mathf.Abs(swayedHeights[i] - ground(swayed[i])) <= allowed) continue;
-            Vector2 p = swayed[i];
             if (spots.Count == 0 || (spots[spots.Count - 1] - p).sqrMagnitude >= HoldRadius * HoldRadius) spots.Add(p);
-        }
+        });
         return spots;
     }
 
@@ -357,27 +484,38 @@ public static class RoadWiggle
         return second ? even.GetRange(mid, even.Count - mid) : even.GetRange(0, mid + 1);
     }
 
-    /// <summary>
-    /// The swayed road moves no more earth than the plain one: its deepest cut
-    /// or fill is within <see cref="EarthSlack"/> of the plain one's, and it
-    /// has no more points past the earthwork cap.
-    /// </summary>
-    public static bool NoMoreEarth(IList<Vector2> swayed, IList<float> swayedHeights,
-        IList<Vector2> plain, IList<float> plainHeights, Func<Vector2, float> ground)
+    /// <summary>Whether holding the sway at <paramref name="next"/> holds nothing <paramref name="held"/> did not: no point, or
+    /// every point already held. Planned again it would be the same sway (RoadSpatialGrid.PlanRoadPath's hold rounds). By the
+    /// points, not by how many: on a line with an odd count of <see cref="HalfOf"/>'s points both halves hold as many, and the
+    /// second half was never tried.</summary>
+    internal static bool HoldsNothingNew(List<Vector2> next, List<Vector2>? held) =>
+        next.Count == 0 || (held != null && next.TrueForAll(held.Contains));
+
+    /// <summary><see cref="NoMoreEarth(RoadSpatialGrid.PlannedPath, RoadNetworkGenerator.Earthwork, Func{Vector2, float})"/> of a whole
+    /// road: the swayed road's pieces against the plain road's, its deepest cut or fill within the slack of the plain road's
+    /// deepest and no more of it past the cap.</summary>
+    internal static bool NoMoreEarth(IList<RoadSpatialGrid.PlannedPath> swayed, IList<RoadSpatialGrid.PlannedPath> plain, Func<Vector2, float> ground)
     {
-        (float deepest, int past) Measure(IList<Vector2> pts, IList<float> hs)
+        static (float worst, int past) Of(IList<RoadSpatialGrid.PlannedPath> plans, Func<Vector2, float> ground)
         {
-            float deepest = 0f; int past = 0;
-            for (int i = 0; i < pts.Count; i++)
-            {
-                float d = Mathf.Abs(hs[i] - ground(pts[i]));
-                deepest = Mathf.Max(deepest, d);
-                if (d > RoadNetworkGenerator.ShapedLimit) past++;
-            }
-            return (deepest, past);
+            float worst = 0f; int past = 0;
+            foreach (var p in plans) { var e = EarthOf(p, ground); worst = Mathf.Max(worst, e.Worst); past += e.Past; }
+            return (worst, past);
         }
-        var s = Measure(swayed, swayedHeights);
-        var p = Measure(plain, plainHeights);
-        return s.deepest <= p.deepest + EarthSlack && s.past <= p.past;
+        var s = Of(swayed, ground);
+        var p0 = Of(plain, ground);
+        return s.worst <= p0.worst + EarthSlack && s.past <= p0.past;
+    }
+
+    /// <summary>
+    /// The swayed road moves no more earth than the plain one (<paramref name="plain"/>, <see cref="EarthOf"/>), both measured
+    /// as every road's earthwork is, across the road's width (<see cref="RoadNetworkGenerator.EarthworkAcross"/>): its deepest
+    /// cut or fill is within <see cref="EarthSlack"/> of the plain one's, and it has no more points past the shaped limit
+    /// (<see cref="RoadNetworkGenerator.ShapedLimit"/>). The deepest sample and a count of points, not a volume.
+    /// </summary>
+    internal static bool NoMoreEarth(RoadSpatialGrid.PlannedPath swayed, RoadNetworkGenerator.Earthwork plain, Func<Vector2, float> ground)
+    {
+        RoadNetworkGenerator.Earthwork s = EarthOf(swayed, ground);
+        return s.Worst <= plain.Worst + EarthSlack && s.Past <= plain.Past;
     }
 }

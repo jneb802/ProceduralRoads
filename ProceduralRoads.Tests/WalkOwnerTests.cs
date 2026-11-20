@@ -26,13 +26,18 @@ public class WalkOwnerTests
     {
         // ---- The owner ----
         new("Roads/StairLayout.cs", "public const float StepUp = 0.2f;", "the walker's step"),
-        new("Roads/StairLayout.cs", "Walkable(float a, float b) => Mathf.Abs(a - b) <= StepUp", "the one walk test"),
+        new("Roads/StairLayout.cs", "Walkable(float a, float b) => FloatBits.Abs(a - b) <= StepUp", "the one walk test"),
 
         // ---- Not a walk between two heights ----
+        new("Roads/RoadNetworkGenerator.cs", "? FloatBits.Abs(rise) > StairLayout.StepUp", "the most a road may move the ground under a placed Location's own piece, either way (PlannedGround.Moved): a change to a piece's ground, not a walk between two heights"),
         new("Roads/RockClearances.cs", "highest + StairLayout.StepUp", "the rock layer over the treads a lump on them is in, not a walk"),
         new("Roads/RoadStairRuns.cs", "CrestStubJoinReach, StairLayout.StepUp, clip", "two staircases' tops joined top to top (no road): JoinTops' height tolerance, a whole number of rises apart within it (two calls)"),
-        new("Roads/StairEnds.cs", "d <= StairLayout.StepUp && d >= -over", "the end reader's step-off band, one-sided: a step under the edge, up to a rise over a low edge (StepsOff)"),
-        new("Roads/StairEnds.cs", "Mathf.Abs(off + StairLayout.StepUp), Mathf.Abs(off - over)", "the distance to the same band, for the nearest miss"),
+        new("Roads/RoadStairRuns.PlacedLocations.cs", "ground - surface <= StairLayout.StepUp", "a walking surface up to a step under the ground, one-sided: the step up onto it (SurfaceUnderGroundAllowed: a raised landing's walk, an onward floor's corners)"),
+        new("Roads/StairEnds.cs", "EdgeIn(a, b, StairLayout.StepUp)", "the one floor-lands rule's band over the walk: a step, the band's under side Walkable's (EdgeLands)"),
+        new("Roads/StairEnds.cs", "Exit(d, StairLayout.StepUp, joined", "a floor's exit by the same band: a step over the walk (Exit)"),
+        new("Roads/StairEnds.cs", "StepsOff(back, o, hs[1], length, StairLayout.StepUp", "a floor's edge read by the end reader in the same band: a step over the walk"),
+        new("Roads/StairEnds.cs", "FloatBits.Abs(d - StairLayout.StepUp), FloatBits.Abs(d + over)", "the distance to the step-off band, for the corner furthest from it (StepsOff's line)"),
+        new("Roads/StairEnds.cs", "FloatBits.Abs(off + StairLayout.StepUp), FloatBits.Abs(off - over)", "the distance to the same band, for the nearest miss"),
         new("Roads/StairEnds.cs", "StairLayout.PieceRise : StairLayout.StepUp", "the band's other side: a rise at a stair's low edge, else a step"),
         new("Roads/StairEnds.cs", "seq[0].Walk(seq[0].Depth) > g + StairLayout.StepUp", "a foot's stairs sunk in the ground: their high edge no more than a step over it, one-sided"),
         new("Roads/StairEnds.cs", "gl - seq[0].Walk(0f) <= StairLayout.StepUp", "a sunk stair's low edge more than a step under the ground, one-sided"),

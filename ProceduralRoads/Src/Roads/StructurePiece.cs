@@ -45,6 +45,9 @@ public sealed class StructurePiece
     /// <summary>The crossing whose bridge the piece is part of, null for any other structure: its kit is chosen when its
     /// first piece is built (BridgeStructures.ChooseKit). Plans only: not saved.</summary>
     public RoadCrossing? Crossing;
+    /// <summary>The staircase this planned piece belongs to. Plans only: its stored walk clears only when some piece of
+    /// this run may be laid (StructurePlans.BuildableStaircases), including when the piece under a walking box is buried.</summary>
+    public StairRun? Staircase;
     /// <summary>The kit the crossing's pieces were solved in (BridgeStructures.Solve), saved on the crossing when its first
     /// piece is built, so a bridge is built in the kit its plan has. Null for any other structure. Plans only: not saved.</summary>
     public BridgeStructures.Kit? Kit;

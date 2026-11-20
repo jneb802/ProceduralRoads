@@ -368,13 +368,14 @@ public class LoadDecisionTests : System.IDisposable
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
         if (kind == "version 99") { w.Write(99); w.Write(0); return ms.ToArray(); }
-        // A v4 envelope (this build's own format) holding one bad point.
-        w.Write(4); w.Write(2); w.Write(1);
+        // This build's own format holding one bad point.
+        w.Write(RoadSpatialGrid.SavedFormat); w.Write(RoadSpatialGrid.SavedEncoding); w.Write(1);
         w.Write(0); w.Write(0); w.Write(1);
         w.Write(1f); w.Write(2f);
         w.Write(kind == "width 0" ? 0f : 4f);
         w.Write(kind == "NaN height" ? float.NaN : 40f);
-        w.Write(false);
+        w.Write(false); w.Write(false); w.Write(false); w.Write(false); w.Write(false); w.Write(0);
+        w.Write(0);
         w.Write((byte)0); w.Write(0f);
         return ms.ToArray();
     }
@@ -389,12 +390,12 @@ public class LoadDecisionTests : System.IDisposable
         try { NeverReplaced(kind); }
         finally { BepInEx.Logging.ManualLogSource.Captured = null; }
 
-        // The error says why: the envelope and encoding read, and the check that failed.
+        // The error says why: the format and encoding read, and the check that failed.
         string expected = kind switch
         {
-            "version 99" => "cannot read (envelope 99, encoding 99: a format this build does not know",
-            "NaN height" => "cannot read (envelope 4, encoding 2: point 0 of cell (0,0) has position (1,2), width 4, height NaN",
-            "width 0" => "cannot read (envelope 4, encoding 2: point 0 of cell (0,0) has position (1,2), width 0, height 40",
+            "version 99" => "cannot read (format 99, encoding 99: a format this build does not know",
+            "NaN height" => "cannot read (format 4, encoding 8: point 0 of cell (0,0) has position (1,2), width 4, height NaN",
+            "width 0" => "cannot read (format 4, encoding 8: point 0 of cell (0,0) has position (1,2), width 0, height 40",
             _ => throw new System.ArgumentException(kind),
         };
         Assert.Contains(log, l => l.Contains(expected));
@@ -421,5 +422,18 @@ public class LoadDecisionTests : System.IDisposable
         Assert.Equal(0, RoadSpatialGrid.StoredPointRecords);
         RoadLifecycleManager.OnPrepareSave();
         Assert.Equal(saved, metadata.GetByteArray(globalData));
+    }
+
+    /// <summary>The roads subscribe to a world from the first of the mods' ZoneSystem.Start postfixes: one that throws before it
+    /// would leave the load decision waiting forever. The patch is not compiled here (Harmony): its attributes are read from
+    /// its source, as the write paths' guards are (ClientNetworkSyncTests.EveryWritePathAsksTheWriteOwner).</summary>
+    [Fact]
+    public void TheZoneSystemStartPostfixRunsFirst()
+    {
+        string file = Path.Combine(OwnersDocTests.RepoRoot(), "ProceduralRoads", "Src", "Patches", "ZoneSystem_Patch.cs");
+        string code = System.Text.RegularExpressions.Regex.Replace(OwnerLiteralTests.Code(File.ReadAllText(file)), @"\s+", " ");
+        Assert.Contains("[HarmonyPatch(typeof(ZoneSystem), nameof(ZoneSystem.Start))] public static class ZoneSystem_Start_Patch { " +
+            "[HarmonyPostfix] [HarmonyPriority(Priority.First)] public static void Postfix(ZoneSystem __instance) " +
+            "{ RoadLifecycleManager.OnZoneSystemStart(__instance); }", code);
     }
 }

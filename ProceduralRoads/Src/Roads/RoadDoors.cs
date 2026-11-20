@@ -8,7 +8,8 @@ namespace ProceduralRoads;
 /// <summary>
 /// A location's door: a point on the ring a road stops at (<see cref="RoadNetworkGenerator.KeepOutEdge(Vector2, float, float)"/>,
 /// out by <see cref="PlacedLocations.AimOut"/>) where it can meet the location, with the point the search ends at a search cell
-/// further out (<see cref="LeadIn"/>, the road then running straight in), the ground's height there, the bearing in, and
+/// further out (<see cref="LeadIn"/>, the road then running straight in: at a placed location, back along its way in,
+/// <see cref="RoadNetworkGenerator.LeadInOnTheWayIn"/>), the ground's height there, the bearing in, and
 /// what arriving there costs on top of the road (<see cref="Price"/>).
 /// </summary>
 internal readonly struct RoadDoor
@@ -26,7 +27,7 @@ public static partial class RoadNetworkGenerator
     /// <summary>Each location's doors, built once a generation: at preparation for every destination chosen
     /// (<see cref="CatalogueDoors"/>), else the first time a road asks (a manual road, an island made again). Kept apart
     /// for a location placed first and the same location not yet placed; forgotten with the network (ResetData).</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<((int, int) location, int radius, int width, bool placed), RoadDoor[]> s_doors = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<((float, float) location, int radius, int width, bool placed), RoadDoor[]> s_doors = new();
     private static int m_doorLocations, m_doorCount, m_doorlessLocations, m_levelDoorLocations, m_unlevelLocations;
     private static int m_doorRoads, m_doorRoadsFound, m_doorFallbacks;
 
@@ -57,15 +58,14 @@ public static partial class RoadNetworkGenerator
     private static RoadDoor[] BuildDoors(Vector2 centre, float radius, float width)
     {
         var world = GenerationWorld!;
-        bool placed = PlacedLocations.TryGetReady(centre, out PlacedLocation placedLocation);
+        bool placed = PlacedLocations.TryGetReady(centre, out PlacedLocation location);
         float ring = DoorRing(centre, radius, width, placed);
         float bearing = 0f, level;
         if (placed)
         {
-            Vector2 toward = placedLocation.Shape.Landing - placedLocation.Centre;
-            if (toward.sqrMagnitude < 1e-4f) toward = placedLocation.Shape.Front;
-            bearing = Mathf.Atan2(toward.x, toward.y) * Mathf.Rad2Deg;
-            level = placedLocation.LandingHeight;
+            // Priced from the landing its road aims for first (PlacedLocation.EntranceBearing, EntranceArc: the entrance preference).
+            bearing = location.EntranceBearing;
+            level = location.LandingHeight;
         }
         else level = float.NaN;
         int count = Mathf.RoundToInt(360f / PlacedLocations.AimStep);
@@ -75,22 +75,28 @@ public static partial class RoadNetworkGenerator
             float b = bearing + i * PlacedLocations.AimStep;
             Vector2 out1 = new Vector2(Mathf.Sin(b * Mathf.Deg2Rad), Mathf.Cos(b * Mathf.Deg2Rad));
             Vector2 at = centre + out1 * ring, leadIn = at + out1 * LeadInLength;
+            // A placed location's road comes in head on to its way in (LeadInOnTheWayIn), not to its centre.
+            if (placed && LeadInOnTheWayIn(at, location, width) is Vector2 onTheWayIn) leadIn = onTheWayIn;
             if (!RoadCrossingDetector.IsRoadGround(at, world) || !RoadCrossingDetector.IsRoadGround(leadIn, world)) continue;
-            // None behind a location entered only from its front (PlacedLocationShape.OnEntranceSide): a road ending there does not reach it.
-            if (placed && !placedLocation.Shape.OnEntranceSide(at)) continue;
-            float height = placed ? placedLocation.Ground(at.x, at.y)
-                : ApproachGround(at, centre, ring) ?? BiomeBlendedHeight.GetBlendedHeight(at.x, at.y, world);
+            // None on a side a placed Location may not be come to from at all (PlacedLocation.OnEntranceSide: a blocked back). Every
+            // other side is offered, priced by its arc from the entrance (PlacedLocation.EntranceArc): a road ends nearer the entrance
+            // where it can, and on the Location's levelled ground on another side where the entrance side is blocked.
+            if (placed && !location.OnEntranceSide(at)) continue;
+            float height = placed ? location.Ground(at.x, at.y)
+                : ApproachGround(at, centre, ring) ?? GroundBeforeRoads(at.x, at.y, world);
             float arrive = placed ? level : ArrivalHeight(centre, radius, at) ?? float.NaN;
-            float off = float.IsNaN(arrive) ? 0f : Mathf.Abs(height - arrive);
-            float round = placed ? Mathf.Min(i, count - i) * PlacedLocations.AimStep * Mathf.Deg2Rad * ring : 0f;
-            doors.Add(new RoadDoor(at, leadIn, height, (b + 180f) % 360f, DoorWeight * (round + PlacedLocations.AimRise * off), off <= ReachRise));
+            float off = float.IsNaN(arrive) ? 0f : FloatBits.Abs(height - arrive);
+            float round = placed ? PlacedLocation.EntranceArc(Mathf.Min(i, count - i) * PlacedLocations.AimStep, ring) : 0f;
+            Vector2 inward = at - leadIn;
+            float heading = (Mathf.Atan2(inward.x, inward.y) * Mathf.Rad2Deg + 360f) % 360f;
+            doors.Add(new RoadDoor(at, leadIn, height, heading, DoorWeight * (round + PlacedLocations.AimRise * off), off <= ReachRise));
         }
         if (RoadsLog)
         {
             System.Threading.Interlocked.Increment(ref m_doorLocations);
             System.Threading.Interlocked.Add(ref m_doorCount, doors.Count);
             if (doors.Count == 0) System.Threading.Interlocked.Increment(ref m_doorlessLocations);
-            if (!placed && ApproachStairsAt(centre, PrefabAt(centre)))
+            if (!placed && ApproachStairsAt(centre, LocationPrefabLevelling.PrefabAt(centre)))
             {
                 if (doors.Exists(d => d.Level)) System.Threading.Interlocked.Increment(ref m_levelDoorLocations);
                 else System.Threading.Interlocked.Increment(ref m_unlevelLocations);
@@ -99,13 +105,47 @@ public static partial class RoadNetworkGenerator
         return doors.ToArray();
     }
 
-    /// <summary>The door catalogue for every destination chosen, built at preparation.</summary>
-    private static void CatalogueDoors(GenerationWork work)
+    /// <summary>
+    /// A placed location's door's lead-in: a search cell (<see cref="LeadInLength"/>) back along the line its way onto the landing
+    /// leaves the door (<see cref="RoadLocationEntry.Route"/> onto the landing its road aims for first, <see cref="PlacedLocation.Aim"/>,
+    /// the landing the door's price is read from), so the road comes in head on to its way in and carries straight on. Null where
+    /// that line would put the lead-in no further from the centre than the door (the way in leaves it outward, round a lead-round
+    /// ring wider than the door's): the door's radial lead-in then. Come in radially to a door off the landing's bearing, the road
+    /// turned at the door onto the way in's lead round the location, and again onto the front: two tight turns back to back (a
+    /// SunkenCrypt4's and a TrollCave02's roads folded back on themselves so on open ground).
+    /// </summary>
+    internal static Vector2? LeadInOnTheWayIn(Vector2 at, PlacedLocation location, float width)
     {
+        PlacedLocationShape aim = location.Aim;
+        PlacedLocationShape.Walker walker = PlacedLocationShape.Walker.Road(width);
+        List<Vector2> line = RoadLocationEntry.Route(at, aim, RoadLocationEntry.WayInEnd(aim, at, walker), walker);
+        Vector2 leaves = line[1] - at;
+        if (leaves.sqrMagnitude < 1e-4f) return null;
+        Vector2 leadIn = at - leaves.normalized * LeadInLength;
+        return (leadIn - location.Centre).sqrMagnitude > (at - location.Centre).sqrMagnitude ? leadIn : null;
+    }
+
+    /// <summary>The door catalogue for every destination chosen, built at preparation.</summary>
+    /// <remarks>A step per location, so the preparation's frame budget slices it (RoadPreparation.Advance): a placed Location's
+    /// doors each lead in on its way in (LeadInOnTheWayIn: its route and its end, walked against its body's rocks), and in game,
+    /// with the prefabs' own rocks read, the whole catalogue in one step held the main thread 3.6 s.</remarks>
+    internal static IEnumerable<bool> CatalogueDoors(GenerationWork work, RoadPreparation preparation)
+    {
+        preparation.BeginStage("Cataloguing doors", work.Islands.Sum(i => i.Locations.Count + (i.Spawn.HasValue ? 1 : 0)), "locations");
         foreach (IslandWork island in work.Islands)
         {
-            foreach (var loc in island.Locations) DoorsOf(new Vector2(loc.position.x, loc.position.z), loc.radius, RoadWidth);
-            if (island.Spawn is Vector3 spawn) DoorsOf(new Vector2(spawn.x, spawn.z), island.Radius, RoadWidth);
+            foreach (var loc in island.Locations)
+            {
+                DoorsOf(new Vector2(loc.position.x, loc.position.z), loc.radius, RoadWidth);
+                preparation.CompleteUnit();
+                yield return true;
+            }
+            if (island.Spawn is Vector3 spawn)
+            {
+                DoorsOf(new Vector2(spawn.x, spawn.z), island.Radius, RoadWidth);
+                preparation.CompleteUnit();
+                yield return true;
+            }
         }
     }
 
@@ -141,7 +181,7 @@ public static partial class RoadNetworkGenerator
     {
         var world = GenerationWorld;
         if (radius <= 0f || world == null || PlacedLocations.TryGetReady(centre, out _) || !HeightNeeded(centre)) return false;
-        return !(ApproachStairsAt(centre, PrefabAt(centre))
+        return !(ApproachStairsAt(centre, LocationPrefabLevelling.PrefabAt(centre))
             && LocationLevelling.PlatformHeight(LocationLevelling.CentreHeight(centre, world), LocationLevelling.OpsAt(centre)) != null);
     }
 
@@ -171,7 +211,7 @@ public static partial class RoadNetworkGenerator
     /// placed location's ring point or at a location's centre, built 5 of 492 such roads.)
     /// </summary>
     private static bool GenerateRoadByDoors(Vector2 startCenter, float startRadius, Vector2 endCenter, float endRadius,
-        float width, string? label, List<Vector2>? networkHints)
+        float width, string? label, List<Vector2>? networkHints, Vector2? joinedThrough)
     {
         if (NoLevelDoor(startCenter, startRadius, width) || NoLevelDoor(endCenter, endRadius, width))
         {
@@ -187,15 +227,20 @@ public static partial class RoadNetworkGenerator
             Finder!.ClearNoStairs();
             trial.Taken.Clear();
             trial.Found = false;
-            bool built = GenerateRoadCore(startCenter, startRadius, endCenter, endRadius, width, label, networkHints, default);
+            bool built = GenerateRoadCore(startCenter, startRadius, endCenter, endRadius, width, label, networkHints, joinedThrough, default);
             if (RoadsLog && built && n > 0) System.Threading.Interlocked.Increment(ref m_doorRetriesBuilt);
             if (built || trial.Taken.Count == 0 || !trial.Found || n + 1 >= DoorTries) return built;
-            // It arrived the way another way into the location does (ReEndOnAWayIn): it ends on that way's road (GenerateRoad),
-            // not on another door of its own.
+            // A duplicate of a way into the location (ReEndOnAWayIn, PlanStop.Duplicate): dropped or searched again from that way's road (GenerateRoad), never tried
+            // at another door of its own.
             if (t_reEnd != null) return false;
             trial.Tried.AddRange(trial.Taken);
             if (RoadsLog) System.Threading.Interlocked.Increment(ref m_doorRetries);
-            if (RoadsLog && label != null) Log.LogDebug($"Road {label}: refused from the door{(trial.Taken.Count > 1 ? "s" : "")} it took ({string.Join(", ", trial.Taken)}: {RoadSpatialGrid.LastRefusal}); searched again to the others");
+            if (RoadsLog && label != null)
+            {
+                // Each door once: every sub-search within the road notes the doors it took (NoteDoorsTaken).
+                var taken = trial.Taken.Distinct().ToList();
+                Log.LogDebug($"Road {label}: refused from the door{(taken.Count > 1 ? "s" : "")} it took ({string.Join(", ", taken)}: {RoadSpatialGrid.LastRefusal}); searched again to the others");
+            }
         }
     }
 
@@ -218,7 +263,7 @@ public static partial class RoadNetworkGenerator
             {
                 Vector2 tOut = t - centre;
                 // A door of this location (on its ring), not of the road's other end.
-                if (Mathf.Abs(tOut.magnitude - out1.magnitude) > 1f) continue;
+                if (FloatBits.Abs(tOut.magnitude - out1.magnitude) > 1f) continue;
                 if (Vector2.Dot(tOut, out1) >= near * tOut.magnitude * out1.magnitude) { taken = true; break; }
             }
             if (!taken) left.Add(d);

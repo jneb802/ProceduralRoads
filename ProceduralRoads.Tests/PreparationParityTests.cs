@@ -15,11 +15,19 @@ public class PreparationParityTests
     private sealed class Landscape : WorldGenerator
     {
         internal int Kind;
-        internal readonly HashSet<int> ReadThreads=new();
-        internal int Reads;
+        /// <summary>The reads each thread made, counted from every thread: the terrain is mapped on the island workers.</summary>
+        internal readonly System.Collections.Concurrent.ConcurrentDictionary<int,int> ReadThreads=new();
+        /// <summary>While set, a read east of x = 0 off <see cref="Preparer"/> waits until it is cleared (or 10 s pass).</summary>
+        internal readonly ManualResetEventSlim Open=new(true);
+        internal int Preparer=-1;
+        /// <summary>Reads that waited on <see cref="Open"/>.</summary>
+        internal int Held;
+        internal int Total => ReadThreads.Values.Sum();
         public override float GetHeight(float x,float z)
         {
-            ReadThreads.Add(Thread.CurrentThread.ManagedThreadId); Reads++;
+            int me=Thread.CurrentThread.ManagedThreadId;
+            ReadThreads.AddOrUpdate(me,1,(_,n)=>n+1);
+            if(x>0 && me!=Preparer && !Open.IsSet) { Interlocked.Increment(ref Held); Open.Wait(10000); }
             return Kind==2 ? x<0?25:33 : Math.Abs(x)<24 ? Kind==1?29:20 : 40;
         }
         public override Heightmap.Biome GetBiome(float x,float z,float oceanLevel=.02f,bool waterAlwaysOcean=false) => Kind==1?Heightmap.Biome.Swamp:Heightmap.Biome.Meadows;
@@ -34,34 +42,90 @@ public class PreparationParityTests
     public void OriginalDetectorOrderedGeometryIsPreserved(int kind,string expected)
     {
         var world=new Landscape {Kind=kind}; using var scope=new ValheimWorldScope(); scope.WithWorld(world);
-        var islands=RoadIslandDetector.Detect(world,worldRadius:256,minArea:1,options:new());
+        // The pinned hashes include the shore landings, which are off as shipped: the search is on for this pin.
+        var given=RoadCoastalLandings.GivenIn; RoadCoastalLandings.GivenIn=_=>true;
+        List<Island> islands; try { islands=RoadIslandDetector.Detect(world,worldRadius:256,minArea:1,options:new()); } finally { RoadCoastalLandings.GivenIn=given; }
         Assert.Equal(expected,Fingerprint(islands));
     }
+    /// <summary>
+    /// The terrain is mapped on the island workers while the preparation waits a frame at a time: with the workers held
+    /// in the world's eastern half, the preparation keeps ending its slices in "Mapping island terrain", its progress the
+    /// western columns done and never past its total, with no island published and no terrain read on its own thread. Let
+    /// go, it ends with the islands one drained detection finds (OriginalDetectorOrderedGeometryIsPreserved pins those).
+    /// </summary>
     [Theory]
     [InlineData(0)] [InlineData(1)] [InlineData(2)] [InlineData(3)]
     public void TinySlicesRetainOriginalOrderedOutputAndDoNotPublishPartialIslands(int kind)
     {
         var world=new Landscape {Kind=kind}; using var scope=new ValheimWorldScope(); scope.WithWorld(world);
         var expected=RoadIslandDetector.Detect(world,worldRadius:256,minArea:1,options:new());
+        int me=Thread.CurrentThread.ManagedThreadId;
+        world.Preparer=me;
         List<Island>? result=null;
         using var preparation=new RoadPreparation(p=>RoadIslandDetector.DetectSteps(world,p,value=>result=value,minArea:1,worldRadius:256,options:new()));
         int oldLimit=RoadPreparation.CheckpointsPerTickForTests;
         RoadPreparation.CheckpointsPerTickForTests=1;
         var slices=new Dictionary<string,int>();
+        long mapped=0;
         try
         {
+            while(preparation.Stage!="Mapping island terrain") Assert.False(preparation.Advance());
+            world.Open.Reset(); world.ReadThreads.Clear();
+            var held=System.Diagnostics.Stopwatch.StartNew();
+            while(held.ElapsedMilliseconds<200 || mapped==0)
+            {
+                Assert.True(held.ElapsedMilliseconds<5000,"the western columns were never counted");
+                Assert.False(preparation.Advance());
+                Assert.Null(result);
+                Assert.Equal("Mapping island terrain",preparation.Stage);
+                Assert.InRange(preparation.Completed,mapped,preparation.Total-1);
+                mapped=preparation.Completed;
+                slices.TryGetValue(preparation.Stage,out int count); slices[preparation.Stage]=count+1;
+            }
+            Assert.False(world.ReadThreads.ContainsKey(me),"the terrain was read on the preparation's thread");
+            Assert.NotEmpty(world.ReadThreads);
+            world.Open.Set();
             while(!preparation.Advance())
             {
                 Assert.Null(result);
-                slices.TryGetValue(preparation.Stage,out int count); slices[preparation.Stage]=count+1;
                 if(preparation.Total>0) Assert.InRange(preparation.Completed,0,preparation.Total);
             }
         }
-        finally { RoadPreparation.CheckpointsPerTickForTests=oldLimit; }
+        finally { world.Open.Set(); RoadPreparation.CheckpointsPerTickForTests=oldLimit; }
         Assert.True(slices["Mapping island terrain"]>8,
-            "The real raster must yield inside its loop, not only at phase boundaries.");
+            "The preparation must wait for the mapping a frame at a time, not block until it is done.");
         Assert.Equal(Fingerprint(expected),Fingerprint(result!));
-        Assert.Equal(new[] {Thread.CurrentThread.ManagedThreadId},world.ReadThreads);
+    }
+    /// <summary>
+    /// A preparation disposed in the middle of the mapping (a generation cancelled, its world unloaded) waits for the runs it
+    /// started: the dispose returns only once the held runs are let go and have stopped, no thread reads the world after it,
+    /// and the river window the mapping opened is closed again.
+    /// </summary>
+    [Fact]
+    public void DisposingInTheMiddleOfTheMappingWaitsForItsRunsAndClosesTheRiverWindow()
+    {
+        var world=new Landscape {Kind=3}; using var scope=new ValheimWorldScope(); scope.WithWorld(world);
+        world.Preparer=Thread.CurrentThread.ManagedThreadId;
+        var preparation=new RoadPreparation(p=>RoadIslandDetector.DetectSteps(world,p,_=>Assert.Fail("published"),minArea:1,worldRadius:256,options:new()));
+        int oldLimit=RoadPreparation.CheckpointsPerTickForTests;
+        RoadPreparation.CheckpointsPerTickForTests=1;
+        try
+        {
+            while(preparation.Stage!="Mapping island terrain") Assert.False(preparation.Advance());
+            world.Open.Reset();
+            Assert.False(preparation.Advance());
+            Assert.True(SpinWait.SpinUntil(()=>world.Held>0,5000),"no run reached the held half");
+            Assert.True(SpinWait.SpinUntil(()=>RiverWeightReads.Indexed(world),5000),"the river window was not opened");
+            var disposing=new Thread(preparation.Dispose) {IsBackground=true}; disposing.Start();
+            Assert.False(disposing.Join(200),"the dispose did not wait for the held runs");
+            world.Open.Set();
+            Assert.True(disposing.Join(5000),"the dispose did not end once the runs were let go");
+            int reads=world.Total;
+            Thread.Sleep(100);
+            Assert.Equal(reads,world.Total);
+            Assert.False(RiverWeightReads.Indexed(world));
+        }
+        finally { world.Open.Set(); preparation.Dispose(); RoadPreparation.CheckpointsPerTickForTests=oldLimit; }
     }
     [Fact]
     public void ActiveTimingExcludesTimeBetweenFramesAndDisposalClosesNestedWork()

@@ -36,6 +36,19 @@ public class Island
     }
     
     public bool ContainsPoint(Vector3 worldPos) => ContainsPoint(worldPos.x, worldPos.z);
+
+    /// <summary>The zones holding any of the island's cells (each cell is far smaller than a zone, so it lies in one): the
+    /// land road_regen_island builds in, every other zone being off the island.</summary>
+    public HashSet<Vector2s> Zones()
+    {
+        var zones = new HashSet<Vector2s>();
+        foreach (Vector2Int cell in Cells)
+        {
+            Vector2 p = CellToWorld(cell);
+            zones.Add(ZoneSystem.GetZone(new Vector3(p.x, 0f, p.y)));
+        }
+        return zones;
+    }
     
     public Vector2 GetEdgePoint()
     {
@@ -47,10 +60,10 @@ public class Island
         foreach (var cell in Cells)
         {
             Vector2 worldPos = CellToWorld(cell);
-            float distToMinX = Mathf.Abs(worldPos.x - Min.x);
-            float distToMaxX = Mathf.Abs(worldPos.x - Max.x);
-            float distToMinY = Mathf.Abs(worldPos.y - Min.y);
-            float distToMaxY = Mathf.Abs(worldPos.y - Max.y);
+            float distToMinX = FloatBits.Abs(worldPos.x - Min.x);
+            float distToMaxX = FloatBits.Abs(worldPos.x - Max.x);
+            float distToMinY = FloatBits.Abs(worldPos.y - Min.y);
+            float distToMaxY = FloatBits.Abs(worldPos.y - Max.y);
             float minDist = Mathf.Min(distToMinX, distToMaxX, distToMinY, distToMaxY);
             
             if (minDist < minDistToEdge)
@@ -93,12 +106,17 @@ public static class IslandDetector
         using var preparation=new RoadPreparation(p=>DetectRoadIslandsSteps(WorldGenerator.instance,RoadNetworkGenerator.NetworkOptions,p,value=>result=value));
         preparation.Drain(); return result!;
     }
+    /// <summary>Whether generation's island scan is bounded to the world's land (<see cref="RoadIslandDetector.DetectSteps"/>'s
+    /// toLand): the same islands, scanned faster on a world whose land lies near its centre. Off in the game, which scans
+    /// the whole world; on in the unit suite (PlainRoads), whose small worlds would otherwise each scan 6.25 M cells.</summary>
+    internal static bool BoundedScan = false;
+
     internal static IEnumerable<bool> DetectRoadIslandsSteps(WorldGenerator world,RoadNetworkOptions options,
         RoadPreparation preparation,System.Action<List<Island>> complete)
     {
         var clock=System.Diagnostics.Stopwatch.StartNew();
         List<Island>? islands=null;
-        foreach(var step in RoadIslandDetector.DetectSteps(world,preparation,value=>islands=value,options:options)) yield return step;
+        foreach(var step in RoadIslandDetector.DetectSteps(world,preparation,value=>islands=value,options:options,toLand:BoundedScan)) yield return step;
         Log.LogInfo($"Road island detection: {islands!.Count} groups at {RoadIslandDetector.SampleSpacing} m in {clock.Elapsed.TotalSeconds:F1}s");
         complete(islands);
     }

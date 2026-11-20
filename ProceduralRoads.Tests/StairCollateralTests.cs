@@ -16,14 +16,14 @@ public class StairCollateralTests : IDisposable
 {
     private readonly ValheimWorldScope _scope = new();
 
-    /// <summary>A scarp of 1.2 from 40 to 52 (no road climbs it), a 50 m bench, then a long slope of 0.6 to 76 a road
+    /// <summary>A scarp of 1.2 from 40 to 49.6 (no road climbs it; its rim at x = 8, on a search cell line), a 50 m bench, then a long slope of 0.5 to 73.6 (to x = 108, on a cell line) a road
     /// climbs in switchbacks. Sea past 200 m.</summary>
     private sealed class TwoFaceWorld : WorldGenerator
     {
         public override float GetHeight(float wx, float wy)
         {
             if (Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f) return 0f;
-            return 40f + Mathf.Clamp(wx * 1.2f, 0f, 12f) + Mathf.Clamp((wx - 60f) * 0.6f, 0f, 24f);
+            return 40f + Mathf.Clamp(wx * 1.2f, 0f, 9.6f) + Mathf.Clamp((wx - 60f) * 0.5f, 0f, 24f);
         }
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
         public override int GetSeed() => 77;
@@ -51,7 +51,7 @@ public class StairCollateralTests : IDisposable
 
         bool built = RoadNetworkGenerator.GenerateRoad(new Vector2(-60f, 0f), 0f, new Vector2(140f, 0f), 0f, 4f, "two faces");
 
-        Assert.True(built, "not built");
+        Assert.True(built, RoadSpatialGrid.LastRefusal ?? "not built");
         Assert.Contains(StairStructures.Runs, r => r.Pieces.Any(p => p.Position.x > 0f && p.Position.x < 12f));
         Assert.DoesNotContain(StairStructures.Runs, r => r.Pieces.Any(p => p.Position.x > 62f));
     }

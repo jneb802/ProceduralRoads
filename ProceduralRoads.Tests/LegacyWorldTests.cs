@@ -223,8 +223,14 @@ public sealed class LegacyWorldTests : IDisposable
     [Fact]
     public void AClearedGridForgetsAnEarlierNetworksAppends()
     {
-        Assert.True(RoadSpatialGrid.DeserializeAllRoadPoints(RoadStatisticsTests.Legacy(3, empty: true)));
+        var road = new List<Vector2> { new(-40f, 60f), new(40f, 60f) };
+        RoadSpatialGrid.AddRoadPath(road, 4f, WorldGenerator.instance!);
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        var manual = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { new(-40f, 90f), new(40f, 90f) }, 4f, WorldGenerator.instance!)!;
+        RoadSpatialGrid.CommitAppend(new[] { manual }, RoadSpatialGrid.RoadNetworkVersion);
+        Assert.Equal(1, RoadSpatialGrid.AppendCount);
         RoadNetworkPersistence.Reset(); RoadSpatialGrid.Clear(); RoadNetworkGenerator.Reset();
+        Assert.Equal(0, RoadSpatialGrid.AppendCount);
 
         SaveAsReleased144();
         Assert.True(Released144.Reads(Blob, out int points));

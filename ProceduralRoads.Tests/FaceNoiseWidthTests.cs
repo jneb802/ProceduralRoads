@@ -26,6 +26,43 @@ public class FaceNoiseWidthTests
             Heightmap.Biome.Mistlands;
     }
 
+    /// <summary>Meadows west of x = 0, Mistlands from it on: a border through the middle of the heightmaps of the zones at
+    /// x = 0 (corners at x = -32 and x = 32).</summary>
+    private sealed class BorderWorld : SyntheticWorld
+    {
+        public override Heightmap.Biome GetBiome(float x, float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) =>
+            x >= 0f ? Heightmap.Biome.Mistlands : Heightmap.Biome.Meadows;
+    }
+
+    [Fact]
+    public void AFaceAcrossAMistlandsBorderChangesItsDetailAsSmoothlyAsTheGround()
+    {
+        // The detail was read at the vertex's own biome: between x = -1 and x = 0 a face went from the global 2 m and 0.6 m
+        // to the Mistlands' 6 m and 2 m in one vertex step, a seam along the border. It now follows the ground's own blend
+        // (the heightmap corners, as the game blends their heights), so no step across the border is steeper than one inside
+        // the Mistlands, where the detail is at its strongest.
+        using var scope = new ValheimWorldScope();
+        using var overrides = StaticOverride.Keep(() => RoadEarthworkNoise.Amplitude);
+        RoadEarthworkNoise.Amplitude = 1f;
+        scope.WithWorld(new BorderWorld { HasRiver = false, HasMountain = false });
+        const float blend = 0.5f, earthwork = 3f, face = 10f;
+        float Bump(int x, int z) => RoadEarthworkNoise.FaceBump(new Vector2(x, z), blend, earthwork, face);
+        float border = 0f, mist = 0f;
+        for (int z = 0; z < 400; z++)
+        {
+            border = Mathf.Max(border, Mathf.Abs(Bump(0, z) - Bump(-1, z)));
+            for (int x = 40; x < 95; x++) mist = Mathf.Max(mist, Mathf.Abs(Bump(x + 1, z) - Bump(x, z)));
+        }
+        _output.WriteLine($"largest step: across the border {border:F3} m, inside the Mistlands {mist:F3} m");
+        Assert.True(border <= mist, $"a {border:F3} m step across the border, {mist:F3} m at most inside the Mistlands");
+        // Each biome keeps its own detail where its ground is its own, and the border's middle carries half of each.
+        Assert.Equal((RoadRules.Mistlands.FaceDetailCoarse, RoadRules.Mistlands.FaceDetailFine), RoadEarthworkNoise.DetailHere(new Vector2(64f, 5f)));
+        Assert.Equal((RoadRules.Meadows.FaceDetailCoarse, RoadRules.Meadows.FaceDetailFine), RoadEarthworkNoise.DetailHere(new Vector2(-64f, 5f)));
+        var (coarse, fine) = RoadEarthworkNoise.DetailHere(new Vector2(0f, 5f));
+        Assert.Equal(0.5f * (RoadRules.Mistlands.FaceDetailCoarse + RoadRules.Meadows.FaceDetailCoarse), coarse, 4);
+        Assert.Equal(0.5f * (RoadRules.Mistlands.FaceDetailFine + RoadRules.Meadows.FaceDetailFine), fine, 4);
+    }
+
     /// <summary>The deltas a fill of <paramref name="fill"/> metres leaves, written from <paramref name="points"/> (made at
     /// the natural height at the origin), with the noise on or off and no fill spread; that height; and the natural ground
     /// at each vertex.</summary>
@@ -98,8 +135,8 @@ public class FaceNoiseWidthTests
             {
                 steepOn = Mathf.Max(steepOn, Mathf.Abs(on[Index(x, z)] - on[Index(x, z + 1)]));
                 steepOff = Mathf.Max(steepOff, Mathf.Abs(off[Index(x, z)] - off[Index(x, z + 1)]));
-                scaled = Mathf.Max(scaled, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, true, face)));
-                full = Mathf.Max(full, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, true)));
+                scaled = Mathf.Max(scaled, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, RoadRules.Mistlands, face)));
+                full = Mathf.Max(full, Mathf.Abs(RoadEarthworkNoise.Detail(x, z, RoadRules.Mistlands)));
             }
         }
         _output.WriteLine($"steepest face step: noise {steepOn:F3} m, plain {steepOff:F3} m; most detail on the face {scaled:F3} m (full {full:F3} m)");
@@ -143,7 +180,7 @@ public class FaceNoiseWidthTests
         float margin = RoadConstants.TerrainBlendMargin * RoadEarthworkNoise.MarginFactor(new Vector2(8872f, -86.24347f));
         float blend = RoadProfile.LevelBlend(3.0f, 4f, margin);
         float earthwork = 36.07f - 34.3f;
-        float full = RoadEarthworkNoise.Detail(vertex.x, vertex.y, true) * 4f * blend * (1f - blend) * Mathf.Min(1f, earthwork / 2f);
+        float full = RoadEarthworkNoise.Detail(vertex.x, vertex.y, RoadRules.Mistlands) * 4f * blend * (1f - blend) * Mathf.Min(1f, earthwork / 2f);
         float bump = RoadEarthworkNoise.FaceBump(vertex, blend, earthwork, RoadProfile.FaceWidth(4f, margin));
         _output.WriteLine($"blend {blend:F3}, face {RoadProfile.FaceWidth(4f, margin):F2} m: full-detail bump {full:F3} m, scaled {bump:F3} m");
         Assert.InRange(full, -1.35f, -1.15f);
@@ -172,7 +209,7 @@ public class FaceNoiseWidthTests
         float margin = RoadConstants.TerrainBlendMargin * RoadEarthworkNoise.MarginFactor(new Vector2(-2496f, 6846f));
         float blend = RoadProfile.LevelBlend(1f, RoadEndRing.PadPointWidth, margin);
         float before = Mathf.Lerp(natural, road, blend)
-            + RoadEarthworkNoise.Detail(vertex.x, vertex.y, true) * 4f * blend * (1f - blend) * Mathf.Min(1f, (road - natural) / 2f);
+            + RoadEarthworkNoise.Detail(vertex.x, vertex.y, RoadRules.Mistlands) * 4f * blend * (1f - blend) * Mathf.Min(1f, (road - natural) / 2f);
         _output.WriteLine($"pad face at (-2496, 6845): {h:F2} (before {before:F2}), road {road:F2}, natural {natural:F2}");
         Assert.True(before > road + 0.3f, $"before {before:F2}: the bump is not reproduced");
         Assert.InRange(h, natural, road + 1e-3f);

@@ -53,10 +53,10 @@ public class ValheimVersionCompatibilityTests
     public void TheFormatIsStillWrittenTheWayItIsRead()
     {
         // The other half: what the mod writes today must read back as what it
-        // wrote. Crossings added a per-point paint-only flag and took the
-        // format to version 2, so the bytes are no longer the version 1 bytes
+        // wrote. This build writes its own format (4, encoding 8: per-point
+        // flags and additions), so the bytes are no longer the version 1 bytes
         // above -- the invariant that has to hold is the round trip, plus the
-        // explicit new envelope marker that tells an older reader it cannot read this.
+        // format number that tells an older reader it cannot read this.
         using var scope = new ValheimWorldScope().WithWorld(new SyntheticWorld());
         try
         {
@@ -65,7 +65,7 @@ public class ValheimVersionCompatibilityTests
             byte[] written = RoadSpatialGrid.SerializeAllRoadPoints()!;
 
             Assert.Equal(4, System.BitConverter.ToInt32(written, 0));
-            Assert.Equal(2,System.BitConverter.ToInt32(written,4));
+            Assert.Equal(8,System.BitConverter.ToInt32(written,4));
             Assert.False(RoadSpatialGrid.Statistics.LengthKnown);
 
             RoadSpatialGrid.Clear();
@@ -104,7 +104,7 @@ public class ValheimVersionCompatibilityTests
         Assert.InRange((int)zone.x, short.MinValue, short.MaxValue);
         Assert.InRange((int)zone.y, short.MinValue, short.MaxValue);
 
-        // And it must still name the place it came from.
+        // And it must still name the location it came from.
         Vector3 back = ZoneSystem.GetZonePos(zone);
         Assert.True(Mathf.Abs(back.x - x) <= ZoneSystem.ZoneSize,
             $"zone {zone} maps back to x={back.x}, not near {x}");
@@ -119,8 +119,8 @@ public class ValheimVersionCompatibilityTests
     public void AZoneStillFindsTheRoadPointsInsideIt(float x, float z)
     {
         // The point of the retyping: a Vector2s zone id has to select the same
-        // road points a Vector2i one did. A road is laid across a known place
-        // and the zone containing that place is asked for it.
+        // road points a Vector2i one did. A road is laid across a known location
+        // and the zone containing that location is asked for it.
         var world = new SyntheticWorld { HasRiver = false, HasMountain = false };
         using var scope = new ValheimWorldScope().WithWorld(world);
         try

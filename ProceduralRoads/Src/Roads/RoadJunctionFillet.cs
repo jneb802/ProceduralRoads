@@ -11,8 +11,10 @@ namespace ProceduralRoads;
 /// road up to a curve of <see cref="Radius"/>: levelled and painted points on arcs tangent to both centrelines, so the
 /// paint's inner edge runs round a curve instead of to a point. Nothing is laid past the other road's centreline (no
 /// spur on the outside). A corner is left as it is where its fill would reach water, a location, a structure, a staircase's
-/// flight or ground more than <see cref="MostEarth"/> off the road, and a road's end at a structure (a bridge's or a
-/// staircase's) is never a junction here: those ends are held where they are.
+/// flight or ground more than <see cref="MostEarth"/> off the road anywhere across its width (or past the earthwork cap), and
+/// a road's end at a structure (a bridge's or a staircase's) is never a junction here: those ends are held where they are.
+/// Nor where a fill's point would meet a road beside it, or the fill itself, more than the grade cap over their gap or a step
+/// apart (RoadNetworkGenerator.PiecesMeet, the walk rule's one verdict on a seam).
 /// </summary>
 public static class RoadJunctionFillet
 {
@@ -31,8 +33,8 @@ public static class RoadJunctionFillet
     internal const float MostAngle = 150f;
     internal const float LeastAngle = 10f;
 
-    /// <summary>The most ground (metres) a corner's fill may raise or lower: the fill is the junction's paint, not
-    /// earthwork of its own.</summary>
+    /// <summary>The most ground (metres) a corner's fill may raise or lower anywhere across its width: the fill is the
+    /// junction's paint, not earthwork of its own. Read off the earthwork cap's own measurement (<see cref="Clear"/>).</summary>
     internal const float MostEarth = 2f;
 
     /// <summary>How far a road's end may stop short of the other road's centreline and still be carried onto it.</summary>
@@ -46,7 +48,23 @@ public static class RoadJunctionFillet
     /// no fill runs on or under a staircase's flight, the network's or the road's own.
     /// </summary>
     public static List<RoadSpatialGrid.PlannedPath> For(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, WorldGenerator? world,
-        IReadOnlyList<RoadCrossing>? crossings = null, IReadOnlyList<RoadStairSpan>? stairs = null)
+        IReadOnlyList<RoadCrossing>? crossings = null, IReadOnlyList<RoadStairSpan>? stairs = null) => For(own, world, crossings, stairs, null);
+
+    /// <summary><see cref="For(IReadOnlyList{RoadSpatialGrid.PlannedPath}, WorldGenerator?, IReadOnlyList{RoadCrossing}?, IReadOnlyList{RoadStairSpan}?)"/>
+    /// read against the network as it will stand once the road's <paramref name="proposed"/> changes are made (the roads it
+    /// raises, a staircase it lands on cut back): what its checks read and its commit stores (RoadNetworkGenerator.Written).</summary>
+    internal static List<RoadSpatialGrid.PlannedPath> For(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, WorldGenerator? world,
+        IReadOnlyList<RoadCrossing>? crossings, IReadOnlyList<RoadStairSpan>? stairs, RoadNetworkGenerator.Proposed? proposed) =>
+        For(own, world, crossings, stairs, proposed, null);
+
+    /// <summary><see cref="For(IReadOnlyList{RoadSpatialGrid.PlannedPath}, WorldGenerator?, IReadOnlyList{RoadCrossing}?, IReadOnlyList{RoadStairSpan}?, RoadNetworkGenerator.Proposed?)"/>,
+    /// with each fill's stretch along the road's line in <paramref name="along"/> (RoadRidges.AtEnd): the road's end and the
+    /// fill's points carrying it onto the met road's centreline, as laid (none where that stretch is not laid; a corner's arcs
+    /// lie beside the line, not on it). What the ridge judge reads of the fill as part of the road (RoadNetworkGenerator.Ridges,
+    /// the owner's rule of 18 Nov 2026), from the one computation the writer stores.</summary>
+    internal static List<RoadSpatialGrid.PlannedPath> For(IReadOnlyList<RoadSpatialGrid.PlannedPath> own, WorldGenerator? world,
+        IReadOnlyList<RoadCrossing>? crossings, IReadOnlyList<RoadStairSpan>? stairs, RoadNetworkGenerator.Proposed? proposed,
+        List<RoadRidges.AtEnd>? along)
     {
         var fills = new List<RoadSpatialGrid.PlannedPath>();
         if (!(Radius > 0f) || !RoadSpatialGrid.IsInitialized || own.Count == 0) return fills;
@@ -56,14 +74,14 @@ public static class RoadJunctionFillet
         if (ends.Count == 0) return fills;
         float widest = 0f;
         foreach (var piece in own) widest = Mathf.Max(widest, piece.Width);
-        var lines = RoadRide.Around(ends, (MostReach + 1f) * widest + Radius);
+        var lines = RoadRide.Around(ends, (MostReach + 1f) * widest + Radius, proposed);
         // Structures' ends near the road's ends: the network's crossings and staircases and the road's own crossings.
         float near = (MostReach + 2f) * widest;
         var held = new List<Vector2>();
         void Hold(Vector2 q) { foreach (Vector2 e in ends) if ((q - e).sqrMagnitude < near * near) { held.Add(q); return; } }
         foreach (RoadCrossing c in RoadNetworkGenerator.CrossingsSnapshot()) { Hold(c.FromBank); Hold(c.ToBank); }
         if (crossings != null) foreach (RoadCrossing c in crossings) { Hold(c.FromBank); Hold(c.ToBank); }
-        foreach (StairRun run in StairStructures.Runs) { Hold(run.From); Hold(run.To); }
+        foreach (StairRun run in proposed != null ? proposed.Runs(StairStructures.Runs) : StairStructures.Runs) { Hold(run.From); Hold(run.To); }
         var ownRuns = new List<StairRun>();
         if (stairs != null)
             foreach (RoadStairSpan st in stairs)
@@ -71,20 +89,20 @@ public static class RoadJunctionFillet
                 Hold(st.FromPoint); Hold(st.ToPoint);
                 ownRuns.Add(StairRun.FromPlan(st.FromPoint, st.ToPoint, RoadStairRuns.Width, st.Plan, st.Kit));
             }
-        bool Clear(List<Vector2> points, List<float> heights) =>
-            RoadJunctionFillet.Clear(points, heights, world) && (points.Count == 0 || !RoadStairRuns.OnAFlight(ownRuns, points, heights));
+        bool Clear(List<Vector2> points, List<float> heights, float width) =>
+            RoadJunctionFillet.Clear(points, heights, width, world) && (points.Count == 0 || !RoadStairRuns.OnAFlight(ownRuns, points, heights));
         foreach (var piece in own)
         {
             if (piece.Points.Count < 2 || piece.FollowTerrain) continue;
             foreach (bool last in new[] { false, true })
-                if (Fill(piece, last, lines, held, Clear) is RoadSpatialGrid.PlannedPath fill) fills.Add(fill);
+                if (Fill(piece, last, lines, held, Clear, proposed, along) is RoadSpatialGrid.PlannedPath fill) fills.Add(fill);
         }
         return fills;
     }
 
     /// <summary>The fill where one end of a piece meets the network, or null where it meets none.</summary>
     private static RoadSpatialGrid.PlannedPath? Fill(RoadSpatialGrid.PlannedPath piece, bool last, RoadRide.Lines lines, List<Vector2> held,
-        Func<List<Vector2>, List<float>, bool> clear)
+        Func<List<Vector2>, List<float>, float, bool> clear, RoadNetworkGenerator.Proposed? proposed, List<RoadRidges.AtEnd>? onLine)
     {
         var pts = piece.Points;
         int n = pts.Count, endIndex = last ? n - 1 : 0, step = last ? -1 : 1;
@@ -114,7 +132,7 @@ public static class RoadJunctionFillet
         if (RoadLocationProtection.Contains(end)) return null;
         Vector2 along = other.Dir, across = new(-along.y, along.x);
         float meet = Vector2.Dot(into, across);
-        if (Mathf.Abs(meet) < Mathf.Sin(LeastAngle * Mathf.Deg2Rad)) return null;
+        if (FloatBits.Abs(meet) < Mathf.Sin(LeastAngle * Mathf.Deg2Rad)) return null;
         // Onto the other road's centreline along its own heading; an end already past it stays where it is.
         float offset = Vector2.Dot(end - other.At, across), toLine = -offset / meet;
         if (toLine > Reach(width)) return null;
@@ -124,7 +142,11 @@ public static class RoadJunctionFillet
         var points = new List<Vector2>();
         var heights = new List<float>();
         float spacing = Mathf.Max(0.25f, width / 4f);
-        float JunctionHeight(Vector2 q) => lines.StoredHeight(q, other.Height);
+        // The met road's surface there, read by the one reader of a met road's height (RoadSpatialGrid.SurfaceReader, on the
+        // network as the road's proposed changes leave it): along its line as the terrain writer fits it, not its nearest
+        // point's own height, which on a road climbing at the cap differed by its grade over half its point spacing.
+        float JunctionHeight(Vector2 q) =>
+            RoadSpatialGrid.TryGetRoadHeightWithin(q, RoadRide.Reach, out float met, proposed) ? met : other.Height;
         if (toLine > spacing)
         {
             int count = Mathf.CeilToInt(toLine / spacing);
@@ -134,15 +156,56 @@ public static class RoadJunctionFillet
                 points.Add(q); heights.Add(Mathf.Lerp(endHeight, JunctionHeight(q), (float)k / count));
             }
         }
-        if (!clear(points, heights)) { points.Clear(); heights.Clear(); }
+        // The fill meets the roads it lies between as two pieces of road meet (RoadNetworkGenerator.PiecesMeet, the one verdict
+        // on a seam): each of its points and every point within a lane's spacing of it (half the width), of the road it meets,
+        // of this road's last metres and of the fill itself, within the grade cap over their gap or within a step. Read off the
+        // roads, a fill's height can lie a step off a road beside it (a road climbing at the cap, its height read by distance
+        // along it where its last metres double back): such a stretch or corner is not laid.
+        float reach = width * 0.5f;
+        bool Meets(List<Vector2> ps, List<float> hs, List<Vector2> laid, List<float> laidHeights)
+        {
+            for (int i = 0; i < ps.Count; i++)
+            {
+                if (!lines.MeetsEvery(ps[i], hs[i], reach)) return false;
+                foreach (var b in back)
+                    if (!MeetsAt(ps[i], hs[i], b.p, b.h)) return false;
+                for (int k = 0; k < laid.Count; k++)
+                    if (!MeetsAt(ps[i], hs[i], laid[k], laidHeights[k])) return false;
+                for (int k = i + 1; k < ps.Count; k++)
+                    if (!MeetsAt(ps[i], hs[i], ps[k], hs[k])) return false;
+            }
+            return true;
+        }
+        bool MeetsAt(Vector2 a, float ha, Vector2 b, float hb)
+        {
+            float d = Vector2.Distance(a, b);
+            return d > reach || RoadNetworkGenerator.PiecesMeet(FloatBits.Abs(ha - hb), d);
+        }
+        if (!clear(points, heights, width) || !Meets(points, heights, new List<Vector2>(), new List<float>())) { points.Clear(); heights.Clear(); }
+        // The stretch carrying the road's end onto the met road's centreline, from the end: part of the road's line (the
+        // corners below lie beside it).
+        List<Vector2>? carry = null;
+        List<float>? carryHeights = null;
+        if (onLine != null && points.Count > 0)
+        {
+            carry = new List<Vector2> { end };
+            carry.AddRange(points);
+            carryHeights = new List<float> { endHeight };
+            carryHeights.AddRange(heights);
+        }
 
-        // Each inside corner: the road's line back (out) against the other road's either way (side).
-        Vector2 outward = -into;
+        // Each inside corner: the road's line back (out) against the other road's either way (side). Its line over the
+        // reach the fill may take along it (MostReach widths back from the junction), not its last few metres: a road
+        // bending into the junction over its last metres (its mouth) read a corner far sharper than the two roads make, and
+        // the fill's lanes were laid out along a line the road had already curved away from.
+        Vector2 far = end;
+        foreach (var b in back) { far = b.p; if (b.along >= MostReach * width) break; }
+        Vector2 outward = (far - junction).sqrMagnitude > 1f ? (far - junction).normalized : -into;
         float reachBack = back[back.Count - 1].along + Mathf.Max(0f, toLine);
         foreach (float sign in new[] { 1f, -1f })
         {
             Vector2 side = along * sign;
-            float corner = Mathf.Abs(Turn(outward, side)) * Mathf.Rad2Deg;
+            float corner = FloatBits.Abs(Turn(outward, side)) * Mathf.Rad2Deg;
             if (corner < LeastAngle || corner > MostAngle) continue;
             float half = corner * 0.5f * Mathf.Deg2Rad;
             float centreRadius = Radius + width * 0.5f;
@@ -154,7 +217,16 @@ public static class RoadJunctionFillet
                 if (!lines.Nearest(junction + side * d, width * 0.5f, out _, side, endHeight, paintOnly: false, structures: false)) break;
                 otherRuns = d;
             }
-            tangent = Mathf.Min(tangent, Mathf.Min(MostReach * width, Mathf.Min(reachBack, otherRuns)));
+            // This road too, by the same test: as far as it runs on its end's line back from the junction (its own points
+            // within half its width of that line). The corner is laid against that line; a road curving away from it within
+            // the fill's reach left the fill's lanes on open ground beside both roads (two to six metres off either).
+            float ownRuns = 0f;
+            for (float d = 1f; d <= MostReach * width + 0.01f; d += 1f)
+            {
+                if (!OnOwnLine(back, junction, junction + outward * d, width * 0.5f)) break;
+                ownRuns = d;
+            }
+            tangent = Mathf.Min(tangent, Mathf.Min(MostReach * width, Mathf.Min(Mathf.Min(reachBack, ownRuns), otherRuns)));
             centreRadius = tangent * (float)Math.Tan(half);
             // A corner whose arc would not reach past the roads' own paint has nothing to round.
             if (centreRadius <= width * 0.5f + 0.25f) continue;
@@ -168,7 +240,7 @@ public static class RoadJunctionFillet
             // Lanes a half road apart, from the arc out to the junction: the paint's solid core reaches between them.
             for (float r = centreRadius; r < apex - 0.25f; r += width * 0.5f)
             {
-                int count = Mathf.Max(1, Mathf.CeilToInt(r * Mathf.Abs(sweep) / spacing));
+                int count = Mathf.Max(1, Mathf.CeilToInt(r * FloatBits.Abs(sweep) / spacing));
                 for (int k = 0; k <= count; k++)
                 {
                     float a = from + sweep * k / count;
@@ -178,19 +250,37 @@ public static class RoadJunctionFillet
                     if (Cross(outward, q - junction) * Cross(outward, side) < -1e-3f) continue;
                     float onOther = Vector2.Dot(q - junction, side), onOwn = Vector2.Dot(q - junction, outward);
                     float hOther = JunctionHeight(junction + side * onOther), hOwn = OwnHeight(back, toLine, onOwn, endHeight);
-                    float dOther = Mathf.Abs(Cross(side, q - junction)), dOwn = Mathf.Abs(Cross(outward, q - junction));
+                    float dOther = FloatBits.Abs(Cross(side, q - junction)), dOwn = FloatBits.Abs(Cross(outward, q - junction));
                     corners.Add(q);
                     cornerHeights.Add(dOther + dOwn < 1e-3f ? hOther : (hOther * dOwn + hOwn * dOther) / (dOther + dOwn));
                 }
             }
-            if (corners.Count == 0 || !clear(corners, cornerHeights)) continue;
+            if (corners.Count == 0 || !clear(corners, cornerHeights, width) || !Meets(corners, cornerHeights, points, heights)) continue;
             points.AddRange(corners);
             heights.AddRange(cornerHeights);
         }
         if (points.Count == 0) return null;
+        if (carry != null && carryHeights != null)
+            onLine!.Add(new RoadRidges.AtEnd(end, new RoadSpatialGrid.PlannedPath(carry, carryHeights,
+                carry.ConvertAll(_ => default(RoadPointDebugInfo)), width, Mathf.Max(0f, toLine), false)));
         var debug = new List<RoadPointDebugInfo>(points.Count);
         for (int i = 0; i < points.Count; i++) debug.Add(default);
         return new RoadSpatialGrid.PlannedPath(points, heights, debug, width, 0f, false);
+    }
+
+    /// <summary>Whether <paramref name="q"/> lies within <paramref name="reach"/> of the road's own line: from the junction
+    /// along its carried end and back over its last points (<paramref name="back"/>, from its end).</summary>
+    private static bool OnOwnLine(List<(Vector2 p, float h, float along)> back, Vector2 junction, Vector2 q, float reach)
+    {
+        Vector2 a = junction;
+        foreach (var b in back)
+        {
+            Vector2 ab = b.p - a;
+            float t = ab.sqrMagnitude < 1e-6f ? 0f : Mathf.Clamp01(Vector2.Dot(q - a, ab) / ab.sqrMagnitude);
+            if (Vector2.Distance(q, a + ab * t) <= reach) return true;
+            a = b.p;
+        }
+        return false;
     }
 
     /// <summary>The road's own height <paramref name="onOwn"/> metres out from the junction along its line.</summary>
@@ -207,19 +297,22 @@ public static class RoadJunctionFillet
         return back[back.Count - 1].h;
     }
 
-    /// <summary>Whether a fill may be laid: none of it in a place, in water or over ground more than
-    /// <see cref="MostEarth"/> off its height.</summary>
-    private static bool Clear(List<Vector2> points, List<float> heights, WorldGenerator? world)
+    /// <summary>Whether a fill <paramref name="width"/> wide may be laid: none of it in a location or in water, and its
+    /// earthwork as every road's is measured (RoadNetworkGenerator.EarthworkAcross: at its centre and both edges, over the
+    /// ground before roads) within the earthwork cap and nowhere more than <see cref="MostEarth"/> off its height.</summary>
+    private static bool Clear(List<Vector2> points, List<float> heights, float width, WorldGenerator? world)
     {
-        for (int i = 0; i < points.Count; i++)
+        foreach (Vector2 q in points)
         {
-            Vector2 q = points[i];
             if (RoadLocationProtection.Contains(q)) return false;
-            if (world == null) continue;
-            if (!RoadWater.BuiltDry(world, q)) return false;
-            if (Mathf.Abs(BiomeBlendedHeight.GetBlendedHeight(q.x, q.y, world) - heights[i]) > MostEarth) return false;
+            if (world != null && !RoadWater.BuiltDry(world, q)) return false;
         }
-        return true;
+        if (world == null || points.Count == 0) return true;
+        var fill = new RoadSpatialGrid.PlannedPath(points, heights, new List<RoadPointDebugInfo>(), width, 0f, false);
+        // Any point past the cap refuses it: the measurement ends there (the worst earth then no longer matters).
+        RoadNetworkGenerator.Earthwork earth = RoadNetworkGenerator.EarthworkAcross(fill, RoadNetworkGenerator.GroundBeforeRoads(world),
+            RoadNetworkGenerator.EarthworkLimit, null, _ => true);
+        return earth.Past == 0 && !(earth.Worst > MostEarth);
     }
 
     /// <summary>The signed angle (radians) from one direction to another.</summary>

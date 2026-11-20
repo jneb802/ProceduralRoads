@@ -14,12 +14,14 @@ namespace ProceduralRoads.Tests;
 /// first's top at the crest: joined to it there, as any second laid up to the crest is, or not laid. Laid from the
 /// road's point at the crest with no meet, it set off from the ground there: on RoadSeedD the merged one's top floors
 /// stood a rise over the first's crest floor, nothing joining the two, and once the ground was cut the first's top was
-/// left 0.94 m under them. Fixtures/ridge-merge-crest.txt is a crest at (9104, 72) in a test world generated offline
-/// with its locations placed first: the road, its stair steps and its ground as laid there, where the second, laid over
-/// both stretches, is snapped off the first's crest floor (SnapOffCrest). Laid there with no meet, its top cannot be
-/// joined to the first's (no clip within a walker's step) and the road's stairs are refused. Earlier fixtures,
-/// RoadSeedD's crest at (-9776, -528) and a crest at (-1544, 7640), no longer lay: the first once the ground was read
-/// as the game's two triangles a cell, the second once a clipped top join steps at most a walker's step.
+/// left 0.94 m under them. Fixtures/ridge-merge-crest.txt is a crest at (8432, 3515) in a test world generated offline
+/// with its locations placed first: the road, its stair steps and its ground as laid there, where generation laid the
+/// second over both stretches from the first's crest (Merge). Recaptured on 18 Nov 2026 under the ring's off-square price
+/// (the owner's decision of 17 Nov 2026: "ring SkewWeight = TurnWeight at 45 ... YES"): on the fixture before it, a crest
+/// at (9104, 72), that price moved the first's top 1.7 m and from there no second staircase was laid, so the merge was no
+/// longer reached. Earlier fixtures, RoadSeedD's crest at (-9776, -528) and a crest at (-1544, 7640), no longer lay: the
+/// first once the ground was read as the game's two triangles a cell, the second once a clipped top join steps at most a
+/// walker's step.
 /// </summary>
 [Collection("StairLayout")]
 public class StairCrestMergeTests : IDisposable

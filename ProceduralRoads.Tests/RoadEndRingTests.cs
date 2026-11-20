@@ -103,7 +103,7 @@ public class RoadEndRingTests
         Assert.Equal(0f, starts[0].Price);
         Assert.Equal(8f, ring.Price(90f, 90f), 3);
         Assert.Equal(4f, ring.Price(45f, 45f), 3);
-        Assert.Equal(2f * 4f + 0.5f * 4f, ring.Price(90f, 0f), 3);
+        Assert.Equal(RoadEndRing.TurnWeight * 4f + RoadEndRing.SkewWeight * 4f, ring.Price(90f, 0f), 3);
         Assert.True(ring.Price(22.5f, 22.5f) < ring.Price(45f, 45f) && ring.Price(45f, 45f) < ring.Price(67.5f, 67.5f));
         foreach (RoadEndRing.Start s in starts)
         {
@@ -120,7 +120,7 @@ public class RoadEndRingTests
 
     /// <summary>
     /// Read in game: an approach's foot at its road's end, set off from the ring at arc -135 (3 degrees short of the cut arc)
-    /// on 315, the road arriving on 43: 88 degrees off the road, 47 off square to the circle, within MostSkew. Every walked
+    /// on 315, the road arriving on 43: 88 degrees off the road, 47 off square to the circle (within the most skew then taken). Every walked
     /// piece kept out of the lane, but its foot stood behind the road's end and was walked off straight across the road, onto
     /// the bank on its other side. The ring takes no such start, in its starts, as a start it is asked about, nor laid; it
     /// still takes the same heading beside the road's end and in front of it, and a start stepped off toward the end.
@@ -146,6 +146,93 @@ public class RoadEndRingTests
         // Every start the ring takes steps off onto the road where it ends.
         foreach (RoadEndRing.Start s in ring.Starts(RoadStairRuns.Width))
             Assert.False(ring.WalksOffAcross(s.At, s.Heading + 180f), $"start {s.Heading} at {s.Arc}");
+    }
+
+    /// <summary>
+    /// Approved rule: a staircase leaves the circle at most two heading steps (45 degrees) off square to it (its arc point's
+    /// radial), never across the front of the ring. Every start the ring lays out keeps within it, and the ring's own question
+    /// (Allows, the one a foot or a top is held to) takes 45 off square where it takes 67.5 off square nowhere.
+    /// </summary>
+    [Fact]
+    public void AFlightsHeadingIsAtMostTwoHeadingStepsOffSquareToTheRing()
+    {
+        Assert.Equal(2f * StairLayout.HeadingStep, RoadEndRing.MostSkew);
+        Assert.Equal(45f, RoadEndRing.MostSkew);
+        var ring = new RoadEndRing(new Vector2(0f, 0f), 0f, 10f);
+        List<RoadEndRing.Start> starts = ring.Starts(RoadStairRuns.Width);
+        // Some start is off square by the whole two steps; none by more.
+        Assert.Contains(starts, s => Mathf.Abs(RoadEndRing.Turn(s.Heading, s.Arc)) > 44.9f);
+        foreach (RoadEndRing.Start s in starts)
+            Assert.True(Mathf.Abs(RoadEndRing.Turn(s.Heading, s.Arc)) <= 45f + 0.01f, $"start {s.Heading} at {s.Arc} is off square by more than two steps");
+        // Allows: a start 45 off square is taken; from the same point a step further off (67.5) is not.
+        foreach (RoadEndRing.Start s in starts.FindAll(s => Mathf.Abs(RoadEndRing.Turn(s.Heading, s.Arc)) > 44.9f))
+        {
+            float further = s.Heading + (RoadEndRing.Turn(s.Heading, s.Arc) > 0f ? 1f : -1f) * StairLayout.HeadingStep;
+            Assert.True(ring.Allows(s.At, s.Heading, RoadStairRuns.Width), $"start {s.Heading} at {s.Arc} not allowed");
+            Assert.False(ring.Allows(s.At, further, RoadStairRuns.Width), $"{further} at {s.Arc}, 67.5 off square, allowed");
+        }
+        // From the ring's side (arc 90, square is 90): 22.5 off square is taken, 67.5 off is not.
+        Vector2 side = ring.ArcPoint(90f);
+        Assert.True(ring.Allows(side, 90f + 22.5f, RoadStairRuns.Width));
+        Assert.False(ring.Allows(side, 90f + 67.5f, RoadStairRuns.Width));
+        Assert.False(ring.Allows(side, 90f - 67.5f, RoadStairRuns.Width));
+    }
+
+    /// <summary>
+    /// Approved rule: of the headings a start may take, square to the circle is at least as cheap as straight on
+    /// (SkewWeight is no less than TurnWeight: a step off square costs at least what a step off the road's travel costs; at
+    /// SkewWeight = TurnWeight the two tie). At arc 22.5 on a dead end, square (22.5) costs no more than straight on (0), and
+    /// no start from that point is cheaper than square. Fails if SkewWeight drops below TurnWeight: straight on, across the
+    /// front of the ring, would then win.
+    /// </summary>
+    [Fact]
+    public void SquareToTheCircleIsAtLeastAsCheapAsStraightOn()
+    {
+        Assert.True(RoadEndRing.SkewWeight >= RoadEndRing.TurnWeight, $"SkewWeight {RoadEndRing.SkewWeight} under TurnWeight {RoadEndRing.TurnWeight}");
+        var ring = new RoadEndRing(new Vector2(0f, 0f), 0f, 10f);
+        Assert.True(ring.Price(22.5f, 22.5f) <= ring.Price(0f, 22.5f), $"square {ring.Price(22.5f, 22.5f)}, straight on {ring.Price(0f, 22.5f)}");
+        Assert.Equal(RoadEndRing.TurnWeight, ring.Price(22.5f, 22.5f), 3);
+        Assert.Equal(RoadEndRing.SkewWeight, ring.Price(0f, 22.5f), 3);
+        List<RoadEndRing.Start> fromThere = ring.Starts(RoadStairRuns.Width).FindAll(s => Mathf.Abs(s.Arc - 22.5f) < 0.1f);
+        Assert.Contains(fromThere, s => s.Heading == 22.5f);
+        float square = fromThere.Find(s => s.Heading == 22.5f).Price;
+        Assert.All(fromThere, s => Assert.True(s.Price >= square - 1e-3f, $"heading {s.Heading} at {s.Price}, under square's {square}"));
+        Assert.Contains(fromThere, s => s.Heading == 0f && s.Price >= square);
+    }
+
+    /// <summary>
+    /// Approved rule: a staircase's top (and a foot searched down to a road) is held to the ring's own rule where its road
+    /// starts again (RoadStairRuns.RoadEndPast): the centre taken is one whose ring Allows the staircase's end as a start (within
+    /// MostSkew), the cheapest by RoadEndRing.Price; no separate 67.5 degree turn toward the road.
+    /// </summary>
+    [Theory]
+    [InlineData(90f)]
+    [InlineData(-90f)]
+    [InlineData(40f)]
+    public void AStaircaseTopIsHeldToTheRingsAllowsAndPriceWhereItsRoadStartsAgain(float roadTurn)
+    {
+        Vector2 at = new(0f, 0f);
+        const float outward = 0f, height = 10f;
+        Vector2 road = at + StairLayout.Forward(outward + roadTurn) * 8f;
+        float radius = new RoadEndRing(at, outward, height).Radius;
+        float heading = StairLayout.Wrap(outward + 180f);
+        Vector2 got = RoadStairRuns.RoadEndPast(new StairPlan(), at, outward, road, height, top: true);
+
+        Vector2? cheapest = null;
+        float cheapestPrice = float.MaxValue;
+        foreach (int k in new[] { 0, 1, -1, 2, -2, 3, -3 })
+        {
+            Vector2 centre = at + StairLayout.Forward(outward + k * StairLayout.HeadingStep) * radius;
+            var ring = new RoadEndRing(centre, StairLayout.Bearing(road, centre), height);
+            if (!ring.Allows(at, heading, RoadStairRuns.Width)) continue;
+            float price = ring.Price(heading, RoadEndRing.Turn(StairLayout.Bearing(centre, at), ring.Travel));
+            if (price < cheapestPrice - 0.001f) { cheapest = centre; cheapestPrice = price; }
+        }
+        Assert.NotNull(cheapest);
+        Assert.True(Vector2.Distance(cheapest.Value, got) < 0.01f, $"took {got}, the ring's cheapest allowed is {cheapest}");
+        Assert.True(new RoadEndRing(got, StairLayout.Bearing(road, got), height).Allows(at, heading, RoadStairRuns.Width));
+        // Never turned past the ring's own most skew toward the road (the old 67.5 degree turn).
+        Assert.True(Mathf.Abs(RoadEndRing.Turn(StairLayout.Bearing(at, got), outward)) <= RoadEndRing.MostSkew + 0.01f);
     }
 
     // ---- Laid flights ----
@@ -183,22 +270,43 @@ public class RoadEndRingTests
     }
 
     /// <summary>A flight going down from a road's end (an approach to a location below): its top arrives on the ring, its exit
-    /// edge on the circle, and nothing of it stands inside the ring or the lane.</summary>
+    /// edge on the circle, and nothing of it stands inside the ring or the lane. The road arrives heading north at 12 m; the
+    /// ground falls away north of a floor's length past the ring at a flight's grade.</summary>
+    private static float Down(float x, float z) => 12f - 0.5f * Mathf.Max(0f, z - 3.5f);
+
+    private static StairPlan DownFrom(float footZ, RoadEndRing ring) =>
+        StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, footZ), Down, topLandings: 1, sunkFoot: true, ring: ring);
+
     [Fact]
     public void AFlightDescendingFromARoadsEndArrivesOnItsRing()
     {
-        // The road arrives heading north at 12 m; the ground falls away north of a floor's length past the ring at a flight's grade.
-        static float Down(float x, float z) => 12f - 0.5f * Mathf.Max(0f, z - 3.5f);
         var ring = new RoadEndRing(new Vector2(0f, 0f), 0f, 12f);
-        StairPlan plan = StairLayout.Build(new Vector2(0f, 0f), new Vector2(0f, 24f), Down, topLandings: 1, sunkFoot: true, ring: ring);
+        // From a foot whose straight flight's top floor ends on the circle (23.5 m out: whole pieces back to 1.5 m).
+        StairPlan plan = DownFrom(23.5f, ring);
         Assert.True(plan.Reached, plan.Reason);
         Assert.True(plan.Reversed);
         var exit = new Vector2(plan.End.x, plan.End.z);
-        Assert.True(Mathf.Abs(exit.magnitude - ring.Radius) <= RoadEndRing.Delta + 0.01f, $"top's exit at {exit}");
+        Assert.True(ring.Allows(exit, StairLayout.Wrap(plan.EndHeading + 180f), StairLayout.PieceRun), $"top's exit at {exit} on {plan.EndHeading}");
         Assert.Null(plan.RingStart);
         Assert.False(ring.Intrudes(plan, out string piece), piece);
         // Straight on: it goes down the way the road arrives.
         Assert.True(Mathf.Abs(RoadEndRing.Turn(StairLayout.Wrap(plan.EndHeading + 180f), 0f)) <= 22.51f, $"goes down on {plan.EndHeading + 180f}");
+    }
+
+    /// <summary>Changed (decision 6j, its precise fallback): an arrival on the ring is the start's own target
+    /// (RoadEndRing.Allows), not a band round the circle. From a foot 24 m out the straight flight's top floor ends half a
+    /// metre past the circle, which the band took (its exit 2 m from the road's end); now the top arrives only where a start
+    /// would set off, on the circle, or the flight is not laid.</summary>
+    [Fact]
+    public void AnArrivalOffTheCircleIsNotTakenWhereAStartWouldNotBe()
+    {
+        var ring = new RoadEndRing(new Vector2(0f, 0f), 0f, 12f);
+        StairPlan plan = DownFrom(24f, ring);
+        var exit = new Vector2(plan.End.x, plan.End.z);
+        Assert.True(!plan.Reached || ring.Allows(exit, StairLayout.Wrap(plan.EndHeading + 180f), StairLayout.PieceRun),
+            $"arrived {exit.magnitude:F2} m from the road's end (the circle {ring.Radius:F2}) on {plan.EndHeading}");
+        // The start's own test, at the exit the band took: refused there.
+        Assert.False(ring.Allows(new Vector2(0f, 2f), 0f, StairLayout.PieceRun));
     }
 
     /// <summary>Where nothing fits from a road's end (every start hemmed in), none is laid there; from a ring further back

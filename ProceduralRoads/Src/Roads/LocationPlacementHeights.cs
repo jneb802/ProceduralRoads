@@ -68,14 +68,13 @@ public static class LocationPlacementHeights
 
     public static bool HasBeenRead => m_read;
 
-    /// <summary>The height saved for this centre, if there is one.</summary>
+    /// <summary>The height saved for the location whose identity is <paramref name="centre"/>, if there is one: its own
+    /// placement only, found by its centre exactly. The game stands a location's proxy at its centre (ZoneSystem.PlaceLocations
+    /// moves only the height) and saves its position whole, so a saved placement near it but not at it is another
+    /// location's, never this one's.</summary>
     public static float? At(Vector2 centre)
     {
         if (!m_read) Read();
-        if (m_heights.TryGetValue(centre, out float height)) return height;
-        // Stored and generated coordinates can differ below console precision.
-        foreach (var entry in m_heights)
-            if ((entry.Key - centre).sqrMagnitude < 0.25f) return entry.Value;
-        return null;
+        return m_heights.TryGetValue(centre, out float height) ? height : null;
     }
 }

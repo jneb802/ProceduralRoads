@@ -85,6 +85,9 @@ public static class RoadSwitchbacks
     /// <see cref="MinBendRadius"/>: planning retries without them before it
     /// gives up the bend rounding.</summary>
     [ThreadStatic] public static int LastFilleted;
+    /// <summary>Shapes made on this thread: whether one made since a count rewrote the Last* it leaves (RoadSpatialGrid's
+    /// remembered pieces).</summary>
+    [ThreadStatic] internal static int Shapes;
 
     /// <summary>Set by planning for one retry: shape with the ordinary bend
     /// arcs only, so a road whose fillet fails a check keeps its rounding.</summary>
@@ -163,6 +166,7 @@ public static class RoadSwitchbacks
         bool tightTurns = tight ?? TightSwitchbacks;
         float filletRadius = bendRadius > 0f && !SuppressFillets ? Mathf.Min(minRadius ?? MinBendRadius, bendRadius) : 0f;
         LastRefusal = null; LastRefusalAt = null; LastCurve = null; LastWidths = null; LastFilleted = 0;
+        Shapes++;
         shaped = null; landing = null;
         var p = new List<Vector2>();
         foreach (var v in input)
@@ -402,7 +406,7 @@ public static class RoadSwitchbacks
             float sign=turn<0?-1:1;
             var centre=begin+new Vector2(-incoming.y,incoming.x)*(sign*r);
             float start=(float)Math.Atan2(begin.y-centre.y,begin.x-centre.x);
-            int count=Mathf.Max(1,Mathf.CeilToInt(r*Mathf.Abs(turn)/step));
+            int count=Mathf.Max(1,Mathf.CeilToInt(r*FloatBits.Abs(turn)/step));
             for(int k=1;k<count;k++)
             {float a=start+turn*k/count;Add(centre+new Vector2(Mathf.Cos(a),Mathf.Sin(a))*r,flat,true);}
         }
@@ -537,7 +541,7 @@ public static class RoadSwitchbacks
                     {
                         if(distance[i]-distance[j]<reach*2) continue;
                         if(run!=null && run[i]!=0 && run[i]==run[j]) continue;
-                        if(Vector2.Distance(points[i],points[j])<Apart(i,j) && Mathf.Abs(heights[i]-heights[j])>0.5f)
+                        if(Vector2.Distance(points[i],points[j])<Apart(i,j) && FloatBits.Abs(heights[i]-heights[j])>0.5f)
                             return false;
                     }
             if(!bins.TryGetValue(cell,out var bucket)) bins[cell]=bucket=new List<int>();

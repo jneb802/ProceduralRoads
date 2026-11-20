@@ -48,42 +48,72 @@ public partial class LocationsFirstTests
         Assert.True(aim.x > 0f, $"aimed at {aim}, round from the landing's side");
     }
 
-    /// <summary>A cave on a mesa 16 m over the plain, with a cut 8 m under the landing on its landing's side that runs down to
-    /// the plain: the ring at the landing's level is on the mesa, its cliffs a road without stairs cannot climb; the ring
-    /// under the landing's bearing is on the cut.</summary>
-    private sealed class MesaWithACut : WorldGenerator
+    /// <summary>A plain at 34 m with a flat top at 50 m out to 26 m from the cave, its flanks falling at 70 % to the plain: the
+    /// ground a location placed on a mesa's flat top has, its doors on the ring all level with its landing.</summary>
+    private sealed class FlatTopWithFlanks : WorldGenerator
     {
         public const float Plain = 34f;
-        public const float Cut = 42f;
+        public const float Top = 50f;
+        public const float FlatRadius = 26f;
+        public const float Flank = 0.7f;
         public override float GetHeight(float wx, float wy) =>
-            Mathf.Abs(wx) > 200f || Mathf.Abs(wy) > 200f ? 0f
-            : wx > 11f && Mathf.Abs(wy) < 8f ? Mathf.Lerp(Cut, Plain, Mathf.Clamp01((wx - 30f) / 60f))
-            : Mathf.Abs(wx) <= 40f && Mathf.Abs(wy) <= 40f ? 50f : Plain;
+            Mathf.Abs(wx) > 400f || Mathf.Abs(wy) > 400f ? 0f
+            : Mathf.Max(Plain, Top - Mathf.Max(0f, Mathf.Sqrt(wx * wx + wy * wy) - FlatRadius) * Flank);
         public override Heightmap.Biome GetBiome(float wx, float wy, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Mountain;
         public override int GetSeed() => 77;
     }
 
-    /// <summary>A road searched to the door at the landing's level that gets no road there is searched again to the doors
-    /// left, and reaches the location by the cut on the landing's bearing: a Hildir frost cave the bearing reached was lost so.</summary>
+    /// <summary>A road's first try, at the cheapest door level with a placed Location's landing, that is refused is searched again
+    /// to the doors left (RoadDoors.GenerateRoadByDoors: not the doors round the ring within AimStep of the one taken), so the road
+    /// goes on to another door or bearing: a Hildir frost cave the bearing reached was lost when it was not. This pins the re-aim
+    /// only. The Location is built as the game's is, as a record remembered and prepared (PlacedLocations.Remember, Prepare): its
+    /// footprint set after the resets, its ground grid 40 m round it with the natural ground past it, on a flat top whose flanks
+    /// fall at 70 % to the plain. On such ground a first try is refused at the level door (its switchback turns do not fit)
+    /// and searched again; no real-Location ground produced the corner this test once pinned, a staircase cut and laid, then
+    /// refused only as it is stored (EntryStairsEndsRefused), with nothing else onto the landing: if that ever matters it needs
+    /// its own test. Here the road is refused at its second door as well, for the same flank, and not built: the outcome is pinned
+    /// as it is, so a change that reaches the landing from here shows as a change to this test.</summary>
     [Fact]
     public void ARoadToAPlacedLocationRefusedAtTheLandingsLevelIsAimedAgainAtTheBearing()
     {
-        var world = new MesaWithACut();
+        var world = new FlatTopWithFlanks();
         _scope.WithWorld(world);
         RoadNetworkGenerator.Reset();
         RoadSpatialGrid.Clear();
         StairStructures.Reset();
         PlacedLocations.Reset();
-        PlacedLocation cave = CaveOn(world);
-        PlacedLocations.Ready(cave);
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), Footprint) });
+        var record = new PlacedLocationRecord
+        {
+            Prefab = "MountainCave02", Centre = new Vector2(0f, 0f), Yaw = 90f, Root = 50f, RockRadius = 0f,
+            Ops = new List<LevelOp>(CaveFloor), X0 = -40, Z0 = -40, W = 81, H = 81,
+        };
+        PlacedLocations.Remember(record);
+        PlacedLocations.Prepare((x, z) => world.GetHeight(x, z));
+        Assert.True(PlacedLocations.TryGetReady(record.Centre, out PlacedLocation cave));
         LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
         SetPathfinder(new RoadPathfinder(world) { Stairs = false, TerrainVarianceThreshold = 1000f, Meander = 0f });
         var doors = RoadNetworkGenerator.DoorsOf(cave.Centre, 10f, 4f).OrderBy(d => d.Price).ToList();
-        Assert.True(doors.Count >= 2 && world.GetHeight(doors[0].At.x, doors[0].At.y) == 50f && doors.Exists(d => world.GetHeight(d.At.x, d.At.y) == MesaWithACut.Cut),
-            $"doors {string.Join(", ", doors.Select(d => d.At))}: the cheapest on the mesa, one in the cut");
+        Assert.True(doors.Count >= 2 && doors.All(d => d.Level), $"doors {string.Join(", ", doors.Select(d => d.At))}: all level with the landing");
 
-        Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave on the mesa"),
-            "last refusal: " + (RoadSpatialGrid.LastRefusal ?? "none"));
-        Assert.True(PlacedLocations.Landed(cave.Centre));
+        var capture = new RoadNetworkGenerator.RoadCapture();
+        bool built;
+        using (RoadNetworkGenerator.PlanningWith(RoadNetworkGenerator.NewFinder(world, RoadLocationProtection.Clearance(RoadNetworkGenerator.RoadWidth)), capture))
+            built = RoadNetworkGenerator.GenerateRoad(new Vector2(120f, 0f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave on the flat top");
+
+        string seen = string.Join(" | ", capture.Refusals);
+        // The first try, to the cheapest door level with the landing, is refused with its reason, at that door.
+        Assert.True(capture.Refusals.Count >= 1, "no refusal: the first try was not refused");
+        (string why, Vector2? at) first = capture.Refusals[0];
+        Assert.Contains("switchback", first.why);
+        Assert.True(first.at is Vector2 a && Vector2.Distance(a, doors[0].LeadIn) < 6f, $"the first try refused at {first.at}, not at the cheapest door {doors[0].LeadIn}");
+        // The road is then searched again: a second leg, refused at a door beyond AimStep round the ring from the first.
+        Assert.True(capture.Refusals.Count >= 2, $"the road was not searched again; refusals: {seen}");
+        Vector2 firstOut = first.at!.Value - cave.Centre, secondOut = capture.Refusals[1].at!.Value - cave.Centre;
+        Assert.True((float)Math.Acos(Mathf.Clamp(Vector2.Dot(firstOut, secondOut) / (firstOut.magnitude * secondOut.magnitude), -1f, 1f)) * Mathf.Rad2Deg > PlacedLocations.AimStep, $"the second try refused at {capture.Refusals[1].at}, at the first's bearing {first.at}");
+        // The outcome: not reached; its last refusal is the switchback's, and the Location is not landed on.
+        Assert.False(built, $"built; refusals: {seen}");
+        Assert.Contains("switchback", RoadSpatialGrid.LastRefusal);
+        Assert.False(PlacedLocations.Landed(cave.Centre));
     }
 }

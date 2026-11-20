@@ -21,10 +21,10 @@ public class LocationShoreSqueezeTests
         public override float GetHeight(float x, float z) => x > WaterX ? 28f : 31f;
     }
 
-    private static void With(Shore world, RoadLocationProtection.Footprint[] footprints, Action body)
+    private static void With(Shore world, RoadLocationProtection.Footprint[] locations, Action body)
     {
         using var scope = new ValheimWorldScope().WithWorld(world);
-        RoadLocationProtection.Set(footprints);
+        RoadLocationProtection.Set(locations);
         try { body(); }
         finally { RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>()); }
     }
@@ -62,7 +62,7 @@ public class LocationShoreSqueezeTests
     {
         // A location on the shore and a row of locations inland beside it: the short
         // way past is the 10 m strip between the first and the water.
-        var footprints = new[]
+        var locations = new[]
         {
             new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 10f),
             new RoadLocationProtection.Footprint(new Vector2(-30f, 0f), 20f),
@@ -72,7 +72,7 @@ public class LocationShoreSqueezeTests
         };
         bool InStrip(Vector2 p) => p.x > 10f && p.x < 20f && Mathf.Abs(p.y) < 12f;
         using var overrides = StaticOverride.Keep(() => RoadPathfinder.SqueezeCorridor);
-        With(new Shore(), footprints, () =>
+        With(new Shore(), locations, () =>
         {
             RoadPathfinder.SqueezeCorridor = 0f;
             var through = new RoadPathfinder(WorldGenerator.instance).FindPath(new Vector2(8f, -120f), new Vector2(8f, 120f));
@@ -115,10 +115,10 @@ public class LocationShoreSqueezeTests
         { weight = River && x > WaterX ? 1f : 0f; width = 0f; }
     }
 
-    private static void With(WorldGenerator world, RoadLocationProtection.Footprint[] footprints, Action body)
+    private static void With(WorldGenerator world, RoadLocationProtection.Footprint[] locations, Action body)
     {
         using var scope = new ValheimWorldScope().WithWorld(world);
-        RoadLocationProtection.Set(footprints);
+        RoadLocationProtection.Set(locations);
         try { body(); }
         finally { RoadLocationProtection.Set(Array.Empty<RoadLocationProtection.Footprint>()); }
     }
@@ -128,8 +128,8 @@ public class LocationShoreSqueezeTests
     [Fact]
     public void ShallowsBesideALocationAreBuiltOutNotSqueezed()
     {
-        var footprints = new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 10f) };
-        With(new Shallows { Depth = 1f }, footprints, () =>
+        var location = new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 10f) };
+        With(new Shallows { Depth = 1f }, location, () =>
         {
             var finder = new RoadPathfinder(WorldGenerator.instance);
             Assert.False(finder.LocationShoreSqueeze(new Vector2(15f, 0f)), "water 1 m under the shallow line squeezed the strip");
@@ -137,20 +137,20 @@ public class LocationShoreSqueezeTests
             Assert.Equal(5f, gap, 3);
         });
         // Deeper than the fill depth: real water, squeezed as before.
-        With(new Shallows { Depth = 2.5f }, footprints, () =>
+        With(new Shallows { Depth = 2.5f }, location, () =>
             Assert.True(new RoadPathfinder(WorldGenerator.instance).LocationShoreSqueeze(new Vector2(15f, 0f))));
         // A river channel is never built out, however shallow.
-        With(new Shallows { Depth = 0.5f, River = true }, footprints, () =>
+        With(new Shallows { Depth = 0.5f, River = true }, location, () =>
             Assert.True(new RoadPathfinder(WorldGenerator.instance).LocationShoreSqueeze(new Vector2(15f, 0f))));
         // Nor where the fill would stand past the earthwork cap under the road.
         using var depth = StaticOverride.Keep(() => RoadShoreFill.FillDepth);
         using var cap = StaticOverride.Keep(() => RoadNetworkGenerator.EarthworkCap);
         RoadNetworkGenerator.EarthworkCap = RoadNetworkGenerator.DefaultEarthworkCap;
-        With(new Shallows { Depth = 1f, Land = RoadConstants.ShallowWaterHeight + 9f }, footprints, () =>
+        With(new Shallows { Depth = 1f, Land = RoadConstants.ShallowWaterHeight + 9f }, location, () =>
             Assert.True(new RoadPathfinder(WorldGenerator.instance).LocationShoreSqueeze(new Vector2(15f, 0f))));
         // Off, every water is water.
         RoadShoreFill.FillDepth = 0f;
-        With(new Shallows { Depth = 1f }, footprints, () =>
+        With(new Shallows { Depth = 1f }, location, () =>
             Assert.True(new RoadPathfinder(WorldGenerator.instance).LocationShoreSqueeze(new Vector2(15f, 0f))));
     }
 
@@ -158,7 +158,7 @@ public class LocationShoreSqueezeTests
     public void TheSearchTakesTheShoreOverBuiltOutShallowsAndSaysWhere()
     {
         // As TheSearchGoesRoundTheSqueezeInsteadOfThroughIt, the water 1 m deep: the strip is road.
-        var footprints = new[]
+        var locations = new[]
         {
             new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 10f),
             new RoadLocationProtection.Footprint(new Vector2(-30f, 0f), 20f),
@@ -167,7 +167,7 @@ public class LocationShoreSqueezeTests
             new RoadLocationProtection.Footprint(new Vector2(-150f, 0f), 20f),
         };
         bool InStrip(Vector2 p) => p.x > 10f && p.x < 20f && Mathf.Abs(p.y) < 12f;
-        With(new Shallows { Depth = 1f }, footprints, () =>
+        With(new Shallows { Depth = 1f }, locations, () =>
         {
             RoadPathfinder.ShoreFillCells.Clear();
             var path = new RoadPathfinder(WorldGenerator.instance).FindPath(new Vector2(8f, -120f), new Vector2(8f, 120f));
@@ -183,10 +183,10 @@ public class LocationShoreSqueezeTests
     [Fact]
     public void ARoadLetThroughOnShallowsLaysAShoulderOverThem()
     {
-        var footprints = new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 10f) };
+        var location = new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), 10f) };
         using var spread = StaticOverride.Keep(() => RoadEarthworkNoise.FillSpread);
         RoadEarthworkNoise.FillSpread = 1f; // the mod's: no fill under a road on its own ground, so the shoulder alone
-        With(new Shallows { Depth = 1f }, footprints, () =>
+        With(new Shallows { Depth = 1f }, location, () =>
         {
             var world = WorldGenerator.instance;
             // A road along the strip at x = 15, 5 m off the location's edge, on the land's height.
@@ -206,7 +206,7 @@ public class LocationShoreSqueezeTests
             Assert.Equal(0f, RoadTerrainModifier.FillExtras(away, world)![0], 3);
         });
         // Over water too deep to build out the search squeezed, so no road there and no shoulder.
-        With(new Shallows { Depth = 2.5f }, footprints, () =>
+        With(new Shallows { Depth = 2.5f }, location, () =>
             Assert.Equal(0f, RoadTerrainModifier.FillExtras(new List<RoadSpatialGrid.RoadPoint> { new(new Vector2(15f, 0f), 4f, 31f) }, WorldGenerator.instance)![0], 3));
     }
 }

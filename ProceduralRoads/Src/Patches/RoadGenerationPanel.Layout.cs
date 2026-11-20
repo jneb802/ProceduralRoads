@@ -36,9 +36,6 @@ internal static partial class RoadGenerationPanel
         return (font, rowHeight, cells, islands - cells + 1);
     }
 
-    /// <summary>Settled locations needed before the remaining-time estimate is shown.</summary>
-    internal const int EstimateAfter = 3;
-
     /// <summary>What the island is doing, in words. The internal stage names stay (tests and the adapter read them);
     /// only the display changes: Pricing is "Planning routes", Connecting is "Building roads", Fitting is "Fitting terrain".</summary>
     internal static string StageLabel(RoadIslandProgress row) => row.Stage switch
@@ -77,14 +74,11 @@ internal static partial class RoadGenerationPanel
         return total >= 60 ? $"{total / 60}m {total % 60:00}s" : $"{total}s";
     }
 
-    /// <summary>Average time per settled location times the locations left; null until <see cref="EstimateAfter"/> locations are
-    /// settled. Timed from the start of connecting, so the pricing stage (when no location settles) does not inflate it.</summary>
-    internal static double? RemainingSeconds(RoadIslandProgress row) =>
-        row.Processed >= EstimateAfter ? row.SettlingSeconds / row.Processed * System.Math.Max(0, row.Destinations - row.Processed) : null;
-
     private static string Count(int n, string one, string many) => n == 1 ? $"1 {one}" : $"{n} {many}";
 
-    /// <summary>Fraction of the island's locations settled, for the progress bar.</summary>
+    /// <summary>Fraction of the island's chosen locations settled, for the progress bar. The total is the chosen locations,
+    /// fixed when the island is claimed; replacement destinations (drawn for chosen ones left unreached) are not added to it,
+    /// and a settled location stays settled, so the fraction never goes back.</summary>
     internal static float Fraction(RoadIslandProgress row) =>
         row.Destinations <= 0 ? 0f : System.Math.Min(1f, row.Processed / (float)row.Destinations);
 
@@ -99,9 +93,7 @@ internal static partial class RoadGenerationPanel
         var built = new StringBuilder(row.Kilometres.ToString("F1", c)).Append(" km");
         if (row.Bridges > 0) built.Append(" · ").Append(Count(row.Bridges, "bridge", "bridges"));
         if (row.Staircases > 0) built.Append(" · ").Append(Count(row.Staircases, "staircase", "staircases"));
-        double? left = RemainingSeconds(row);
-        built.Append(" · ").Append(Duration(row.IslandSeconds)).Append(" · ")
-            .Append(left == null ? "— left" : left.Value < 60 ? "under 1m left" : $"~{(int)(left.Value / 60 + .5)}m left");
+        built.Append(" · ").Append(Duration(row.IslandSeconds));
         return $"Island {row.Island} · {doing}\n<size=85%>{locations}\n{built}</size>";
     }
 }

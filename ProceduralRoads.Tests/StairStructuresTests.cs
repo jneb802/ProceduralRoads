@@ -108,7 +108,7 @@ public class StairStructuresTests : IDisposable
         StairClearance first = run.Clearances[0];
 
         var near = StructurePlans.ClearancesNear(first.Centre, 3f);
-        Assert.Contains(near, c => c.IsBox && c.Centre.Equals(first.Centre) && c.Half.Equals(first.Half) && c.YawDegrees == first.YawDegrees);
+        Assert.Contains(near, c => c.Centre.Equals(first.Centre) && c.Half.Equals(first.Half) && c.YawDegrees == first.YawDegrees);
         Assert.All(near, c => Assert.False(c.WholeOnly));
         Assert.Empty(StructurePlans.ClearancesNear(first.Centre + new Vector3(500f, 0f, 0f), 3f));
     }

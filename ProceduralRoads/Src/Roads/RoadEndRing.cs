@@ -20,8 +20,9 @@ public readonly struct RoadEndRing
     /// <summary>How far in from the road's edge the circle runs.</summary>
     public const float Inset = 0.5f;
 
-    /// <summary>How far either way of the circle a staircase's foot (or top) may meet it: walked pieces may come this far
-    /// inside it (tuned in game).</summary>
+    /// <summary>The circle's slack: walked pieces may come this far inside it (<see cref="KeptOut"/>), and a start this far
+    /// behind or ahead of the road's end is still abreast of it (<see cref="WalksOffAcross"/>) (tuned in game). Not how far off
+    /// the circle a staircase meets it: a start and an arrival alike stand on it (<see cref="Allows"/>).</summary>
     public const float Delta = 0.5f;
 
     /// <summary>Half the clear lane kept along the road (a ~2 m corridor where nothing is built).</summary>
@@ -46,13 +47,15 @@ public readonly struct RoadEndRing
     public const float TurnWeight = StairLayout.FootOffRoadWeight;
 
     /// <summary>Price per heading step a staircase's first piece leaves the circle off square (off the arc point's
-    /// radial): straight on starts from the front of the ring, a quarter turn from its side.</summary>
-    public const float SkewWeight = 0.5f;
+    /// radial): straight on starts from the front of the ring, a quarter turn from its side. The turn's price: from a
+    /// point round the ring, leaving square to the circle costs the same as leaving on the road's own heading.</summary>
+    public const float SkewWeight = TurnWeight;
 
-    /// <summary>The most a start leaves the circle off square (off its arc point's radial): three heading steps, short of
-    /// square to it. Square or more, a flight set off across the front of the ring. (Held to two steps, six worlds laid four
-    /// staircases fewer and reached two locations fewer.)</summary>
-    public const float MostSkew = 3f * StairLayout.HeadingStep;
+    /// <summary>The most a start leaves the circle off square (off its arc point's radial): two heading steps (45 degrees), a
+    /// flight leaving it near square (its foot, or a top arriving on it). Further off, a flight set off across the front of the
+    /// ring. (Chosen in game: at three steps staircases left the circle up to 67.5 degrees off square; at one step a staircase
+    /// over a ridge, its feet about 27 and 45 degrees off square, was lost.)</summary>
+    public const float MostSkew = 2f * StairLayout.HeadingStep;
 
     /// <summary>How far round the circle candidate starts are taken: the hammer's heading step.</summary>
     public const float ArcStep = StairLayout.HeadingStep;
@@ -92,13 +95,13 @@ public readonly struct RoadEndRing
     /// <summary>Whether the arc point <paramref name="arc"/> degrees round is cut out (back, and through also straight on).</summary>
     public bool ArcCut(float arc)
     {
-        float a = Mathf.Abs(Turn(Travel + arc, Travel));
+        float a = FloatBits.Abs(Turn(Travel + arc, Travel));
         return a > 180f - CutArc + 0.01f || Through && StraightOn(Travel + arc);
     }
 
     /// <summary>Whether <paramref name="heading"/> is within the arc straight on, where the lane meets the circle on the far
     /// side (<see cref="CutArc"/>): the arc a through road cuts, and the way a road going on past the end goes.</summary>
-    public bool StraightOn(float heading) => Mathf.Abs(Turn(heading, Travel)) < CutArc - 0.01f;
+    public bool StraightOn(float heading) => FloatBits.Abs(Turn(heading, Travel)) < CutArc - 0.01f;
 
     /// <summary>A first piece setting off from the circle: its back edge centred on <see cref="At"/>, heading
     /// <see cref="Heading"/>, at <see cref="Arc"/> degrees round, and what it costs.</summary>
@@ -113,8 +116,8 @@ public readonly struct RoadEndRing
     /// off the road's travel (<see cref="TurnWeight"/>), and by how far off square it leaves the circle
     /// (<see cref="SkewWeight"/>).</summary>
     public float Price(float heading, float arc) =>
-        TurnWeight * Mathf.Abs(Turn(heading, Travel)) / StairLayout.HeadingStep
-        + SkewWeight * Mathf.Abs(Turn(heading, Travel + arc)) / StairLayout.HeadingStep;
+        TurnWeight * FloatBits.Abs(Turn(heading, Travel)) / StairLayout.HeadingStep
+        + SkewWeight * FloatBits.Abs(Turn(heading, Travel + arc)) / StairLayout.HeadingStep;
 
     /// <summary>Every start on the remaining arc (every <see cref="ArcStep"/> round it, the cut arcs left out) on each of the
     /// hammer's sixteen headings that leaves the circle outward (within <see cref="MostSkew"/> of the arc point's radial: a
@@ -131,25 +134,28 @@ public readonly struct RoadEndRing
             for (int k = 0; k < 16; k++)
             {
                 float heading = k * StairLayout.HeadingStep;
-                if (Mathf.Abs(Turn(heading, Travel + arc)) > MostSkew + 0.01f) continue;
+                if (FloatBits.Abs(Turn(heading, Travel + arc)) > MostSkew + 0.01f) continue;
                 if (Intrudes(Footprint(at, heading, width, StairLayout.PieceRun))) continue;
                 if (WalksOffAcross(at, heading + 180f)) continue;
                 starts.Add(new Start(at, heading, arc, Price(heading, arc)));
             }
         }
-        starts.Sort((x, y) => x.Price != y.Price ? x.Price.CompareTo(y.Price) : Mathf.Abs(x.Arc).CompareTo(Mathf.Abs(y.Arc)));
+        starts.Sort((x, y) => x.Price != y.Price ? x.Price.CompareTo(y.Price) : FloatBits.Abs(x.Arc).CompareTo(FloatBits.Abs(y.Arc)));
         return starts;
     }
 
     /// <summary>Whether a first piece of <paramref name="width"/> may set off from <paramref name="at"/> on the circle on
     /// <paramref name="heading"/>, as <see cref="Starts"/> takes a start: not from a cut arc, within <see cref="MostSkew"/> of
     /// its arc point's radial, its footprint out of the circle and the lane, not walked off across the road. For a start the
-    /// ring did not lay out itself (RoadStairRuns.CarryRoadOntoStairs: a ring put a radius behind a staircase's first stair). The one owner of staircase starts (docs/OWNERS.md).</summary>
+    /// ring did not lay out itself (RoadStairRuns.CarryRoadOntoStairs: a ring put a radius behind a staircase's first stair),
+    /// and for a top arriving on the ring from below (StairLayout.Build's search, read as a start leaving it the way the flight
+    /// goes down): one precise target for both ends, no band round the circle for an arrival. The one owner of staircase
+    /// starts and arrivals on a road's end (docs/OWNERS.md).</summary>
     public bool Allows(Vector2 at, float heading, float width)
     {
-        if (Mathf.Abs(Vector2.Distance(at, Centre) - Radius) > 0.05f) return false;
+        if (FloatBits.Abs(Vector2.Distance(at, Centre) - Radius) > 0.05f) return false;
         float arc = Turn(StairLayout.Bearing(Centre, at), Travel);
-        return !ArcCut(arc) && Mathf.Abs(Turn(heading, Travel + arc)) <= MostSkew + 0.01f
+        return !ArcCut(arc) && FloatBits.Abs(Turn(heading, Travel + arc)) <= MostSkew + 0.01f
             && !Intrudes(Footprint(at, heading, width, StairLayout.PieceRun)) && !WalksOffAcross(at, heading + 180f);
     }
 
@@ -169,7 +175,7 @@ public readonly struct RoadEndRing
         Vector2 d = at - Centre, forward = StairLayout.Forward(Travel), right = StairLayout.Right(Travel), dir = StairLayout.Forward(walkOff);
         float along = Vector2.Dot(d, forward), across = Vector2.Dot(d, right), goesAlong = Vector2.Dot(dir, forward), goesAcross = Vector2.Dot(dir, right);
         bool besideTheBody = along < -Delta || Through && along > Delta;
-        return besideTheBody && Mathf.Abs(across) > margin && across * goesAcross < 0f && along * goesAlong >= 0f;
+        return besideTheBody && FloatBits.Abs(across) > margin && across * goesAcross < 0f && along * goesAlong >= 0f;
     }
 
     /// <summary>Samples over a piece's footprint from its back edge's centre <paramref name="back"/> on
@@ -189,7 +195,7 @@ public readonly struct RoadEndRing
         Vector2 d = p - Centre;
         if (d.magnitude < Radius - Delta - margin) return true;
         float along = Vector2.Dot(d, StairLayout.Forward(Travel)), across = Vector2.Dot(d, StairLayout.Right(Travel));
-        if (Mathf.Abs(across) >= CorridorHalfWidth - margin) return false;
+        if (FloatBits.Abs(across) >= CorridorHalfWidth - margin) return false;
         return along <= 0f && along >= -CorridorLength || Through && along >= 0f && along <= CorridorLength;
     }
 
@@ -224,7 +230,7 @@ public readonly struct RoadEndRing
             StairPiece p = plan.Pieces[i];
             if (p.Kind == StairPieceKind.Support) continue;
             float surface = StairLayout.CentreSurface(p);
-            if (Mathf.Abs(surface - Height) > RoadStairRuns.JunctionHeight) continue;
+            if (FloatBits.Abs(surface - Height) > RoadStairRuns.JunctionHeight) continue;
             // At a top, a floor a walker's step off the road's height (StairLayout.Walkable) is where the road comes onto it,
             // level (a top landing the road meets from any side): not a crossing. Only its flight counts there.
             if (top && p.Kind != StairPieceKind.Stair && StairLayout.Walkable(surface, Height)) continue;
@@ -250,7 +256,7 @@ public readonly struct RoadEndRing
 
     /// <summary>How far from <see cref="Centre"/> the road's end reaches, the disc its own earthwork levels: the ring and its
     /// <see cref="Inset"/> (<see cref="RoadsGround"/>, <see cref="PadUnder(StairPlan, RoadEndRing, bool, Func{float, float, float}, float, out string)"/>,
-    /// RoadStairRuns.FootLeftOver).</summary>
+    /// RoadStairRuns.ConnectionRefusal).</summary>
     public float RoadsEnd => Radius + Inset;
 
     /// <summary>How far from <see cref="Centre"/> a staircase still starts: the road's end and <see cref="PadReach"/> on.</summary>
@@ -263,7 +269,14 @@ public readonly struct RoadEndRing
     {
         Vector2 centre = Centre;
         float height = Height, reach = RoadsEnd;
-        return (x, z) => (new Vector2(x, z) - centre).sqrMagnitude <= reach * reach ? height : ground(x, z);
+        // (new Vector2(x, z) - centre).sqrMagnitude, each part rounded where the vector and its square stored them: the
+        // same to the bit, without the vector calls the game's Mono makes for every ground read of a staircase's search.
+        return (x, z) =>
+        {
+            float dx = x - centre.x, dz = z - centre.y;
+            float distSq = dx * dx + dz * dz;
+            return distSq <= reach * reach ? height : ground(x, z);
+        };
     }
 
     // ---- The level pad where a staircase starts ----
@@ -308,10 +321,64 @@ public readonly struct RoadEndRing
         /// <summary>Walked pieces it lies under.</summary>
         public int Pieces;
 
+        /// <summary>The walked pieces it lies under, each its line along the walk (the middle of its back edge to the middle of
+        /// its front edge), in walking order away from the road's end.</summary>
+        public readonly List<(Vector2 from, Vector2 to)> Walk = new();
+
         /// <summary>As stored: levelled road points, never painted (the road's own paint is left as it was).</summary>
         public RoadSpatialGrid.PlannedPath ToPath() =>
             new(new List<Vector2>(Points), new List<float>(Heights), Points.ConvertAll(_ => default(RoadPointDebugInfo)), PadPointWidth, 0f, false)
             { Unpainted = Points.ConvertAll(_ => true) };
+
+        /// <summary>
+        /// The pad along the road's line (RoadRidges.AtEnd, the owner's rule of 18 Nov 2026: the ridge judge reads it as part of
+        /// the road): from the road's own end <paramref name="from"/> (at <paramref name="height"/>) through <see cref="End"/> and
+        /// on along the walked pieces it lies under (<see cref="Walk"/>), each of its own points (<see cref="Points"/>, as laid)
+        /// nearest that way every <see cref="PadSpacing"/>, until no point of it lies within a <see cref="PadSpacing"/> of the
+        /// way. Null where none of it lies on that way.
+        /// </summary>
+        public RoadSpatialGrid.PlannedPath? Line(Vector2 from, float height)
+        {
+            var way = new List<Vector2> { from, End };
+            Vector2 at = End;
+            foreach (var (a, b) in Walk)
+            {
+                bool turned = (b - at).sqrMagnitude < (a - at).sqrMagnitude;
+                way.Add(turned ? b : a); way.Add(turned ? a : b);
+                at = turned ? a : b;
+            }
+            var points = new List<Vector2> { from };
+            var heights = new List<float> { height };
+            var taken = new HashSet<int>();
+            for (int s = 1; s < way.Count; s++)
+            {
+                float leg = Vector2.Distance(way[s - 1], way[s]);
+                int steps = Mathf.Max(1, Mathf.CeilToInt(leg / PadSpacing));
+                for (int k = 1; k <= steps; k++)
+                {
+                    Vector2 q = Vector2.Lerp(way[s - 1], way[s], k / (float)steps);
+                    int best = -1;
+                    float bestD = PadSpacing;
+                    for (int i = 0; i < Points.Count; i++)
+                    {
+                        float d = Vector2.Distance(Points[i], q);
+                        if (d <= bestD) { bestD = d; best = i; }
+                    }
+                    if (best < 0) return Made();
+                    if (!taken.Add(best)) continue;
+                    points.Add(Points[best]); heights.Add(Heights[best]);
+                }
+            }
+            return Made();
+
+            RoadSpatialGrid.PlannedPath? Made()
+            {
+                if (points.Count < 2) return null;
+                float length = 0f;
+                for (int i = 1; i < points.Count; i++) length += Vector2.Distance(points[i - 1], points[i]);
+                return new RoadSpatialGrid.PlannedPath(points, heights, points.ConvertAll(_ => default(RoadPointDebugInfo)), PadPointWidth, length, false);
+            }
+        }
     }
 
     /// <summary>
@@ -325,10 +392,11 @@ public readonly struct RoadEndRing
     /// down from the road's end) the floors at the road's level it ends on, never the flight going down. All levelled to the
     /// walked piece's height there (a foot's low edge, a top's exit), under a floor <see cref="PadUnderFloor"/> lower; past
     /// it the terrain writer blends the pad into the road's grade and the ground.</para>
-    /// <para>Within the road's earthwork rules: none where any of it cuts deeper than <paramref name="cap"/>; off the road's
-    /// own end, no point that fills more than <see cref="PadMostFill"/>, nor one beside it that its flat core would level
-    /// too (no ridge up to a stair: the ground there is left as it is, <see cref="Pad.LeftOut"/>). Null, with
-    /// <paramref name="why"/>, where none is laid.</para>
+    /// <para>Within the road's earthwork rules: off the road's own end, no point that fills more than
+    /// <see cref="PadMostFill"/>, nor one beside it that its flat core would level too (no ridge up to a stair: the ground
+    /// there is left as it is, <see cref="Pad.LeftOut"/>); and none where the pad so laid is past <paramref name="cap"/> as
+    /// every road's earthwork is measured (RoadNetworkGenerator.EarthworkAcross, its points as stored, over
+    /// <paramref name="ground"/>). Null, with <paramref name="why"/>, where none is laid.</para>
     /// </summary>
     public static Pad? PadUnder(StairPlan plan, Func<float, float, float> ground, float cap, out string why)
     {
@@ -400,6 +468,7 @@ public readonly struct RoadEndRing
             }
         }
         var pad = new Pad { End = end, Height = height, Top = top, Pieces = under.Count };
+        foreach (var u in under) pad.Walk.Add((u.back, u.back + StairLayout.Forward(u.heading) * u.depth));
         float x0 = Mathf.Floor(minX / PadSpacing) * PadSpacing, z0 = Mathf.Floor(minZ / PadSpacing) * PadSpacing;
         int nx = Mathf.FloorToInt((maxX - x0) / PadSpacing + 1e-3f) + 1, nz = Mathf.FloorToInt((maxZ - z0) / PadSpacing + 1e-3f) + 1;
         // Each lattice point: its height (NaN off the pad), on the road's end, and off it too deep (a fill past PadMostFill).
@@ -407,7 +476,6 @@ public readonly struct RoadEndRing
         var gs = new float[nx, nz];
         var onRoads = new bool[nx, nz];
         var deep = new bool[nx, nz];
-        // Every point checked against the cap first: a cut past it refuses the whole pad.
         for (int ix = 0; ix < nx; ix++)
             for (int iz = 0; iz < nz; iz++)
             {
@@ -419,13 +487,12 @@ public readonly struct RoadEndRing
                 {
                     Vector2 d = q - u.back;
                     float along = Vector2.Dot(d, StairLayout.Forward(u.heading)), side = Vector2.Dot(d, StairLayout.Right(u.heading));
-                    if (along >= -1e-3f && along <= u.depth + 1e-3f && Mathf.Abs(side) <= u.across / 2f + 1e-3f) h = Mathf.Min(h, u.height);
+                    if (along >= -1e-3f && along <= u.depth + 1e-3f && FloatBits.Abs(side) <= u.across / 2f + 1e-3f) h = Mathf.Min(h, u.height);
                 }
                 hs[ix, iz] = float.IsPositiveInfinity(h) ? float.NaN : h;
                 if (float.IsPositiveInfinity(h)) continue;
                 float g = gs[ix, iz] = ground(x, z);
-                float cut = g - h, fill = h - g;
-                if (cut > cap) { why = FormattableString.Invariant($"a cut of {cut:F1} m at ({x:F1}, {z:F1}), past the {cap:F0} m cap"); return null; }
+                float fill = h - g;
                 onRoads[ix, iz] = onRoad;
                 deep[ix, iz] = !onRoad && fill > PadMostFill;
             }
@@ -449,6 +516,17 @@ public readonly struct RoadEndRing
                 pad.Points.Add(new Vector2(x0 + ix * PadSpacing, z0 + iz * PadSpacing));
                 pad.Heights.Add(h);
             }
+        // The pad as it is stored, measured as every road's earthwork is: a point past the cap refuses the whole pad.
+        Vector2? pastAt = null;
+        RoadNetworkGenerator.Earthwork earth = RoadNetworkGenerator.EarthworkAcross(pad.ToPath(), q => ground(q.x, q.y), cap, q => pastAt ??= q);
+        if (pastAt is Vector2 at)
+        {
+            why = FormattableString.Invariant($"{PastTheCap} at ({at.x:F1}, {at.y:F1}), {earth.Worst:F1} m");
+            return null;
+        }
         return pad;
     }
+
+    /// <summary>Why a pad past the earthwork cap is not laid (<see cref="PadUnder(StairPlan, RoadEndRing, bool, Func{float, float, float}, float, out string)"/>).</summary>
+    public const string PastTheCap = "past the earthwork cap";
 }

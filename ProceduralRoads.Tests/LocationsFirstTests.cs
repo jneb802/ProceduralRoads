@@ -81,6 +81,7 @@ public partial class LocationsFirstTests : IDisposable
     public void AWayOntoAPlacedLocationsLandingReachesFurtherThanAnApproach()
     {
         PlacedLocation cave = Cave();
+        PlacedLocations.Ready(cave);
         Vector2 end = cave.Shape.Landing + new Vector2(0f, 58f);
         RoadSpatialGrid.PlannedPath? From(float reach, out string why)
         {
@@ -89,7 +90,7 @@ public partial class LocationsFirstTests : IDisposable
                 RoadEnd = end, RoadHeight = 50f, Arriving = 180f, Centre = cave.Centre,
                 RoadTail = new List<Vector2> { end + new Vector2(0f, 20f), end }, Reach = reach,
             };
-            return RoadLocationEntry.Plan(request, cave.Shape, 4f, cave.Ground, _world, out why);
+            return RoadLocationEntry.Plan(request, cave.Shape, 4f, cave.Ground, out why);
         }
 
         Assert.True(From(RoadNetworkGenerator.PlacedLocationReach, out string placed) != null, placed);
@@ -181,6 +182,9 @@ public partial class LocationsFirstTests : IDisposable
         // The placed ground a sheer wall 40 m high everywhere but the ring the road ends on.
         Func<float, float, float> wall = (x, z) => new Vector2(x, z).magnitude < 22f ? 90f : 50f;
         PlacedLocations.Ready(new PlacedLocation { Record = cave.Record, Ground = wall, Shape = PlacedLocationShape.Of(cave.Centre, 90f, CaveFloor[0], 0f, null, wall, false, 90f) });
+        // Its footprint, as every placed Location has: the levelled ground before roads reads its ground there.
+        RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(cave.Centre, Footprint) });
+        RoadStairRuns.ForgetGround();
         LocationLevelling.Source = c => c.magnitude < 0.5f ? CaveFloor : null;
         SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
 
@@ -217,13 +221,20 @@ public partial class LocationsFirstTests : IDisposable
 
     /// <summary>A staircase onto a placed location's landing that could not be laid is not laid out again from
     /// the same start, and a location gets no more than EntryStairsPerLocation of them: the slowest islands took
-    /// 570 and 537 s, most of it laying the same failing staircases for each road tried to a location.</summary>
+    /// 570 and 537 s, most of it laying the same failing staircases for each road tried to a location. The road tries
+    /// several starts onto the cave's landing: held to one, it lays one; let lay them all, it lays the rest; asked
+    /// again, none (with the cap left high, so only the failed starts can hold it: at the cap, a road asked again
+    /// laid none even when its failed starts were laid out again).</summary>
     [Fact]
     public void AFailedStaircaseOntoAPlacedLocationsLandingIsNotLaidOutAgain()
     {
-        int perLocation = RoadNetworkGenerator.EntryStairsPerLocation;
+        int perLocation = RoadNetworkGenerator.EntryStairsPerLocation, budget = RoadNetworkGenerator.EntryTotalExpansions, stall = RoadNetworkGenerator.EntryStall;
         try
         {
+            // What is counted is the layouts tried, not how long each searched before it failed: a small search budget
+            // (RoadNetworkGenerator.EntryTotalExpansions, EntryStall) fails the same six starts sooner, each in a fraction of
+            // the 2.5 s it took at the generation's.
+            (RoadNetworkGenerator.EntryTotalExpansions, RoadNetworkGenerator.EntryStall) = (1000, 500);
             PlacedLocation cave = Cave();
             Func<float, float, float> wall = (x, z) => new Vector2(x, z).magnitude < 22f ? 90f : 50f;
             PlacedLocations.Ready(new PlacedLocation { Record = cave.Record, Ground = wall, Shape = PlacedLocationShape.Of(cave.Centre, 90f, CaveFloor[0], 0f, null, wall, false, 90f) });
@@ -231,17 +242,18 @@ public partial class LocationsFirstTests : IDisposable
             SetPathfinder(new RoadPathfinder(_world) { Stairs = true, TerrainVarianceThreshold = 1000f, Meander = 0f });
             RoadNetworkGenerator.EntryStairLayouts = 0;
 
+            RoadNetworkGenerator.EntryStairsPerLocation = 1;
             Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 120f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave"));
-            int first = RoadNetworkGenerator.EntryStairLayouts;
-            Assert.True(first > 0);
-            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 120f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave again"));
-            Assert.Equal(first, RoadNetworkGenerator.EntryStairLayouts);
+            Assert.Equal(1, RoadNetworkGenerator.EntryStairLayouts);
 
-            RoadNetworkGenerator.EntryStairsPerLocation = 0;
-            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(120f, 60f), 0f, new Vector2(0f, 0f), 10f, 4f, "from elsewhere"));
-            Assert.Equal(first, RoadNetworkGenerator.EntryStairLayouts);
+            RoadNetworkGenerator.EntryStairsPerLocation = int.MaxValue;
+            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 120f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave, every start"));
+            int all = RoadNetworkGenerator.EntryStairLayouts;
+            Assert.True(all > 1, $"{all} staircase(s) laid: the road tried one start, so the cap held nothing back");
+            Assert.False(RoadNetworkGenerator.GenerateRoad(new Vector2(0f, 120f), 0f, new Vector2(0f, 0f), 10f, 4f, "to the cave again"));
+            Assert.Equal(all, RoadNetworkGenerator.EntryStairLayouts);
         }
-        finally { RoadNetworkGenerator.EntryStairsPerLocation = perLocation; }
+        finally { (RoadNetworkGenerator.EntryStairsPerLocation, RoadNetworkGenerator.EntryTotalExpansions, RoadNetworkGenerator.EntryStall) = (perLocation, budget, stall); }
     }
 
     /// <summary>The level ground with the cave on an islet: deep sea from 30 to 80 m out all round.</summary>

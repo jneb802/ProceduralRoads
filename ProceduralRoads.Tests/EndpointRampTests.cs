@@ -1,10 +1,11 @@
+using Valheim.Testing;
 using UnityEngine;
 using Valheim.Testing.Doubles;
 using Xunit;
 
 namespace ProceduralRoads.Tests;
 
-/// <summary>The endpoint ramp: its curve, and its effect on road-point heights through AddRoadPath.</summary>
+/// <summary>The endpoint ramp: its curve, the smoothing it blends toward, and its effect on road-point heights through AddRoadPath.</summary>
 public class EndpointRampTests
 {
     [Fact]
@@ -26,38 +27,42 @@ public class EndpointRampTests
     [Fact]
     public void SmoothedHeightsCarryNoSlopeBiasNearTheEnds()
     {
-        // On a plane slope smoothing has nothing to remove, so every stored
-        // height must be the natural height, ramp or no ramp. The one-sided
-        // smoothing window at the ends used to lean the last twenty metres
-        // toward the interior: a hump on the way down, a cut on the way up.
+        // On a plane slope smoothing has nothing to remove, so every smoothed
+        // height must be the natural height. The one-sided smoothing window at
+        // the ends used to lean the last twenty metres toward the interior: a
+        // hump on the way down, a cut on the way up. The reviewer's
+        // reproduction is a plane rising half a metre per metre, steeper than
+        // any road the cap lets through, so it is run through the smoothing
+        // itself (RoadSpatialGrid.SmoothHeights, the planner's own call) rather
+        // than a whole road: the cap's own behaviour on such a slope is a
+        // refusal, tested in RoadGradeRoadTests. Both windows the planner uses
+        // (the long one, and the short one when the road follows the ground).
         var world = new PlaneSlope();
-        using var scope = new ValheimWorldScope().WithWorld(world);
-        RoadSpatialGrid.Clear();
-        try
+        using var follow = StaticOverride.Keep(() => RoadSpatialGrid.FollowGround);
+        foreach (bool followGround in new[] { false, true })
         {
-            var path = new System.Collections.Generic.List<Vector2>();
-            for (float x = -200f; x <= 200f; x += 8f)
-                path.Add(new Vector2(x, 0f));
-            // Cap off: this plane rises half a metre per metre, so the subject
-            // - smoothing bias at the ends - only exists if the road does.
-            using (GradeCap.Off())
-                Assert.True(RoadSpatialGrid.AddRoadPath(path, 4f, world));
+            RoadSpatialGrid.FollowGround = followGround;
+            // A 4 m road's dense points from -200 to 200 at the planner's quarter-width spacing, evenly spaced to
+            // the ends, on the natural ground. (The spline bunches its last few points, which a line fitted by
+            // index reads a little off a plane; the ramp holds the very end to the ground there.)
+            var heights = new System.Collections.Generic.List<float>();
+            var xs = new System.Collections.Generic.List<float>();
+            for (float x = -200f; x <= 200f; x += 1f) { xs.Add(x); heights.Add(world.GetHeight(x, 0f)); }
+            var smoothed = RoadSpatialGrid.SmoothHeights(heights, RoadSpatialGrid.SmoothingWindow(4f), out _);
+            Assert.Equal(heights.Count, smoothed.Count);
 
             foreach (float end in new[] { -200f, 200f })
             {
-                var points = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(end, 0f, 0f), 30f);
-                Assert.True(points.Count > 10, $"too few road points near {end}");
-                foreach (var rp in points)
+                int near = 0;
+                for (int i = 0; i < xs.Count; i++)
                 {
-                    float natural = world.GetHeight(rp.p.x, rp.p.y);
-                    Assert.True(Mathf.Abs(rp.h - natural) < 0.02f,
-                        $"road point at x={rp.p.x:F1} is {rp.h - natural:F3} m off the slope");
+                    if (Mathf.Abs(xs[i] - end) > 30f) continue;
+                    near++;
+                    Assert.True(Mathf.Abs(smoothed[i] - heights[i]) < 0.02f,
+                        $"window {RoadSpatialGrid.SmoothingWindow(4f)}: smoothed height at x={xs[i]:F1} is {smoothed[i] - heights[i]:F3} m off the slope");
                 }
+                Assert.True(near > 10, $"too few points near {end}");
             }
-        }
-        finally
-        {
-            RoadSpatialGrid.Clear();
         }
     }
 

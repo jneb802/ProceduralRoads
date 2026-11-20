@@ -19,7 +19,7 @@ namespace ProceduralRoads;
 /// recorded as "this prefab levels nothing", which puts the road back on the
 /// natural terrain under its own end - the behaviour before any of this.
 /// </summary>
-public static class LocationPrefabLevelling
+public static partial class LocationPrefabLevelling
 {
     private static readonly Dictionary<string, IReadOnlyList<LevelOp>> m_byPrefab = new();
 
@@ -213,7 +213,7 @@ public static class LocationPrefabLevelling
         m_terrainRadius.TryGetValue(name,out float terrainRadius);
         m_byPrefab.TryGetValue(name,out IReadOnlyList<LevelOp>? ops);
         float exterior=location.m_location.m_exteriorRadius, whole=Mathf.Max(exterior,terrainRadius);
-        return new RoadLocationProtection.Footprint(new Vector2(location.m_position.x,location.m_position.z),
+        return new RoadLocationProtection.Footprint(Centre(location),
             whole,LocationLevelling.ArrivalReach(ops,exterior,whole));
     }
     private static readonly int LocationProxyHash="LocationProxy".GetStableHashCode();
@@ -229,36 +229,7 @@ public static class LocationPrefabLevelling
     private static float? PlacementHeightAt(Vector2 centre) => LocationPlacementHeights.At(centre);
 
     private static IReadOnlyList<LevelOp>? OpsAt(Vector2 centre) =>
-        LocationAt(centre, out ZoneSystem.LocationInstance inst) ? ForPrefab(inst.m_location) : null;
-
-    /// <summary>
-    /// The location standing within half a metre of <paramref name="centre"/> each way, the one reader of the world's
-    /// locations by centre (its levelling, <see cref="OpsAt"/>; its turn, <see cref="FacesDownhillAt"/>; its placed parts,
-    /// <see cref="PlacedOps"/>): a zone holds at most one location, so it is the one in the zone under that square's corners
-    /// (one zone but where the square straddles a zone's edge). A lookup in the zone table, as PlacedLocations.FindNotPlaced and
-    /// RoadNetworkGenerator.PrefabAt read it; never a walk of the whole list, which island workers ask of every road
-    /// point in a location's reach (the reached test, through RoadNetworkGenerator.ArrivalHeight).
-    /// </summary>
-    private static bool LocationAt(Vector2 centre, out ZoneSystem.LocationInstance location)
-    {
-        location = default;
-        if (ZoneSystem.instance == null || ZoneSystem.instance.m_locationInstances == null) return false;
-        Vector2s first = default;
-        for (int corner = 0; corner < 4; corner++)
-        {
-            Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x + ((corner & 1) == 0 ? -0.5f : 0.5f), 0f,
-                centre.y + ((corner & 2) == 0 ? -0.5f : 0.5f)));
-            if (corner > 0 && zone.Equals(first)) continue;
-            if (corner == 0) first = zone;
-            if (ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance inst)
-                && Mathf.Abs(inst.m_position.x - centre.x) <= 0.5f && Mathf.Abs(inst.m_position.z - centre.y) <= 0.5f)
-            {
-                location = inst;
-                return true;
-            }
-        }
-        return false;
-    }
+        LocationAt(centre, out ZoneSystem.LocationInstance inst, out _) ? ForPrefab(inst.m_location) : null;
 
     /// <summary>
     /// The terrain modifiers a placed location really has. A location's parts are
@@ -270,13 +241,16 @@ public static class LocationPrefabLevelling
     /// each enabled RandomSpawn and then each RandomObject at its placed position, in that
     /// order; the location then appears with the modifiers left active. Main thread only;
     /// the prefab (its transform and every object's active flag), Random's state and the
-    /// location's cached biome are all put back.
-    /// Null when the prefab cannot be read.
+    /// location's cached biome are all put back. The location is the one whose identity is
+    /// <paramref name="centre"/> (<see cref="LocationOf"/>): a placed location is held by it.
+    /// Null when the prefab cannot be read. <paramref name="whileDrawn"/>, if given, reads the prefab as the draw left it (at the
+    /// origin, unturned, the placement's parts active), before it is put back: the reader's own static rocks
+    /// (PlacedLocationReader.LocationRocks).
     /// </summary>
-    public static IReadOnlyList<LevelOp>? PlacedOps(Vector2 centre, int seed, Vector3 pos, Quaternion rot)
+    public static IReadOnlyList<LevelOp>? PlacedOps(Vector2 centre, int seed, Vector3 pos, Quaternion rot, Action<GameObject>? whileDrawn = null)
     {
         if (ZoneSystem.instance == null) return null;
-        if (!LocationAt(centre, out ZoneSystem.LocationInstance placedAt)) return null;
+        if (!LocationOf(centre, out ZoneSystem.LocationInstance placedAt)) return null;
         ZoneSystem.ZoneLocation location = placedAt.m_location;
         var ops = new List<LevelOp>();
         try
@@ -326,6 +300,7 @@ public static class LocationPrefabLevelling
                             modifier.m_level ? modifier.m_levelRadius : 0f, modifier.m_square,
                             modifier.m_smooth ? modifier.m_smoothRadius : 0f, modifier.m_smoothPower, modifier.m_sortOrder));
                     }
+                    whileDrawn?.Invoke(asset);
                 }
                 finally
                 {
@@ -354,7 +329,7 @@ public static class LocationPrefabLevelling
 
     private static bool FacesDownhillAt(Vector2 centre)
     {
-        return LocationAt(centre, out ZoneSystem.LocationInstance inst) && inst.m_location.m_slopeRotation;
+        return LocationAt(centre, out ZoneSystem.LocationInstance inst, out _) && inst.m_location.m_slopeRotation;
     }
 
     private static IReadOnlyList<LevelOp> ForPrefab(ZoneSystem.ZoneLocation location)
@@ -396,8 +371,7 @@ public static class LocationPrefabLevelling
                     if (modifier.m_paintCleared) reach = Mathf.Max(reach, modifier.m_paintRadius);
                     // Rotation-independent enclosure, including square corners
                     // and off-centre smoothing/paint beyond the exterior radius.
-                    if (modifier.m_square) reach *= Mathf.Sqrt(2f);
-                    terrainRadius = Mathf.Max(terrainRadius, new Vector2(local.x, local.z).magnitude + reach);
+                    terrainRadius = Mathf.Max(terrainRadius, LocationLevelling.ModifierReach(local.x, local.z, reach, modifier.m_square));
                     // Smoothing-only modifiers too (radius 0): a frost cave carries six, out to
                     // 26 m, and its ground cannot be rebuilt without them.
                     if (!modifier.m_level && !modifier.m_smooth) continue;

@@ -23,7 +23,7 @@ public sealed class ReverseLocationIntegrationTests : IDisposable
     [Fact]
     public void ReverseSearchCanLeaveItsOwnProtectedDestination()
     {
-        var path = new RoadPathfinder(world).FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize);
+        var path = new RoadPathfinder(world).FindPathToNetwork(new Vector2(0, 0), RoadPathfinder.CellSize, () => RoadNetworkGenerator.Reached(new Vector2(0, 0), 12f), location: new Vector2(0, 0));
         Assert.NotNull(path);
         Assert.True(RoadSpatialGrid.TryGetRoadWithin(path![path.Count - 1], 0.01f, out _));
     }
@@ -32,8 +32,8 @@ public sealed class ReverseLocationIntegrationTests : IDisposable
     public void ReverseSearchDoesNotKeepThePreviousDestinationExempt()
     {
         var finder = new RoadPathfinder(world);
-        Assert.NotNull(finder.FindPath(new Vector2(-80, 40), new Vector2(0, 0)));
-        var path = finder.FindPathToNetwork(new Vector2(-80, 0), RoadPathfinder.CellSize);
+        Assert.NotNull(finder.FindPath(new Vector2(-80, 40), new Vector2(0, 0), new RoadLocationProtection.Targets(null, new Vector2(0, 0))));
+        var path = finder.FindPathToNetwork(new Vector2(-80, 0), RoadPathfinder.CellSize, () => RoadNetworkGenerator.Reached(new Vector2(-80, 0), null));
         Assert.NotNull(path);
         for (int i = 1; i < path!.Count; i++)
         {

@@ -26,7 +26,7 @@ public static class RoadGrade
 {
     /// <summary>
     /// The cap in force, <see cref="RoadConstants.DefaultMaxRoadGrade"/>;
-    /// settable for tests (0 for no cap). One value, read by both
+    /// settable for tests (a positive cap: there is no uncapped mode). One value, read by both
     /// halves: the pathfinder takes it as its default and the spatial grid
     /// holds the stored profile to it. They were briefly two - the grid read
     /// the pathfinder's copy - which is a coupling with nothing to say for
@@ -35,7 +35,7 @@ public static class RoadGrade
     /// </summary>
     public static float Configured = RoadConstants.DefaultMaxRoadGrade;
 
-    /// <summary>The cap as a divisor: never under 0.01, so a test with no cap (0) does not divide by zero.</summary>
+    /// <summary>The cap as a divisor: never under 0.01, so a cap at or near 0 does not divide by zero.</summary>
     public static float Floored => Mathf.Max(Configured, 0.01f);
 
     /// <summary>The metres of road that ease a rise of <paramref name="rise"/> at the grade cap.</summary>
@@ -55,6 +55,11 @@ public static class RoadGrade
 
     /// <summary>Trial plans on this thread (a location approach's or entry's candidates) are not recorded: only roads count.</summary>
     [System.ThreadStatic] private static int t_trial;
+    /// <summary>Whether a trial is planned on this thread (<see cref="Trial{T}"/>).</summary>
+    internal static bool InTrial => t_trial > 0;
+    /// <summary>The steepest recorded on this thread (<see cref="RecordSteepest"/>), read round a remembered piece
+    /// (RoadSpatialGrid's) to record it again as it is answered.</summary>
+    [System.ThreadStatic] internal static float RecordedSteepest;
 
     /// <summary>Plan a trial: nothing it plans is recorded as the steepest, on this thread only (other islands go on recording).</summary>
     public static T Trial<T>(System.Func<T> plan)
@@ -70,16 +75,13 @@ public static class RoadGrade
     public static void RecordSteepest(float grade)
     {
         if (t_trial > 0) return;
+        if (grade > RecordedSteepest) RecordedSteepest = grade;
         lock (m_steepestGate)
             if (grade > SteepestPlanned) SteepestPlanned = grade;
     }
 
     /// <summary>A cap at or below zero is no cap at all.</summary>
     public static bool Capped(float maxGrade) => maxGrade > 0f;
-
-    /// <summary>The cap in force, or <paramref name="uncapped"/> where there is none (a test with the cap at 0). The one place a
-    /// caller that needs a number without a cap picks it; at the default settings every caller reads <see cref="Configured"/>.</summary>
-    public static float CapOr(float uncapped) => Capped(Configured) ? Configured : uncapped;
 
     /// <summary>
     /// The steepest step in a profile, as rise over run. Steps shorter than a
@@ -93,7 +95,7 @@ public static class RoadGrade
         {
             float run = Vector2.Distance(points[i - 1], points[i]);
             if (run < 0.001f) continue;
-            float grade = Mathf.Abs(heights[i] - heights[i - 1]) / run;
+            float grade = FloatBits.Abs(heights[i] - heights[i - 1]) / run;
             if (grade > steepest) steepest = grade;
         }
         return steepest;
@@ -101,10 +103,33 @@ public static class RoadGrade
 
     /// <summary>The grade edge <paramref name="i"/> (from point i-1 to i) may climb: its own limit in
     /// <paramref name="edgeGrades"/> (a pitch, a rest, a turn landing) under <paramref name="maxGrade"/>, their
-    /// steepest (<see cref="RoadPitches.LimitCap"/>); <paramref name="maxGrade"/> without them. The one reading of
+    /// never past <paramref name="maxGrade"/>; <paramref name="maxGrade"/> without them. The one reading of
     /// per-edge limits, for the limiter and for a road eased to the roads it meets (RoadSpatialGrid.HoldToNetwork).</summary>
     public static float EdgeLimit(IReadOnlyList<float>? edgeGrades, int i, float maxGrade) =>
         edgeGrades != null && i < edgeGrades.Count ? Mathf.Min(maxGrade, Mathf.Max(0f, edgeGrades[i])) : maxGrade;
+
+    /// <summary>
+    /// Rewrite <paramref name="heights"/> in place as the greatest profile at or below them no step of which exceeds
+    /// <paramref name="maxGrade"/>: the road cut down into the ground until it is within the cap, never raised over it
+    /// (one forward and one backward pass of a cone, the lower half of <see cref="Limit"/>). Returns false where that lowers a
+    /// point <paramref name="held"/> says must keep its height (true): no cut alone meets it within the cap there, only fill.
+    /// Asked by a levelled wade's ramp, which cuts into its bank and never fills out over the pool's bed
+    /// (RoadCrossingDetector.LevelledWadeWithinGrade).
+    /// </summary>
+    public static bool CutWithin(IReadOnlyList<Vector2> points, IList<float> heights, float maxGrade, System.Func<int, bool> held)
+    {
+        if (!Capped(maxGrade)) return true;
+        int n = Mathf.Min(points.Count, heights.Count);
+        var was = new float[n];
+        for (int i = 0; i < n; i++) was[i] = heights[i];
+        for (int i = 1; i < n; i++)
+            heights[i] = Mathf.Min(heights[i], heights[i - 1] + maxGrade * Vector2.Distance(points[i - 1], points[i]));
+        for (int i = n - 2; i >= 0; i--)
+            heights[i] = Mathf.Min(heights[i], heights[i + 1] + maxGrade * Vector2.Distance(points[i + 1], points[i]));
+        for (int i = 0; i < n; i++)
+            if (held(i) && heights[i] < was[i] - RoadSpatialGrid.HeldCapMargin) return false;
+        return true;
+    }
 
     /// <summary>
     /// Rewrite <paramref name="heights"/> in place as the closest profile no
@@ -141,7 +166,7 @@ public static class RoadGrade
 
         float first = heights[0];
         float last = heights[n - 1];
-        if (Mathf.Abs(last - first) > maxGrade * length + 0.001f)
+        if (FloatBits.Abs(last - first) > maxGrade * length + 0.001f)
             return false;
 
         // Greatest capped profile at or below the input, and least capped

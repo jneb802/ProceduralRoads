@@ -134,8 +134,8 @@ public class TowerPlacedFirstTests : IDisposable
                     FormattableString.Invariant($"at ({p.x:F1},{p.y:F1}): {RoadStairRuns.GroundAt(p.x, p.y, _world):F2} against {Real(p):F2}"));
             }
         RoadStairSpan? Lay(LocationApproachRequest from, out string refused) => RoadStairRuns.PlanPlacedLocationApproach(from, r.Yaw, r.Ops,
-            (x, z) => RoadStairRuns.GroundAt(x, z, _world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed, out refused, r.RockRadius,
-            _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
+            RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed, out refused, r.RockRadius,
+            RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
         RoadStairSpan? span = Lay(q, out why);
         // Every staircase from the captured road's end crosses the road there (RoadEndRing): laid from where
         // the road is cut back for it, the first cut back along its last stretch (RoadNetworkGenerator.EntryCutBacks).
@@ -225,8 +225,8 @@ public class TowerPlacedFirstTests : IDisposable
             tail = Enumerable.Range(0, 6).Select(k => at - StairLayout.Forward(arriving) * (8f * (5 - k))).ToList();
             q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
                 TotalExpansions = _tower.Request.TotalExpansions, Stall = _tower.Request.Stall, Leg = _tower.Request.Leg, RoadTail = tail };
-            span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, Ground, (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
-                out string refused, r.RockRadius, _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
+            span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
+                out string refused, r.RockRadius, RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
             why += (back > 0f ? FormattableString.Invariant($"; {back:F0} m back: ") : "") + refused;
             if (span != null) break;
         }
@@ -319,8 +319,8 @@ public class TowerPlacedFirstTests : IDisposable
         var tail = Enumerable.Range(0, 6).Select(k => end - StairLayout.Forward(arriving) * (8f * (5 - k))).ToList();
         LocationApproachRequest q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
             TotalExpansions = _tower.Request.TotalExpansions, Stall = _tower.Request.Stall, Leg = _tower.Request.Leg, RoadTail = tail };
-        RoadStairSpan? span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, Ground, (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
-            out string why, r.RockRadius, _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
+        RoadStairSpan? span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
+            out string why, r.RockRadius, RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
         if (span == null) return;
         Assert.True(AcrossItsRoad(span.Plan, end, arriving, q.RoadHeight) == "", AcrossItsRoad(span.Plan, end, arriving, q.RoadHeight));
         Assert.False(RoadStairRuns.OverRoad(span.Plan, tail, tail.Count - 1, tail.Count - 1, Ground), "on its road");
@@ -368,19 +368,19 @@ public class TowerPlacedFirstTests : IDisposable
             var tail = Enumerable.Range(0, 6).Select(k => end - StairLayout.Forward(arriving) * (8f * (5 - k))).ToList();
             LocationApproachRequest q = new() { Centre = r.Centre, RoadEnd = end, RoadHeight = Ground(end.x, end.y), Arriving = arriving, Reach = _tower.Request.Reach,
                 TotalExpansions = _tower.Request.TotalExpansions, Stall = _tower.Request.Stall, Leg = _tower.Request.Leg, RoadTail = tail };
-            span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, Ground, (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
-                out string refused, r.RockRadius, _ => true, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
+            span = RoadStairRuns.PlanPlacedLocationApproach(q, r.Yaw, r.Ops, RoadStairRuns.LayoutGround.Lattice(_world), (_, _) => Heightmap.Biome.Mountain, _tower.Seed,
+                out string refused, r.RockRadius, RoadLocationProtection.Contains, r.Rocks, r.KeepSmallRocks, r.Root, placed: placedLocation.Shape);
             why += (back > 0f ? FormattableString.Invariant($"; {back:F0} m back: ") : "") + refused;
             if (span != null) break;
         }
         Assert.True(span != null, why);
         StairPlan plan = span!.Plan;
         // Where the walk ends on the landing: the aim a staircase laid up from it set off from, else its top.
-        Vector2 place = plan.Reversed ? span.ToPoint : new Vector2(plan.End.x, plan.End.z);
-        var (walk, toward, at) = ArrivingStair(plan, place, r.Centre);
+        Vector2 location = plan.Reversed ? span.ToPoint : new Vector2(plan.End.x, plan.End.z);
+        var (walk, toward, at) = ArrivingStair(plan, location, r.Centre);
         float off = Mathf.Abs(StairLayout.Wrap(walk - toward + 180f) - 180f);
         Assert.True(off <= StairLayout.ArrivalSteps * StairLayout.HeadingStep + 5f, FormattableString.Invariant(
-            $"{(plan.Reversed ? "down" : "up")} to ({place.x:F1},{place.y:F1}): its last stair at ({at.x:F1},{at.y:F1}) walked heading {walk:F1}, the tower's centre at {toward:F1} from it, {off:F1} off"));
+            $"{(plan.Reversed ? "down" : "up")} to ({location.x:F1},{location.y:F1}): its last stair at ({at.x:F1},{at.y:F1}) walked heading {walk:F1}, the tower's centre at {toward:F1} from it, {off:F1} off"));
         float buried = RoadStairRuns.Cover(plan, Ground);
         Assert.True(buried <= StairCover.ApproachRefusal + 0.001f, FormattableString.Invariant($"a walked piece {buried:F2} m into the ground"));
         Assert.True(RailAcrossTheWalk(span, p => Ground(p.x, p.y)) == "", RailAcrossTheWalk(span, p => Ground(p.x, p.y)));
@@ -421,14 +421,14 @@ public class TowerPlacedFirstTests : IDisposable
     /// <summary>The stair a walker steps onto a location's landing from at <paramref name="location"/> (sunk steps aside), the heading
     /// they walk it on and the bearing of <paramref name="centre"/> from it: of its two ends, they leave it by the one nearer the
     /// landing, up it or down it (a top finished with a step down is walked down).</summary>
-    internal static (float walk, float toward, Vector2 at) ArrivingStair(StairPlan plan, Vector2 place, Vector2 centre)
+    internal static (float walk, float toward, Vector2 at) ArrivingStair(StairPlan plan, Vector2 location, Vector2 centre)
     {
         StairPiece last = plan.Pieces.Skip(plan.SunkPieces).Where(p => p.Kind == StairPieceKind.Stair)
-            .OrderBy(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), place)).First();
+            .OrderBy(p => Vector2.Distance(new Vector2(p.Position.x, p.Position.z), location)).First();
         Vector2 at = new Vector2(last.Position.x, last.Position.z);
         float climb = StairLayout.Wrap(last.YawDegrees + 180f);
         Vector2 high = at + StairLayout.Forward(climb), low = at - StairLayout.Forward(climb);
-        float walk = Vector2.Distance(high, place) <= Vector2.Distance(low, place) ? climb : StairLayout.Wrap(climb + 180f);
+        float walk = Vector2.Distance(high, location) <= Vector2.Distance(low, location) ? climb : StairLayout.Wrap(climb + 180f);
         return (walk, StairLayout.Bearing(at, centre), at);
     }
 
@@ -440,7 +440,9 @@ public class TowerPlacedFirstTests : IDisposable
     /// the stairs can find a proper way to reach it). A road 48 m straight in to the tower's end at -4791,1751, heading 200 or
     /// 180 (as captured), on its ground, carried on onto the landing through the one owner (PlanEntry): no staircase from its
     /// end fits beside it, and none is laid across it: one that does not cross it, else the road cut back along its last
-    /// stretch (or started lower) and the staircase laid from there, or the location gets none. Whatever is laid crosses no road.
+    /// stretch (or started lower) and the staircase laid from there, or the location gets none (across its road, or a staircase
+    /// from further back refused for an end with no way off it as it is planned, RoadNetworkGenerator.EntryStairsEnds,
+    /// RoadStairRuns.NoWayOffItsEnd). Whatever is laid crosses no road.
     /// </summary>
     [Theory]
     [InlineData(200f)]
@@ -466,7 +468,7 @@ public class TowerPlacedFirstTests : IDisposable
         var plans = new List<RoadSpatialGrid.PlannedPath> { piece };
         bool entered = RoadNetworkGenerator.PlanEntry(placedLocation, false, path, plans, new List<RoadStairSpan>(), new List<RoadCrossing>(), 4f,
             out RoadSpatialGrid.PlannedPath? road, out RoadStairSpan? span, out string why);
-        if (!entered) { Assert.Contains(RoadStairRuns.AcrossItsRoad, why); return; }
+        if (!entered) { Assert.True(why.Contains(RoadStairRuns.AcrossItsRoad) || why.Contains("stairs: " + RoadStairRuns.NoWayOffItsEnd + " at"), why); return; }
         if (span == null) return;
         Vector2 now = path[path.Count - 1];
         Assert.Equal(now, span.FromPoint);

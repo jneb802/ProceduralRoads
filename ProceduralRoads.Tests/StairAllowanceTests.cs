@@ -30,7 +30,7 @@ public class StairAllowanceTests : IDisposable
     private static StairPlan Plan(Vector2 a, Vector2 b, Func<float, float, float> ground, float? arriving, bool retried = false)
     {
         MethodInfo plan = typeof(RoadStairRuns).GetMethod("Plan", BindingFlags.NonPublic | BindingFlags.Static)!;
-        object?[] given = { a, b, StairKit.Stone, ground, arriving, null, null, StairCover.RoadStaircase, RoadStairRuns.TopLandings, null, null, retried, true };
+        object?[] given = { a, b, StairKit.Stone, RoadStairRuns.LayoutGround.Own(ground), arriving, null, null, StairCover.RoadStaircase, RoadStairRuns.TopLandings, null, null, retried, true };
         var args = new object?[plan.GetParameters().Length];
         for (int i = 0; i < args.Length; i++) args[i] = i < given.Length ? given[i] : Type.Missing;
         return (StairPlan)plan.Invoke(null, args)!;

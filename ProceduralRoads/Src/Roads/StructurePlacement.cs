@@ -123,26 +123,40 @@ public static class StructurePlacement
         // A zone explored before this network gets no pieces (NetworkCutoff).
         if (NetworkCutoff.Excludes(zoneID))
             return 0;
-        if (StructureAppendQueue.ForZone(zoneID) != null) return SpawnAppend(zoneID);
         // Nor does a bridge that reaches into such a zone anywhere else: it is built whole or not at all.
         // The zone is not marked spawned, so the bridge is built if those zones stop being excluded.
+        // What an append owes the zone goes out first (its pieces are owed here too, and laid once, by the queue); once it is all out, the zone's own plan, if it is still owed, below, but for those pieces.
+        int appended = 0;
+        if (StructureAppendQueue.ForZone(zoneID) != null)
+        {
+            appended = SpawnAppend(zoneID);
+            if (StructureAppendQueue.ForZone(zoneID) != null) return appended;
+        }
         List<StructurePiece>? pieces = StructurePlans.BuildablePlanFor(zoneID);
         if (pieces == null)
-            return 0;
+            return appended;
         // A bridge with pieces built keeps the kit they were built in: chosen with its first pieces, below, or here for a
         // zone built already (a record that saved no kit) (RoadNetworkGenerator.ChooseKitsAsBuilt).
         if (StructurePlans.IsSpawned(zoneID))
         {
             RoadNetworkGenerator.ChooseKitsAsBuilt(pieces);
-            return 0;
+            return appended;
         }
-        // A zone whose pieces are already standing is recorded as spawned and
-        // left alone; pieces condemned moments ago do not count as standing.
-        if (StructurePlans.ZoneHasLivePieces(zoneID, condemned))
+        // A zone whose plan's pieces are already standing is recorded as spawned and left alone; pieces condemned moments
+        // ago do not count as standing, nor do an append's (its own work, not the zone's plan).
+        if (StructurePlans.ZoneHasLivePieces(zoneID, condemned, laidByPlan: true))
         {
             RoadNetworkGenerator.ChooseKitsAsBuilt(pieces);
             StructurePlans.MarkSpawned(zoneID);
-            return 0;
+            return appended;
+        }
+        // The plan's pieces an append put out here already stand (the plans read them from then on): the rest is laid.
+        HashSet<string> standing = AppendedKeys(zoneID, condemned);
+        if (standing.Count > 0) pieces = pieces.FindAll(p => !standing.Contains(StructureAppendQueue.Key(p)));
+        if (pieces.Count == 0)
+        {
+            StructurePlans.MarkSpawned(zoneID);
+            return appended;
         }
 
         // A plan goes out whole: a zone waiting on a prefab not registered yet is not recorded as having its pieces,
@@ -152,7 +166,7 @@ public static class StructurePlacement
         {
             if (s_warnedPrefabs.Add(missing))
                 Log.LogWarning($"[BRIDGES] zone {zoneID}: pieces wait for missing prefab {missing}");
-            return 0;
+            return appended;
         }
         // A bridge's pieces saved as its first zone is built, the kits chosen as they go out, among the kits installed now,
         // and saved.
@@ -177,8 +191,35 @@ public static class StructurePlacement
         StructurePlans.MarkSpawned(zoneID);
         if (spawned > 0)
             Log.LogInfo($"[BRIDGES] zone {zoneID}: spawned {spawned} bridge pieces");
-        return spawned;
+        return appended + spawned;
     }
+
+    /// <summary>The keys of the pieces an append put out in the zone (StructurePlans.AppendKeyHash), as their ZDOs carry them; a
+    /// piece condemned moments ago (<paramref name="condemned"/>, a respawn's) does not stand.</summary>
+    private static HashSet<string> AppendedKeys(Vector2s zone, ICollection<ZDOID>? condemned = null)
+    {
+        var zdos = new List<ZDO>();
+        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        var keys = new HashSet<string>();
+        foreach (var zdo in zdos)
+        {
+            if (condemned != null && condemned.Contains(zdo.m_uid)) continue;
+            string key = zdo.GetString(StructurePlans.AppendKeyHash, "");
+            if (key.Length > 0) keys.Add(key);
+        }
+        return keys;
+    }
+
+    /// <summary>
+    /// Whether the zone's own plan is all out once an append's pieces are: recorded spawned already, standing as its plan
+    /// laid it (StructurePlans.ZoneHasLivePieces, an append's pieces not counted: a plan that failed part way owes its rest
+    /// through the queue), or every piece of its buildable plan standing as appended (<paramref name="standing"/>, by
+    /// StructureAppendQueue.Key: the append was the zone's whole plan). Else its plan is still owed, and the zone is not
+    /// recorded: an append marks only its own work done.
+    /// </summary>
+    private static bool PlanOut(Vector2s zone, HashSet<string> standing) =>
+        StructurePlans.IsSpawned(zone) || StructurePlans.ZoneHasLivePieces(zone, laidByPlan: true) ||
+        StructurePlans.BuildablePlanFor(zone) is not { } plan || plan.TrueForAll(p => standing.Contains(StructureAppendQueue.Key(p)));
 
     /// <summary>The first of these pieces' prefabs the scene does not have, or null when it has them all.</summary>
     private static string? MissingPrefab(List<StructurePiece> pieces)
@@ -202,19 +243,11 @@ public static class StructurePlacement
         SpawnAppend(zones[s_appendCursor++]);
     }
 
-    private static readonly int AppendPieceHash = "ProceduralRoads_AppendPiece".GetStableHashCode();
     private static int SpawnAppend(Vector2s zone)
     {
         var pieces = StructureAppendQueue.ForZone(zone);
         if (pieces == null || NetworkCutoff.Excludes(zone)) return 0;
-        var zdos = new List<ZDO>();
-        ZDOMan.instance.FindObjects(zone, zdos, new HashSet<ZoneSystem.SectorIndex>());
-        var existing = new HashSet<string>();
-        foreach (var zdo in zdos)
-        {
-            string key = zdo.GetString(AppendPieceHash, "");
-            if (key.Length > 0) existing.Add(key);
-        }
+        HashSet<string> existing = AppendedKeys(zone);
         int count = 0;
         bool changed = false;
         try
@@ -239,7 +272,12 @@ public static class StructurePlacement
                 StructureAppendQueue.Acknowledge(zone, key);
                 changed = true;
             }
-            if (pieces.Count == 0) { StructureAppendQueue.Complete(zone); changed = true; }
+            if (pieces.Count == 0)
+            {
+                StructureAppendQueue.Complete(zone);
+                if (PlanOut(zone, existing)) StructurePlans.MarkSpawned(zone);
+                changed = true;
+            }
             return count;
         }
         // Saved when the queue moved: a piece owed for a prefab that is missing (a removed kit mod) rewrote the
@@ -253,8 +291,10 @@ public static class StructurePlacement
     internal static Quaternion Rotation(StructurePiece piece) => Quaternion.Euler(piece.PitchDegrees, piece.YawDegrees, piece.RollDegrees);
 
     /// <summary>Places the pieces; <paramref name="emitted"/>, when given, gets each piece as its object (its ZDO) is out,
-    /// before the steps that follow on it.</summary>
-    private static int SpawnPieces(List<StructurePiece> pieces, bool ghost, string? appendKey = null, List<StructurePiece>? emitted = null)
+    /// before the steps that follow on it. With <paramref name="loose"/>, a debug catalogue's (RailingCatalogue): not the
+    /// mod's marker (no clearing or respawn of the network's pieces touches them), that string under its key on each instead.</summary>
+    private static int SpawnPieces(List<StructurePiece> pieces, bool ghost, string? appendKey = null, List<StructurePiece>? emitted = null,
+        (int key, string value)? loose = null)
     {
         int spawned = 0;
         foreach (StructurePiece piece in pieces)
@@ -281,8 +321,9 @@ public static class StructurePlacement
                 if (zdo != null)
                 {
                     emitted?.Add(piece);
-                    zdo.Set(MarkerHash, 1);
-                    if (appendKey != null) zdo.Set(AppendPieceHash, appendKey);
+                    if (loose is var (looseKey, looseValue)) zdo.Set(looseKey, looseValue);
+                    else zdo.Set(MarkerHash, 1);
+                    if (appendKey != null) zdo.Set(StructurePlans.AppendKeyHash, appendKey);
                     WearNTear wearNTear = go.GetComponent<WearNTear>();
                     if (wearNTear != null)
                     {
@@ -357,20 +398,7 @@ public static class StructurePlacement
         int destroyed = 0;
         foreach (ZDO zdo in tagged)
         {
-            ZNetView? instance = ZNetScene.instance.FindInstance(zdo);
-            if (instance != null)
-            {
-                // The scene drops a persistent object only when it owns it;
-                // a piece a client owns would survive and its marker would
-                // then block the respawn.
-                instance.ClaimOwnership();
-                ZNetScene.instance.Destroy(instance.gameObject);
-            }
-            else
-            {
-                zdo.SetOwner(ZDOMan.GetSessionID());
-                ZDOMan.instance.DestroyZDO(zdo);
-            }
+            Destroy(zdo);
             condemned?.Add(zdo.m_uid);
             destroyed++;
         }
@@ -379,17 +407,50 @@ public static class StructurePlacement
         return destroyed;
     }
 
+    /// <summary>Destroys a piece's object, loaded or not. The scene drops a persistent object only when it owns it; a piece a
+    /// client owns would survive and its marker would then block the respawn.</summary>
+    internal static void Destroy(ZDO zdo)
+    {
+        ZNetView? instance = ZNetScene.instance.FindInstance(zdo);
+        if (instance != null)
+        {
+            instance.ClaimOwnership();
+            ZNetScene.instance.Destroy(instance.gameObject);
+        }
+        else
+        {
+            zdo.SetOwner(ZDOMan.GetSessionID());
+            ZDOMan.instance.DestroyZDO(zdo);
+        }
+    }
+
+    /// <summary>Places a debug catalogue's pieces (RailingCatalogue) by the one placing path, each live, or as its object
+    /// only where <paramref name="ghost"/> says (a zone not loaded), carrying <paramref name="value"/> under <paramref name="key"/> and not
+    /// the mod's marker. Returns how many were placed.</summary>
+    internal static int SpawnLoose(List<StructurePiece> pieces, int key, string value, System.Func<Vector3, bool> ghost)
+    {
+        if (ZNetScene.instance == null || ZDOMan.instance == null) return 0;
+        int spawned = 0;
+        foreach (StructurePiece piece in pieces)
+            spawned += SpawnPieces(new List<StructurePiece> { piece }, ghost: ghost(piece.Position), loose: (key, value));
+        return spawned;
+    }
+
     /// <summary>Clear-areas round a zone's planned structure pieces, so vegetation
-    /// does not spawn through them (each source decides its own; see StructurePlans); with <paramref name="staircases"/>,
-    /// only the staircases' (true) or only the other structures' (false).</summary>
-    public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2s zoneID, bool? staircases = null)
+    /// does not spawn through them (each source decides its own; see StructurePlans).</summary>
+    public static List<ZoneSystem.ClearArea> GetClearAreas(Vector2s zoneID)
     {
         if (RoadLifecycleManager.WorkersOwnWorld) return new List<ZoneSystem.ClearArea>();
         List<ZoneSystem.ClearArea> areas = new();
-        foreach (var (centre, radius) in StructurePlans.ClearAreas(zoneID, staircases))
+        foreach (var (centre, radius) in StructurePlans.ClearAreas(zoneID))
             areas.Add(new ZoneSystem.ClearArea(centre, radius));
         return areas;
     }
+
+    /// <summary>The structures' walking surfaces a zone's vegetation is judged against (StructurePlans.WalksNear); none while
+    /// the generation's workers own the world.</summary>
+    public static List<StairSupport.Walk> GetWalks(Vector2s zoneID) =>
+        RoadLifecycleManager.WorkersOwnWorld ? new List<StairSupport.Walk>() : StructurePlans.WalksNear(zoneID);
     private static readonly System.Reflection.FieldInfo? s_healthPercentage =
         typeof(WearNTear).GetField("m_healthPercentage", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
     private static readonly System.Reflection.MethodInfo? s_updateVisual =

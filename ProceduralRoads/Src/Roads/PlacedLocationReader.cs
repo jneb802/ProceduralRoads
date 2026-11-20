@@ -8,119 +8,43 @@ namespace ProceduralRoads;
 /// What the game placed, read off the saved world: a location's placement (its LocationProxy: root, turn
 /// and seed), the levelling its placement kept (<see cref="LocationPrefabLevelling.PlacedOps"/>, the
 /// game's draw replayed), its own rocks, and the ground it leaves. One owner for the locations placed
-/// before their roads (<see cref="LocationsFirstLoad"/>), the terrain writer, which levels a road onto a location's
-/// landing against the ground the location leaves (<see cref="RoadTerrainModifier.PlacedGround"/>).
+/// before their roads (<see cref="LocationsFirstLoad"/>) and for the bake's reading of a placed location's parts.
 /// Main thread.
 /// </summary>
-public static class PlacedLocationReader
+public static partial class PlacedLocationReader
 {
-    /// <summary>How far past a location's ring (or its rock), and round a road's end, its ground is read
-    /// or rebuilt: a road or staircase onto its landing cannot be laid beyond it.</summary>
-    public const float Margin = 16f;
-    private static readonly int ProxyHash = "LocationProxy".GetStableHashCode();
+    /// <summary>Forget the replayed parts with the network.</summary>
+    public static void Install() => RoadNetworkGenerator.OnReset += Reset;
 
-    /// <summary>Wire the terrain writer to the ground placed locations leave, and forget it with the network.</summary>
-    public static void Install()
+    // The game's draw replayed (LocationPrefabLevelling.PlacedOps): null when the prefab cannot be read. Asked once a location a
+    // session (KeptOps).
+    // The prefab's own static rocks are read in the same draw, while it is loaded (PrefabRocks), for LocationRocks.
+    private static partial IReadOnlyList<LevelOp>? Replay(Vector2 centre, ZDO proxy)
     {
-        RoadTerrainModifier.PlacedGround = PlacedGroundAt;
-        RoadNetworkGenerator.OnReset += Reset;
+        Vector3 at = proxy.GetPosition();
+        Quaternion turn = proxy.GetRotation();
+        return LocationPrefabLevelling.PlacedOps(centre, proxy.GetInt(ZDOVars.s_seed), at, turn,
+            asset =>
+            {
+                // A prefab whose rocks cannot be read keeps its parts' draw; the log says its rocks are missing.
+                try { s_prefabRocks[centre] = PrefabRocks(asset, at, turn); }
+                catch (Exception e)
+                {
+                    ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+                        $"[STAIRS] {asset.name}'s own static rocks at ({centre.x:F0}, {centre.y:F0}) not read: {e.GetType().Name} {e.Message}");
+                }
+            });
     }
 
-    /// <summary>The location's saved placement, its LocationProxy: root, turn and seed.</summary>
-    internal static bool Placed(Vector2s zone, Vector2 centre, out ZDO? proxy)
-    {
-        proxy = null;
-        if (ZDOMan.instance == null) return false;
-        var objects = new List<ZDO>();
-        ZDOMan.instance.FindObjects(zone, objects, new HashSet<ZoneSystem.SectorIndex>());
-        foreach (ZDO zdo in objects)
-        {
-            if (zdo.GetPrefab() != ProxyHash) continue;
-            Vector3 p = zdo.GetPosition();
-            if (Vector2.Distance(new Vector2(p.x, p.z), centre) > 1f) continue;
-            proxy = zdo;
-            return true;
-        }
-        return false;
-    }
+    /// <summary>Whether the location whose identity is <paramref name="centre"/> (LocationPrefabLevelling.LocationOf) keeps every
+    /// rock (<see cref="LocationRock.KeepsEveryRock"/>).</summary>
+    internal static bool KeepsEveryRock(Vector2 centre) =>
+        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.Name);
 
-    /// <summary>The parts each placed location kept, by its centre: replayed once a session.</summary>
-    private static readonly Dictionary<Vector2, IReadOnlyList<LevelOp>> s_opsByLocation = new();
-    /// <summary>Each location's ground as it leaves it, rebuilt once a session, by its centre.</summary>
-    private static readonly Dictionary<Vector2, Func<float, float, float>> s_locationGround = new();
-    /// <summary>When each location whose ground could not be rebuilt was last asked (its proxy not saved yet, a neighbour
-    /// zone not spawned): asked again a second later, so a location placed since is read, not the bare ground for good.</summary>
-    private static readonly Dictionary<Vector2, long> s_locationGroundMissed = new();
-    private static readonly System.Diagnostics.Stopwatch s_clock = System.Diagnostics.Stopwatch.StartNew();
-    private const long MissRetryMs = 1000;
-
-    /// <summary>
-    /// The terrain modifiers the placement at <paramref name="proxy"/> kept: the game's draw replayed
-    /// (<see cref="LocationPrefabLevelling.PlacedOps"/>), once per place a session. Replaying loads the
-    /// prefab, up to 387 ms on the main thread; it restores the prefab exactly, so it agrees with
-    /// the placement (21 of 21). Null when the prefab cannot be read.
-    /// </summary>
-    internal static IReadOnlyList<LevelOp>? KeptOps(Vector2 centre, ZDO proxy)
-    {
-        if (s_opsByLocation.TryGetValue(centre, out IReadOnlyList<LevelOp>? known)) return known;
-        IReadOnlyList<LevelOp>? ops = LocationPrefabLevelling.PlacedOps(centre, proxy.GetInt(ZDOVars.s_seed), proxy.GetPosition(), proxy.GetRotation());
-        if (ops != null) s_opsByLocation[centre] = ops;
-        return ops;
-    }
-
-    /// <summary>
-    /// The ground a placed location leaves at <paramref name="p"/>, inside its footprint: the terrain's
-    /// natural height with the location's kept terrain modifiers applied (<see cref="PlacedLocationGround"/>),
-    /// whether or not the place is in the scene. The road terrain writer measures a road into a location
-    /// against it (RoadTerrainModifier.PlacedGround): measured against the terrain it was written on,
-    /// the server's temporary terrain without the cave, the road's earthwork came on top of the
-    /// cave's own levelling in play, 5 m too high at one frost cave's landing (the road's earthwork
-    /// added to the location's). Main thread: a location not yet replayed this
-    /// session is replayed here. Null outside a footprint or where it cannot be rebuilt.
-    /// </summary>
-    public static float? PlacedGroundAt(Vector2 p)
-    {
-        if (ZoneSystem.instance == null || WorldGenerator.instance == null
-            || !RoadLocationProtection.NearestFootprint(p, 0f, out RoadLocationProtection.Footprint footprint)) return null;
-        if (s_locationGround.TryGetValue(footprint.Centre, out Func<float, float, float>? known)) return known!(p.x, p.y);
-        long now = s_clock.ElapsedMilliseconds;
-        if (s_locationGroundMissed.TryGetValue(footprint.Centre, out long missed) && now - missed < MissRetryMs) return null;
-        Func<float, float, float>? ground = BuildLocationGround(footprint);
-        if (ground == null) { s_locationGroundMissed[footprint.Centre] = now; return null; }
-        s_locationGround[footprint.Centre] = ground;
-        s_locationGroundMissed.Remove(footprint.Centre);
-        return ground(p.x, p.y);
-    }
-
-    private static Func<float, float, float>? BuildLocationGround(RoadLocationProtection.Footprint footprint)
-    {
-        Vector2s zone = ZoneSystem.GetZone(new Vector3(footprint.Centre.x, 0f, footprint.Centre.y));
-        if (!Placed(zone, footprint.Centre, out ZDO? proxy)) return null;
-        IReadOnlyList<LevelOp>? ops = KeptOps(footprint.Centre, proxy!);
-        if (ops == null) return null;
-        WorldGenerator world = WorldGenerator.instance;
-        int reach = Mathf.CeilToInt(footprint.Radius) + 2;
-        int x0 = Mathf.FloorToInt(footprint.Centre.x) - reach, z0 = Mathf.FloorToInt(footprint.Centre.y) - reach, w = 2 * reach + 2, h = 2 * reach + 2;
-        float[] heights = PlacedLocationGround.Build(x0, z0, w, h, footprint.Centre, proxy!.GetPosition().y, proxy.GetRotation().eulerAngles.y, ops,
-            (x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, world));
-        return PlacedLocationGround.Sampler(heights, x0, z0, w, h);
-    }
-
-    /// <summary>Whether the location at <paramref name="centre"/> keeps every rock (<see cref="LocationRock.KeepsEveryRock"/>).</summary>
-    internal static bool KeepsEveryRock(Vector2 centre)
-    {
-        Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
-        return ZoneSystem.instance != null && ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance instance)
-            && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.Name);
-    }
-
-    /// <summary>The location's exterior radius: its rock, for leading a staircase round it. The one owner of which rocks a location keeps (docs/OWNERS.md).</summary>
-    internal static float RockRadius(Vector2 centre)
-    {
-        Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
-        return ZoneSystem.instance != null && ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance instance)
-            ? instance.m_location.m_exteriorRadius : 0f;
-    }
+    /// <summary>The location's exterior radius (the location whose identity is <paramref name="centre"/>,
+    /// LocationPrefabLevelling.LocationOf; 0 for none): its rock, for leading a staircase round it. The one owner of which rocks a location keeps (docs/OWNERS.md).</summary>
+    internal static float RockRadius(Vector2 centre) =>
+        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) ? instance.m_location.m_exteriorRadius : 0f;
 
     private static readonly Dictionary<int, Bounds> s_rockBox = new();
 
@@ -129,12 +53,11 @@ public static class PlacedLocationReader
     /// ground's box and standing in a location's footprint, as its prefab's colliders' box seen
     /// from above, scaled and turned as it is saved. A location's rocks are placed with it (a frost cave's reach about
     /// 20 m, past its exterior radius) and vegetation is kept out of its area, so a boulder
-    /// in its footprint is its own. With <paramref name="pieces"/>, the location's own building pieces too (its parts with a
-    /// WearNTear: a tower ruin's walls and floors), as their boxes: the body a landing on the level ground beside it keeps
-    /// clear of (PlacedLocationShape.OnLevelGround).
+    /// in its footprint is its own. The location's own building pieces too (its parts with a WearNTear: a tower ruin's walls
+    /// and floors, a Dvergr entrance's railed ring and stairs), as their boxes, marked built (LocationRock.Built): the body
+    /// every approach keeps the walker's own body off (PlacedLocationShape.Refusal).
     /// </summary>
-    internal static List<LocationRock> LocationRocks(int x0, int z0, int w, int h, Vector2 centre, float root, float yaw, out int world,
-        bool pieces = false)
+    internal static List<LocationRock> LocationRocks(int x0, int z0, int w, int h, Vector2 centre, float root, float yaw, out int world)
     {
         world = 0;
         var rocks = new List<LocationRock>();
@@ -142,8 +65,7 @@ public static class PlacedLocationReader
         // Only the location's own parts: a boulder of the world's standing in its footprint is any
         // road's to carve (a rock2_mountain that stayed put while the frost cave beside it turned,
         // in game). Where the prefab's parts are not known, every boulder there, as before.
-        Vector2s home = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
-        string? locationPrefab = ZoneSystem.instance.m_locationInstances.TryGetValue(home, out ZoneSystem.LocationInstance instance)
+        string? location = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance)
             ? instance.m_location.m_prefab.Name : null;
         var rootAt = new Vector3(centre.x, root, centre.y);
         Quaternion turn = Quaternion.Euler(0f, yaw, 0f);
@@ -168,26 +90,121 @@ public static class PlacedLocationReader
             // The location's own rocks of kinds no road clears, its ice above all (Hildir's cave:
             // ice_rock1, rock3_ice, caverock_ice_*): kept and kept clear of, as its large rocks
             // are. Left out, a staircase ran up beside and behind its great ice block.
-            bool ownRock = !rock && locationPrefab != null && prefab.name.IndexOf("rock", StringComparison.OrdinalIgnoreCase) >= 0
-                && LocationPrefabLevelling.IsPart(locationPrefab, rootAt, turn, p) == true;
-            bool piece = !rock && !ownRock && pieces && locationPrefab != null && prefab.GetComponent<WearNTear>() != null
-                && LocationPrefabLevelling.IsPart(locationPrefab, rootAt, turn, p) == true;
+            bool ownRock = !rock && location != null && LocationRock.OwnRockName(prefab.name)
+                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p) == true;
+            bool piece = !rock && !ownRock && location != null && prefab.GetComponent<WearNTear>() != null
+                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p) == true;
             if (piece)
             {
                 Vector3 pieceScale = zdo.GetVec3(ZDOVars.s_scaleHash, Vector3.zero);
-                rocks.Add(LocationRock.Of(p, zdo.GetRotation(), pieceScale != Vector3.zero ? pieceScale : Vector3.one, LocalBox(prefab), prefab.name));
+                rocks.Add(LocationRock.Of(p, zdo.GetRotation(), pieceScale != Vector3.zero ? pieceScale : Vector3.one, LocalBox(prefab), prefab.name, built: true));
                 continue;
             }
             if (!rock && !ownRock) continue;
-            if (!ownRock && locationPrefab != null && LocationPrefabLevelling.IsPart(locationPrefab, rootAt, turn, p) == false) { world++; continue; }
+            if (!ownRock && location != null && LocationPrefabLevelling.IsPart(location, rootAt, turn, p) == false) { world++; continue; }
             Vector3? setScale = SavedScale(zdo);
             LocationRock box = BoxOf(zdo, prefab);
             // Its real top where it counts: a rock an approach keeps clear of (large, round the
-            // mouth, or at a place keeping every rock); a small one elsewhere is cleared anyway.
+            // mouth, or at a location keeping every rock); a small one elsewhere is cleared anyway.
             bool kept = ownRock || box.KeptAt(centre, rockRadius, keepSmall, out _);
-            rocks.Add(kept ? WithTop(box, prefab, p, zdo.GetRotation(), setScale) : box);
+            rocks.Add(kept ? WithTop(box, () => Copy(prefab, p, zdo.GetRotation(), setScale)) : box);
         }
+        // And its prefab's own static rocks, read as its placement was replayed (KeptOps, PrefabRocks): a crypt's stones and stair
+        // slabs have no ZNetView, so no saved object stands for them.
+        if (s_prefabRocks.TryGetValue(centre, out List<LocationRock>? own)) rocks.AddRange(own);
         return rocks;
+    }
+
+    /// <summary>
+    /// A Location prefab's own static rocks, as the placement being replayed left them (LocationPrefabLevelling.PlacedOps: the
+    /// prefab at the origin, unturned, its parts drawn): every solid, enabled, active collider under no ZNetView (a networked part
+    /// is a saved object, read off its ZDO) and outside its dungeon interior, whose object or mesh is named a rock (<see cref="LocationRock.OwnRockName"/>), placed
+    /// at the Location's root <paramref name="at"/> plus its turn <paramref name="turn"/> times the collider's pose in the prefab
+    /// (<see cref="LocationRock.OfPart"/>), its box from its collider (<see cref="ColliderBounds"/>), with its real top
+    /// (<see cref="WithTop"/>). Kept as the Location's own rock, as a saved one is: a Crypt3's 16 stones and its stair and cap slabs
+    /// (Rock_3 and Rock_4 meshes) stood round its chamber with none in its body, and a way in from behind went straight through them.
+    /// Main thread, while the prefab is loaded.
+    /// </summary>
+    private static List<LocationRock> PrefabRocks(GameObject asset, Vector3 at, Quaternion turn)
+    {
+        var found = new List<LocationRock>();
+        float yaw = turn.eulerAngles.y;
+        // A dungeon's interior (Location.m_interiorTransform) stands far above the ground; nothing of it is in a way in.
+        Location? component = asset.GetComponent<Location>();
+        Transform? interior = component != null ? component.m_interiorTransform : null;
+        Collider[] colliders = asset.GetComponentsInChildren<Collider>(false);
+        // Counted for the log: a read that goes wrong (every rock under a networked root, no collider found) finds no rock and no error.
+        int named = 0, networked = 0;
+        foreach (Collider collider in colliders)
+        {
+            if (!collider.enabled || collider.isTrigger) continue;
+            if (interior != null && collider.transform.IsChildOf(interior)) continue;
+            string? mesh = collider is MeshCollider m && m.sharedMesh != null ? m.sharedMesh.name : null;
+            if (!LocationRock.OwnRockName(collider.gameObject.name) && !LocationRock.OwnRockName(mesh)) continue;
+            named++;
+            if (UnderAView(collider.transform)) { networked++; continue; }
+            // The prefab stands at the origin, unturned, while it is replayed: its pose in the world is its pose in the prefab.
+            Matrix4x4 pose = collider.transform.localToWorldMatrix;
+            Bounds local = ColliderBounds(collider);
+            var corners = new Vector3[8];
+            for (int i = 0; i < 8; i++) corners[i] = pose.MultiplyPoint3x4(LocationRock.Corner(local, i));
+            LocationRock box = LocationRock.OfPart(at, yaw, pose.MultiplyVector(Vector3.forward), corners, collider.gameObject.name);
+            Collider part = collider;
+            found.Add(WithTop(box, () => CopyOfPart(part, asset.transform, at, turn)));
+        }
+        var log = ProceduralRoadsPlugin.ProceduralRoadsLogger;
+        log.LogDebug($"[STAIRS] {asset.name}'s own static rocks at ({at.x:F0}, {at.z:F0}): {found.Count} read of {colliders.Length} colliders ({named} named a rock, {networked} of them under a ZNetView)");
+        // A networked root puts every collider under a ZNetView: the read then finds no rock and raises nothing.
+        if (found.Count == 0 && named > 0 && asset.GetComponent<ZNetView>() != null)
+            log.LogWarning($"[STAIRS] {asset.name} at ({at.x:F0}, {at.z:F0}) has {named} rock-named colliders but its own static rocks read zero: its root has a ZNetView, so all {networked} counted as saved objects");
+        return found;
+    }
+
+    /// <summary>Whether <paramref name="t"/> or a parent of it is networked (has a ZNetView).</summary>
+    private static bool UnderAView(Transform t)
+    {
+        for (Transform? up = t; up != null; up = up.parent)
+            if (up.GetComponent<ZNetView>() != null) return true;
+        return false;
+    }
+
+    /// <summary>A copy of a saved rock's prefab as saved (turned, scaled), for its top (<see cref="WithTop"/>).</summary>
+    private static GameObject Copy(GameObject prefab, Vector3 position, Quaternion rotation, Vector3? scale)
+    {
+        GameObject copy = UnityEngine.Object.Instantiate(prefab, position, rotation);
+        if (scale is Vector3 s) copy.transform.localScale = s;
+        return copy;
+    }
+
+    /// <summary>A copy of a Location prefab's static part <paramref name="part"/> as the game stands it, for its top
+    /// (<see cref="WithTop"/>): its parents' chain up to the prefab's root (<paramref name="root"/>) rebuilt as empty objects with
+    /// their own position, turn and scale, the root at <paramref name="at"/> turned <paramref name="turn"/>, and the part's own
+    /// object under them without its children (each a part of its own). The copy's root is returned, to be taken down.</summary>
+    private static GameObject CopyOfPart(Collider part, Transform root, Vector3 at, Quaternion turn)
+    {
+        var chain = new List<Transform>();
+        for (Transform? t = part.transform.parent; t != null && t != root; t = t.parent) chain.Add(t);
+        var top = new GameObject("ProceduralRoads part copy");
+        top.transform.SetPositionAndRotation(at, turn);
+        top.transform.localScale = root.localScale;
+        Transform parent = top.transform;
+        for (int i = chain.Count - 1; i >= 0; i--)
+        {
+            Transform link = new GameObject(chain[i].name).transform;
+            link.SetParent(parent, false);
+            link.localPosition = chain[i].localPosition;
+            link.localRotation = chain[i].localRotation;
+            link.localScale = chain[i].localScale;
+            parent = link;
+        }
+        GameObject own = UnityEngine.Object.Instantiate(part.gameObject, parent, false);
+        own.transform.localPosition = part.transform.localPosition;
+        own.transform.localRotation = part.transform.localRotation;
+        own.transform.localScale = part.transform.localScale;
+        var children = new List<GameObject>();
+        foreach (Transform child in own.transform) children.Add(child.gameObject);
+        foreach (GameObject child in children) UnityEngine.Object.DestroyImmediate(child);
+        return top;
     }
 
     /// <summary>The scale a ZDO's object was saved with (a vector, or a scalar), none when it has none.</summary>
@@ -214,7 +231,7 @@ public static class PlacedLocationReader
     /// The box alone, from the colliders' corners, overstated a rough tilted rock: roads were
     /// refused metres from a rock1_mountain whose box they touched.
     /// </summary>
-    private static LocationRock WithTop(LocationRock box, GameObject prefab, Vector3 position, Quaternion rotation, Vector3? scale)
+    private static LocationRock WithTop(LocationRock box, Func<GameObject> copyOf)
     {
         float minX = float.PositiveInfinity, maxX = float.NegativeInfinity, minZ = float.PositiveInfinity, maxZ = float.NegativeInfinity;
         for (int c = 0; c < 4; c++)
@@ -233,8 +250,7 @@ public static class PlacedLocationReader
         ZNetView.m_forceDisableInit = true;
         try
         {
-            copy = UnityEngine.Object.Instantiate(prefab, position, rotation);
-            if (scale is Vector3 s) copy.transform.localScale = s;
+            copy = copyOf();
             Physics.SyncTransforms();
             var colliders = new List<Collider>();
             foreach (Collider c in copy.GetComponentsInChildren<Collider>())
@@ -279,14 +295,7 @@ public static class PlacedLocationReader
         foreach (Collider collider in prefab.GetComponentsInChildren<Collider>(true))
         {
             if (collider.isTrigger) continue;
-            Bounds local = collider switch
-            {
-                BoxCollider b => new Bounds(b.center, b.size),
-                SphereCollider s => new Bounds(s.center, Vector3.one * (2f * s.radius)),
-                CapsuleCollider c => new Bounds(c.center, Vector3.one * Mathf.Max(2f * c.radius, c.height)),
-                MeshCollider m when m.sharedMesh != null => m.sharedMesh.bounds,
-                _ => new Bounds(Vector3.zero, Vector3.zero),
-            };
+            Bounds local = ColliderBounds(collider);
             Matrix4x4 m2 = toRoot * collider.transform.localToWorldMatrix;
             for (int i = 0; i < 8; i++)
             {
@@ -300,10 +309,14 @@ public static class PlacedLocationReader
         return s_rockBox[key] = box ?? new Bounds(Vector3.zero, Vector3.zero);
     }
 
-    public static void Reset()
+    /// <summary>A collider's own box, in its object's frame.</summary>
+    private static Bounds ColliderBounds(Collider collider) => collider switch
     {
-        s_opsByLocation.Clear();
-        s_locationGround.Clear();
-        s_locationGroundMissed.Clear();
-    }
+        BoxCollider b => new Bounds(b.center, b.size),
+        SphereCollider s => new Bounds(s.center, Vector3.one * (2f * s.radius)),
+        CapsuleCollider c => new Bounds(c.center, Vector3.one * Mathf.Max(2f * c.radius, c.height)),
+        MeshCollider m when m.sharedMesh != null => m.sharedMesh.bounds,
+        _ => new Bounds(Vector3.zero, Vector3.zero),
+    };
+
 }

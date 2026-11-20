@@ -21,7 +21,7 @@ public static partial class StairLayout
 
     private static float FootOffRoadPrice(float heading, Route route) =>
         route.Facing.HasValue
-            ? FootOffRoadWeight * Mathf.Round(Mathf.Abs(Wrap(heading - route.Facing.Value + 180f) - 180f) / HeadingStep) : 0f;
+            ? FootOffRoadWeight * Mathf.Round(FloatBits.Abs(Wrap(heading - route.Facing.Value + 180f) - 180f) / HeadingStep) : 0f;
 
     /// <summary>
     /// A staircase set off freely from a road's end (an approach onto a location's landing) sets off within this many heading
@@ -48,7 +48,7 @@ public static partial class StairLayout
     private static (int backRun, int faced)? BackRunAfter(Node node, float heading, StairPieceKind kind, Route route)
     {
         if (!route.Facing.HasValue) return (-1, -1);
-        bool back = Mathf.Abs(Wrap(heading - route.Facing.Value + 180f) - 180f) > FacingSteps * HeadingStep + 0.01f;
+        bool back = FloatBits.Abs(Wrap(heading - route.Facing.Value + 180f) - 180f) > FacingSteps * HeadingStep + 0.01f;
         int stair = kind == StairPieceKind.Stair ? 1 : 0;
         bool root = node.Parent == null;
         if (root || node.FacedStairs < 0)
@@ -65,15 +65,31 @@ public static partial class StairLayout
     /// <summary>Most stairs <see cref="LowerFoot"/> adds down from a foot.</summary>
     public const int MostLowered = 2;
 
-    /// <summary>The one rounding of a foot standing <paramref name="over"/> its road: to the nearest whole stair. Below half a rise
-    /// the foot stays (the road's landing is filled up to it); from half a rise up, a stair drops
-    /// (<see cref="LowerFoot"/>, <see cref="FootToRoad"/>). Half rounds up, not to even. The one owner of a foot rounding to whole stairs (docs/OWNERS.md).</summary>
-    private static int WholeStairsOver(float over) => Mathf.FloorToInt(over / PieceRise + StairFitsFrom / PieceRise);
+    /// <summary>
+    /// The one rounding of a foot's drop to whole stairs (docs/OWNERS.md), for a foot over its road's ground
+    /// (<see cref="LowerFoot"/>) and a foot over a road held at a height (<see cref="FootToRoad"/>) alike: a foot
+    /// <paramref name="over"/> its road by whole stairs and a leftover. A leftover within a walker's step (<see cref="Walkable"/>)
+    /// keeps the shorter flight: the foot steps off within a step. One up to half a rise (<see cref="StairFitsFrom"/>) keeps the
+    /// shorter flight where the road's landing is raised to the foot by the leftover, so the foot steps off level
+    /// (<paramref name="raised"/>, asked with the stairs of the shorter flight and the leftover: the road's earthwork owner's
+    /// verdict, null where nothing may raise the road); else, and past half a rise, the stair is added (rounded up, "a stair a
+    /// bit sunk is fine", the owner, 12 Nov 2026): rounded up alone, a foot 0.21 m over the road its stairs left took a whole
+    /// stair more and its landing was cut 0.8 m into the ground. None for a foot within a step of its road or under it.
+    /// </summary>
+    internal static int StairsDownTo(float over, Func<int, float, bool>? raised = null)
+    {
+        if (over <= 0f) return 0;
+        int whole = Mathf.FloorToInt(over / PieceRise);
+        float left = over - whole * PieceRise;
+        if (Walkable(left, 0f)) return whole;
+        if (left <= StairFitsFrom && raised != null && raised(whole, left)) return whole;
+        return whole + 1;
+    }
 
     /// <summary>
     /// How far off a height must be for one stair to be the nearer fit: half a rise (<see cref="PieceRise"/>). Off by less, no
     /// stair fits and it is the ground's own unevenness; off by this or more, a stair is laid where one may be. The one owner of
-    /// a height rounding to whole stairs, with <see cref="WholeStairsOver"/> (docs/OWNERS.md): a foot over its road, an end's
+    /// a height rounding to whole stairs (docs/OWNERS.md): how far a foot's road may be raised to it (<see cref="StairsDownTo"/>), an end's
     /// stairs (StructureEnds.Decide), and how far over or under a location's landing the network may arrive and still be level with
     /// it (a road always ends level, even at the cost of a POI, and may end in stairs if needed): the reached test, a road's end
     /// at its location, an approach staircase's threshold, the landing's level ground (PlacedLocationShape.Aims) and a staircase that
@@ -93,19 +109,34 @@ public static partial class StairLayout
     /// as it was, read as climbed at the cap, and its road's landing stood on 1.2 m of fill). Returns the new foot (low edge, height) or null; null too at a foot the
     /// road was carried on to (<see cref="StairPlan.FootFloorsTrimmed"/>), which starts on its kept floor row with no sunk
     /// step: the road there was judged ending where it is.
+    /// The stairs are rounded by <see cref="StairsDownTo"/>: <paramref name="raised"/> says whether the road's landing may be
+    /// raised to the foot the shorter flight leaves (its low edge, and the leftover), null where it may not; a foot kept on a
+    /// raised landing records the leftover (<see cref="StairPlan.FootRaised"/>).
     /// The one owner of staircase starts (docs/OWNERS.md).
     /// </summary>
-    public static Vector3? LowerFoot(StairPlan plan, Func<float, float, float> ground, float width, float back, float run, float cap)
+    public static Vector3? LowerFoot(StairPlan plan, Func<float, float, float> ground, float width, float back, float run, float cap,
+        Func<Vector3, float, bool>? raised = null)
     {
         if (plan.Foot is not Vector3 foot || plan.SunkPieces <= 0 || plan.FootLowered > 0) return null;
-        int steps = Mathf.Min(MostLowered, WholeStairsOver(foot.y - back - RoadPitches.ClimbToFoot(run, cap)));
-        return steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
+        float fill = 0f;
+        int down = StairsDownTo(foot.y - back - RoadPitches.ClimbToFoot(run, cap), raised == null ? null : (whole, left) =>
+        {
+            Vector2 at = new Vector2(foot.x, foot.z) - Forward(plan.StartHeading) * (whole * PieceRun);
+            if (!raised(new Vector3(at.x, foot.y - whole * PieceRise, at.y), left)) return false;
+            fill = left;
+            return true;
+        });
+        int steps = Mathf.Min(MostLowered, down);
+        Vector3? low = steps <= 0 ? null : AddFootStairs(plan, ground, width, steps);
+        if (fill > 0f && steps == down && (steps == 0 || low != null)) plan.FootRaised = fill;
+        return low;
     }
 
     /// <summary>
     /// The one owner of a staircase's foot meeting a road held at <paramref name="road"/> (the road levelled at a crossing's
     /// end, RoadStairRuns.Lay), and of the stair sunk into that road where the two stand apart: the foot carried on down
-    /// toward the road by whole stairs (<see cref="WholeStairsOver"/>). Left within a walker's
+    /// toward the road by whole stairs, rounded by the one rounding (<see cref="StairsDownTo"/>) with nothing to raise the road: it is
+    /// held at the end's height. Left within a walker's
     /// step of the road (<see cref="Walkable"/>), it meets it there. Left more than a step over it (or under it: then one stair
     /// less, so it stands over it), one stair more is sunk into the road under the foot, as a staircase's own sunk step is laid
     /// (<see cref="SinkStep"/>: an uncut stair a rise down, out along its first heading, buried in the road but for its top):
@@ -117,8 +148,10 @@ public static partial class StairLayout
     public static (Vector3 foot, float meets, bool sunk, bool laid)? FootToRoad(StairPlan plan, Func<float, float, float> ground, float width, float road)
     {
         if (plan.Foot is not Vector3 foot) return null;
-        int steps = WholeStairsOver(foot.y - road);
+        int steps = StairsDownTo(foot.y - road);
         bool sink = !Walkable(foot.y - steps * PieceRise, road);
+        // Rounded up past the held road by more than a step: the stair added is the one sunk into the road under the foot
+        // (SinkStep, its slope coming up out of it), not one cut into the road.
         if (sink && foot.y - steps * PieceRise < road) steps--;
         if (steps < 0) return null;
         if (steps > 0 && AddFootStairs(plan, ground, width, steps) is null) return null;
@@ -175,27 +208,47 @@ public static partial class StairLayout
 
     /// <summary><paramref name="steps"/> stairs added on down from a plan's foot along its first heading, the sunk step
     /// under the foot taken away; the new foot. None, and null, where something within reach would not hold one of them up.</summary>
-    private static Vector3? AddFootStairs(StairPlan plan, Func<float, float, float> ground, float width, int steps)
+    private static Vector3? AddFootStairs(StairPlan plan, Func<float, float, float> ground, float width, int steps) =>
+        AddFootRows(plan, ground, width, 0, steps);
+
+    /// <summary><paramref name="floors"/> level floor rows at the foot's height, then <paramref name="steps"/> stairs on down
+    /// from the last of them, out from a plan's foot along its first heading (back down the way it climbs), the sunk step
+    /// under the foot taken away; the new foot (the last row's low edge). The one way rows are added below a foot
+    /// (<see cref="LowerFoot"/>, <see cref="FinishFoot"/>). None, and null, where something within reach would not hold one of
+    /// them up (<see cref="RowHeld"/>).</summary>
+    private static Vector3? AddFootRows(StairPlan plan, Func<float, float, float> ground, float width, int floors, int steps)
     {
         Vector3 foot = plan.Foot!.Value;
         StairKit kit = StairKit.Of(plan.Kit);
         int lanes = Lanes(width);
         Vector2 dir = Forward(plan.StartHeading), at = new Vector2(foot.x, foot.z);
         // None where something within reach would not hold one up (RowHeld).
-        for (int i = 1; i <= steps; i++)
-            if (!RowHeld(kit, kit.Stair, at - dir * (i * PieceRun), plan.StartHeading, foot.y - i * PieceRise, lanes, ground)) return null;
+        for (int i = 1; i <= floors + steps; i++)
+        {
+            bool floor = i <= floors;
+            if (!RowHeld(kit, floor ? kit.Floor : kit.Stair, at - dir * (i * PieceRun), plan.StartHeading,
+                    floor ? foot.y : foot.y - (i - floors) * PieceRise, lanes, ground)) return null;
+        }
         // The sunk step goes: the first stair down takes its location, uncovered.
         DropSunkFoot(plan);
         float base_ = foot.y;
         int pieces = plan.Pieces.Count, clearances = plan.Clearances.Count;
-        var pieceRows = new List<int>(steps + 1) { pieces };
-        var clearanceRows = new List<int>(steps + 1) { clearances };
-        for (int i = 0; i < steps; i++)
+        var pieceRows = new List<int>(floors + steps + 1) { pieces };
+        var clearanceRows = new List<int>(floors + steps + 1) { clearances };
+        for (int i = 0; i < floors + steps; i++)
         {
             at -= dir * PieceRun;
-            base_ -= PieceRise;
-            AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, at, plan.StartHeading, base_, lanes, ground, mark: true);
-            plan.Stairs += lanes;
+            if (i < floors)
+            {
+                AddRow(plan, kit, StairPieceKind.Landing, kit.Floor, at, plan.StartHeading, base_, lanes, ground, mark: true);
+                plan.Landings += lanes;
+            }
+            else
+            {
+                base_ -= PieceRise;
+                AddRow(plan, kit, StairPieceKind.Stair, kit.Stair, at, plan.StartHeading, base_, lanes, ground, mark: true);
+                plan.Stairs += lanes;
+            }
             pieceRows.Add(plan.Pieces.Count);
             clearanceRows.Add(plan.Clearances.Count);
         }
@@ -206,11 +259,61 @@ public static partial class StairLayout
         FirstInWalkingOrder(plan.Pieces, pieceRows);
         FirstInWalkingOrder(plan.Clearances, clearanceRows);
         if (plan.LastRowPieces >= 0) { plan.LastRowPieces += plan.Pieces.Count - pieces; plan.LastRowClearances += plan.Clearances.Count - clearances; }
-        plan.FootLowered += steps;
+        plan.FootLowered += floors + steps;
         plan.Rise += steps * PieceRise;
-        plan.WalkedLength += steps * PieceRun;
+        plan.WalkedLength += (floors + steps) * PieceRun;
         plan.Foot = new Vector3(at.x, base_, at.y);
         return plan.Foot;
+    }
+
+    /// <summary>How <see cref="FinishFoot"/> finished a foot onto the ground past it.</summary>
+    public enum FootFinish { None, Floor, FloorThenDown, DownInPlace, FloorsOn }
+
+    /// <summary>The end rule's cases off a plan's foot (StairEnds, the one reader: the drops at the far corners of the floor its
+    /// exit edge, the first stair's low edge, would take, out back along its first heading): the rule's own, and where the
+    /// two corners read different cases, the other corner's after it, as a top's are read (<see cref="TopCases"/>).</summary>
+    internal static StairEnds.Case[] FootCases(StairPlan plan, Func<float, float, float> ground, float width)
+    {
+        Vector3 foot = plan.Foot!.Value;
+        return Cases(StairEnds.FloorDrops(new Vector2(foot.x, foot.z), -Forward(plan.StartHeading), foot.y, width, ground));
+    }
+
+    /// <summary>
+    /// The one owner of a staircase's own foot finished onto the ground past it where no road carries on past it
+    /// (RoadStairRuns.FinishFootOntoNothing), in the order a top is finished (<see cref="FinishTop"/>, the owner's, for feet as
+    /// for tops): the end rule read off the foot (<see cref="FootCases"/>), each case in turn. A floor's case, or a short one
+    /// (the ground over its low edge: sunk), is finished as it is, its bare stair stepped off. A stair down's case or a step
+    /// back's (over the ground by more than a ledge), back to back before a landing (the owner's of 19 Nov 2026, replacing
+    /// 12 Nov's landing first: "floor -> stair down in place (back to back) -> floor + stair down -> step back -> bare"): a
+    /// floor at the foot's height out from it (<see cref="FootFinish.Floor"/>); stairs on down in place
+    /// (<see cref="FootFinish.DownInPlace"/>), each one stair, then up to <see cref="MostLowered"/>; the floor and stairs on
+    /// down off its far edge (<see cref="FootFinish.FloorThenDown"/>), the same; then more level floors
+    /// out, up to <see cref="MoreTopFloors"/> more (<see cref="FootFinish.FloorsOn"/>). A foot has no stairs past it to step
+    /// back from (taking stairs off a foot only raises it): no step back is laid at a foot. Each kept only where <paramref name="finished"/> (the end reader on it: a way off, finished as
+    /// its rule chose) and <paramref name="fits"/> say so; with none the plan is as it was (bare, and the audit reads it
+    /// unfinished). The one owner of staircase ends (docs/OWNERS.md).
+    /// </summary>
+    public static FootFinish FinishFoot(StairPlan plan, Func<float, float, float> ground, float width, Func<StairPlan, bool> fits,
+        Func<StairPlan, bool> finished)
+    {
+        if (plan.Foot == null || !plan.Reached) return FootFinish.None;
+        StairPlan start = plan.Copy(deepPieces: true);
+        foreach (StairEnds.Case rule in FootCases(plan, ground, width))
+        {
+            // A floor's or a short case: as it is.
+            if (rule is StairEnds.Case.Floor or StairEnds.Case.Short) return FootFinish.None;
+            var order = new List<(FootFinish finish, int floors, int steps)> { (FootFinish.Floor, 1, 0) };
+            for (int s = 1; s <= MostLowered; s++) order.Add((FootFinish.DownInPlace, 0, s));
+            for (int s = 1; s <= MostLowered; s++) order.Add((FootFinish.FloorThenDown, 1, s));
+            for (int f = 2; f <= MoreTopFloors + 1; f++) order.Add((FootFinish.FloorsOn, f, 0));
+            foreach (var (finish, floors, steps) in order)
+            {
+                plan.Restore(start);
+                if (AddFootRows(plan, ground, width, floors, steps) != null && finished(plan) && fits(plan)) return finish;
+            }
+            plan.Restore(start);
+        }
+        return FootFinish.None;
     }
 
     /// <summary>The rows appended to <paramref name="list"/> (each from one of <paramref name="bounds"/> to the next), each laid
@@ -354,7 +457,7 @@ public static partial class StairLayout
         {
             StairPiece p = plan.Pieces[i];
             if (!Walked(p)) continue;
-            if (p.Kind == StairPieceKind.Stair || Mathf.Abs(Footprint(p).height - level) > 0.05f) return null;
+            if (p.Kind == StairPieceKind.Stair || FloatBits.Abs(Footprint(p).height - level) > 0.05f) return null;
             if (p.Kind == StairPieceKind.Landing) floors++;
         }
         if (floors == 0) return null;
@@ -374,7 +477,7 @@ public static partial class StairLayout
                 var (back, heading, across, depth, height) = Footprint(p);
                 Vector2 d = new Vector2(cut.x, cut.z) - back;
                 float along = Vector2.Dot(d, Forward(heading)), side = Vector2.Dot(d, Right(heading));
-                if (along >= -0.01f && along <= depth + 0.01f && Mathf.Abs(side) <= across / 2f + 0.01f && cut.y <= height + 0.01f) return true;
+                if (along >= -0.01f && along <= depth + 0.01f && FloatBits.Abs(side) <= across / 2f + 0.01f && cut.y <= height + 0.01f) return true;
             }
             return false;
         }

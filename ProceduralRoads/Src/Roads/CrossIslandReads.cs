@@ -7,7 +7,7 @@ namespace ProceduralRoads;
 /// <summary>
 /// Islands are separate networks: an island's worker builds as if no other island had been built. The one owner of that
 /// rule. Every road point, ride line, staircase, crossing and viaduct an island worker commits carries its island's number
-/// (<see cref="Tag"/>); every read of the network asks <see cref="Sees(int, byte)"/> of each thing it finds, so a worker
+/// (<see cref="Tag"/>); every read of the network asks <see cref="Sees(int, int)"/> of each thing it finds, so a worker
 /// sees its own island's work and untagged work (laid before the islands, loaded from a save, laid by a manual road) and
 /// nothing of another island's, whichever island finished first. Off an island worker (the main thread, the bake, console
 /// commands, a loaded network) everything is seen. A read that passed over another island's work is counted
@@ -24,20 +24,19 @@ internal static class CrossIslandReads
     private static readonly long[] s_counts = new long[5];
     private static readonly ConcurrentQueue<string> s_samples = new();
 
-    /// <summary>This thread's island as the tags hold it: 0 for none, and for an island past what a tag holds (255), which
-    /// then neither tags its work nor filters what it reads.</summary>
-    internal static int Me { get { int c = Current; return c > 0 && c < 256 ? c : 0; } }
+    /// <summary>This thread's island: its whole worker number, or 0 off an island worker.</summary>
+    internal static int Me { get { int c = Current; return c > 0 ? c : 0; } }
 
     /// <summary>What a commit on this thread tags its work with: 0 for none.</summary>
-    internal static byte Tag => (byte)Me;
+    internal static int Tag => Me;
 
     /// <summary>Whether island worker <paramref name="me"/> (<see cref="Me"/>, read once per read) sees work tagged
     /// <paramref name="tag"/>: its own island's and untagged work; everything off an island worker.</summary>
     [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
-    internal static bool Sees(int me, byte tag) => me == 0 || tag == 0 || tag == me;
+    internal static bool Sees(int me, int tag) => me == 0 || tag == 0 || tag == me;
 
-    /// <summary><see cref="Sees(int, byte)"/> for this thread.</summary>
-    internal static bool Sees(byte tag) => Sees(Me, tag);
+    /// <summary><see cref="Sees(int, int)"/> for this thread.</summary>
+    internal static bool Sees(int tag) => Sees(Me, tag);
 
     /// <summary><paramref name="work"/> run as island worker <paramref name="island"/> on this thread (an island's pricing
     /// on another worker thread), this thread's own island restored after.</summary>
@@ -50,7 +49,7 @@ internal static class CrossIslandReads
     }
 
     /// <summary>A read on this thread passed over work of island <paramref name="tag"/> (one count per read).</summary>
-    internal static void Skipped(Kind kind, byte tag, Vector2 at)
+    internal static void Skipped(Kind kind, int tag, Vector2 at)
     {
         if (tag == 0) return;
         Interlocked.Increment(ref s_counts[(int)kind]);

@@ -32,26 +32,32 @@ public class EndpointTerrainTests : System.IDisposable
     private const float WestEnd = -200f;
 
     /// <summary>
-    /// Lays the test road with the grade cap off. The subject here is the
-    /// terrain the ends leave behind, and the reviewer's reproduction is a
-    /// plane rising half a metre per metre - two and a half times the default
-    /// cap - so with the cap on there is no road to leave any terrain at all.
-    /// The cap's own behaviour on this same slope is tested in
-    /// RoadGradeRoadTests; it is not being avoided here, only held out of a
-    /// test about something else.
+    /// Lays the test road along x from <see cref="WestEnd"/> to <see cref="EastEnd"/>. The subject here is the terrain
+    /// the ends leave behind, and the reviewer's reproduction is a plane rising half a metre per metre, two and a half
+    /// times the default cap, so there the planner refuses the road (RoadGradeRoadTests): the road is stored as the
+    /// planner leaves a plane, on the natural ground at every point (EndpointRampTests) at the planner's own dense
+    /// points, and the terrain writer is given exactly that. On a slope inside the cap (<paramref name="planned"/>) the road is planned
+    /// and stored by AddRoadPath at the configured cap, the whole path the game takes.
     /// </summary>
-    private (SlopeWorld world, List<Vector2> path) SetUp(float across = 0f)
+    private (SlopeWorld world, List<Vector2> path) SetUp(float across = 0f, float along = 0.5f, bool planned = false)
     {
         // The fitted surface at the end, not the side-slope detail around it.
         _plain ??= PlainEarthworks.Apply();
-        var world = new SlopeWorld { AcrossZ = across };
+        var world = new SlopeWorld { AlongX = along, AcrossZ = across };
         _world.WithWorld(world);
         RoadSpatialGrid.Clear();
         var path = new List<Vector2>();
         for (float x = WestEnd; x <= EastEnd; x += 8f)
             path.Add(new Vector2(x, 0f));
-        using (GradeCap.Off())
+        if (planned)
             Assert.True(RoadSpatialGrid.AddRoadPath(path, RoadWidth, world));
+        else
+        {
+            // The planner's own dense points (RoadSpatialGrid.SplinePath at PlanRoadPathCore's quarter-width spacing).
+            var points = RoadSpatialGrid.SplinePath(path, RoadWidth / 4f);
+            RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(points, points.ConvertAll(p => world.GetHeight(p.x, p.y)),
+                points.ConvertAll(_ => default(RoadPointDebugInfo)), RoadWidth, EastEnd - WestEnd, false));
+        }
         RoadSpatialGrid.FinalizeRoadNetwork();
         return (world, path);
     }
@@ -85,11 +91,13 @@ public class EndpointTerrainTests : System.IDisposable
     }
 
     [Theory]
-    [InlineData(EastEnd)]   // road arrives going uphill
-    [InlineData(WestEnd)]   // road arrives going downhill
-    public void TerrainAtARoadEndStaysOnTheNaturalGround(float end)
+    [InlineData(EastEnd, 0.5f, false)]   // road arrives going uphill, on the reviewer's 50 % plane
+    [InlineData(WestEnd, 0.5f, false)]   // road arrives going downhill
+    [InlineData(EastEnd, 0.2f, true)]    // the same ends planned at the configured cap, on a slope inside it
+    [InlineData(WestEnd, 0.2f, true)]
+    public void TerrainAtARoadEndStaysOnTheNaturalGround(float end, float along, bool planned)
     {
-        SetUp();
+        SetUp(along: along, planned: planned);
         try
         {
             TerrainComp tc = Apply(end);
@@ -111,6 +119,42 @@ public class EndpointTerrainTests : System.IDisposable
                 float inside = DeltaAt(tc, end - outward * d, 0f);
                 Assert.True(Mathf.Abs(inside) < 0.1f, $"terrain {d} m inside the road end is off the ground by {inside:F3} m");
             }
+        }
+        finally { TearDown(); }
+    }
+
+    /// <summary>
+    /// Past a road's end the writer reads the road's own last stretch: points a metre apart on the reviewer's 50 % plane,
+    /// stored on the natural ground and none bunched at the end (the planner's spline bunches them, which hid it), leave the
+    /// ground on the plane for the blend margin past both ends. Before, 3 m past the end only the end point's blend reached
+    /// the vertex with any weight, the next point's almost none, and the fit read half the road's gradient: the terrain
+    /// stood 0.75 m off the plane there.
+    /// </summary>
+    [Theory]
+    [InlineData(EastEnd)]
+    [InlineData(WestEnd)]
+    public void PastARoadsEndTheGroundFollowsTheRoadsOwnLastStretch(float end)
+    {
+        _plain ??= PlainEarthworks.Apply();
+        var world = new SlopeWorld { AlongX = 0.5f };
+        _world.WithWorld(world);
+        RoadSpatialGrid.Clear();
+        var points = new List<Vector2>();
+        for (float x = WestEnd; x <= EastEnd + 0.01f; x += 1f) points.Add(new Vector2(x, 0f));
+        RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(points, points.ConvertAll(p => world.GetHeight(p.x, p.y)),
+            points.ConvertAll(_ => default(RoadPointDebugInfo)), RoadWidth, EastEnd - WestEnd, false));
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        try
+        {
+            TerrainComp tc = Apply(end);
+            float outward = end > 0f ? 1f : -1f;
+            for (int d = 0; d <= 4; d++)
+            {
+                float beyond = DeltaAt(tc, end + outward * d, 0f);
+                Assert.True(Mathf.Abs(beyond) < 0.05f, $"terrain {d} m beyond the road end is off the ground by {beyond:F3} m");
+            }
+            // Mid-road the fit is the blend-weighted line as before: on the plane.
+            Assert.True(Mathf.Abs(DeltaAt(tc, end - outward * 10f, 0f)) < 0.05f);
         }
         finally { TearDown(); }
     }

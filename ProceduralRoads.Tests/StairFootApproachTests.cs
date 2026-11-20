@@ -154,4 +154,56 @@ public sealed class StairFootApproachTests : IDisposable
         Assert.True(stairs.FromPoint.y > -RoadPathfinder.CellSize, $"the staircase starts at {stairs.FromPoint}");
         Assert.True(LongestRidge(planned.Plans!, world).length < 2f);
     }
+
+    /// <summary>
+    /// The ground along a road climbing south (to -z) from a bank at x = 3672 to a staircase up a face, as read in game around a
+    /// black marble staircase in the Mistlands: <paramref name="p"/>'s metres along the road from (3672,6800) are 6800 - z. The
+    /// bank falls 0.1 per metre back to the road's start; from the foot the staircase was started at (z 6784, 40 m) the ground
+    /// climbs 4.5 m over 44 m to the search's foot (z 6740, 44.5 m), crossed every 4 m by a runnel 2.5 m deep and narrower
+    /// than the road's points are apart (Mistlands ground), so the approach to every point of it but the bank's dips into one;
+    /// past it the face climbs 0.51 per metre.
+    /// </summary>
+    private static float RunnelledClimb(Vector2 p)
+    {
+        float s = 6800f - p.y;
+        if (s <= 16f) return 40f - 0.1f * (16f - s);
+        if (s >= 60f) return 44.5f + 0.51f * (s - 60f);
+        float runnel = Mathf.Abs(((s - 15f) % 4f + 4f) % 4f - 2f) < 0.25f ? 2.5f : 0f;
+        return 40f + 4.5f * (s - 16f) / 44f - runnel;
+    }
+
+    /// <summary>The road a point every 2 m from (3672,6800) to (3672,6700); the search's foot at z 6740 and top at z 6700.</summary>
+    private static (List<Vector2> path, int foot, int top) UpTheRunnels()
+    {
+        var path = new List<Vector2>();
+        for (int i = 0; i <= 50; i++) path.Add(new Vector2(3672f, 6800f - 2f * i));
+        return (path, 30, 50);
+    }
+
+    /// <summary>The road arriving at a staircase's foot cannot climb to it on its ground (a runnel under the line to the foot,
+    /// ApproachUnder past ApproachFill), nor to any point of the 44 m of ground climbing 4.5 m behind it; it can to the bank
+    /// there. Started lower on the bank (as in game: a foot moved 43 m down its road), the staircase took no height a road
+    /// could not over those 44 m: it was laid as 18 level floors over 28 m and three short rests, a road's ground. A foot
+    /// moves back along its road only to ground lower than its road could climb to the foot from (RoadPitches.ClimbToFoot at
+    /// the cap): here none, and the staircase starts where the search put it.</summary>
+    [Fact]
+    public void AStaircaseDoesNotStartLowerOverGroundItsRoadCouldClimb()
+    {
+        var (path, foot, top) = UpTheRunnels();
+        Assert.True(RoadStairRuns.ApproachUnder(path, foot, -1, 0, RunnelledClimb, RoadGrade.Configured) > RoadStairRuns.ApproachFill);
+        var stretch = RoadStairRuns.StartLower(path, (foot, top), -1, path.Count, Array.Empty<RoadCrossing>(), RunnelledClimb);
+        Assert.True(stretch == (foot, top), FormattableString.Invariant(
+            $"the foot at ({path[foot].x:F1}, {path[foot].y:F1}) ground {RunnelledClimb(path[foot]):F1} started lower at ({path[stretch.from].x:F1}, {path[stretch.from].y:F1}) ground {RunnelledClimb(path[stretch.from]):F1}, {RoadStairRuns.Along(path, stretch.from, foot):F0} m back"));
+    }
+
+    /// <summary>The same road with the ground under the search's foot's approach 15 m lower than the bank's (a face's foot
+    /// over a gorge): the staircase still starts lower, at the first point its road climbs to.</summary>
+    [Fact]
+    public void AStaircaseStillStartsLowerOverGroundItsRoadCouldNotClimb()
+    {
+        var (path, foot, top) = UpTheRunnels();
+        float Deep(Vector2 p) => RunnelledClimb(p) + (6800f - p.y >= 18f ? 15f : 0f);
+        var stretch = RoadStairRuns.StartLower(path, (foot, top), -1, path.Count, Array.Empty<RoadCrossing>(), Deep);
+        Assert.Equal((8, top), stretch);
+    }
 }

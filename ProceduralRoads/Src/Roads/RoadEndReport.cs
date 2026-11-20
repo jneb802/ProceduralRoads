@@ -45,7 +45,7 @@ public static class RoadEndReport
             Vector2 centre = new Vector2(loc.position.x, loc.position.z);
             RoadSpatialGrid.RoadPoint best = near[0];
             float bestDistance = float.MaxValue;
-            near.RemoveAll(rp => rp.cutOnly);
+            near.RemoveAll(rp => !rp.Walked);
             if (near.Count == 0)
                 continue;
             foreach (var rp in near)
@@ -54,12 +54,12 @@ public static class RoadEndReport
                 if (d < bestDistance) { bestDistance = d; best = rp; }
             }
 
-            float terrain = BiomeBlendedHeight.GetBlendedHeight(best.p.x, best.p.y, world);
+            float terrain = NaturalGround.ForDiagnostics(best.p.x, best.p.y, world);
             float sum = 0f, min = float.MaxValue, max = float.MinValue;
             for (int i = 0; i < RingSamples; i++)
             {
                 float a = i * Mathf.PI * 2f / RingSamples;
-                float h = BiomeBlendedHeight.GetBlendedHeight(best.p.x + Mathf.Cos(a) * ring, best.p.y + Mathf.Sin(a) * ring, world);
+                float h = NaturalGround.ForDiagnostics(best.p.x + Mathf.Cos(a) * ring, best.p.y + Mathf.Sin(a) * ring, world);
                 sum += h;
                 if (h < min) min = h;
                 if (h > max) max = h;
@@ -73,7 +73,7 @@ public static class RoadEndReport
             });
         }
 
-        rows.Sort((a, b) => Mathf.Abs(b.DeltaRing).CompareTo(Mathf.Abs(a.DeltaRing)));
+        rows.Sort((a, b) => FloatBits.Abs(b.DeltaRing).CompareTo(FloatBits.Abs(a.DeltaRing)));
         return rows;
     }
 }

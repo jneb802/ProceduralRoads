@@ -66,7 +66,7 @@ public static partial class RoadStairRuns
     /// </summary>
     public static RoadStairSpan? LayLocationApproach(Vector2 roadEnd, float roadHeight, float arriving, Vector2 centre,
         float centreGround, IReadOnlyList<LevelOp>? ops, bool facesDownhill, List<Vector2> path, int endIndex,
-        IReadOnlyList<RoadStairSpan> stairs, WorldGenerator world, out string why)
+        IReadOnlyList<RoadStairSpan> stairs, WorldGenerator world, out string why, bool tally = true)
     {
         why = "";
         if (ops == null || ops.Count == 0) { why = "no levelling known"; return null; }
@@ -78,7 +78,8 @@ public static partial class RoadStairRuns
         Vector2 outward = roadEnd - centre;
         if (outward.sqrMagnitude < 1e-4f) { why = "road ends at its centre"; return null; }
         // The ground this location is expected to leave, which its kit chooses its supports on too (PlanningGround).
-        Func<float, float, float> expected = ApproachGround(centre, centreGround, ops, world);
+        LayoutGround laidOn = LayoutGround.Expected(centre, centreGround, ops, world);
+        Func<float, float, float> expected = laidOn.Read;
         float Ground(float x, float z) => expected(x, z);
         // The road's end at the top of a staircase: carried on from its top row, which stands at
         // its own height, over the ground or not.
@@ -86,9 +87,9 @@ public static partial class RoadStairRuns
         foreach (RoadStairSpan s in stairs)
             onStairs ??= TopAt(roadEnd, roadHeight, StairRun.FromPlan(s.FromPoint, s.ToPoint, Width, s.Plan).Pieces);
         onStairs ??= TopAt(roadEnd, roadHeight, StairStructures.PiecesNear(new Vector3(roadEnd.x, 0f, roadEnd.y), OnStairReach));
-        if (onStairs == null && Mathf.Abs(Ground(roadEnd.x, roadEnd.y) - roadHeight) > LocationFootTolerance) { why = "road end off the ground"; return null; }
+        if (onStairs == null && FloatBits.Abs(Ground(roadEnd.x, roadEnd.y) - roadHeight) > LocationFootTolerance) { why = "road end off the ground"; return null; }
         Vector2 target = centre + outward.normalized * (flat.Value.Radius - ApronInset);
-        Heightmap.Biome Biome(float x, float z) => world.GetBiome(x, z);
+        Heightmap.Biome Biome(float x, float z) => RoadBiome.At(world, x, z);
         StairKit kit = StairKit.ForLine(new List<Vector2> { roadEnd, target }, Biome);
         float apron = Ground(target.x, target.y);
         why = AimRefused(roadEnd, roadHeight, target, apron);
@@ -100,13 +101,20 @@ public static partial class RoadStairRuns
         Vector2 into = IntoTheLocation(centre);
         bool faceInto = true;
         RoadEndRing? ring = onStairs == null ? EndRing(path, endIndex, roadEnd, arriving, roadHeight) : null;
-        StairPlan Laid(StairKit k) => Plan(roadEnd, target, k, Ground, arriving, null, null, StairCover.ApproachSearch,
-            apron < roadHeight ? TopLandings : 0, after: onStairs, apron: (centre, radius), ring: ring, intoLocation: faceInto ? into : null);
+        StairPlan Laid(StairKit k)
+        {
+            StairPlan laid = Plan(roadEnd, target, k, laidOn, arriving, null, null, StairCover.ApproachSearch,
+                apron < roadHeight ? TopLandings : 0, after: onStairs, apron: (centre, radius), ring: ring, intoLocation: faceInto ? into : null);
+            // Each layout asked, a road's or an approach trial's (RoadNetworkGenerator.TrialBuilds), and its search's expansions.
+            System.Threading.Interlocked.Increment(ref tally ? ref ApproachLayouts : ref TrialApproachLayouts);
+            System.Threading.Interlocked.Add(ref tally ? ref ApproachExpansions : ref TrialApproachExpansions, laid.Expansions);
+            return laid;
+        }
         string Refused(StairPlan p)
         {
             string refused = PlanRefused(p, ApronDepth(centre, radius), Ground);
             if (refused == "" && faceInto && onStairs == null && SetsOffOnAPad(p)) refused = HeldOnAPad;
-            return refused != "" ? refused : LocationConflict(p, centre, path, endIndex, Ground, world, stairs, EndsOnStairs(roadEnd, stairs) ? roadEnd : null, arriving, roadHeight);
+            return refused != "" ? refused : LocationConflict(p, centre, path, endIndex, Ground, world, stairs, EndsOnStairs(roadEnd, stairs) ? roadEnd : null, arriving, roadHeight, tally);
         }
         (StairPlan plan, string why) Lay()
         {
@@ -119,7 +127,7 @@ public static partial class RoadStairRuns
         // (ApronBeside) tried first, facing in, within the facing allowance (FacingStalls), and the aim kept where none is laid.
         if (why != "" && BuriedAtItsAim(plan))
         {
-            System.Threading.Interlocked.Increment(ref AimsBuried);
+            if (tally) System.Threading.Interlocked.Increment(ref AimsBuried);
             (Vector2 aimed, float aimedApron) = (target, apron);
             int spent = plan.Expansions;
             foreach (Vector2 beside in ApronBeside(centre, aimed))
@@ -130,7 +138,7 @@ public static partial class RoadStairRuns
                 (target, apron) = (beside, there);
                 var (besidePlan, refused) = Lay();
                 spent += besidePlan.Expansions;
-                if (refused == "") { (plan, why) = (besidePlan, refused); System.Threading.Interlocked.Increment(ref LaidBesideTheirAim); break; }
+                if (refused == "") { (plan, why) = (besidePlan, refused); if (tally) System.Threading.Interlocked.Increment(ref LaidBesideTheirAim); break; }
             }
             if (why != "") (target, apron) = (aimed, aimedApron);
         }
@@ -139,10 +147,10 @@ public static partial class RoadStairRuns
         // again is the same layout, refused the same way.
         if (why != "" && (plan.HeldToFace > 0 || why == HeldOnAPad))
         {
-            System.Threading.Interlocked.Increment(ref ApproachFacingReruns);
+            if (tally) System.Threading.Interlocked.Increment(ref ApproachFacingReruns);
             faceInto = false;
             (plan, why) = Lay();
-            if (why == "") System.Threading.Interlocked.Increment(ref ApproachesNotFacingIn);
+            if (why == "" && tally) System.Threading.Interlocked.Increment(ref ApproachesNotFacingIn);
         }
         if (why != "") return null;
         // Built in the kit its own pieces stand in (StairKit.ForPlan): laid again in that kit where it differs, and kept
@@ -198,7 +206,7 @@ public static partial class RoadStairRuns
     private static string AimRefused(Vector2 roadEnd, float roadHeight, Vector2 target, float apron, bool roadRefused = false,
         float reach = LocationReach) =>
         Vector2.Distance(roadEnd, target) > reach ? "too far"
-        : !roadRefused && Mathf.Abs(apron - roadHeight) <= StairLayout.StairFitsFrom ? "level enough"
+        : !roadRefused && FloatBits.Abs(apron - roadHeight) <= StairLayout.StairFitsFrom ? "level enough"
         : !RoadWater.BuiltDry(apron) ? "flat under water"
         : "";
 
@@ -234,13 +242,13 @@ public static partial class RoadStairRuns
         bool crest = high >= Mathf.Max(ha, hb) + CrestRise;
         // The middle of a flat top or floor, not its edge.
         float extreme = crest ? high : low;
-        var at = along.FindAll(s => Mathf.Abs(s.h - extreme) <= 0.1f);
+        var at = along.FindAll(s => FloatBits.Abs(s.h - extreme) <= 0.1f);
         Vector2 middle = at[at.Count / 2].p;
         // A valley within the walkway cap is crossed level, not down stairs to its floor and up again: the chain's one
         // rule (StairChain).
         if (!crest && StairChain.CrossesLevel(low, ha, hb))
         {
-            if (low < Mathf.Min(ha, hb) - CrestRise) level = middle;
+            if (StairChain.OverADip(low, ha, hb)) level = middle;
             return null;
         }
         return (middle, crest);
@@ -259,14 +267,18 @@ public static partial class RoadStairRuns
         {
             Vector2 p = Vector2.Lerp(target, roadEnd, d / length);
             float h = ground(p.x, p.y);
-            if (Mathf.Abs(h - last) > RoadPathfinder.StairMinGrade) break;
+            if (FloatBits.Abs(h - last) > RoadPathfinder.StairMinGrade) break;
             flats = p; last = h;
         }
         return Vector2.Distance(flats, target) < CrestFromEnd ? target : flats;
     }
 
+    /// <summary>Why a join of two legs is not reached (<see cref="Join"/>): the second laid over the first.</summary>
+    internal const string OverItsFirstLeg = "the second staircase laid over the first";
+
     /// <summary>One plan of two staircases that meet on a crest or in a valley, the first
-    /// from the road's end, the second on to the landing: walked as one, road end to landing.</summary>
+    /// from the road's end, the second on to the landing: walked as one, road end to landing. Not reached where either is
+    /// not, or where the second overlaps the first seen from above (<see cref="StairLayout.OverlapsItself"/>).</summary>
     internal static StairPlan Join(StairPlan up, StairPlan down, Vector3 landing)
     {
         var plan = new StairPlan
@@ -288,6 +300,8 @@ public static partial class RoadStairRuns
             OverlapTurnSteps = up.OverlapTurnSteps + down.OverlapTurnSteps,
             Switchbacks = up.Switchbacks + down.Switchbacks,
             Rise = landing.y - (up.End.y - up.Rise),
+            // Each leg's own climb (its Rise, or the larger of its own legs' where it was joined too): what a player climbs on either.
+            LegClimb = Mathf.Max(Mathf.Max(FloatBits.Abs(up.Rise), up.LegClimb), Mathf.Max(FloatBits.Abs(down.Rise), down.LegClimb)),
             WalkedLength = up.WalkedLength + down.WalkedLength,
             MaxFloat = Mathf.Max(up.MaxFloat, down.MaxFloat),
             MaxBuried = Mathf.Max(up.MaxBuried, down.MaxBuried),
@@ -306,8 +320,53 @@ public static partial class RoadStairRuns
         plan.Pieces.AddRange(up.Pieces); plan.Pieces.AddRange(down.Pieces);
         plan.Clearances.AddRange(up.Clearances); plan.Clearances.AddRange(down.Clearances);
         plan.Cuts.AddRange(up.Cuts); plan.Cuts.AddRange(down.Cuts);
+        // The two legs are searched apart, each clear of itself only (StairLayout's search): the second over the first, seen
+        // from above, is no way over the crest or out of the valley (StairLayout.OverlapsItself), and the join is not reached.
+        if (plan.Reached && StairLayout.OverlapsItself(plan, up.Pieces.Count))
+        {
+            plan.Reached = false;
+            plan.Reason = OverItsFirstLeg;
+        }
         return plan;
     }
+
+    /// <summary>
+    /// Two legs over a crest that do not meet head-on (<paramref name="up"/> from the road's end to the crest, <paramref name="down"/>
+    /// laid as it falls from the landing up to the first's top), joined where their flights pass instead, by the crest's one owner
+    /// for a chain's two staircases (<see cref="JoinLow"/>, with its flat run where they pass: <see cref="PassingJoins"/>): each cut
+    /// back to there and the join laid into the second, so the walk no longer climbs past where its legs pass to two tops side by
+    /// side, up one and back down the other (in game: two flights in line over a spur, each turned at its top toward the crest
+    /// point on the straight line, 2.6 m apart, the spur's ground standing over both exits). Copies of the two are joined, never
+    /// the legs themselves (the generation's layouts are shared). Null where no join is laid and kept by <paramref name="usable"/>,
+    /// which judges the whole walk as joined (<see cref="Join"/>, onto <paramref name="landing"/>).
+    /// </summary>
+    internal static StairPlan? JoinedWhereTheyPass(StairPlan up, StairPlan down, Vector3 landing, StairKit kit, Func<float, float, float> ground,
+        Func<StairPlan, bool> usable)
+    {
+        if (!up.Reached || !down.Reached || up.Reversed || !down.Reversed) return null;
+        StairPlan first = up.Copy(deepPieces: true), second = down.Copy(deepPieces: true);
+        var pair = new RoadStairSpan { Plan = first, Kit = kit };
+        if (!JoinLow(pair, second, kit, ground, Width, (p, _) => usable(Join(first, p, landing)), out _, turnsBack: true)) return null;
+        return Join(first, second, landing);
+    }
+
+    /// <summary>Why a way over a crest laid as it falls is refused where its legs carry on the same way off the ridge
+    /// (<see cref="LegsCarryOnTheSameWay"/>).</summary>
+    internal const string BesideItselfTheSameWay = "up the crest and back down beside itself, its legs going on the same way";
+
+    /// <summary>
+    /// Whether a way over a crest whose second leg was laid as it falls (not head-on) goes on the same way on both sides of the ridge:
+    /// walked up its first leg (<paramref name="roadEnd"/> to its top <paramref name="firstTop"/>) and down its second (its top
+    /// <paramref name="secondTop"/> to <paramref name="landing"/>) on headings less than <see cref="StairChain.BackTrackYaw"/> apart, the
+    /// chain's own bound for two flights facing the same way. Its tops met side by side, the walk up one and back down the other is a
+    /// switchback the ridge does not need: refused, never laid (the owner's of 18 Nov 2026: in game two flights in line over a spur,
+    /// 2.7 degrees apart, and a one-stair climb off a road's end, 0.7 apart; "the stairs are going the same direction outside of the
+    /// ridge"). Legs going off the ridge opposite ways (a turn of more than 180 less that bound, <see cref="StairChain.TurnsBack"/>), or
+    /// anywhere between, are a ridge crossed and kept: "there are some cases it makes sense such as when there is a ridge and the stairs
+    /// do go opposite directions".
+    /// </summary>
+    internal static bool LegsCarryOnTheSameWay(Vector2 roadEnd, Vector2 firstTop, Vector2 secondTop, Vector2 landing) =>
+        StairChain.FaceTheSameWay(StairLayout.Bearing(roadEnd, firstTop), StairLayout.Bearing(secondTop, landing));
 
     /// <summary>What is wrong with an approach staircase's own shape, if anything.</summary>
     private static string PlanRefused(StairPlan plan, Func<Vector2, float> depth, Func<float, float, float> ground) =>
@@ -334,10 +393,9 @@ public static partial class RoadStairRuns
     /// and nothing climbed its last 13 m (3712,3264).</param>
     internal static string LocationConflict(StairPlan plan, Vector2 centre, List<Vector2> path, int endIndex,
         Func<float, float, float> ground, WorldGenerator world, IReadOnlyList<RoadStairSpan> stairs, Vector2? meet = null, float? arriving = null,
-        float? roadHeight = null)
+        float? roadHeight = null, bool tally = true)
     {
-        string conflict = InExcludedZone(plan) ? ExcludedZone
-            : Blocked(plan, world, centre, ground) is string hit && hit != "" ? hit
+        string conflict = Blocked(plan, world, out _, centre, ground, keptGroundFirst: true) is string hit && hit != "" ? hit
             : OverRoad(plan, path, endIndex, endIndex, ground) ? OnItsRoad
             : OverStairs(plan, new List<RoadStairSpan>(stairs), meet) ? "on another staircase"
             : DuplicatesAWayIn(plan, centre) ? BesideAnApproach
@@ -349,8 +407,11 @@ public static partial class RoadStairRuns
             && EndRing(path, endIndex, end, arriving ?? ArrivingTravel(path, end, endIndex == 0), roadHeight ?? ground(end.x, end.y)).Intrudes(plan, out string piece, RoadEndRing.MetAtTop(plan)))
         {
             conflict = AcrossItsRoad;
-            System.Threading.Interlocked.Increment(ref LocationChecksAcross);
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant($"[STAIRS] across its road: location check at ({end.x:F1}, {end.y:F1}) to {centre}: {piece}"));
+            if (tally)
+            {
+                System.Threading.Interlocked.Increment(ref LocationChecksAcross);
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant($"[STAIRS] across its road: location check at ({end.x:F1}, {end.y:F1}) to {centre}: {piece}"));
+            }
         }
         return conflict;
     }
@@ -358,13 +419,35 @@ public static partial class RoadStairRuns
     /// <summary>An approach refused for arriving as another way into its location does (<see cref="DuplicatesAWayIn"/>).</summary>
     internal const string BesideAnApproach = "another way into the location arrives this way";
 
+    /// <summary>Why a staircase onto a Location is not built (<see cref="ClimbsUnderAPlayer"/>).</summary>
+    internal const string UnderAPlayerRefusal = "climbs less than a player's height";
+
+    /// <summary>Whether a staircase onto a Location climbs less than a player's height (<see cref="RoadRockPolicy.PlayerHeight"/>)
+    /// from its foot to its top (<see cref="StairPlan.Rise"/>): then it is not built, and the road ends where it would have met it,
+    /// on both ways a staircase is laid onto a Location: onto a placed Location's landing (RoadNetworkGenerator.PlanEntryFrom: the
+    /// Location reached there where its target says network there arrives on it) and an approach onto one not placed first
+    /// (RoadNetworkGenerator.LocationApproaches: the end then judged as every end not met by one, EndNotLevel); wherever it
+    /// starts, from the road's own end or carried on from the top of the road's own staircase (judged by its own climb from
+    /// there). The stairs a staircase's ends are finished with (a reverse stair or a floor at its top or foot, StairLayout.FinishTop,
+    /// StairLayout.FinishFoot) are pieces of its ends, not counted in its climb. A road's staircases between two of its
+    /// stretches are not judged so: the road has no end there. Over a crest or through a valley (<see cref="Join"/>) its climb is
+    /// the larger of its two legs' (<see cref="StairPlan.LegClimb"/>), not road end to landing: up 4 m and down 3 climbs 4.</summary>
+    internal static bool ClimbsUnderAPlayer(StairPlan plan) => ClimbsUnderAPlayer(Mathf.Max(FloatBits.Abs(plan.Rise), plan.LegClimb));
+
+    /// <summary>Whether a climb of <paramref name="climb"/> m, up or down, is less than a player's height
+    /// (<see cref="RoadRockPolicy.PlayerHeight"/>): the one rule, asked of a laid staircase's climb (<see cref="ClimbsUnderAPlayer(StairPlan)"/>)
+    /// and, where none was laid out onto a placed Location, of the heights alone, the road's end against the target's ground
+    /// (PlacedLocationShape.ArrivesNearby, on the arrival ladder's last resort, RoadNetworkGenerator.PlanEntryFrom). Over a
+    /// crest its legs may climb more, known only once laid out: there a laid staircase is judged by its legs.</summary>
+    internal static bool ClimbsUnderAPlayer(float climb) => FloatBits.Abs(climb) < RoadRockPolicy.PlayerHeight;
+
     /// <summary>Whether an approach staircase onto <paramref name="location"/> is a way in it has already: another way into that
     /// location arriving the same way (LocationWaysIn, the one owner). Refused, the next aim or start is tried, and where none is
-    /// laid its road ends on that way's road (RoadNetworkGenerator.ReEndOnAWayIn).</summary>
+    /// laid its road is a duplicate of that way, dropped (RoadNetworkGenerator.ReEndOnAWayIn).</summary>
     internal static bool DuplicatesAWayIn(StairPlan plan, Vector2 location) => LocationWaysIn.Joining(location, LocationWaysIn.Of(plan, location), out _) != null;
 
     /// <summary>Where an approach's own road meets it (<see cref="StairRun.Ends"/>): of its two ends, the one away from the location
-    /// at <paramref name="centre"/>. A later road to that location joins the network there (RoadNetworkGenerator.ReEndOnAWayIn).</summary>
+    /// at <paramref name="centre"/>. A later road to that location the same way is a duplicate of it (RoadNetworkGenerator.ReEndOnAWayIn).</summary>
     internal static Vector2 RoadEndOf(StairRun approach, Vector2 centre)
     {
         Vector2 from = approach.FromMeet ?? approach.From, to = approach.ToMeet ?? approach.To;

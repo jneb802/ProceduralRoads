@@ -55,7 +55,7 @@ public static class StairCommands
                 foreach (StructurePiece p in run.Pieces)
                 {
                     if (p.Kind == StructurePieceKind.StairSupport) continue;
-                    Heightmap.Biome biome = WorldGenerator.instance.GetBiome(p.Position.x, p.Position.z);
+                    Heightmap.Biome biome = RoadBiome.At(WorldGenerator.instance, p.Position.x, p.Position.z);
                     biomes[biome] = biomes.TryGetValue(biome, out int seen) ? seen + 1 : 1;
                     walked++;
                 }
@@ -75,7 +75,8 @@ public static class StairCommands
     /// <summary>
     /// Every end of the built network's staircases (StairStructures.Runs) read by the one end reader (StairEnds), as one
     /// string, for road_stairs_ends and a cli_call: a line per end not walkable (with <paramref name="all"/>, every end), then
-    /// "OK: STAIR_ENDS n ok, m miss, k gap, t twin(s) (live a, finished b)", the twins the network's locations with two ways in
+    /// "OK: STAIR_ENDS n ok, m miss, k gap, u not verified, t twin(s) (live a, finished b)" (not verified: a foot onto a road
+    /// whose slope into it is not known, as after a reload: StairEnds.OntoItsRoad), the twins the network's locations with two ways in
     /// arriving the same way (LocationWaysIn.Twins), each listed. Read on the terrain where the end's zone is loaded
     /// (ZoneSystem.GetGroundHeight, live), else on the finished ground its walls stand down to (StairEnds.GroundOf), and
     /// marked which. Read-only; no zone is loaded for it.
@@ -85,14 +86,14 @@ public static class StairCommands
         WorldGenerator? world = WorldGenerator.instance;
         if (world == null) return "ERROR: The world is not ready.";
         var sb = new System.Text.StringBuilder();
-        int ok = 0, miss = 0, gap = 0, live = 0, finished = 0;
+        int ok = 0, miss = 0, gap = 0, unverified = 0, live = 0, finished = 0;
         foreach (StairRun run in StairStructures.Runs)
         {
             Func<float, float, float> predicted = StairEnds.GroundOf(run, world);
             bool anyLive = false, anyPredicted = false;
             float Terrain(float x, float z)
             {
-                if (ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(new Vector3(x, 0f, z), out float h)) { anyLive = true; return h; }
+                if (ZoneSystem.instance != null && NaturalGround.Live(new Vector3(x, 0f, z), out float h)) { anyLive = true; return h; }
                 anyPredicted = true;
                 return predicted(x, z);
             }
@@ -100,7 +101,8 @@ public static class StairCommands
             Func<float, float, float> ground = StairEnds.WithRoads(Terrain);
             foreach (StairEnds.End end in StairEnds.Read(run, ground, StairStructures.MetAtEnds(run)))
             {
-                if (end.Verdict == StairEnds.Verdict.Ok) ok++; else if (end.Verdict == StairEnds.Verdict.Miss) miss++; else gap++;
+                if (end.Verdict == StairEnds.Verdict.Ok) ok++; else if (end.Verdict == StairEnds.Verdict.Miss) miss++;
+                else if (end.Verdict == StairEnds.Verdict.Gap) gap++; else unverified++;
                 if (all || end.Verdict != StairEnds.Verdict.Ok)
                     sb.Append(StairEnds.Line(end)).Append(anyPredicted ? (anyLive ? " [live+finished]" : " [finished]") : " [live]").Append('\n');
             }
@@ -109,7 +111,7 @@ public static class StairCommands
         // Beside the ends, the network's twin ways into locations (LocationWaysIn.Twins): a line for each.
         var twins = LocationWaysIn.Twins();
         foreach (var twin in twins) sb.Append(twin.line).Append('\n');
-        sb.Append(FormattableString.Invariant($"OK: STAIR_ENDS {ok} ok, {miss} miss, {gap} gap, {twins.Count} twin(s) (staircases read live {live}, finished {finished})"));
+        sb.Append(FormattableString.Invariant($"OK: STAIR_ENDS {ok} ok, {miss} miss, {gap} gap, {unverified} not verified, {twins.Count} twin(s) (staircases read live {live}, finished {finished})"));
         return sb.ToString();
     }
 
@@ -126,7 +128,7 @@ public static class StairCommands
             for (float x = cx - radius; x <= cx + radius; x += step)
                 for (float z = cz - radius; z <= cz + radius; z += step)
                     if ((x - cx) * (x - cx) + (z - cz) * (z - cz) <= radius * radius)
-                        all.Add((BiomeBlendedHeight.GetBlendedHeight(x, z, WorldGenerator.instance), x, z));
+                        all.Add((NaturalGround.ForDiagnostics(x, z, WorldGenerator.instance), x, z));
             all.Sort((a, b) => b.h.CompareTo(a.h));
             args.Context.AddString($"SCAN centre=({cx:F0},{cz:F0}) radius={radius:F0} step={step:F0} points={all.Count} (rendered natural ground; no roads or edits)");
             for (int i = 0; i < Math.Min(5, all.Count); i++) args.Context.AddString($"  HIGH {all[i].h:F1} at ({all[i].x:F0},{all[i].z:F0})");

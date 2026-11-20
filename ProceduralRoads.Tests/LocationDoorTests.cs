@@ -56,6 +56,8 @@ public class LocationDoorTests : IDisposable
 
     private static void Place(Vector2 centre, IReadOnlyList<LevelOp> ops)
     {
+        // A crypt turns with its door, so the game places it first: on the preload list (RoadLocationProtection.Enterable).
+        PlacedLocations.Preload(centre);
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(centre, Crypt4Paint,
             LocationLevelling.ArrivalReach(ops, Crypt4Exterior, Crypt4Paint)) });
         LocationLevelling.Source = c => (c - centre).magnitude < 0.5f ? ops : null;
@@ -73,6 +75,45 @@ public class LocationDoorTests : IDisposable
             if (d < best) { best = d; nearest = rp; }
         }
         return best;
+    }
+
+    /// <summary>The reach the reached test measures at a ring (the keep-out edge and a path cell past it), read without the
+    /// footprint index: the same answer as with it, from a placed location's saved levelling, and for a location with no record
+    /// the answer the index gives before it is built (its exterior radius).</summary>
+    [Fact]
+    public void TheReachedReachIsTheKeepOutEdgeWithoutTheFootprintIndex()
+    {
+        var crypt = new Vector2(0f, 0f);
+        var cave = new Vector2(400f, 0f);
+        var other = new Vector2(-400f, 0f);
+        float caveWhole = LocationLevelling.GroundReach(CaveFloor);
+        Assert.Equal(new Vector2(-0.06f, -4.75f).magnitude + 7f, caveWhole, 4);
+        foreach (var (centre, ops) in new[] { (crypt, Crypt4), (cave, CaveFloor) })
+        {
+            PlacedLocations.Preload(centre);
+            PlacedLocations.Remember(new PlacedLocationRecord { Prefab = "Test", Centre = centre, Ops = new List<LevelOp>(ops) });
+        }
+        // The index as a prefab read builds it: the crypt's paint out to 30 m; the cave (exterior 5 m) shapes ground off its
+        // centre out past its exterior, and paints no farther.
+        const float CaveExterior = 5f;
+        RoadLocationProtection.Set(new[]
+        {
+            new RoadLocationProtection.Footprint(crypt, Crypt4Paint, LocationLevelling.ArrivalReach(Crypt4, Crypt4Exterior, Crypt4Paint)),
+            new RoadLocationProtection.Footprint(cave, caveWhole, LocationLevelling.ArrivalReach(CaveFloor, CaveExterior, caveWhole)),
+        });
+        float WithIndex(Vector2 c, float r) => RoadNetworkGenerator.KeepOutEdge(c, r, RoadNetworkGenerator.RoadWidth) + RoadNetworkGenerator.ReachPastEdge;
+        float past = RoadLocationProtection.Clearance(RoadNetworkGenerator.RoadWidth) + RoadNetworkGenerator.ReachPastEdge;
+        float crypts = WithIndex(crypt, Crypt4Exterior), caves = WithIndex(cave, CaveExterior);
+        Assert.Equal(Crypt4Exterior + past, crypts, 4);
+        Assert.Equal(caveWhole + past, caves, 4);
+        Assert.Equal(crypts, RoadNetworkGenerator.ArrivalReach(crypt, Crypt4Exterior), 4);
+        Assert.Equal(caves, RoadNetworkGenerator.ArrivalReach(cave, CaveExterior), 4);
+        // Without the index: the same, read from the records alone.
+        RoadLocationProtection.Reset();
+        Assert.Equal(crypts, RoadNetworkGenerator.ArrivalReach(crypt, Crypt4Exterior), 4);
+        Assert.Equal(caves, RoadNetworkGenerator.ArrivalReach(cave, CaveExterior), 4);
+        // No record: its exterior radius, as the keep-out edge answers with no footprint for it.
+        Assert.Equal(WithIndex(other, Crypt4Exterior), RoadNetworkGenerator.ArrivalReach(other, Crypt4Exterior), 4);
     }
 
     [Fact]
@@ -127,9 +168,10 @@ public class LocationDoorTests : IDisposable
         Place(crypt, Crypt4);
         // Ends at the carried-in edge (18 + 4) on the far side, having crossed the structure: refused.
         var across = new List<Vector2> { new(60f, 0f), new(-22f, 0f) };
-        Assert.Null(RoadSpatialGrid.PlanRoadPath(across, 4f, WorldGenerator.instance));
+        var toCrypt = new RoadLocationProtection.Targets(null, crypt);
+        Assert.Null(RoadSpatialGrid.PlanRoadPath(across, 4f, WorldGenerator.instance, locations: toCrypt));
         // Straight in to that edge: built.
         var straight = new List<Vector2> { new(60f, 0f), new(22f, 0f) };
-        Assert.NotNull(RoadSpatialGrid.PlanRoadPath(straight, 4f, WorldGenerator.instance));
+        Assert.NotNull(RoadSpatialGrid.PlanRoadPath(straight, 4f, WorldGenerator.instance, locations: toCrypt));
     }
 }

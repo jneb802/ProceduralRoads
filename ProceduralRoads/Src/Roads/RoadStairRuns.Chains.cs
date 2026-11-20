@@ -53,7 +53,7 @@ public static partial class RoadStairRuns
                 var ps = g.ToList();
                 Vector2 sum = new Vector2(0f, 0f);
                 foreach (StairPiece p in ps) sum += new Vector2(p.Position.x, p.Position.z);
-                if (ps.Any(p => Mathf.Abs(p.Position.y - (bottom + g.Key * StairLayout.PieceRise)) > 0.05f)) continue;
+                if (ps.Any(p => FloatBits.Abs(p.Position.y - (bottom + g.Key * StairLayout.PieceRise)) > 0.05f)) continue;
                 rows[g.Key] = (sum * (1f / ps.Count), ps[0].YawDegrees);
             }
             if (level && rows.Count > 0)
@@ -64,7 +64,7 @@ public static partial class RoadStairRuns
             }
             return rows;
         }
-        float Off(float a, float b) => Mathf.Abs(StairLayout.Wrap(a - b + 180f) - 180f);
+        float Off(float a, float b) => FloatBits.Abs(StairLayout.Wrap(a - b + 180f) - 180f);
         var first = Rows(below, bottom);
         var second = Rows(up, bottom);
         float half = StairLayout.ExitHalf(width);
@@ -172,11 +172,19 @@ public static partial class RoadStairRuns
             && StairLayout.CarryTopTo(first, up.ToPoint + StairLayout.Forward(first.EndHeading) * StairLayout.PieceRun, up.ToHeight, ground, Width, up.Kit))
             floored = first.CrestFloored = true;
         if (floored) { up.ToPoint = new Vector2(first.End.x, first.End.z); up.ToHeight = first.End.y; }
-        return new StairContinuation(up.ToPoint, first.EndHeading, up.ToHeight, floored ? StairPieceKind.Landing : StairPieceKind.Stair);
+        // The crest floor ends the first's top level run, its rows walked on by the way down (a crest pair is one level run).
+        return new StairContinuation(up.ToPoint, first.EndHeading, up.ToHeight, floored ? StairPieceKind.Landing : StairPieceKind.Stair,
+            floored ? EndLevelRun(first, ground, top: true)?.Rows ?? 1 : 0);
     }
 
-    /// <summary>Ridge meets snapped off the crest's floor's side or a second floor on (<see cref="SnapOffCrest"/>).</summary>
-    public static int RidgesSnappedOffCrest;
+    /// <summary>Whether <paramref name="plan"/>, joined to <paramref name="other"/> at their tops (JoinCrest, StairLayout.JoinTops),
+    /// walks a level run further than a rest on <paramref name="ground"/>, its floors and the other's met there one level run
+    /// (StairEnds.LevelRuns with the other's pieces, StairLayout.PastARest), as the road's final check reads them
+    /// (<see cref="NoWayOff"/>): a walkway over a dip is none.</summary>
+    internal static bool JoinedPastARest(StairPlan plan, StairPlan other, Func<float, float, float> ground) =>
+        StairEnds.LevelRuns(StairRun.FromPlan(new Vector2(0f, 0f), new Vector2(0f, 0f), Width, plan), ground,
+            StairRun.FromPlan(new Vector2(0f, 0f), new Vector2(0f, 0f), Width, other).Pieces).Exists(l => l.PastARest);
+
 
     /// <summary>
     /// Where the second staircase over a ridge found no way down straight on from the 2x2 on the crest: searched down from
@@ -185,22 +193,25 @@ public static partial class RoadStairRuns
     /// the 2x2 at ridge top with stairs snapping the whole way up and down is preferred). The second floor is added to
     /// the first staircase only where its way down is used. Returns the way down, or null.
     /// </summary>
-    private static StairPlan? SnapOffCrest(RoadStairSpan up, StairContinuation crest, Vector2 b, StairKit kit, Func<float, float, float> ground, List<Vector2> corridor,
+    private static StairPlan? SnapOffCrest(RoadStairSpan up, StairContinuation crest, Vector2 b, StairKit kit, List<Vector2> corridor,
         List<Vector2> path, int start, int to, WorldGenerator world, List<RoadStairSpan> spans, ref Vector2 a, ref Vector2? meet)
     {
+        // The ground a road's staircase is laid on (GroundAt), the ground its ways down are laid on (FromRow).
+        float Ground(float x, float z) => GroundAt(x, z, world);
         StairPlan first = up.Plan;
         Vector2 fwd = StairLayout.Forward(crest.Heading), centre = crest.Edge - fwd * (StairLayout.PieceRun / 2f);
         var rows = new List<(StairContinuation row, bool second)>();
+        // Each off the crest floor's level run (crest.Rows), the second floor a row more.
         foreach (int side in new[] { -1, 1 })
             rows.Add((new StairContinuation(centre + StairLayout.Right(crest.Heading) * (side * StairLayout.PieceRun / 2f),
-                StairLayout.Wrap(crest.Heading + side * 90f), crest.Height, StairPieceKind.Landing), false));
-        rows.Add((new StairContinuation(crest.Edge + fwd * StairLayout.PieceRun, crest.Heading, crest.Height, StairPieceKind.Landing), true));
+                StairLayout.Wrap(crest.Heading + side * 90f), crest.Height, StairPieceKind.Landing, crest.Rows), false));
+        rows.Add((new StairContinuation(crest.Edge + fwd * StairLayout.PieceRun, crest.Heading, crest.Height, StairPieceKind.Landing, crest.Rows + 1), true));
         foreach (var (row, second) in rows)
         {
-            StairPlan down = StairLayout.BuildDown(row, b, ground, Width, kit, GenerationExpansions, GenerationTotalExpansions, GenerationStall, corridor: corridor);
+            StairPlan down = FromRow(RowLay.DownFrom(row, b, kit, world, corridor));
             if (!down.Reached || !Usable(down, path, start, to, world, spans, row.Edge)) continue;
             // A second floor on is the first's: never on a staircase an earlier road built.
-            if (second && (up.Existing || !StairLayout.CarryTopTo(first, row.Edge, crest.Height, ground, Width, up.Kit))) continue;
+            if (second && (up.Existing || !StairLayout.CarryTopTo(first, row.Edge, crest.Height, Ground, Width, up.Kit))) continue;
             up.ToPoint = row.Edge;
             a = row.Edge;
             meet = row.Edge;
@@ -222,8 +233,6 @@ public static partial class RoadStairRuns
 
 
 
-    /// <summary>Ridge meets joined lower down, where the two flights pass close, their tops taken away (<see cref="JoinLow"/>).</summary>
-    public static int RidgesJoinedLow;
 
     /// <summary>Most stairs a ridge's two flights are joined lower down with: three (as by hand at a Mistlands ridge).</summary>
     public const int LowJoinStairs = 3;
@@ -279,7 +288,7 @@ public static partial class RoadStairRuns
                     float foot = h - stairs * StairLayout.PieceRise;
                     if (foot > lowTop - LowJoinSaves + 0.01f) continue;
                     var floors = Enumerable.Range(low.SunkPieces, low.Pieces.Count - low.SunkPieces)
-                        .Where(j => low.Pieces[j].Kind == StairPieceKind.Landing && Mathf.Abs(Surface(low.Pieces[j]) - foot) < 0.05f).ToList();
+                        .Where(j => low.Pieces[j].Kind == StairPieceKind.Landing && FloatBits.Abs(Surface(low.Pieces[j]) - foot) < 0.05f).ToList();
                     if (floors.Count == 0) continue;
                     var level = floors.Select(j => low.Pieces[j]).ToList();
                     for (int turn = -StairLayout.MaxJoinTurnSteps; turn <= StairLayout.MaxJoinTurnSteps; turn++)
@@ -316,7 +325,6 @@ public static partial class RoadStairRuns
         // Doubling back, alongside each other or round a wider loop: joined where they pass, by a flat run.
         if (turnsBack || StairChain.BackTracks(first.Pieces, down.Pieces, kit).Count > 0) joins.AddRange(PassingJoins(first, down, crest: true, kit, ground, width));
         if (!TryJoins(first, down, joins.OrderBy(j => j.Height).ThenBy(j => j.Turn), crest: true, kit, usable, out at, out PassJoin? made)) return false;
-        System.Threading.Interlocked.Increment(ref RidgesJoinedLow);
         if (RoadNetworkGenerator.RoadsLog)
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(FormattableString.Invariant(
                 $"[STAIRS] ridge joined low at ({at.x:F1}, {at.y:F1}): {made!.Said}, the tops over it taken away"));
@@ -379,7 +387,7 @@ public static partial class RoadStairRuns
                     float heading = crest ? StairLayout.Wrap(p.YawDegrees + 180f) : p.YawDegrees;
                     Vector2 edge = At(p) + StairLayout.Forward(heading) * (StairLayout.PieceRun / 2f);
                     // A floor level with that edge carries the row on: it is the row.
-                    if (walked.Any(q => q.Kind == StairPieceKind.Landing && Mathf.Abs(q.Position.y + kit.FloorTop - h) < 0.05f
+                    if (walked.Any(q => q.Kind == StairPieceKind.Landing && FloatBits.Abs(q.Position.y + kit.FloorTop - h) < 0.05f
                         && Vector2.Distance(At(q), edge) < StairLayout.PieceRun)) continue;
                     rows.Add((i, new StairContinuation(edge, heading, h, StairPieceKind.Stair)));
                 }
@@ -387,9 +395,9 @@ public static partial class RoadStairRuns
                 {
                     float h = p.Position.y + kit.FloorTop;
                     // A pad's floors are walked across, not along.
-                    if (walked.Any(q => q != p && q.Kind == StairPieceKind.Landing && Mathf.Abs(q.Position.y - p.Position.y) < 0.05f
+                    if (walked.Any(q => q != p && q.Kind == StairPieceKind.Landing && FloatBits.Abs(q.Position.y - p.Position.y) < 0.05f
                         && StairChain.YawApart(q.YawDegrees, p.YawDegrees) < 0.1f
-                        && Mathf.Abs(Vector2.Dot(At(q) - At(p), StairLayout.Forward(p.YawDegrees))) < 0.1f)) continue;
+                        && FloatBits.Abs(Vector2.Dot(At(q) - At(p), StairLayout.Forward(p.YawDegrees))) < 0.1f)) continue;
                     float heading = crest ? p.YawDegrees : StairLayout.Wrap(p.YawDegrees + 180f);
                     rows.Add((i, new StairContinuation(At(p) + StairLayout.Forward(heading) * (StairLayout.PieceRun / 2f), heading, h, StairPieceKind.Landing)));
                 }
@@ -406,7 +414,7 @@ public static partial class RoadStairRuns
         foreach (var (i, r1) in mine)
             foreach (var (j, r2) in theirs)
             {
-                if (Mathf.Abs(r1.Height - r2.Height) > 0.05f || (crest ? r1.Height > inside + 0.01f : r1.Height < inside - 0.01f)
+                if (FloatBits.Abs(r1.Height - r2.Height) > 0.05f || (crest ? r1.Height > inside + 0.01f : r1.Height < inside - 0.01f)
                     || Vector2.Distance(r1.Edge, r2.Edge) > CrestStubJoinReach) continue;
                 StairPiece mineAt = first.Pieces[i], theirsAt = second.Pieces[j];
                 float h = r1.Height;
@@ -475,11 +483,11 @@ public static partial class RoadStairRuns
         bool Walked(StairPiece p) => p.Kind == StairPieceKind.Stair || p.Kind == StairPieceKind.Landing;
         StairKit kit = StairKit.Of(plan.Kit);
         var laid = plan.Pieces.Take(from).Concat(other.Pieces)
-            .Where(p => Walked(p) && !(p.Kind == StairPieceKind.Landing && Mathf.Abs(p.Position.y + kit.FloorTop - foot) < 0.05f)).ToList();
+            .Where(p => Walked(p) && !(p.Kind == StairPieceKind.Landing && FloatBits.Abs(p.Position.y + kit.FloorTop - foot) < 0.05f)).ToList();
         foreach (StairPiece p in plan.Pieces.Skip(from).Where(Walked))
             foreach (StairPiece q in laid)
                 if (Vector2.Distance(new Vector2(p.Position.x, p.Position.z), new Vector2(q.Position.x, q.Position.z)) < 1.3f
-                    && Mathf.Abs(p.Position.y - q.Position.y) < 1.5f) return true;
+                    && FloatBits.Abs(p.Position.y - q.Position.y) < 1.5f) return true;
         return false;
     }
 
@@ -528,12 +536,16 @@ public static partial class RoadStairRuns
     /// <summary>The top row of a laid staircase whose far edge is the road's end <paramref name="end"/>,
     /// at <paramref name="height"/>: the road ends on that staircase's top, and a staircase on from
     /// there carries on from that row (<see cref="StairLayout.Build"/>'s after). Null where none ends
-    /// there: a road's own end, or a staircase's foot.</summary>
+    /// there: a road's own end, or a staircase's foot. A floor row ends its level run among <paramref name="pieces"/>
+    /// (StairEnds.LevelRuns), its rows walked on by the staircase carried on from it (StairContinuation.Rows).</summary>
     internal static StairContinuation? TopAt(Vector2 end, float height, IEnumerable<StructurePiece> pieces)
     {
         StairContinuation? best = null;
+        StructurePiece? bestPiece = null;
         float nearest = TopRowReach;
-        foreach (StructurePiece p in pieces)
+        var laid = new StairRun { Width = Width };
+        laid.Pieces.AddRange(pieces);
+        foreach (StructurePiece p in laid.Pieces)
         {
             bool step = p.Kind == StructurePieceKind.StairStep;
             if (!step && p.Kind != StructurePieceKind.StairFloor) continue;
@@ -541,7 +553,7 @@ public static partial class RoadStairRuns
             // walks its kit's top above its origin, either way along its yaw (StairLayout.AddPiece).
             float walk = step ? p.Position.y + StairLayout.PieceRise
                 : p.Position.y + StairKit.FloorTopOf(p.Prefab);
-            if (Mathf.Abs(walk - height) > TopRowReach) continue;
+            if (FloatBits.Abs(walk - height) > TopRowReach) continue;
             var at = new Vector2(p.Position.x, p.Position.z);
             foreach (float heading in step ? new[] { StairLayout.Wrap(p.YawDegrees + 180f) } : new[] { p.YawDegrees, StairLayout.Wrap(p.YawDegrees + 180f) })
             {
@@ -550,8 +562,15 @@ public static partial class RoadStairRuns
                 if (d > nearest) continue;
                 nearest = d;
                 best = new StairContinuation(edge, heading, walk, step ? StairPieceKind.Stair : StairPieceKind.Landing);
+                bestPiece = p;
             }
         }
+        if (best is not StairContinuation row || row.Kind != StairPieceKind.Landing || bestPiece == null) return best;
+        // Its rows only: the ground under the run is not read for them.
+        var floor = new Vector2(bestPiece.Position.x, bestPiece.Position.z);
+        foreach (StairEnds.LevelRun l in StairEnds.LevelRuns(laid, (_, _) => 0f))
+            if (Array.Exists(l.Floors, f => f.x == floor.x && f.y == floor.y))
+                return new StairContinuation(row.Edge, row.Heading, row.Height, row.Kind, l.Rows);
         return best;
     }
 }

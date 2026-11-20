@@ -69,6 +69,60 @@ public sealed class StructureStretchTests : IDisposable
         finally { RoadSpatialGrid.LevelledEnds = null; }
     }
 
+    /// <summary>A structure's levelled end (its last apron, StructureEnds) over another road it is held to: within a step of
+    /// that road's surface it is built; more than a step off it, the levelled end would lie on the road at another height, a
+    /// step between the two surfaces beside the bridge's end (seen at a turned bridge's apron, 0.6 m), and the road is
+    /// refused (BRIEF-RULES 17).</summary>
+    [Theory]
+    [InlineData(40.1f, true)]
+    [InlineData(41f, false)]
+    public void ALevelledEndOnAnotherRoadAtAnotherHeightIsRefused(float other, bool built)
+    {
+        var world = new Level();
+        _scope.WithWorld(world);
+        var cross = new List<Vector2>();
+        var heights = new List<float>();
+        for (float z = -20f; z <= 20f; z += 1f) { cross.Add(new Vector2(4f, z)); heights.Add(other); }
+        RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(cross, heights, cross.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 40f, false));
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        Vector2 a = new(0f, 0f), b = new(30f, 0f);
+        RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (a, 40f) };
+        try
+        {
+            var plan = RoadSpatialGrid.PlanRoadPath(new List<Vector2> { a, b }, 4f, world, 40f, null);
+            if (built) Assert.True(plan != null, RoadSpatialGrid.LastRefusal);
+            else
+            {
+                Assert.Null(plan);
+                Assert.Equal(RoadSpatialGrid.LevelledOnARoadRefusal, RoadSpatialGrid.LastRefusal);
+            }
+        }
+        finally { RoadSpatialGrid.LevelledEnds = null; }
+    }
+
+    /// <summary>The levelled-end rule judges a road that rides the other one as any: a road laid along another road at 40.6 m
+    /// (aligned, on it for 28 m) from a structure's end levelled at 40 m is refused, not let through as a ride that would store
+    /// none of itself there (the ride is decided later, on the moved heights).</summary>
+    [Fact]
+    public void ALevelledEndRidingAnotherRoadAtAnotherHeightIsRefused()
+    {
+        var world = new Level();
+        _scope.WithWorld(world);
+        var along = new List<Vector2>();
+        var heights = new List<float>();
+        for (float x = 2f; x <= 40f; x += 1f) { along.Add(new Vector2(x, 0f)); heights.Add(40.6f); }
+        RoadSpatialGrid.Commit(new RoadSpatialGrid.PlannedPath(along, heights, along.Select(_ => default(RoadPointDebugInfo)).ToList(), 4f, 38f, false));
+        RoadSpatialGrid.FinalizeRoadNetwork();
+        Vector2 a = new(0f, 0f), b = new(30f, 0f);
+        RoadSpatialGrid.LevelledEnds = new List<(Vector2 at, float height)> { (a, 40f) };
+        try
+        {
+            Assert.Null(RoadSpatialGrid.PlanRoadPath(new List<Vector2> { a, b }, 4f, world, 40f, null));
+            Assert.Equal(RoadSpatialGrid.LevelledOnARoadRefusal, RoadSpatialGrid.LastRefusal);
+        }
+        finally { RoadSpatialGrid.LevelledEnds = null; }
+    }
+
     /// <summary>The road a shared landing is levelled at (its ends' common height) runs on under a viaduct's joining piece at a
     /// flush end: within a step of the deck (StairLayout.Walkable), so it is the deck's own joint road, not road under the deck.
     /// The landing between ends 0.4 m apart stands 0.2 m (0.2000008 in float) under the deck; 0.45 m apart, 0.225 m: not a step.</summary>
@@ -626,7 +680,7 @@ public sealed class StructureStretchTests : IDisposable
         var world = new BridgeTests.WideRiverWorld();
         _scope.WithWorld(world);
         RoadCrossingDetector.SetFordStyleWeights(1f, 1f, 1f);
-        SetPathfinder(new RoadPathfinder(world) { Fords = true, Bridges = true, MaxGrade = 0f });
+        SetPathfinder(new RoadPathfinder(world) { Fords = true, Bridges = true });
         var roads = new List<RoadSpatialGrid.PlannedPath>();
         RoadNetworkGenerator.PieceCommitted = (plan, _) => roads.Add(plan);
         Assert.True(RoadNetworkGenerator.GenerateRoad(new Vector2(-200f, -40f), 0f, new Vector2(200f, 40f), 0f, 4f, "across the river"));
@@ -674,6 +728,50 @@ public sealed class StructureStretchTests : IDisposable
         Assert.Same(c, RoadNetworkGenerator.BuiltRefusal(own, crossings, out Vector2 at, out string refused));
         Assert.Contains("road under the deck", refused);
         Assert.True(Mathf.Abs(at.x - x) <= 1.5f, $"found at {at}");
+    }
+
+    /// <summary>
+    /// The final check on the road as built reads the road as it would be stored (RoadTerrainModifier.AsStored over what it
+    /// writes, as RoadNetworkGenerator.RoadRefusal and generation's crossing bans open it), not the network as it stands: a
+    /// fill the road writes under the deck's end, never stored yet and not among its planned pieces, is road under the deck
+    /// there; and a road laid before under it, which the road raises (CrossingGround.Raised) clear of the deck, is not.
+    /// </summary>
+    [Fact]
+    public void TheFinalCheckReadsTheBuiltRoadAsTheRoadWouldBeStored()
+    {
+        var world = new RimValley();
+        _scope.WithWorld(world);
+        float bank = world.Rim + 1f;
+        RoadCrossing c = DvergrViaduct.ValleyCrossing(new Vector2(-bank, 0f), new Vector2(bank, 0f), world, out string why)!;
+        Assert.True(c != null, why);
+        var (near, far) = DvergrViaduct.Ends(c!, world);
+        RoadSpatialGrid.PlannedPath Piece(Vector2 a, Vector2 b, float h) =>
+            new(new List<Vector2> { a, b }, new List<float> { h, h }, new List<RoadPointDebugInfo>(), 4f, Vector2.Distance(a, b), false);
+        var own = new List<RoadSpatialGrid.PlannedPath> { Piece(near.Apron, near.Joint, near.MeetHeight), Piece(far.Joint, far.Apron, far.MeetHeight) };
+        var crossings = new List<RoadCrossing> { c! };
+        float x = near.Edge.x + 4f;
+        var none = new List<(RoadSpatialGrid.RoadPoint, float)>();
+
+        // A fill the road writes under the deck's end: under the deck once it is stored.
+        var fill = new List<RoadSpatialGrid.RoadPoint>();
+        for (float z = -8f; z <= 8f; z += 2f)
+            fill.Add(new RoadSpatialGrid.RoadPoint(new Vector2(x, z), 4f, world.GetHeight(x, z), false));
+        Assert.Null(RoadNetworkGenerator.BuiltRefusal(own, crossings, out _, out _));
+        using (RoadTerrainModifier.AsStored(fill, none))
+        {
+            Assert.Same(c, RoadNetworkGenerator.BuiltRefusal(own, crossings, out Vector2 at, out string refused));
+            Assert.Contains("road under the deck", refused);
+            Assert.True(Mathf.Abs(at.x - x) <= 1.5f, $"found at {at}");
+        }
+
+        // A road laid before under it, raised by the road over the deck's height: clear of the deck once it is stored.
+        LayRoad(new Vector2(x, -8f), new Vector2(x, 8f), p => world.GetHeight(p.x, p.y));
+        Assert.Same(c, RoadNetworkGenerator.BuiltRefusal(own, crossings, out _, out _));
+        float deck = DvergrViaduct.DeckHeight(c!, world);
+        var raised = RoadSpatialGrid.GetRoadPointsNearPosition(new Vector3(x, 0f, 0f), 12f).ConvertAll(rp => (rp, deck + 1f));
+        Assert.NotEmpty(raised);
+        using (RoadTerrainModifier.AsStored(new List<RoadSpatialGrid.RoadPoint>(), raised))
+            Assert.Null(RoadNetworkGenerator.BuiltRefusal(own, crossings, out _, out _));
     }
 
     /// <summary>The other half of the road-under-a-deck case: a road planned after a viaduct is laid does not run under its deck. The

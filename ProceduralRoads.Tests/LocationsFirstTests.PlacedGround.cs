@@ -8,30 +8,60 @@ namespace ProceduralRoads.Tests;
 
 public partial class LocationsFirstTests
 {
-    /// <summary>One reader of the ground a placed location leaves (PlacedLocations.GroundAt): the terrain writer reads a location
-    /// placed first from its preload, as the finished-ground predictor does, and rebuilds from the saved placement (its
-    /// hook) only a location with no preload. Before, the writer rebuilt every location itself.</summary>
+    /// <summary>
+    /// One published ground for a location (PlacedLocations.GroundAt), read alike by the terrain writer and the finished-ground
+    /// predictor on any thread: a location not on the preload list has none (not known to either, never the natural ground);
+    /// on it, its preload's ground, known to a worker too.
+    /// </summary>
     [Fact]
-    public void TheWriterReadsAPlacedLocationsGroundFromItsPreloadAsThePredictorDoes()
+    public void ALocationsGroundIsKnownOnlyFromItsPreloadAndAloneForTheWriterAndThePredictor()
     {
-        Func<Vector2, float?>? hook = RoadTerrainModifier.PlacedGround;
-        try
+        PlacedLocation cave = Cave();
+        var inside = new Vector2(3f, 2f);
+        Func<int, int, float> Predictor() => RoadTerrainModifier.FinishedGround((x, z) => _world.GetHeight(x, z));
+        // Not on the preload list: not known, to the writer and the predictor alike.
+        Assert.Null(PlacedLocations.GroundAt(inside));
+        Assert.True(float.IsNaN(Predictor()(3, 2)));
+        PlacedLocations.Preload(cave.Centre, cave.Ground);
+        float placed = cave.Ground(inside.x, inside.y);
+        Assert.Equal(placed, PlacedLocations.GroundAt(inside));
+        Assert.Equal(placed, Predictor()(3, 2));
+        // A worker reads what the main thread published.
+        float onWorker = float.NaN;
+        var worker = new System.Threading.Thread(() => onWorker = Predictor()(3, 2));
+        worker.Start();
+        worker.Join();
+        Assert.Equal(placed, onWorker);
+        // Outside every footprint there is no location's ground.
+        Assert.Null(PlacedLocations.GroundAt(new Vector2(500f, 500f)));
+    }
+
+    /// <summary>A location placed first whose levelling leaves it no landing (no flat, no smoothing) still publishes the ground
+    /// it leaves: knowing its ground and having a landing are two facts. Held on a Location with no measured entrance: one with an
+    /// entrance (the frost cave) always has a landing, its entrance's (roads aim at measured entrances, the owner's decision of
+    /// 16 Nov 2026: "I think we should explore trying to aim for the entrances. We can fall back if needed if we can't";
+    /// PlacedLocations.FlatFor), and publishes its ground as well.</summary>
+    [Fact]
+    public void APlacedLocationWithNoLandingStillPublishesItsGround()
+    {
+        var record = new PlacedLocationRecord
         {
-            RoadTerrainModifier.PlacedGround = _ => 999f;
-            var inside = new Vector2(3f, 2f);
-            // Not placed first: no preload, the hook's rebuild.
-            Assert.Null(PlacedLocations.GroundAt(inside));
-            Assert.Equal(999f, RoadTerrainModifier.PlacedBaseAt(inside));
-            PlacedLocation cave = Cave();
-            PlacedLocations.Ready(cave);
-            float preload = cave.Ground(inside.x, inside.y);
-            Assert.Equal(preload, PlacedLocations.GroundAt(inside));
-            Assert.Equal(preload, RoadTerrainModifier.PlacedBaseAt(inside));
-            Assert.Equal(preload, RoadTerrainModifier.FinishedGround((x, z) => _world.GetHeight(x, z))(3, 2));
-            // Outside every footprint there is no location's ground.
-            Assert.Null(PlacedLocations.GroundAt(new Vector2(500f, 500f)));
-        }
-        finally { RoadTerrainModifier.PlacedGround = hook; }
+            Prefab = "MountainWell1", Centre = new Vector2(0f, 0f), Yaw = 90f, Root = 50f,
+            Ops = new List<LevelOp> { new LevelOp(0f, 0f, 0f, 0f, false, 0f, 0f) }, X0 = -60, Z0 = -60, W = 121, H = 121,
+        };
+        PlacedLocations.Remember(record);
+        PlacedLocations.Prepare((x, z) => _world.GetHeight(x, z));
+        Assert.False(PlacedLocations.TryGetReady(record.Centre, out _));
+        float expected = PlacedLocationGround.Sampler(record.Ground((x, z) => _world.GetHeight(x, z)), record.X0, record.Z0, record.W, record.H)(3f, 2f);
+        Assert.Equal(expected, PlacedLocations.GroundAt(new Vector2(3f, 2f)));
+        // The same levelling under a frost cave, which has a measured entrance: landed at it, its ground published as well.
+        PlacedLocations.Reset();
+        record.Prefab = "MountainCave02";
+        PlacedLocations.Remember(record);
+        PlacedLocations.Prepare((x, z) => _world.GetHeight(x, z));
+        Assert.True(PlacedLocations.TryGetReady(record.Centre, out PlacedLocation landed));
+        Assert.NotEmpty(landed.Entrances);
+        Assert.Equal(expected, PlacedLocations.GroundAt(new Vector2(3f, 2f)));
     }
 
     /// <summary>A location at the origin, placed first, that levels its landing 6 m over the level ground: a flat 6 m round a
@@ -59,14 +89,14 @@ public partial class LocationsFirstTests
         var smoothed = new Vector2(-13f, 1f);
         // Read before the location is ready: the natural ground.
         Assert.Equal(50f, RoadStairRuns.GroundAt(landing.x, landing.y, _world), 3);
-        PlacedLocation placedLocation = RaisedLanding();
-        PlacedLocations.Ready(placedLocation);
-        Assert.Equal(56f, placedLocation.Ground(landing.x, landing.y), 3);
-        Assert.InRange(placedLocation.Ground(smoothed.x, smoothed.y), 50.5f, 55.5f);
+        PlacedLocation location = RaisedLanding();
+        PlacedLocations.Ready(location);
+        Assert.Equal(56f, location.Ground(landing.x, landing.y), 3);
+        Assert.InRange(location.Ground(smoothed.x, smoothed.y), 50.5f, 55.5f);
         foreach (Vector2 p in new[] { landing, smoothed })
         {
-            Assert.Equal(placedLocation.Ground(p.x, p.y), PlacedLocations.GroundAt(p.x, p.y, _world), 3);
-            Assert.Equal(placedLocation.Ground(p.x, p.y), RoadStairRuns.GroundAt(p.x, p.y, _world), 3);
+            Assert.Equal(location.Ground(p.x, p.y), PlacedLocations.GroundAt(p.x, p.y, _world), 3);
+            Assert.Equal(location.Ground(p.x, p.y), RoadStairRuns.GroundAt(p.x, p.y, _world), 3);
         }
         // Outside every footprint, the natural ground.
         Assert.Equal(_world.GetHeight(500f, 500f), RoadStairRuns.GroundAt(500f, 500f, _world), 3);
@@ -77,10 +107,10 @@ public partial class LocationsFirstTests
     /// staircase is, or <paramref name="onItsPreload"/> on the location's own ground, as the way onto its landing is.</summary>
     private StairRun OntoTheRaisedLanding(bool onItsPreload = false)
     {
-        PlacedLocation placedLocation = RaisedLanding();
-        PlacedLocations.Ready(placedLocation);
+        PlacedLocation location = RaisedLanding();
+        PlacedLocations.Ready(location);
         Vector2 from = new(-30f, 0f), to = new(-8f, 0f);
-        Func<float, float, float> ground = onItsPreload ? placedLocation.Ground : (x, z) => RoadStairRuns.GroundAt(x, z, _world);
+        Func<float, float, float> ground = onItsPreload ? location.Ground : (x, z) => RoadStairRuns.GroundAt(x, z, _world);
         StairPlan plan = StairLayout.Build(from, to, ground, RoadStairRuns.Width, StairKit.Stone, maxBuried: StairCover.ApproachSearch);
         Assert.True(plan.Reached, plan.Reason);
         return StairRun.FromPlan(from, to, RoadStairRuns.Width, plan, StairKit.Stone);
@@ -129,9 +159,9 @@ public partial class LocationsFirstTests
         // As a generation makes it ready (RoadNetworkGenerator's preparation), from the record its placing remembered.
         PlacedLocations.Remember(RaisedLanding().Record);
         PlacedLocations.Prepare((x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, _world));
-        Assert.True(PlacedLocations.TryGetReady(new Vector2(0f, 0f), out PlacedLocation placedLocation));
+        Assert.True(PlacedLocations.TryGetReady(new Vector2(0f, 0f), out PlacedLocation location));
         Vector2 from = new(-30f, 0f), to = new(-8f, 0f);
-        StairPlan plan = StairLayout.Build(from, to, placedLocation.Ground, RoadStairRuns.Width, StairKit.Stone, maxBuried: StairCover.ApproachSearch);
+        StairPlan plan = StairLayout.Build(from, to, location.Ground, RoadStairRuns.Width, StairKit.Stone, maxBuried: StairCover.ApproachSearch);
         Assert.True(plan.Reached, plan.Reason);
         StairRun run = StairRun.FromPlan(from, to, RoadStairRuns.Width, plan, StairKit.Stone);
         StairStructures.Add(run);

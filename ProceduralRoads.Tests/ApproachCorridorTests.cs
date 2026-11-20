@@ -209,7 +209,7 @@ public class ApproachCorridorTests : IDisposable
         Assert.True(RoadStairRuns.DuplicatesAWayIn(Plan(SecondFurther), Cave));
     }
 
-    /// <summary>A road up that face onto the landing is too: its road ends on the first's road instead, at the first's foot.</summary>
+    /// <summary>A road up that face onto the landing is too: a duplicate of the first, whose foot it would join (dropped by generation).</summary>
     [Fact]
     public void ARoadUpTheSameFaceJoinsTheApproachAtItsFoot()
     {

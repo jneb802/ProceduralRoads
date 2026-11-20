@@ -15,21 +15,18 @@ namespace ProceduralRoads
 {
     [BepInPlugin(ModGUID, ModName, ModVersion)]
     [BepInDependency(Jotunn.Main.ModGuid)]
-    public class ProceduralRoadsPlugin : BaseUnityPlugin
+    public partial class ProceduralRoadsPlugin : BaseUnityPlugin
     {
         internal const string ModName = "ProceduralRoads";
         internal const string ModVersion = "1.10.0";
         internal const string Author = "warpalicious";
-        private const string ModGUID = Author + "." + ModName;
+        internal const string ModGUID = Author + "." + ModName;
         private static string ConfigFileName = ModGUID + ".cfg";
         private static string ConfigFileFullPath = Paths.ConfigPath + Path.DirectorySeparatorChar + ConfigFileName;
         internal static string ConnectionError = "";
         private readonly Harmony _harmony = new(ModGUID);
 
         public static readonly ManualLogSource ProceduralRoadsLogger = BepInEx.Logging.Logger.CreateLogSource(ModName);
-
-        // Location Manager variables
-        public Texture2D tex = null!;
 
         // Use only if you need them
         //private Sprite mySprite = null!;
@@ -42,13 +39,7 @@ namespace ProceduralRoads
         }
 
         // Configuration entries
-        public static ConfigEntry<float> RoadWidth = null!;
         public static ConfigEntry<string> CustomLocations = null!;
-        public static ConfigEntry<Heightmap.Biome> ExcludedRoadBiomes = null!;
-        public static ConfigEntry<bool> AttemptRoadsToHildirQuestLocations = null!;
-        public static ConfigEntry<int> IslandRoadPercentage = null!;
-        public static ConfigEntry<int> PathfindingMaxIterations = null!;
-        public static ConfigEntry<int> MaxLocationsPerIsland = null!;
         public static ConfigEntry<ExistingWorldRoads> ExistingWorldFirstLoadRoads = null!;
         public static ConfigEntry<WeatheredStructures> WeatheredStructures = null!;
 
@@ -80,6 +71,9 @@ namespace ProceduralRoads
                 new ConfigDescription("Destination budget per island. Required boss/quest locations and selected coastal landings count toward it " +
                     "but are retained even when they exceed it.",
                     new AcceptableValueRange<int>(2, 128)));
+
+            BindReplaceUnreachableLocations(Config);
+            BindLowMemoryGeneration(Config);
 
             CustomLocations = Config.Bind("Locations", "CustomLocations", "",
                 "Comma-separated list of location names to include in road generation. " +
@@ -116,7 +110,7 @@ namespace ProceduralRoads
                 "Structures laid weathered, as an old ruin a player can repair: Bridges (bridges and viaducts: some deck, " +
                 "railing and support pieces missing, every piece worn as a vanilla location's) and Stairs (staircases: every " +
                 "piece worn the same way, some railing missing; nothing anything rests on). One not listed is laid whole and at " +
-                "full health; a bridge's gap over a river stays open for boats either way. Read when a structure's first zone " +
+                "full health; a bridge's gap for boats (over a river or deep water) stays open either way. Read when a structure's first zone " +
                 "is built: one already built keeps its pieces.");
             StructureWear.Weathered = WeatheredStructures.Value;
             WeatheredStructures.SettingChanged += (_, _) => StructureWear.Weathered = WeatheredStructures.Value;
@@ -133,10 +127,14 @@ namespace ProceduralRoads
             ExistingWorldFirstLoadRoads.SettingChanged += (_, _) => ExistingWorldFirstLoad.Setting = ExistingWorldFirstLoadRoads.Value;
             ExistingWorldFirstLoad.CanAsk = () => RoadLifecycleManager.HostHasScreen;
             ExistingWorldFirstLoad.Backup = WorldBackup.Make;
+            ExistingWorldFirstLoad.SaveNow = WorldBackup.SaveNow;
             ExistingWorldFirstLoad.Tell = text => MessageHud.instance?.ShowMessage(MessageHud.MessageType.TopLeft, text);
 
             // Apply config to road generator
             ApplyConfiguration();
+
+            // The road network's points to validated same-version clients (RoadNetworkSync): registered before Game.Start.
+            RoadNetworkSync.Register(peer => RpcHandlers.ValidatedPeers.Contains(peer.m_rpc));
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             _harmony.PatchAll(assembly);
@@ -181,32 +179,6 @@ namespace ProceduralRoads
             ProceduralRoadsLogger.LogDebug($"Registered metadata prefab: {RoadNetworkGenerator.MetadataPrefabName}");
         }
 
-        private static bool m_configurationPending;
-
-        private static void ApplyConfiguration()
-        {
-            if (RoadLifecycleManager.IsGenerating) { m_configurationPending = true; return; }
-            m_configurationPending = false;
-            RoadNetworkGenerator.RoadWidth = RoadWidth.Value;
-            RoadNetworkGenerator.IslandRoadPercentage = IslandRoadPercentage.Value;
-            // A validation switch, not a setting: see DebugSwitches.
-            RoadNetworkGenerator.GenerateOnLoad = DebugSwitches.Flag("GENERATE_ROADS_ON_LOAD", true);
-            // How many islands may be built at once. Unset is what the mod
-            // does on its own -- one fewer than the machine reports -- and 1
-            // is the fully serial path. A validation switch for measuring
-            // worker counts against each other, not a setting: the right
-            // number is a property of the machine, not of the player's taste.
-            RoadParallel.Configured = DebugSwitches.Count("ISLAND_WORKERS", 0, 0, 256);
-            RoadNetworkGenerator.MaxLocationsPerIsland = MaxLocationsPerIsland.Value;
-            RoadNetworkGenerator.NetworkOptions = new RoadNetworkOptions
-            {
-                ExcludedBiomes = ExcludedRoadBiomes.Value,
-                HildirQuestLocations = AttemptRoadsToHildirQuestLocations.Value,
-            };
-            RoadPathfinder.MaxIterations = PathfindingMaxIterations.Value;
-            // CustomLocations is parsed at generation time to preserve API registrations
-        }
-
         /// <summary>
         /// Parse the CustomLocations config string into a list of location names.
         /// Called at generation time to merge with API-registered locations.
@@ -232,16 +204,25 @@ namespace ProceduralRoads
         }
 
         private float m_nextTerrainSweep;
+        private float m_nextWriteLine;
 
         // Road terrain the zone-spawn path missed (see RoadTerrainModifier.SweepUnstamped).
         private void Update()
         {
             RoadLifecycleManager.Tick();
             RoadGenerationPanel.Synchronize();
-            if (m_configurationPending && !RoadLifecycleManager.IsGenerating) ApplyConfiguration();
+            ApplyPendingConfiguration();
+            if (Time.unscaledTime >= m_nextWriteLine)
+            {
+                // The terrain writer's minute line (RoadTerrainModifier.WriteStats), when it wrote any zone: debug
+                // information, as the rock pass's timing line is.
+                bool first = m_nextWriteLine == 0f;
+                m_nextWriteLine = Time.unscaledTime + RoadTerrainModifier.WriteStats.Period;
+                if (!first && RoadTerrainModifier.WriteStats.TakeLine() is string line) ProceduralRoadsLogger.LogDebug(line);
+            }
             if (Time.time < m_nextTerrainSweep) return;
             m_nextTerrainSweep = Time.time + 3f;
-            if (RoadNetworkGenerator.RoadsAvailable && ZNet.instance != null)
+            if (RoadLifecycleManager.WritesTheNetwork)
                 RoadTerrainModifier.SweepUnstamped();
         }
 
@@ -287,20 +268,5 @@ namespace ProceduralRoads
         }
 
 
-    }
-
-    public static class KeyboardExtensions
-    {
-        public static bool IsKeyDown(this KeyboardShortcut shortcut)
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKeyDown(shortcut.MainKey) &&
-                   shortcut.Modifiers.All(Input.GetKey);
-        }
-
-        public static bool IsKeyHeld(this KeyboardShortcut shortcut)
-        {
-            return shortcut.MainKey != KeyCode.None && Input.GetKey(shortcut.MainKey) &&
-                   shortcut.Modifiers.All(Input.GetKey);
-        }
     }
 }

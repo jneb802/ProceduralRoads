@@ -28,12 +28,11 @@ internal static class Released144
     /// <summary>A 1.4.4 blob of the network this build's grid holds now (cells and points as this build stores them).</summary>
     internal static byte[] BlobOfCurrentGrid()
     {
-        // This build's own v4 blob, read back cell by cell and written the way 1.4.4 wrote it.
-        byte[] v4 = RoadSpatialGrid.SerializeAllRoadPoints()!;
-        using var input = new BinaryReader(new MemoryStream(v4));
-        Assert(input.ReadInt32() == 4, "envelope");
-        int encoding = input.ReadInt32();
-        Assert(encoding == 2, "a network without appends");
+        // This build's own blob, read back cell by cell and written the way 1.4.4 wrote it.
+        byte[] current = RoadSpatialGrid.SerializeAllRoadPoints()!;
+        using var input = new BinaryReader(new MemoryStream(current));
+        Assert(input.ReadInt32() == RoadSpatialGrid.SavedFormat, "format");
+        Assert(input.ReadInt32() == RoadSpatialGrid.SavedEncoding, "encoding");
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
         writer.Write(1);
@@ -51,7 +50,9 @@ internal static class Released144
                 writer.Write(input.ReadSingle());
                 writer.Write(input.ReadSingle());
                 writer.Write(input.ReadSingle());
-                input.ReadBoolean(); // paint-only: 1.4.4 had no such flag
+                // 1.4.4 had no flags and no additions: a plain road point only.
+                bool paintOnly = input.ReadBoolean(), cutOnly = input.ReadBoolean(), intoLocation = input.ReadBoolean(), unpainted = input.ReadBoolean(), mound = input.ReadBoolean();
+                Assert(!paintOnly && !cutOnly && !intoLocation && !unpainted && !mound && input.ReadInt32() == 0, "a plain road point");
             }
         }
         return ms.ToArray();

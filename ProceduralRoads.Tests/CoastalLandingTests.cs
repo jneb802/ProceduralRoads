@@ -8,8 +8,14 @@ using Xunit;
 
 namespace ProceduralRoads.Tests;
 
-public class CoastalLandingTests
+public class CoastalLandingTests : IDisposable
 {
+    // Coastal landings are off for the release (RoadRules.CoastLandings false everywhere): these tests keep the search itself
+    // under test by turning it on here; CoastalLandingsAreOffTests pins that none is made as shipped.
+    private readonly Func<Heightmap.Biome, bool> _given = RoadCoastalLandings.GivenIn;
+    public CoastalLandingTests() => RoadCoastalLandings.GivenIn = _ => true;
+    public void Dispose() => RoadCoastalLandings.GivenIn = _given;
+
     private static (Island island, float[] heights) Coast(Func<float,float,float>? height = null, float spacing = 8)
     {
         const int size = 160;
@@ -29,6 +35,25 @@ public class CoastalLandingTests
     private static List<Vector3> Find((Island island,float[] heights) coast,
         Heightmap.Biome biome=Heightmap.Biome.Meadows, RoadNetworkOptions? options=null) =>
         RoadCoastalLandings.Find(coast.island,coast.heights,160,(x,z)=>biome,options ?? new());
+
+    /// <summary>As shipped (Tys, 18 Nov 2026: off for the release) no biome gives a coastal landing, so the search offers none on
+    /// any shore, and no island carries one for the selection, the replacements or the record to take.</summary>
+    [Fact]
+    public void NoBiomeGivesACoastalLandingAsShipped()
+    {
+        RoadCoastalLandings.GivenIn = _given;
+        foreach (Heightmap.Biome biome in Enum.GetValues(typeof(Heightmap.Biome)))
+        {
+            Assert.False(RoadRules.For(biome).CoastLandings, $"{biome}");
+            Assert.False(RoadCoastalLandings.GivenIn(biome), $"{biome}");
+            Assert.Empty(Find(Coast(), biome));
+        }
+        Assert.False(RoadRules.CoastLandings);
+        Assert.Empty(Find(Coast()));
+        // The same shore does give them once the search is on: the empty result is the rule, not a missing coast.
+        RoadCoastalLandings.GivenIn = _ => true;
+        Assert.NotEmpty(Find(Coast()));
+    }
 
     [Theory]
     [InlineData(8)]
@@ -73,6 +98,7 @@ public class CoastalLandingTests
     [Fact]
     public void BiomeScopeIsRespected()
     {
+        RoadCoastalLandings.GivenIn=b=>b==Heightmap.Biome.Meadows;
         var coast=Coast();
         Assert.Empty(Find(coast,Heightmap.Biome.AshLands));
         Assert.Empty(Find(coast,Heightmap.Biome.Swamp));
@@ -101,7 +127,8 @@ public class CoastalLandingTests
     private sealed class CountingCoast : WorldGenerator
     {
         public int HeightReads;
-        public override float GetHeight(float x,float z) { HeightReads++; return x<0 ? 25 : 33; }
+        // Counted from every thread: the terrain is mapped on the island workers.
+        public override float GetHeight(float x,float z) { System.Threading.Interlocked.Increment(ref HeightReads); return x<0 ? 25 : 33; }
         public override Heightmap.Biome GetBiome(float x,float z, float oceanLevel = 0.02f, bool waterAlwaysOcean = false) => Heightmap.Biome.Meadows;
     }
 

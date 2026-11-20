@@ -76,7 +76,7 @@ public sealed class SeamFadeTests : IDisposable
     private static void ExcludeOnANewNetwork(params Vector2s[] explored)
     {
         NetworkCutoff.SnapshotWorld(explored);
-        NetworkCutoff.UseNewNetwork();
+        NetworkCutoff.BeginNewNetwork(); NetworkCutoff.UseNewNetwork();
     }
 
     [Fact]
@@ -166,40 +166,6 @@ public sealed class SeamFadeTests : IDisposable
         Assert.Equal(1f, NetworkCutoff.SeamWeight(new Vector2(24f, 0f), excluded));   // 32 m south of the square
         Assert.Equal(0.25f, NetworkCutoff.SeamWeight(new Vector2(28f, 40f), excluded), 4);   // 4 m west of it
         Assert.Equal(1f, NetworkCutoff.SeamWeight(new Vector2(0f, 0f), new HashSet<Vector2s>()));
-    }
-
-    /// <summary>
-    /// road_generate and road_regen_island admit the excluded zones they write (like a manual road): every writer
-    /// writes them from then on, they are not an edge for the seam fade, and the operator is told which they are.
-    /// </summary>
-    [Fact]
-    public void AnOperatorsWriteAdmitsTheZonesItWritesAndSaysSo()
-    {
-        var path = new List<Vector2>();
-        for (float x = -40f; x <= 100f; x += 4f) path.Add(new Vector2(x, 0f));
-        RoadSpatialGrid.AddRoadPath(path, RoadWidth, WorldGenerator.instance!);
-        RoadSpatialGrid.FinalizeRoadNetwork();
-        ExcludeOnANewNetwork(Explored);
-        Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);
-
-        Heightmap hm = _world.RegisterHeightmap(Explored, Width);
-        var log = new List<string>();
-        BepInEx.Logging.ManualLogSource.Captured = log;
-        try
-        {
-            RoadTerrainModifier.ApplyToLoadedZones(operatorRequest: true, out List<Vector2s> admitted);
-            Assert.Equal(new[] { Explored }, admitted);
-            Assert.Contains(log, line => line.Contains(NetworkCutoff.AdmissionWarning("this command builds roads in", admitted)));
-        }
-        finally { BepInEx.Logging.ManualLogSource.Captured = null; }
-        Assert.True(hm.m_terrainComp!.SaveCount > 0, "the operator's write reaches the explored zone");
-        Assert.False(NetworkCutoff.Excludes(Explored), "it is the network's now, for every writer");
-        Assert.Equal(1f, NetworkCutoff.SeamWeight(new Vector2(30f, 0f)));
-
-        // A zone off the loaded ones stays as it is, and the next session starts over from the record.
-        NetworkCutoff.Forget();
-        ExcludeOnANewNetwork(Explored);
-        Assert.True(NetworkCutoff.SeamWeight(new Vector2(30f, 0f)) < 1f);
     }
 
     /// <summary>
@@ -307,14 +273,16 @@ public sealed class SeamFadeTests : IDisposable
         {
             ExcludeOnANewNetwork(Explored);
             float natural = BiomeBlendedHeight.GetBlendedHeight(landing.x, landing.y, WorldGenerator.instance!);
-            TerrainComp written = Write(Writable, new RoadSpatialGrid.RoadPoint(landing, RoadWidth, natural + Lift, intoLocation: true));
+            // The other location's ground, published by its preload.
+            PlacedLocations.Preload(landing, (x, z) => BiomeBlendedHeight.GetBlendedHeight(x, z, WorldGenerator.instance!));
+            TerrainComp written = Write(Writable, new RoadSpatialGrid.RoadPoint(landing, RoadWidth, natural + Lift, intoLocation: true, location: landing));
             Assert.True(written.m_modifiedHeight[Index(-20, 20)], "the road onto the other landing writes its footprint");
             Assert.False(written.m_modifiedHeight[Index(28, 20)], "a footprint vertex in the fade, away from the road onto a landing");
             Assert.Equal(0f, written.m_levelDelta[Index(28, 20)]);
             Assert.Equal(Cut, written.m_levelDelta[Index(32, 20)], 4);
             Assert.True(written.m_modifiedHeight[Index(28, 10)]);
         }
-        finally { RoadLocationProtection.Reset(); }
+        finally { PlacedLocations.Reset(); RoadLocationProtection.Reset(); }
     }
 
     /// <summary>

@@ -52,13 +52,41 @@ public static class RoadClearAreaManager
     /// <summary>
     /// PlaceVegetation's test for one vegetation entry, with the scale it drew for this one: inside a clear area
     /// (<see cref="InsideClearArea"/>), or a grown tree whose trunk reaches one of <paramref name="road"/>
-    /// (VegetationClearing.OnRoad, the rule the server clearing applies too).
+    /// (VegetationClearing.OnRoad, the rule the server clearing applies too). <paramref name="lean"/> is the tilt it drew and
+    /// the height its origin will stand at, for armour a road may run through.
     /// </summary>
     public static bool OnRoad(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea,
         IReadOnlyList<VegetationClearing.RoadCentre> road, Vector3 point, string prefab, float scale,
-        RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt) =>
-        VegetationClearing.OnRoad(InsideClearArea(areas, firstRoadArea, firstStructureArea, point, prefab, rockClearing, biomeAt),
-            prefab, scale, road, new Vector2(point.x, point.z));
+        RockClearingMode rockClearing, System.Func<Vector3, Heightmap.Biome> biomeAt, ref float yaw, VegetationClearing.Lean? lean = null,
+        bool turns = true)
+    {
+        int hash = prefab.GetStableHashCode();
+        var at = new Vector2(point.x, point.z);
+        VegetationClearing.Lying lying = VegetationClearing.OnRoad(InsideClearArea(areas, firstRoadArea, firstStructureArea, point, prefab, rockClearing, biomeAt),
+            hash, scale, road, at, yaw, out float turned, VegetationClearing.IsLying(hash) ? KeptBy(areas, firstRoadArea, firstStructureArea) : null,
+            lean);
+        VegetationClearing.Note(hash, at, lying, yaw, turned);
+        // One lying along the ground, turned so the road passes beside it, or through it (VegetationClearing.Lie). Where
+        // the candidate's yaw cannot be turned (<paramref name="turns"/> false), one that would be is removed instead.
+        bool turn = lying == VegetationClearing.Lying.Turned || lying == VegetationClearing.Lying.Through;
+        if (turn && !turns) return true;
+        if (turn) yaw = turned;
+        return lying == VegetationClearing.Lying.Remove;
+    }
+
+    /// <summary>Generation's kept ground for a turn: a location's or structure's clear area (the game's areas before the roads',
+    /// the structures' after them).</summary>
+    private static System.Func<Vector2, bool> KeptBy(List<ZoneSystem.ClearArea> areas, int firstRoadArea, int firstStructureArea) => p =>
+    {
+        int roadStart = Mathf.Min(firstRoadArea, areas.Count), structureStart = Mathf.Clamp(firstStructureArea, roadStart, areas.Count);
+        for (int i = 0; i < areas.Count; i++)
+        {
+            if (i >= roadStart && i < structureStart) continue;
+            ZoneSystem.ClearArea area = areas[i];
+            if (Mathf.Abs(p.x - area.m_center.x) < area.m_radius && Mathf.Abs(p.y - area.m_center.z) < area.m_radius) return true;
+        }
+        return false;
+    };
 
     /// <summary>
     /// PlaceVegetation's clear-area test (ZoneSystem.InsideClearArea: strict, and square), asked for one vegetation entry.
@@ -100,7 +128,7 @@ public static class RoadClearAreaManager
             float reach = beyond + roadPoint.w * 0.5f;
             if (Mathf.Abs(roadPoint.p.x - zonePos.x) > reach || Mathf.Abs(roadPoint.p.y - zonePos.z) > reach || !seen.Add(roadPoint.p))
                 continue;
-            centres.Add(new VegetationClearing.RoadCentre(roadPoint.p, roadPoint.w * 0.5f));
+            centres.Add(new VegetationClearing.RoadCentre(roadPoint.p, roadPoint.w * 0.5f, roadPoint.h));
         }
 
         return centres;

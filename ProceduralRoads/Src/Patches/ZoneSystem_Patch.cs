@@ -87,12 +87,54 @@ public static class ZoneSystem_Patch
                 ? new[] { LoadLocal(code[drawn + 2]) }
                 : new[] { new CodeInstruction(code[veg - 1].opcode, code[veg - 1].operand), new CodeInstruction(OpCodes.Ldfld, code[veg].operand),
                     new CodeInstruction(OpCodes.Ldfld, scaleMax) };
+            // The yaw drawn for the candidate (Random.Range(0, 360), as an int turned float), by address, so one lying across the
+            // road is turned beside it (VegetationClearing.Lie); a dummy if that is not found, and nothing is turned.
+            MethodInfo rangeInt = AccessTools.Method(typeof(UnityEngine.Random), nameof(UnityEngine.Random.Range), new[] { typeof(int), typeof(int) });
+            int yawDraw = call < 0 ? -1 : code.FindLastIndex(call, c => c.Calls(rangeInt) );
+            while (yawDraw > 0 && !(code[yawDraw - 1].opcode == OpCodes.Ldc_I4 && code[yawDraw - 1].operand is int max && max == 360))
+                yawDraw = code.FindLastIndex(yawDraw - 1, c => c.Calls(rangeInt));
+            CodeInstruction loadYaw = yawDraw > 0 && yawDraw + 2 < call && code[yawDraw + 1].opcode == OpCodes.Conv_R4 && code[yawDraw + 2].IsStloc()
+                ? AddressOf(code[yawDraw + 2])
+                : new CodeInstruction(OpCodes.Ldsflda, AccessTools.Field(typeof(ZoneSystem_PlaceVegetation_Patch), nameof(s_noYaw)));
+            s_yawFound = loadYaw.opcode != OpCodes.Ldsflda;
+            if (!s_yawFound)
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("PlaceVegetation has changed shape: logs lying across a road are removed, never turned beside it");
+            // The tilts drawn for it, about x then z (Random.Range(-m_randTilt, m_randTilt), each stored to a local), so armour
+            // across the road can be turned so the road runs through it; NaN if they are not found, and it never is.
+            FieldInfo randTilt = AccessTools.Field(typeof(ZoneSystem.ZoneVegetation), nameof(ZoneSystem.ZoneVegetation.m_randTilt));
+            var tilts = new List<CodeInstruction>();
+            int afterDraws = Mathf.Max(drawn, yawDraw);
+            for (int k = afterDraws + 1; afterDraws >= 0 && k + 1 < call; k++)
+                if (code[k].Calls(range) && code[k - 1].LoadsField(randTilt) && code[k + 1].IsStloc()) tilts.Add(LoadLocal(code[k + 1]));
+            if (tilts.Count != 2)
+            {
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning("PlaceVegetation has changed shape: ancient armour across a road is never turned so the road runs through it");
+                tilts = new List<CodeInstruction> { new CodeInstruction(OpCodes.Ldc_R4, float.NaN), new CodeInstruction(OpCodes.Ldc_R4, float.NaN) };
+            }
             code[call].opcode = OpCodes.Call;
             code[call].operand = AccessTools.Method(typeof(ZoneSystem_PlaceVegetation_Patch), nameof(InsideClearArea));
             var load = new List<CodeInstruction> { new CodeInstruction(code[veg - 1].opcode, code[veg - 1].operand), new CodeInstruction(OpCodes.Ldfld, code[veg].operand) };
             load.AddRange(loadScale);
+            load.Add(loadYaw);
+            load.AddRange(tilts);
             code.InsertRange(call, load);
             return code;
+        }
+
+        /// <summary>Where PlaceVegetation's yaw goes when it is not found: never read, and never written back.</summary>
+        public static float s_noYaw;
+        /// <summary>Whether the transpiler found PlaceVegetation's yaw: without it nothing can be turned, so a log lying
+        /// across the road is removed (RoadClearAreaManager.OnRoad's turns).</summary>
+        private static bool s_yawFound = true;
+
+        /// <summary>The address of the local <paramref name="store"/> stores to.</summary>
+        private static CodeInstruction AddressOf(CodeInstruction store)
+        {
+            if (store.opcode == OpCodes.Stloc_0) return new CodeInstruction(OpCodes.Ldloca_S, (byte)0);
+            if (store.opcode == OpCodes.Stloc_1) return new CodeInstruction(OpCodes.Ldloca_S, (byte)1);
+            if (store.opcode == OpCodes.Stloc_2) return new CodeInstruction(OpCodes.Ldloca_S, (byte)2);
+            if (store.opcode == OpCodes.Stloc_3) return new CodeInstruction(OpCodes.Ldloca_S, (byte)3);
+            return new CodeInstruction(store.opcode == OpCodes.Stloc_S ? OpCodes.Ldloca_S : OpCodes.Ldloca, store.operand);
         }
 
         /// <summary>The load of the local <paramref name="store"/> stores to.</summary>
@@ -105,9 +147,12 @@ public static class ZoneSystem_Patch
             return new CodeInstruction(store.opcode == OpCodes.Stloc_S ? OpCodes.Ldloc_S : OpCodes.Ldloc, store.operand);
         }
 
-        public static bool InsideClearArea(ZoneSystem zones, List<ZoneSystem.ClearArea> areas, Vector3 point, ZoneSystem.ZoneVegetation veg, float scale) =>
+        /// <summary>The replaced clear-area test. The point stands on the ground; the game raises the object's origin by its
+        /// entry's m_groundOffset after the test.</summary>
+        public static bool InsideClearArea(ZoneSystem zones, List<ZoneSystem.ClearArea> areas, Vector3 point, ZoneSystem.ZoneVegetation veg, float scale,
+            ref float yaw, float tiltX, float tiltZ) =>
             RoadClearAreaManager.OnRoad(areas, s_firstRoadArea, s_firstStructureArea, s_road, point, veg.m_prefab.name, scale,
-                RoadRockClearing.Mode, BiomeAt);
+                RoadRockClearing.Mode, BiomeAt, ref yaw, new VegetationClearing.Lean(tiltX, tiltZ, point.y + veg.m_groundOffset), turns: s_yawFound);
 
         private static Heightmap.Biome BiomeAt(Vector3 point) => WorldGenerator.instance.GetBiome(point);
 

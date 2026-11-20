@@ -350,9 +350,12 @@ public class RoadEdgesAndVegetationTests
 
     /// <summary>Generation's test of one candidate (ZoneSystem_PlaceVegetation_Patch: the road's clear areas after none of
     /// the game's, the zone's road centres, the drawn scale).</summary>
-    private static bool PlacedOffTheRoad(Vector2s zone, Vector2 at, string prefab, float scale) =>
-        !RoadClearAreaManager.OnRoad(RoadClearAreaManager.GetOrCreateClearAreas(zone), 0, int.MaxValue, RoadCentres(zone),
-            new Vector3(at.x, 40f, at.y), prefab, scale, RockClearingMode.Carve, _ => Heightmap.Biome.Meadows);
+    private static bool PlacedOffTheRoad(Vector2s zone, Vector2 at, string prefab, float scale)
+    {
+        float yaw = 0f;
+        return !RoadClearAreaManager.OnRoad(RoadClearAreaManager.GetOrCreateClearAreas(zone), 0, int.MaxValue, RoadCentres(zone),
+            new Vector3(at.x, 40f, at.y), prefab, scale, RockClearingMode.Carve, _ => Heightmap.Biome.Meadows, ref yaw);
+    }
 
     /// <summary>The server's test of one saved object.</summary>
     private static bool Cleared(Vector2s zone, Vector2 at, int prefab, float scale) =>
@@ -445,7 +448,7 @@ public class RoadEdgesAndVegetationTests
             Assert.True(VegetationClearing.IsGrownTree(tree.GetStableHashCode(), out float byHash) && byHash == reach, tree);
         }
         foreach (string creep in new[] { "Beech_small1", "Beech_small2", "FirTree_small", "FirTree_small_dead", "YggaShoot_small1", "Bush01_0",
-                     "shrub_2", "stubbe_0", "FirTree_oldLog", "SwampTree2_log", "Pickable_Stone", "Pickable_Branch" })
+                     "shrub_2", "stubbe", "FirTree_oldLog", "SwampTree2_log", "Pickable_Stone", "Pickable_Branch" })
             Assert.False(VegetationClearing.IsGrownTree(creep, out _), creep);
         foreach (string rock in RoadRockPolicy.KnownRocks)
             Assert.False(VegetationClearing.IsGrownTree(rock, out _), rock);

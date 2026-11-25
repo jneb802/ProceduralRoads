@@ -24,7 +24,7 @@ internal static class TestPlacing
             if (!PlacedLocations.NeedsPlacing(instance, world) || PlacedLocations.TryGet(centre, out _)) continue;
             PlacedLocations.Remember(new PlacedLocationRecord
             {
-                Prefab = instance.m_location.m_prefab.Name ?? "", Centre = centre, Yaw = 0f, Root = world.GetHeight(centre.x, centre.y),
+                Prefab = instance.m_location.m_prefab.name ?? "", Centre = centre, Yaw = 0f, Root = world.GetHeight(centre.x, centre.y),
                 RockRadius = instance.m_location.m_exteriorRadius,
                 Ops = new List<LevelOp>(LocationLevelling.OpsAt(centre) ?? new List<LevelOp>()),
                 X0 = (int)centre.x - 60, Z0 = (int)centre.y - 60, W = 121, H = 121,

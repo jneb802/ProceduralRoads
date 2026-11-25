@@ -159,7 +159,7 @@ public static class LocationsFirstLoad
         // The ground the road onto its landing may be laid over (PlacedLocationReader.ReadHalf).
         float half = PlacedLocationReader.ReadHalf(centre, rock);
         int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
-        string prefab = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";
+        string prefab = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.name : "?";
         // Its own built pieces are read with its boulders: every approach keeps clear of them (PlacedLocationShape.Refusal: the walker's own body).
         List<LocationRock> rocks = PlacedLocationReader.LocationRocks(x0, z0, w, w, centre, root, yaw, out _);
         PlacedLocations.Remember(new PlacedLocationRecord

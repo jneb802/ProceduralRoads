@@ -44,7 +44,7 @@ public sealed class PoiIdentityTests : IDisposable
     private static string? Automatic(Vector2 at) => LocationPrefabLevelling.PrefabAt(at);
 
     private static string? Preparation(Vector2 at) =>
-        LocationPrefabLevelling.LocationAt(at, out ZoneSystem.LocationInstance location, out _) ? location.m_location.m_prefab.Name : null;
+        LocationPrefabLevelling.LocationAt(at, out ZoneSystem.LocationInstance location, out _) ? location.m_location.m_prefab.name : null;
 
     private static string? Manual(Vector2 at)
     {

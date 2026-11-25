@@ -39,7 +39,7 @@ public static partial class PlacedLocationReader
     /// <summary>Whether the location whose identity is <paramref name="centre"/> (LocationPrefabLevelling.LocationOf) keeps every
     /// rock (<see cref="LocationRock.KeepsEveryRock"/>).</summary>
     internal static bool KeepsEveryRock(Vector2 centre) =>
-        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.Name);
+        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.name);
 
     /// <summary>The location's exterior radius (the location whose identity is <paramref name="centre"/>,
     /// LocationPrefabLevelling.LocationOf; 0 for none): its rock, for leading a staircase round it. The one owner of which rocks a location keeps (docs/OWNERS.md).</summary>
@@ -66,7 +66,7 @@ public static partial class PlacedLocationReader
         // road's to carve (a rock2_mountain that stayed put while the frost cave beside it turned,
         // in game). Where the prefab's parts are not known, every boulder there, as before.
         string? location = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance)
-            ? instance.m_location.m_prefab.Name : null;
+            ? instance.m_location.m_prefab.name : null;
         var rootAt = new Vector3(centre.x, root, centre.y);
         Quaternion turn = Quaternion.Euler(0f, yaw, 0f);
         float rockRadius = RockRadius(centre);

@@ -1338,7 +1338,7 @@ public static class ServerTerrainBake
                     location.m_location == null)
                     continue;
                 var centre = new Vector2(location.m_position.x, location.m_position.z);
-                string prefab = location.m_location.m_prefab.Name;
+                string prefab = location.m_location.m_prefab.name;
                 bool placed = location.m_placed;
                 locations.Add(new VegetationClearing.Footprint(centre, location.m_location.m_exteriorRadius,
                     at => PartOfLocation(home, centre, prefab, placed, at)));

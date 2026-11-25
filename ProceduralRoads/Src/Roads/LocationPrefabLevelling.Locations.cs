@@ -87,5 +87,5 @@ public static partial class LocationPrefabLevelling
     /// <summary>The prefab of the location <see cref="LocationAt"/> resolves at <paramref name="centre"/>, or null where it
     /// resolves none.</summary>
     internal static string? PrefabAt(Vector2 centre) =>
-        LocationAt(centre, out ZoneSystem.LocationInstance location, out _) ? location.m_location.m_prefab.Name : null;
+        LocationAt(centre, out ZoneSystem.LocationInstance location, out _) ? location.m_location.m_prefab.name : null;
 }

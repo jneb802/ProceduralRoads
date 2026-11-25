@@ -175,31 +175,67 @@ public class LocationPartsTests : IDisposable
     }
 
     /// <summary>The rock pass's queries for one clearance box (RoadRockProbe.Judge gathers its colliders here): the box itself on
-    /// the candidate layers, then the box's column (its footprint at any height, RockClearance.Column) for a Location's snapping
-    /// stakes only, both judged.</summary>
+    /// the candidate layers, then the box's column (its footprint between the levelled and the unlevelled ground under it, with the
+    /// walker's headroom: RockClearances.Band, RockClearance.Column) for a Location's snapping stakes only, both judged. The grounds
+    /// are read at the box's middle and its four corners.</summary>
     [Fact]
     public void TheRockPassLooksInABoxsColumnForSnappingStakes()
     {
         var box = new RockClearance(new Vector3(10f, 60f, -4f), new Vector3(2f, 1f, 3f), Quaternion.Euler(0f, 30f, 0f), 59f,
             wholeOnly: false, keepsLocationRocks: true);
         var asked = new List<(RockClearance box, bool stakesOnly)>();
+        var read = new List<Vector2>();
         var into = new List<string> { "left over" };
-        RoadRockProbe.Candidates(box, (b, stakesOnly) =>
+        // Levelled at 59 m everywhere; the zone before the levelling 12 m under it at one corner, 3 m over it at another.
+        RoadRockProbe.Candidates(box, (Vector2 p, out float levelled, out float unlevelled) =>
+        {
+            read.Add(p);
+            levelled = 59f;
+            unlevelled = read.Count == 2 ? 47f : read.Count == 5 ? 62f : 59f;
+            return true;
+        }, (b, stakesOnly) =>
         {
             asked.Add((b, stakesOnly));
             return new List<string> { stakesOnly ? "stake wall" : "boulder" };
         }, into);
         Assert.Equal(new[] { "boulder", "stake wall" }, into);
+        Assert.Equal(5, read.Count);
+        Assert.Equal(new Vector2(box.Centre.x, box.Centre.z), read[0]);
         Assert.Equal(2, asked.Count);
         Assert.False(asked[0].stakesOnly);
         Assert.Equal(box.Centre, asked[0].box.Centre);
         Assert.Equal(box.Half, asked[0].box.Half);
         Assert.True(asked[1].stakesOnly);
-        Assert.Equal(box.Column.Centre, asked[1].box.Centre);
-        Assert.Equal(box.Column.Half, asked[1].box.Half);
+        RockClearance column = box.Column(47f, 62f);
+        Assert.Equal(column.Centre, asked[1].box.Centre);
+        Assert.Equal(column.Half, asked[1].box.Half);
         Assert.Equal(box.Turn, asked[1].box.Turn);
-        Assert.Equal(RockClearances.AnyHeight, asked[1].box.Half.y);
+        Assert.Equal(RockClearances.Bottom(47f), column.Centre.y - column.Half.y, 4);
+        Assert.Equal(RockClearances.Top(62f), column.Top, 4);
         Assert.Equal(box.Half.x, asked[1].box.Half.x);
         Assert.Equal(box.Half.z, asked[1].box.Half.z);
+    }
+
+    /// <summary>
+    /// The owner's decision, 24 Nov: a fractured rock is not one of a Location's parts. The game spawns a Location's boulder by its own
+    /// prefab (rock4_forest); once a pickaxe or the carve breaks it, what stands at the part's spot is its fractured copy
+    /// (rock4_forest_frac, a prefab of its own). The one part matcher asks for the object's own prefab, so the copy is no part: for the
+    /// matcher, the reader and the rock pass, and a road may clear it as it clears any boulder of the world's.
+    /// </summary>
+    [Fact]
+    public void AFracturedRockAtAPartSpotIsNoPartAndARoadMayClearIt()
+    {
+        const string frac = "rock4_forest_frac";
+        Vector3 at = Spot(BoulderLocal);
+        int fractured = frac.GetStableHashCode();
+        Assert.True(LocationPrefabLevelling.IsPart(Crypt, Root, Turn, at, Boulder.GetStableHashCode()));
+        Assert.False(LocationPrefabLevelling.IsPart(Crypt, Root, Turn, at, fractured));
+        Assert.False(RoadRockProbe.PartOfLocation(Crypt, Root, Turn, at, frac));
+        Assert.Equal(PlacedLocationReader.Own.World, PlacedLocationReader.Classify(frac, clearable: true, wearNTear: false,
+            () => LocationPrefabLevelling.IsPart(Crypt, Root, Turn, at, fractured)));
+        // Not a part and not kept on the approach: the rock pass judges it as the boulders it fractures from, and clears it.
+        RoadRockHit hit = RoadRockHit.Judged(frac, 3f, new[] { Boulder }, new HashSet<string> { Boulder }, mist: false, cliffs: false,
+            locationChild: false, inLocationArea: true, keptOnApproach: null, piece: false, hasView: true, validView: true, owned: true);
+        Assert.True(hit.Clears);
     }
 }

@@ -143,11 +143,12 @@ public class LocationStructureGapTests
     }
 
     /// <summary>
-    /// The owner's decision, 24 Nov: a Location's stake wall the game snaps to the ground (SnapToGround, LocationRock.ClearedAtAnyHeight)
-    /// lands on the unlevelled zone in Ghost mode and on the levelled one in Full mode, up to 17 m apart at the same x and z. It stays
-    /// cleared for a way (LocationRock.ClearedForAWay): never an obstacle to planning, at the Full height or the Ghost one, and the rock
-    /// pass finds the one in a way by its x and z in the walk's box's footprint at any height (RockClearance.Column) and removes it
-    /// whole, wherever it landed. A stake that does not snap, or a boulder, is looked for in the box itself.
+    /// The owner's decisions, 24 Nov: a Location's stake wall the game snaps to the ground (SnapToGround,
+    /// LocationRock.ClearedOnEitherGround) lands on the unlevelled zone in Ghost mode and on the levelled one in Full mode, up to 17 m
+    /// apart at the same x and z. It stays cleared for a way (LocationRock.ClearedForAWay): never an obstacle to planning, at the Full
+    /// height or the Ghost one, and the rock pass finds the one in a way by its x and z in the walk's box's footprint between the two
+    /// grounds, with the walker's headroom over them (RockClearances.Band, RockClearance.Column), and removes it whole, wherever it
+    /// landed. Nothing over or under that band is looked for. A stake that does not snap, or a boulder, is looked for in the box itself.
     /// </summary>
     [Fact]
     public void ASnappingStakeWallInAWayIsClearedAtTheGhostAndTheFullHeightAndIsNoObstacle()
@@ -157,37 +158,96 @@ public class LocationStructureGapTests
         string Road(PlacedLocationShape shape) => shape.Refusal(at, RoadLocationEntry.InsideReach(4f), 2f + RoadLocationEntry.HugGap,
             2f + PlacedLocationShape.BodyGap);
         // A road's box over the levelled ground at the stakes, turned with the road.
-        var box = new RockClearance(new Vector3(at.x, RockClearances.Bottom(Level) + 1f, at.y), new Vector3(2f, 1f, RockClearances.ClearanceHalfLength),
-            Quaternion.Euler(0f, 30f, 0f), Level, wholeOnly: false, keepsLocationRocks: true);
-        bool Holds(RockClearance b, Vector3 p)
-        {
-            Vector3 local = Quaternion.Inverse(b.Turn) * (p - b.Centre);
-            return Mathf.Abs(local.x) <= b.Half.x && Mathf.Abs(local.y) <= b.Half.y && Mathf.Abs(local.z) <= b.Half.z;
-        }
+        RockClearance box = RoadBox(at);
         // Full: on the levelled ground; Ghost: 17 m over it or under it (the zone's ground before the levelling).
-        foreach (float low in new[] { 0f, 17f, -17f })
+        foreach (float ghost in new[] { 0f, 17f, -17f })
         {
-            PlacedLocationShape shape = Shape(new List<LocationRock> { new(at, 1f, 1f, 0f, Level + low, Level + low + 1f, stakes, built: true) });
+            PlacedLocationShape shape = Shape(new List<LocationRock> { new(at, 1f, 1f, 0f, Level + ghost, Level + ghost + 1f, stakes, built: true) });
             Assert.Empty(shape.Body);
             Assert.DoesNotContain("built pieces", Road(shape));
             Assert.DoesNotContain("built pieces", Stair(shape, at));
-            var stake = new Vector3(at.x, Level + low + 0.5f, at.y);
-            Assert.True(Holds(box.Column, stake), $"the stakes {low} m off the levelled ground are not in the box's column");
-            if (low != 0f) Assert.False(Holds(box, stake), "the box itself reaches the Ghost height: the column pins nothing");
+            Assert.True(RockClearances.Band(box, Grounds(Level, Level + ghost), out float low, out float high));
+            Assert.Equal(Mathf.Min(Level, Level + ghost), low);
+            Assert.Equal(Mathf.Max(Level, Level + ghost), high);
+            RockClearance column = box.Column(low, high);
+            var stake = new Vector3(at.x, Level + ghost + 0.5f, at.y);
+            Assert.True(Holds(column, stake), $"the stakes {ghost} m off the levelled ground are not in the box's column");
+            if (ghost != 0f) Assert.False(Holds(box, stake), "the box itself reaches the Ghost height: the column pins nothing");
+            // The band and the walker's headroom over it, no more: a stake past either ground's headroom is not looked for.
+            Assert.Equal(RockClearances.Top(high), column.Top);
+            Assert.Equal(RockClearances.Bottom(low), column.Centre.y - column.Half.y);
+            Assert.False(Holds(column, new Vector3(at.x, RockClearances.Top(high) + 0.5f, at.y)));
+            Assert.False(Holds(column, new Vector3(at.x, low - 0.5f, at.y)));
+            // The column is the box's footprint, no wider: stakes beside the way are not taken.
+            Assert.False(Holds(column, new Vector3(at.x + 4f, Level, at.y + 4f)));
+            Assert.Equal(box.Turn, column.Turn);
+            Assert.Equal(box.Half.x, column.Half.x);
+            Assert.Equal(box.Half.z, column.Half.z);
         }
-        // The column is the box's footprint, no wider: stakes beside the way are not taken.
-        Assert.False(Holds(box.Column, new Vector3(at.x + 4f, Level, at.y + 4f)));
-        Assert.Equal(box.Centre, box.Column.Centre);
-        Assert.Equal(box.Turn, box.Column.Turn);
-        // Only a Location's stakes that snap are looked for at any height; found, they are removed whole.
-        Assert.True(LocationRock.ClearedAtAnyHeight(stakes, snaps: true));
-        Assert.False(LocationRock.ClearedAtAnyHeight(stakes, snaps: false));
-        Assert.False(LocationRock.ClearedAtAnyHeight("rock4_coast", snaps: true));
-        Assert.False(LocationRock.ClearedAtAnyHeight("dvergrprops_wood_wall", snaps: true));
+        // Only a Location's stakes that snap are looked for on either ground; found, they are removed whole.
+        Assert.True(LocationRock.ClearedOnEitherGround(stakes, snaps: true));
+        Assert.False(LocationRock.ClearedOnEitherGround(stakes, snaps: false));
+        Assert.False(LocationRock.ClearedOnEitherGround("rock4_coast", snaps: true));
+        Assert.False(LocationRock.ClearedOnEitherGround("dvergrprops_wood_wall", snaps: true));
         RoadRockHit hit = RoadRockHit.Judged(stakes, 20f, new[] { stakes }, new HashSet<string>(), mist: true, cliffs: false,
             locationChild: true, inLocationArea: true, keptOnApproach: null, piece: false, hasView: true, validView: true, owned: true);
         Assert.True(hit.Clears);
         Assert.Equal(RoadRockPolicy.Taking.RemoveWhole, RoadRockPolicy.HowTaken(hit.Clears, hit.DeckTakes, false, hit.Size, true, hit.LocationStakes));
+    }
+
+    /// <summary>
+    /// The owner's decision, 24 Nov (the cap on the stake column): a viaduct's deck 15 m over a Location's ground does not reach the
+    /// stakes standing on the ground under it, whether or not the Location levels the ground there: its walk stands over the band
+    /// between the levelled and the unlevelled ground (RockClearances.Band), so the rock pass asks for no column and the stake stays.
+    /// A road's box on that ground, at the same x and z, still finds it. Where no Location's levelling is known, no column is asked.
+    /// </summary>
+    [Fact]
+    public void AStakeUnderADeckFifteenMetresUpIsNotClearedThroughTheDeck()
+    {
+        Vector2 at = At(-8f, 26f);
+        float deck = Level + 15f;
+        var deckBox = new RockClearance(new Vector3(at.x, RockClearances.Bottom(deck) + 1f, at.y), new Vector3(2f, 1f, 1f),
+            Quaternion.Euler(0f, 30f, 0f), deck, wholeOnly: true, keepsLocationRocks: false);
+        var stake = new Vector3(at.x, Level + 0.5f, at.y);
+        foreach (float ghost in new[] { 0f, -10f, 10f })
+        {
+            Assert.False(RockClearances.Band(deckBox, Grounds(Level, Level + ghost), out _, out _), $"a deck reaches the stakes {ghost} m off");
+            List<RockClearance> asked = Asked(deckBox, Grounds(Level, Level + ghost));
+            Assert.Single(asked);
+            Assert.Equal(deckBox.Centre, asked[0].Centre);
+            Assert.False(Holds(asked[0], stake));
+            // The road's box under the deck, on the levelled ground at the same x and z: the stake is found.
+            List<RockClearance> road = Asked(RoadBox(at), Grounds(Level, Level + ghost));
+            Assert.Equal(2, road.Count);
+            Assert.True(Holds(road[1], stake));
+        }
+        // No Location's levelling known under the box: only the box itself.
+        Assert.Single(Asked(RoadBox(at), (Vector2 _, out float l, out float u) => { l = u = float.NaN; return false; }));
+    }
+
+    private static RockClearance RoadBox(Vector2 at) =>
+        new(new Vector3(at.x, RockClearances.Bottom(Level) + 1f, at.y), new Vector3(2f, 1f, RockClearances.ClearanceHalfLength),
+            Quaternion.Euler(0f, 30f, 0f), Level, wholeOnly: false, keepsLocationRocks: true);
+
+    private static RockClearances.GroundsAt Grounds(float levelled, float unlevelled) => (Vector2 _, out float l, out float u) =>
+    {
+        l = levelled;
+        u = unlevelled;
+        return true;
+    };
+
+    /// <summary>The boxes the rock pass asks the physics for at <paramref name="box"/> (RoadRockProbe.Candidates).</summary>
+    private static List<RockClearance> Asked(RockClearance box, RockClearances.GroundsAt grounds)
+    {
+        var asked = new List<RockClearance>();
+        RoadRockProbe.Candidates(box, grounds, (b, _) => { asked.Add(b); return new List<int>(); }, new List<int>());
+        return asked;
+    }
+
+    private static bool Holds(RockClearance b, Vector3 p)
+    {
+        Vector3 local = Quaternion.Inverse(b.Turn) * (p - b.Centre);
+        return Mathf.Abs(local.x) <= b.Half.x && Mathf.Abs(local.y) <= b.Half.y && Mathf.Abs(local.z) <= b.Half.z;
     }
 
     [Fact]

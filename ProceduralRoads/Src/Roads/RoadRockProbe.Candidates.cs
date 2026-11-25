@@ -9,16 +9,17 @@ public static partial class RoadRockProbe
     /// <summary>
     /// The colliders the rock pass judges for one clearance box (RoadRockProbe.Judge), into <paramref name="into"/> (cleared
     /// first): those in the box itself (<paramref name="query"/> asked with false), then a Location's stakes the game snaps to the
-    /// ground found in the box's column (<see cref="RockClearance.Column"/>, asked with true: only those stakes,
-    /// LocationRock.ClearedAtAnyHeight). The stakes stand where the spawn mode dropped them, on the unlevelled zone (Ghost) or the
-    /// levelled one (Full), up to 17 m apart at the same x and z: found by x and z in the box's footprint at any height, the one in
-    /// the way goes wherever it landed.
+    /// ground found in the box's column (<see cref="RockClearance.Column"/> over <see cref="RockClearances.Band"/> of
+    /// <paramref name="grounds"/>, asked with true: only those stakes, LocationRock.ClearedOnEitherGround). The stakes stand where
+    /// the spawn mode dropped them, on the unlevelled zone (Ghost) or the levelled one (Full), up to 17 m apart at the same x and
+    /// z: found by x and z in the box's footprint between the two grounds, the one in the way goes wherever it landed. A box with
+    /// no band (no Location's levelling under it, or a walk over the band, as a deck's) asks for no column.
     /// </summary>
-    internal static void Candidates<T>(RockClearance box, Func<RockClearance, bool, List<T>> query, List<T> into)
+    internal static void Candidates<T>(RockClearance box, RockClearances.GroundsAt grounds, Func<RockClearance, bool, List<T>> query, List<T> into)
     {
         into.Clear();
         into.AddRange(query(box, false));
-        into.AddRange(query(box.Column, true));
+        if (RockClearances.Band(box, grounds, out float low, out float high)) into.AddRange(query(box.Column(low, high), true));
     }
 
     /// <summary>Whether the rock of prefab <paramref name="objectPrefab"/> (its prefab name) at <paramref name="at"/> is one of the

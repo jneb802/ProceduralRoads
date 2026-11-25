@@ -422,4 +422,46 @@ public class SeededLocationTurnTests : IDisposable
         Assert.Equal(FixedLocationYaw.Degrees(WorldSeed, "Crypt4", chosen.x, chosen.y), yaw, 3);
         Assert.Equal(record.Yaw, yaw, 3);
     }
+
+    /// <summary>
+    /// The owner's decision, 24 Nov: a saved destination the game moved (ZoneSystem.ClearNonPlacedLocations moves a LocationInstance
+    /// it has not placed when it generates its locations again) is only logged, once at load, and its road is left as saved. The
+    /// moved one is a record with no LocationInstance of its prefab at its centre: none there, or another Location's. One warning
+    /// names each; a world whose saved destinations all stand where they were logs nothing.
+    /// </summary>
+    [Fact]
+    public void ASavedDestinationTheGameMovedIsLoggedAtLoadAndItsRecordKept()
+    {
+        Add("Crypt4", 300f, -200f, slope: false, chosen: true);
+        Add("GoblinCamp2", -120f, -410f, slope: false, chosen: false);
+        Assert.Null(SeededLocationTurn.SayMoved(PlacedLocations.Records));
+        // Moved away: no instance at its centre any more. Another Location now at the centre: not this destination.
+        PlacedLocations.Remember(new PlacedLocationRecord { Prefab = "Crypt2", Centre = new Vector2(700f, 900f) });
+        PlacedLocations.Remember(new PlacedLocationRecord { Prefab = "Crypt3", Centre = new Vector2(-120f, -410f) });
+        string? line = SeededLocationTurn.SayMoved(PlacedLocations.Records);
+        Assert.NotNull(line);
+        Assert.StartsWith("[SEEDEDTURN] 2 saved destination(s) have no LocationInstance where the network expects them", line);
+        Assert.Contains("Crypt3 (-120.0, -410.0), Crypt2 (700.0, 900.0)", line);
+        Assert.DoesNotContain("Crypt4", line);
+        Assert.Contains("left as saved", line);
+        // Log only: the records stay, roads and all.
+        Assert.Equal(3, PlacedLocations.Count);
+        Assert.Equal(new[] { "Crypt3", "Crypt2" },
+            SeededLocationTurn.Moved(PlacedLocations.Records, SeededLocationTurn.InstancePrefabAt).Select(r => r.Prefab));
+    }
+
+    /// <summary>
+    /// The owner's decision, 24 Nov: a generation (at load, road_generate, road_regen_island) keeps reading the destinations the game
+    /// has already placed and predicts only the unplaced ones (SeededLocationTurn.Settle, LocationsFirstLoad's one decision): a
+    /// placing found is read, whether or not its zone counts as generated; one not placed in a zone not generated is predicted; one
+    /// whose zone is generated but whose placing is not found gets no road.
+    /// </summary>
+    [Fact]
+    public void ARegenerationReadsPlacedDestinationsAndPredictsOnlyUnplacedOnes()
+    {
+        Assert.Equal(SeededLocationTurn.Settling.Read, SeededLocationTurn.Settle(placingFound: true, placedOrGenerated: true));
+        Assert.Equal(SeededLocationTurn.Settling.Read, SeededLocationTurn.Settle(placingFound: true, placedOrGenerated: false));
+        Assert.Equal(SeededLocationTurn.Settling.Predicted, SeededLocationTurn.Settle(placingFound: false, placedOrGenerated: false));
+        Assert.Equal(SeededLocationTurn.Settling.Neither, SeededLocationTurn.Settle(placingFound: false, placedOrGenerated: true));
+    }
 }

@@ -155,6 +155,63 @@ public static class SeededLocationTurn
         finally { UnityEngine.Random.state = state; }
     }
 
+    /// <summary>How a generation settles a chosen destination's landing (LocationsFirstLoad, at world load, road_generate and
+    /// road_regen_island alike).</summary>
+    internal enum Settling
+    {
+        /// <summary>Already placed: read as the game left it, never predicted.</summary>
+        Read,
+        /// <summary>Not placed yet: predicted, and seeded when the game places it.</summary>
+        Predicted,
+        /// <summary>Placed, or its zone generated, but no placing of it found to read: no road (PlacedLocations.NotPlaced).</summary>
+        Neither,
+    }
+
+    /// <summary>
+    /// The one decision of how a chosen destination's landing is settled: one whose placing is found (its LocationProxy in its
+    /// zone, PlacedLocationReader.Placed: <paramref name="placingFound"/>) is read, whatever else; one not placed whose zone is not
+    /// generated (<paramref name="placedOrGenerated"/> false) is predicted; any other gets no road. So a regeneration reads the
+    /// destinations the game has placed since the network was made and predicts only those still unplaced.
+    /// </summary>
+    internal static Settling Settle(bool placingFound, bool placedOrGenerated) =>
+        placingFound ? Settling.Read : placedOrGenerated ? Settling.Neither : Settling.Predicted;
+
+    /// <summary>
+    /// The saved destinations the world no longer has where the network expects them: a record (PlacedLocations) with no
+    /// LocationInstance of its prefab at its centre (<paramref name="prefabAt"/>: the prefab of the instance whose identity is that
+    /// centre, LocationPrefabLevelling.LocationOf, or null). The game moves a LocationInstance it has not placed yet when it
+    /// generates its locations again (ZoneSystem.ClearNonPlacedLocations: a location list or version change, genloc, Upgrade
+    /// World). Such a destination is only logged (<see cref="SayMoved"/>): its road stays as saved, and the game places the moved
+    /// location with its own unseeded turn, since no record stands at its new centre.
+    /// </summary>
+    internal static System.Collections.Generic.List<PlacedLocationRecord> Moved(
+        System.Collections.Generic.IEnumerable<PlacedLocationRecord> records, Func<Vector2, string?> prefabAt)
+    {
+        var moved = new System.Collections.Generic.List<PlacedLocationRecord>();
+        foreach (PlacedLocationRecord record in records)
+            if (prefabAt(record.Centre) is not string prefab || prefab.Replace(',', '_') != record.Prefab) moved.Add(record);
+        moved.Sort((a, b) => a.Centre.x != b.Centre.x ? a.Centre.x.CompareTo(b.Centre.x) : a.Centre.y.CompareTo(b.Centre.y));
+        return moved;
+    }
+
+    /// <summary>The prefab of the LocationInstance whose identity is <paramref name="centre"/> (LocationPrefabLevelling.LocationOf), or null.</summary>
+    internal static string? InstancePrefabAt(Vector2 centre) =>
+        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) ? instance.m_location?.m_prefab.Name : null;
+
+    /// <summary>The warning a load logs for the saved destinations the world no longer has where the network expects them
+    /// (<see cref="Moved"/>): null when every one is there, else one line naming each. Logged once, as the saved network is read
+    /// (RoadNetworkGenerator.UseReadNetwork). The roads are left as saved.</summary>
+    internal static string? SayMoved(System.Collections.Generic.IEnumerable<PlacedLocationRecord> records)
+    {
+        var moved = Moved(records, InstancePrefabAt);
+        if (moved.Count == 0) return null;
+        var names = new System.Text.StringBuilder();
+        foreach (PlacedLocationRecord r in moved)
+            names.Append(names.Length == 0 ? "" : ", ").Append(FormattableString.Invariant($"{r.Prefab} ({r.Centre.x:F1}, {r.Centre.y:F1})"));
+        return FormattableString.Invariant(
+            $"[SEEDEDTURN] {moved.Count} saved destination(s) have no LocationInstance where the network expects them (the game moved them when it generated its locations again); their roads are left as saved: {names}");
+    }
+
     /// <summary>The mismatch guard: the chosen location just placed in <paramref name="zone"/> against its record (turn and root
     /// as its LocationProxy saved them). A difference is a warning; a match is logged with the roads log.</summary>
     internal static void Guard(Vector2s zone, ZoneSystem.LocationInstance instance, PlacedLocationRecord record)

@@ -98,13 +98,14 @@ public static class LocationsFirstLoad
         // onto a landing there, so its location gets no road (PlacedLocations.NotPlaced).
         if (NetworkCutoff.Excludes(zone)) { PlacedLocations.NoteWhyNotPlaced(centre, PlacedLocations.ZoneLeftAlone); return; }
         if (!PlacedLocations.PlacesFirst(instance, WorldGenerator.instance)) return;
-        if (PlacedLocationReader.Placed(zone, centre, out _)) { s_placed.Add((centre, zone)); return; }
-        if (instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone))
+        // Already placed: read; not placed yet: predicted (SeededLocationTurn.Settle, the one decision).
+        bool found = PlacedLocationReader.Placed(zone, centre, out _);
+        switch (SeededLocationTurn.Settle(found, !found && (instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone))))
         {
-            PlacedLocations.NoteWhyNotPlaced(centre, "its zone is generated, but no placing of it was found there to read");
-            return;
+            case SeededLocationTurn.Settling.Read: s_placed.Add((centre, zone)); return;
+            case SeededLocationTurn.Settling.Predicted: s_pending.Add((centre, zone)); return;
+            default: PlacedLocations.NoteWhyNotPlaced(centre, "its zone is generated, but no placing of it was found there to read"); return;
         }
-        s_pending.Add((centre, zone));
     }
 
     /// <summary>The record of the destination at <paramref name="centre"/> predicted, not placed (PlacedLocationReader.Predict on

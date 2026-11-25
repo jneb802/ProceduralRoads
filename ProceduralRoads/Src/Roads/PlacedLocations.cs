@@ -392,6 +392,21 @@ public static class PlacedLocations
         RoadLocationProtection.NearestFootprint(p, 0f, out RoadLocationProtection.Footprint f) && s_ground.TryGetValue(RoadNetworkGenerator.LocationKey(f.Centre), out Func<float, float, float>? ground)
             ? ground(p.x, p.y) : null;
 
+    /// <summary>The ground a placed Location leaves at <paramref name="p"/> (<paramref name="levelled"/>, <see cref="GroundAt(Vector2)"/>)
+    /// and the ground of its freshly built zone there, before its levelling (<paramref name="unlevelled"/>,
+    /// SeededLocationTurn.MeshGround): the two the game snaps a Location's stakes onto (Full mode, Ghost mode). False outside a
+    /// footprint, where the Location's ground is not known, or with no world. The rock pass's band for those stakes
+    /// (RockClearances.Band).</summary>
+    public static bool GroundsAt(Vector2 p, out float levelled, out float unlevelled)
+    {
+        levelled = unlevelled = float.NaN;
+        WorldGenerator? world = WorldGenerator.instance;
+        if (world == null || GroundAt(p) is not float known || float.IsNaN(known)) return false;
+        levelled = known;
+        unlevelled = SeededLocationTurn.MeshGround(p.x, p.y, world);
+        return true;
+    }
+
     /// <summary>
     /// The ground as locations will leave it (one owner, which every staircase planner reads): in the footprint of a location placed
     /// before its roads the ground it levels (<see cref="GroundAt(Vector2)"/>), anywhere else the natural ground. A road's

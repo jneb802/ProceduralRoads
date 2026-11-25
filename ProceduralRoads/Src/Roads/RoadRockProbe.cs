@@ -212,11 +212,11 @@ public static partial class RoadRockProbe
     internal static int LastNotOwner;
 
     private static Collider[] s_column = new Collider[64];
-    private static readonly List<Collider> s_atAnyHeight = new List<Collider>();
+    private static readonly List<Collider> s_onEitherGround = new List<Collider>();
     private static int s_stakeMask;
     private static ZNetScene? s_stakeMaskScene;
 
-    /// <summary>The layers a Location's snapping stakes (LocationRock.ClearedAtAnyHeight) stand on, read from the game's own
+    /// <summary>The layers a Location's snapping stakes (LocationRock.ClearedOnEitherGround) stand on, read from the game's own
     /// prefabs once per scene: the column query (<see cref="SnappedStakesIn"/>) asks only those.</summary>
     private static int StakeMask
     {
@@ -226,7 +226,7 @@ public static partial class RoadRockProbe
             int mask = 0;
             foreach (GameObject prefab in ZNetScene.instance.m_prefabs)
             {
-                if (prefab == null || !LocationRock.ClearedAtAnyHeight(prefab.name, prefab.GetComponent<SnapToGround>() != null)) continue;
+                if (prefab == null || !LocationRock.ClearedOnEitherGround(prefab.name, prefab.GetComponent<SnapToGround>() != null)) continue;
                 foreach (Collider part in prefab.GetComponentsInChildren<Collider>(true)) mask |= 1 << part.gameObject.layer;
             }
             s_stakeMaskScene = ZNetScene.instance;
@@ -234,14 +234,14 @@ public static partial class RoadRockProbe
         }
     }
 
-    /// <summary>The colliders of a Location's snapping stakes (LocationRock.ClearedAtAnyHeight: a SnapToGround on the object,
-    /// the stakes' prefab name) in <paramref name="column"/>, a box's footprint at any height (<see cref="RockClearance.Column"/>).
+    /// <summary>The colliders of a Location's snapping stakes (LocationRock.ClearedOnEitherGround: a SnapToGround on the object,
+    /// the stakes' prefab name) in <paramref name="column"/>, a box's footprint between the levelled and the unlevelled ground (<see cref="RockClearance.Column"/>).
     /// Reused between calls.</summary>
     private static List<Collider> SnappedStakesIn(RockClearance column)
     {
-        s_atAnyHeight.Clear();
+        s_onEitherGround.Clear();
         int mask = StakeMask;
-        if (mask == 0) return s_atAnyHeight;
+        if (mask == 0) return s_onEitherGround;
         int count = Physics.OverlapBoxNonAlloc(column.Centre, column.Half, s_column, column.Turn, mask, QueryTriggerInteraction.Ignore);
         if (count == s_column.Length)
         {
@@ -253,11 +253,11 @@ public static partial class RoadRockProbe
             Collider collider = s_column[c];
             if (collider == null) continue;
             var view = collider.GetComponentInParent<ZNetView>();
-            if (view == null || !LocationRock.ClearedAtAnyHeight(RoadRockCarve.PrefabName(view.gameObject, view),
+            if (view == null || !LocationRock.ClearedOnEitherGround(RoadRockCarve.PrefabName(view.gameObject, view),
                     view.GetComponent<SnapToGround>() != null)) continue;
-            s_atAnyHeight.Add(collider);
+            s_onEitherGround.Add(collider);
         }
-        return s_atAnyHeight;
+        return s_onEitherGround;
     }
 
     private static readonly List<Collider> s_inBox = new List<Collider>();
@@ -280,6 +280,7 @@ public static partial class RoadRockProbe
         return s_inBox;
     }
     private static readonly System.Func<RockClearance, bool, List<Collider>> s_query = Query;
+    private static readonly RockClearances.GroundsAt s_grounds = PlacedLocations.GroundsAt;
 
     /// <summary>
     /// Which objects stand in one clearance box, each judged once (into
@@ -287,7 +288,7 @@ public static partial class RoadRockProbe
     /// box touched, judged now or before, so a caller can note where.
     /// <paramref name="keepLocationRocks"/>: the box is an approach to a location (a staircase to its
     /// landing, a road onto it), and a rock in a location area is the location's own: kept, whatever
-    /// another box decided. A Location's snapping stakes are looked for in its footprint at any height
+    /// another box decided. A Location's snapping stakes are looked for in its footprint between the levelled and the unlevelled ground
     /// (<see cref="SnappedStakesIn"/>).
     /// </summary>
     private static List<GameObject> Judge(RockClearance box, bool mist, bool cliffs,
@@ -296,7 +297,7 @@ public static partial class RoadRockProbe
         var touchedHere = new List<GameObject>();
         long t = RoadRockStats.Now;
         // The box's own colliders, and a Location's snapping stakes in its column (Candidates).
-        Candidates(box, s_query, s_candidates);
+        Candidates(box, s_grounds, s_query, s_candidates);
         RoadRockStats.QueryTicks += RoadRockStats.Now - t;
         RoadRockStats.Queries++;
         RoadRockStats.Colliders += s_inBox.Count;

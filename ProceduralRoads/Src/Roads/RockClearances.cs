@@ -27,13 +27,19 @@ public readonly struct RockClearance
     /// <summary>The box's top.</summary>
     public float Top => Centre.y + Half.y;
 
-    /// <summary>This box's footprint at any height: the same middle, turn and width seen from above, standing through the
-    /// whole world (<see cref="RockClearances.AnyHeight"/> either side of the box's middle). The rock pass looks in it only
-    /// for a Location's stakes the game snaps to the ground (LocationRock.ClearedAtAnyHeight): where those stand depends on
-    /// the spawn mode (Ghost: on the unlevelled zone, Full: on the levelled one, up to 17 m apart at the same x and z), so
-    /// one in a way is found by its x and z and removed wherever it landed.</summary>
-    public RockClearance Column => new RockClearance(Centre, new Vector3(Half.x, RockClearances.AnyHeight, Half.z), Turn, Surface,
-        WholeOnly, KeepsLocationRocks);
+    /// <summary>This box's footprint over the band a Location's snapping stakes may stand in (<see cref="RockClearances.Band"/>):
+    /// the same middle, turn and width seen from above, from <see cref="RockClearances.Bottom"/> of the lower of the levelled and
+    /// the unlevelled ground (<paramref name="low"/>) to <see cref="RockClearances.Top"/> of the higher (<paramref name="high"/>):
+    /// the walker's own headroom over either ground. The rock pass looks in it only for those stakes
+    /// (LocationRock.ClearedOnEitherGround): where they stand depends on the spawn mode (Ghost: on the unlevelled zone, Full: on
+    /// the levelled one, up to 17 m apart at the same x and z), so one in a way is found by its x and z on either ground and
+    /// removed wherever it landed; nothing over or under that band is looked for.</summary>
+    public RockClearance Column(float low, float high)
+    {
+        float bottom = RockClearances.Bottom(low), top = RockClearances.Top(high);
+        return new RockClearance(new Vector3(Centre.x, (bottom + top) * 0.5f, Centre.z), new Vector3(Half.x, (top - bottom) * 0.5f, Half.z),
+            Turn, Surface, WholeOnly, KeepsLocationRocks);
+    }
 }
 
 /// <summary>
@@ -92,10 +98,34 @@ public static class RockClearances
     /// <summary>The ground under a point, if any answers there.</summary>
     public delegate bool GroundAt(Vector3 at, out float height);
 
-    /// <summary>Half a <see cref="RockClearance.Column"/>'s height: more than the world's whole height range (the deepest sea
-    /// floor to the highest peak), so a column of a box is its footprint at any height. Not a tuning value: any height past
-    /// the world's own finds the same objects.</summary>
-    public const float AnyHeight = 2000f;
+    /// <summary>The levelled and the unlevelled ground at a point, where a Location's levelling is known there
+    /// (PlacedLocations.GroundsAt).</summary>
+    public delegate bool GroundsAt(Vector2 at, out float levelled, out float unlevelled);
+
+    /// <summary>
+    /// The band a Location's snapping stakes (LocationRock.ClearedOnEitherGround) may stand in under <paramref name="box"/>: from the
+    /// lower (<paramref name="low"/>) to the higher (<paramref name="high"/>) of the levelled and the unlevelled ground
+    /// (<paramref name="grounds"/>) over the box's footprint (its middle and its four corners); <see cref="RockClearance.Column"/>
+    /// adds the walker's headroom over it. The game snaps a stake onto one of the two: the unlevelled zone in Ghost mode, the
+    /// levelled one in Full mode. False where no Location's levelling is known under the box, or where the box's walk does not
+    /// reach into that band (a viaduct's deck, or a flight standing over the ground): a stake under it is not in its way.
+    /// </summary>
+    internal static bool Band(RockClearance box, GroundsAt grounds, out float low, out float high)
+    {
+        low = float.PositiveInfinity;
+        high = float.NegativeInfinity;
+        for (int corner = -1; corner < 4; corner++)
+        {
+            Vector3 local = corner < 0 ? Vector3.zero
+                : new Vector3((corner & 1) == 0 ? -box.Half.x : box.Half.x, 0f, (corner & 2) == 0 ? -box.Half.z : box.Half.z);
+            Vector3 at = box.Centre + box.Turn * local;
+            if (!grounds(new Vector2(at.x, at.z), out float levelled, out float unlevelled)) continue;
+            low = Mathf.Min(low, Mathf.Min(levelled, unlevelled));
+            high = Mathf.Max(high, Mathf.Max(levelled, unlevelled));
+        }
+        if (low > high) return false;
+        return box.Centre.y - box.Half.y <= Top(high) && box.Top >= Bottom(low);
+    }
 
     /// <summary>How much further out than a clearance's reach its headings read road points.</summary>
     public const float HeadingReach = 3f;

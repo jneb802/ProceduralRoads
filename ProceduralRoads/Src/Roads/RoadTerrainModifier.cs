@@ -8,30 +8,254 @@ namespace ProceduralRoads;
 /// </summary>
 public static class RoadTerrainModifier
 {
-    private static int s_coordLogCount = 0;
+    /// <summary>
+    /// ZDO key on a zone's terrain compiler: the RoadNetworkVersion whose
+    /// roads that zone's terrain carries. Ordinary zone loads skip a zone
+    /// stamped with the current version, so the road terrain is written once
+    /// per network and the player's later terrain edits in the road survive
+    /// reloads. Explicit paths (load-time generation, road_regen_island,
+    /// road_apply) force the write and re-stamp.
+    /// </summary>
+    internal static readonly int AppliedVersionHash = "ProceduralRoads_AppliedVersion".GetStableHashCode();
 
-    public static void ResetDebugCounters()
+    /// <summary>
+    /// The version of this terrain writer: how it turns road points into heights and paint. Raised whenever a change to
+    /// the writer would write a zone differently, so a later build can tell the zones an older writer wrote
+    /// (<see cref="WriterVersionHash"/>).
+    /// <para>1: the first release's writer.</para>
+    /// </summary>
+    public const int WriterVersion = 1;
+
+    /// <summary>ZDO key on a zone's terrain compiler: the <see cref="WriterVersion"/> that wrote it, stamped with
+    /// <see cref="AppliedVersionHash"/> (<see cref="Stamp"/>); 0 on a compiler no writer of this build has stamped, and
+    /// on every zone of a network a released build saved, which keeps the keys that build wrote.</summary>
+    internal static readonly int WriterVersionHash = "ProceduralRoads_WriterVersion".GetStableHashCode();
+
+    /// <summary>A zone's compiler carries the current network's roads as this writer wrote them.</summary>
+    private static void Stamp(TerrainComp terrainComp)
     {
-        s_coordLogCount = 0;
+        ZDO zdo = terrainComp.m_nview.GetZDO();
+        zdo.Set(AppliedVersionHash, RoadSpatialGrid.RoadNetworkVersion);
+        if (!RoadSpatialGrid.LoadedFromReleasedFormat) zdo.Set(WriterVersionHash, WriterVersion);
+    }
+
+    /// <summary>What a terrain write did.</summary>
+    public enum WriteOutcome
+    {
+        None,
+        /// <summary>Saved into the compiler and stamped.</summary>
+        Written,
+        /// <summary>The roads change nothing in this zone (its points only brush its edge).</summary>
+        NothingToWrite,
+        /// <summary>The game would not save: this peer does not own the compiler.</summary>
+        SaveRefused,
     }
 
     /// <summary>
-    /// Apply terrain mods for road points in a zone.
+    /// The outcome of the last write. ServerTerrainBake reads it straight after
+    /// the compiler's write.
+    /// </summary>
+    public static WriteOutcome LastWriteOutcome = WriteOutcome.None;
+
+    /// <summary>Prefab hash of the game's terrain compiler object (one per zone).</summary>
+    private static readonly int TerrainCompilerPrefabHash = "_TerrainCompiler".GetStableHashCode();
+
+    /// <summary>
+    /// Zones whose explicit (forced) application was requested while their
+    /// saved terrain compiler was not alive yet; written, stamp or no stamp,
+    /// when that compiler comes alive. Cleared with the world.
+    /// </summary>
+    private static readonly HashSet<Vector2s> s_pendingForcedZones = new HashSet<Vector2s>();
+
+    public static void ResetForWorld()
+    {
+        s_pendingForcedZones.Clear();
+    }
+
+    /// <summary>
+    /// A zone finished spawning (Full or Client mode) and has road points.
+    /// The game keeps one terrain compiler per zone and creates the saved
+    /// one from its ZDO only after the zone is loaded, so a compiler asked
+    /// for at this moment would be a second one: the two then destroy each
+    /// other on every load. If the zone has a saved compiler not yet alive,
+    /// leave the roads to OnTerrainCompilerReady; otherwise write them now,
+    /// creating the zone's compiler if it has none.
+    /// </summary>
+    public static void OnZoneSpawned(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
+    {
+        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
+        if (TerrainComp.FindTerrainCompiler(zonePos) == null && HasSavedTerrainCompiler(zoneID))
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Zone {zoneID}: saved terrain compiler not alive yet, road terrain applied when it is");
+            return;
+        }
+        ApplyRoadTerrainMods(zoneID, roadPoints);
+    }
+
+    /// <summary>
+    /// A terrain compiler came alive (created fresh, from the save, or under
+    /// ghost init): if its zone has road points and it is not stamped with
+    /// the current network version, write the roads into it. An unowned
+    /// compiler in our area is claimed, as the game itself would shortly;
+    /// one owned by another peer is theirs to write.
+    /// </summary>
+    public static void OnTerrainCompilerReady(TerrainComp terrainComp)
+    {
+        if (terrainComp == null || terrainComp.m_hmap == null || terrainComp.m_nview == null || !terrainComp.m_nview.IsValid())
+            return;
+
+        Vector2s zoneID = ZoneSystem.GetZone(terrainComp.m_hmap.transform.position);
+        List<RoadSpatialGrid.RoadPoint> roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+        // Forced only by an operator's command (ApplyToLoadedZones); otherwise a
+        // zone explored before this network is left exactly as it is.
+        bool forced = s_pendingForcedZones.Remove(zoneID);
+        if (roadPoints.Count == 0 || (!forced && (NetworkCutoff.Excludes(zoneID) || CarriesCurrentRoads(terrainComp))))
+            return;
+
+        if (!terrainComp.m_nview.IsOwner())
+        {
+            if (terrainComp.m_nview.HasOwner())
+                return;
+            terrainComp.m_nview.ClaimOwnership();
+        }
+
+        ApplyRoadTerrainModsWithContext(zoneID, roadPoints, terrainComp.m_hmap, terrainComp);
+    }
+
+    /// <summary>Whether the zone's saved objects include a terrain compiler.</summary>
+    public static bool HasSavedTerrainCompiler(Vector2s zoneID) => SavedTerrainCompilers(zoneID).Count > 0;
+
+    /// <summary>The terrain compilers saved in a zone, as ZDOs (one, normally; two is a zone the game would fight over).</summary>
+    internal static List<ZDO> SavedTerrainCompilers(Vector2s zoneID)
+    {
+        var zdos = new List<ZDO>();
+        if (ZDOMan.instance == null) return zdos;
+        // Valheim 1.0 asks callers to carry the set of sectors already visited; this is a single-zone lookup.
+        ZDOMan.instance.FindObjects(zoneID, zdos, new HashSet<ZoneSystem.SectorIndex>());
+        zdos.RemoveAll(zdo => zdo.GetPrefab() != TerrainCompilerPrefabHash);
+        return zdos;
+    }
+
+    /// <summary>
+    /// Apply terrain mods for road points in a zone. A zone whose terrain
+    /// compiler already carries the current network version is left alone (see
+    /// AppliedVersionHash); ApplyRoadTerrainModsWithContext forces the write.
     /// </summary>
     public static void ApplyRoadTerrainMods(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
     {
+        // Before the compiler is asked for: a zone explored before this
+        // network gets no compiler and no write (NetworkCutoff).
+        if (NetworkCutoff.Excludes(zoneID)) return;
         TerrainContext? context = GetTerrainContext(zoneID);
         if (context == null)
             return;
 
+        if (CarriesCurrentRoads(context.Value.TerrainComp))
+        {
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                $"Zone {zoneID}: terrain already carries road network version {RoadSpatialGrid.RoadNetworkVersion}, skipping");
+            return;
+        }
+
         ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context.Value);
-        ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
-        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context.Value);
+        stats.PaintedTexels = ApplyRoadPaint(roadPoints, context.Value.TerrainComp, stats.PaintedCells);
+        FinalizeTerrainMods(zoneID, roadPoints, stats, context.Value);
+    }
+
+    /// <summary>
+    /// Whether the zone's terrain compiler is stamped with the current road
+    /// network version, i.e. its terrain already carries these roads.
+    /// </summary>
+    public static bool CarriesCurrentRoads(TerrainComp terrainComp)
+    {
+        int version = RoadSpatialGrid.RoadNetworkVersion;
+        if (version == 0)
+            return false;
+        ZDO? zdo = terrainComp.m_nview?.GetZDO();
+        if (zdo == null) return false;
+        return CarriesCurrentRoads(ZoneSystem.GetZone(terrainComp.m_hmap.transform.position),
+            zdo.GetInt(AppliedVersionHash, 0));
+    }
+
+    // Saved compilers and live ones must agree: an append elsewhere does not
+    // make this zone stale, and does not justify taking its owner or rebuilding it.
+    internal static bool CarriesCurrentRoads(Vector2s zone, int applied)
+    {
+        int version = RoadSpatialGrid.RoadNetworkVersion;
+        return version != 0 && applied != 0 && applied == version;
+    }
+
+    /// <summary>
+    /// Apply the current network's terrain mods to every loaded zone that has
+    /// road points, whether or not the zone already carries them. Zones
+    /// generated before the network existed (the zones around the player's
+    /// login position on a fresh world, or around a teleport target that landed
+    /// mid-generation) get their roads here; zones generated afterwards get
+    /// them from the ZoneSystem.SpawnZone hook. Height deltas are computed from
+    /// the world generator height, so writing them again does not accumulate;
+    /// paint is blended toward the paved colour each time, so the road edges
+    /// come out a shade more solid on every explicit reapplication.
+    /// </summary>
+    /// <param name="operatorRequest">An operator's command (road_generate, road_regen_island): the
+    /// zones loaded around them are written even if they were explored before this network.
+    /// Otherwise (a network just generated) those zones are left alone (NetworkCutoff).</param>
+    public static int ApplyToLoadedZones(bool operatorRequest = false)
+    {
+        var heightmaps = Heightmap.GetAllHeightmaps();
+        int zonesWithRoads = 0;
+        if (heightmaps == null)
+            return 0;
+
+        // The operator's write reaches every loaded road zone: none of them is an edge for the seam fade.
+        if (operatorRequest)
+            foreach (var heightmap in heightmaps)
+                if (heightmap != null)
+                {
+                    Vector2s zone = ZoneSystem.GetZone(heightmap.transform.position);
+                    if (RoadSpatialGrid.GetRoadPointsInZone(zone).Count > 0) NetworkCutoff.WrittenByOperator(zone);
+                }
+
+        foreach (var heightmap in heightmaps)
+        {
+            if (heightmap == null) continue;
+
+            Vector2s zoneID = ZoneSystem.GetZone(heightmap.transform.position);
+            var roadPoints = RoadSpatialGrid.GetRoadPointsInZone(zoneID);
+            if (roadPoints.Count == 0) continue;
+            if (!operatorRequest && NetworkCutoff.Excludes(zoneID)) continue;
+
+            bool existed = TerrainComp.FindTerrainCompiler(heightmap.transform.position) != null;
+            if (!existed && HasSavedTerrainCompiler(zoneID))
+            {
+                // Same as OnZoneSpawned: asking for a compiler now would make a
+                // second one; the saved one gets this write when it comes alive.
+                s_pendingForcedZones.Add(zoneID);
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                    $"Zone {zoneID}: saved terrain compiler not alive yet, road terrain applied when it is");
+                zonesWithRoads++;
+                continue;
+            }
+            TerrainComp terrainComp = heightmap.GetAndCreateTerrainCompiler();
+            if (terrainComp == null || !terrainComp.m_nview.IsOwner()) continue;
+
+            // A compiler created just now was written by OnTerrainCompilerReady.
+            if (!existed && CarriesCurrentRoads(terrainComp))
+            {
+                zonesWithRoads++;
+                continue;
+            }
+
+            ApplyRoadTerrainModsWithContext(zoneID, roadPoints, heightmap, terrainComp);
+            zonesWithRoads++;
+        }
+        return zonesWithRoads;
     }
 
     /// <summary>
     /// Public entry point for applying road terrain mods to a specific zone.
-    /// Used by console commands to force-update loaded zones.
+    /// Always writes (the explicit path): used by ApplyToLoadedZones and the
+    /// console commands to force-update loaded zones.
     /// </summary>
     public static void ApplyRoadTerrainModsWithContext(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints,
         Heightmap heightmap, TerrainComp terrainComp)
@@ -56,8 +280,15 @@ public static class RoadTerrainModifier
         };
 
         ModificationStats stats = ModifyVertexHeights(zoneID, roadPoints, context);
-        ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
-        FinalizeTerrainMods(zoneID, roadPoints.Count, stats, context);
+        stats.PaintedTexels = ApplyRoadPaint(roadPoints, context.TerrainComp, stats.PaintedCells);
+        FinalizeTerrainMods(zoneID, roadPoints, stats, context);
+    }
+
+    /// <summary>Finish a server-owned zone through the same writer as live terrain.</summary>
+    internal static void BakeRoadTerrain(Vector2s zone, Heightmap heightmap, TerrainComp compiler)
+    {
+        if (CarriesCurrentRoads(compiler)) return;
+        ApplyRoadTerrainModsWithContext(zone, RoadSpatialGrid.GetRoadPointsInZone(zone), heightmap, compiler);
     }
 
     private struct TerrainContext
@@ -71,7 +302,7 @@ public static class RoadTerrainModifier
 
     private static TerrainContext? GetTerrainContext(Vector2s zoneID)
     {
-        Heightmap heightmap = Heightmap.FindHeightmap(ZoneSystem.GetZonePos(zoneID));
+        Heightmap? heightmap = Heightmap.FindHeightmap(ZoneSystem.GetZonePos(zoneID));
         TerrainComp? terrainComp = heightmap?.GetAndCreateTerrainCompiler();
         int gridSize = (terrainComp?.m_width ?? 0) + 1;
 
@@ -93,14 +324,16 @@ public static class RoadTerrainModifier
     {
         public int VerticesModified;
         public int VerticesChecked;
+        /// <summary>Road points' paint dedupe cells: NOT a count of what was painted.</summary>
         public HashSet<Vector2i> PaintedCells;
+        /// <summary>Paint texels of this zone actually written.</summary>
+        public int PaintedTexels;
     }
 
     private static ModificationStats ModifyVertexHeights(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
     {
         ModificationStats stats = new ModificationStats { PaintedCells = new HashSet<Vector2i>() };
-
-        LogCoordinateDebug(zoneID, roadPoints, context);
+        bool seamNear = NetworkCutoff.SeamNear(zoneID);
 
         for (int vz = 0; vz < context.GridSize; vz++)
         {
@@ -117,6 +350,10 @@ public static class RoadTerrainModifier
                 BlendResult blendResult = CalculateBlendedHeight(roadPoints, vertexPos2D);
                 if (blendResult.InfluencingPoints == 0)
                     continue;
+                // Next to a zone left as it is, the road fades in from its border (NetworkCutoff.SeamWeight).
+                float seam = seamNear ? NetworkCutoff.SeamWeight(vertexPos2D) : 1f;
+                if (seam <= 0f)
+                    continue;
 
                 float baseHeight = BiomeBlendedHeight.GetBlendedHeight(vertexWorldPos.x, vertexWorldPos.z, WorldGenerator.instance);
                 float finalHeight = Mathf.Lerp(baseHeight, blendResult.TargetHeight, blendResult.MaxBlend);
@@ -125,17 +362,20 @@ public static class RoadTerrainModifier
                 if (Mathf.Abs(delta) > RoadConstants.MinHeightDeltaThreshold || blendResult.MaxBlend > RoadConstants.MinBlendForModification)
                 {
                     int index = vz * context.GridSize + vx;
-                    context.TerrainComp.m_levelDelta[index] = delta;
-                    context.TerrainComp.m_smoothDelta[index] = 0f;
+                    if (seam >= 1f)
+                    {
+                        context.TerrainComp.m_levelDelta[index] = delta;
+                        context.TerrainComp.m_smoothDelta[index] = 0f;
+                    }
+                    else
+                    {
+                        // Part of the road's change, as the full write does an absolute one: writing it
+                        // again gives the same ground, however often an operator reapplies the road.
+                        context.TerrainComp.m_levelDelta[index] = delta * seam;
+                        context.TerrainComp.m_smoothDelta[index] = Mathf.Lerp(context.TerrainComp.m_smoothDelta[index], 0f, seam);
+                    }
                     context.TerrainComp.m_modifiedHeight[index] = true;
                     stats.VerticesModified++;
-                    
-                    if (stats.VerticesModified <= RoadConstants.MaxVertexModificationLogs)
-                    {
-                        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-                            $"[VERTEX] Zone {zoneID} v[{vx},{vz}]: pos=({vertexWorldPos.x:F1},{vertexWorldPos.z:F1}), " +
-                            $"base={baseHeight:F2}m, target={blendResult.TargetHeight:F2}m, blend={blendResult.MaxBlend:F2}, delta={delta:F2}m");
-                    }
                 }
             }
         }
@@ -156,7 +396,6 @@ public static class RoadTerrainModifier
         float totalWeight = 0f;
         float maxBlend = 0f;
         int influencingPoints = 0;
-
         foreach (RoadSpatialGrid.RoadPoint rp in roadPoints)
         {
             float distSq = (rp.p - vertexPos).sqrMagnitude;
@@ -187,15 +426,17 @@ public static class RoadTerrainModifier
         };
     }
 
-    private static void ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells)
+    private static int ApplyRoadPaint(List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainComp terrainComp, HashSet<Vector2i> paintedCells)
     {
         Heightmap hmap = terrainComp.m_hmap;
         if (hmap == null)
-            return;
+            return 0;
+        int painted = 0;
             
         int gridSize = terrainComp.m_width + 1;
         Vector3 terrainPos = hmap.transform.position;
         float scale = hmap.m_scale;
+        bool seamNear = NetworkCutoff.SeamNear(ZoneSystem.GetZone(terrainPos));
         
         foreach (RoadSpatialGrid.RoadPoint roadPoint in roadPoints)
         {
@@ -232,7 +473,10 @@ public static class RoadTerrainModifier
                         continue;
                     
                     float blendFactor = 1f - Mathf.Clamp01(dist / radiusInVertices);
-                    blendFactor = Mathf.Pow(blendFactor, 0.1f);
+                    blendFactor = Mathf.Pow(blendFactor, 0.1f)
+                        * (seamNear ? NetworkCutoff.SeamWeight(new Vector2(terrainPos.x + (vx - halfWidth) * scale, terrainPos.z + (vy - halfWidth) * scale)) : 1f);
+                    if (blendFactor <= 0f)
+                        continue;
                     
                     int index = vy * gridSize + vx;
                     
@@ -243,18 +487,39 @@ public static class RoadTerrainModifier
                     
                     terrainComp.m_modifiedPaint[index] = true;
                     terrainComp.m_paintMask[index] = newColor;
+                    painted++;
                 }
             }
         }
+        return painted;
     }
 
-    private static void FinalizeTerrainMods(Vector2s zoneID, int roadPointCount, ModificationStats stats, TerrainContext context)
+    private static void FinalizeTerrainMods(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, ModificationStats stats, TerrainContext context)
     {
-        int paintOps = stats.PaintedCells.Count;
+        // Texels actually written, not the dedupe cells: a zone whose road
+        // points all lie just outside it fills the dedupe set without painting
+        // a texel of its own, and counting that as a write saved and stamped
+        // an empty compiler.
+        int paintOps = stats.PaintedTexels;
         
         if (stats.VerticesModified > 0 || paintOps > 0)
         {
-            context.TerrainComp.Save();
+            // Stamp only what was saved. TerrainComp.Save does nothing unless
+            // this peer owns the compiler, and a stamp without the data behind
+            // it would tell every later load that the zone already carries
+            // its roads, so they would never be written again.
+            if (SaveTerrain(context.TerrainComp))
+            {
+                Stamp(context.TerrainComp);
+                LastWriteOutcome = WriteOutcome.Written;
+            }
+            else
+            {
+                LastWriteOutcome = WriteOutcome.SaveRefused;
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+                    $"Zone {zoneID}: the terrain compiler did not save (not ours to write?); " +
+                    "left unstamped so the roads are written again");
+            }
             // Valheim 1.0 turned Poke's bool into a selector for WHICH late
             // pass rebuilds the mesh, not a count: LateUpdate acts on 1,
             // CustomLateUpdate on 2, and any other positive value is never
@@ -266,26 +531,44 @@ public static class RoadTerrainModifier
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
                 $"Zone {zoneID}: {stats.VerticesModified}/{stats.VerticesChecked} vertices modified, {paintOps} paint cells");
         }
-        else if (roadPointCount > 0)
+        else
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
-                $"Zone {zoneID}: {roadPointCount} road points but 0 vertices matched! Coordinate mismatch?");
+            LastWriteOutcome = WriteOutcome.NothingToWrite;
+            // A point just outside the zone reaches into it only faintly, so a
+            // zone whose points all lie outside it can have nothing to change.
+            // Only a point INSIDE the zone that changed nothing is suspicious.
+            if (AnyPointInside(zoneID, roadPoints))
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
+                    $"Zone {zoneID}: {roadPoints.Count} road points but 0 vertices matched! Coordinate mismatch?");
+            else
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
+                    $"Zone {zoneID}: its {roadPoints.Count} road points lie outside it and change nothing in it");
         }
     }
 
-    private static void LogCoordinateDebug(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints, TerrainContext context)
+    private static bool AnyPointInside(Vector2s zoneID, List<RoadSpatialGrid.RoadPoint> roadPoints)
     {
-        if (s_coordLogCount >= RoadConstants.MaxCoordDebugLogs)
-            return;
+        Vector3 zonePos = ZoneSystem.GetZonePos(zoneID);
+        foreach (RoadSpatialGrid.RoadPoint rp in roadPoints)
+        {
+            if (Mathf.Abs(rp.p.x - zonePos.x) <= RoadConstants.HalfZoneSize &&
+                Mathf.Abs(rp.p.y - zonePos.z) <= RoadConstants.HalfZoneSize)
+                return true;
+        }
+        return false;
+    }
 
-        s_coordLogCount++;
-        
-        float halfSize = context.TerrainComp.m_width / 2f * context.VertexSpacing;
-        RoadSpatialGrid.RoadPoint firstRoadPoint = roadPoints.Count > 0 ? roadPoints[0] : default;
-        
-        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug(
-            $"[COORD DEBUG] Zone {zoneID}: hmPos=({context.HeightmapPosition.x:F1},{context.HeightmapPosition.z:F1}), " +
-            $"vertices cover X[{context.HeightmapPosition.x - halfSize:F1},{context.HeightmapPosition.x + halfSize:F1}], " +
-            $"first road point=({firstRoadPoint.p.x:F1},{firstRoadPoint.p.y:F1}), width={firstRoadPoint.w:F1}m");
+    /// <summary>
+    /// Save the compiler's arrays into its ZDO, and say whether they are
+    /// there. The game's Save returns without a word when this peer does not
+    /// own the compiler; its data is then whatever it was before.
+    /// </summary>
+    internal static bool SaveTerrain(TerrainComp terrainComp)
+    {
+        ZNetView? view = terrainComp.m_nview;
+        if (view == null || !view.IsValid() || !view.IsOwner())
+            return false;
+        terrainComp.Save();
+        return view.GetZDO().GetByteArray(ZDOVars.s_TCData) != null;
     }
 }

@@ -52,7 +52,7 @@ public class RoadEndReportTests : System.IDisposable
             RoadNetworkGenerator.GenerateRoads(force: true);
             var locations = new List<(string name, Vector3 position, float radius)>();
             foreach (var inst in ZoneSystem.instance!.GetLocationList())
-                locations.Add((inst.m_location.m_prefab.Name!, inst.m_position, inst.m_location.m_exteriorRadius));
+                locations.Add((inst.m_location.m_prefab.name!, inst.m_position, inst.m_location.m_exteriorRadius));
 
             var rows = RoadEndReport.Compute(locations, 8f, world);
             Assert.True(rows.Count >= 2, $"expected road ends at several locations, got {rows.Count}");

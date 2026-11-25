@@ -111,7 +111,7 @@ public static class PlacedLocationReader
     {
         Vector2s zone = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
         return ZoneSystem.instance != null && ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance instance)
-            && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.Name);
+            && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.name);
     }
 
     /// <summary>The location's exterior radius: its rock, for leading a staircase round it.</summary>
@@ -144,7 +144,7 @@ public static class PlacedLocationReader
         // in game). Where the prefab's parts are not known, every boulder there, as before.
         Vector2s home = ZoneSystem.GetZone(new Vector3(centre.x, 0f, centre.y));
         string? locationPrefab = ZoneSystem.instance.m_locationInstances.TryGetValue(home, out ZoneSystem.LocationInstance instance)
-            ? instance.m_location.m_prefab.Name : null;
+            ? instance.m_location.m_prefab.name : null;
         var rootAt = new Vector3(centre.x, root, centre.y);
         Quaternion turn = Quaternion.Euler(0f, yaw, 0f);
         float rockRadius = RockRadius(centre);

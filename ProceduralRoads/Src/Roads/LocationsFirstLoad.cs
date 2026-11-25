@@ -160,7 +160,7 @@ public static class LocationsFirstLoad
         float ring = RoadNetworkGenerator.KeepOutEdge(centre, rock, RoadNetworkGenerator.RoadWidth, placed: true) + PlacedLocations.AimOut;
         float half = Mathf.Max(ring, rock + RoadStairRuns.RockMargin + RoadStairRuns.RockClearance) + PlacedLocationReader.Margin;
         int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
-        string prefab = ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.Name : "?";
+        string prefab = ZoneSystem.instance.m_locationInstances.TryGetValue(zone, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.name : "?";
         // One that levels no flat but smooths round it is landed on the level ground beside it (PlacedLocationShape.OnLevelGround),
         // clear of its own pieces: read with its boulders.
         bool pieces = RoadStairRuns.FlatOf(ops) == null && !PlacedLocationShape.HasDoor(prefab) && PlacedLocations.SmoothsItsGround(ops);

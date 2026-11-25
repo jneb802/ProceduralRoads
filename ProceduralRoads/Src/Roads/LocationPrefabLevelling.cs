@@ -117,7 +117,7 @@ public static class LocationPrefabLevelling
             var names=new HashSet<string>();
             foreach(var location in locations)
             {
-                if(names.Add(location.m_location.m_prefab.Name)) distinct.Add(location.m_location);
+                if(names.Add(location.m_location.m_prefab.name)) distinct.Add(location.m_location);
                 if(preparation.Checkpoint()) yield return true;
             }
             preparation.BeginStage("Preparing location prefabs",distinct.Count,"prefabs"); yield return true;
@@ -166,7 +166,7 @@ public static class LocationPrefabLevelling
         var seen = new HashSet<string>();
         foreach (var inst in ZoneSystem.instance.GetLocationList())
         {
-            string name = inst.m_location.m_prefab.Name;
+            string name = inst.m_location.m_prefab.name;
             if (!seen.Add(name)) continue;
             IReadOnlyList<LevelOp> ops = ForPrefab(inst.m_location);
             m_terrainRadius.TryGetValue(name, out float terrainRadius);
@@ -209,7 +209,7 @@ public static class LocationPrefabLevelling
 
     private static RoadLocationProtection.Footprint FootprintAt(ZoneSystem.LocationInstance location)
     {
-        string name=location.m_location.m_prefab.Name;
+        string name=location.m_location.m_prefab.name;
         m_terrainRadius.TryGetValue(name,out float terrainRadius);
         m_byPrefab.TryGetValue(name,out IReadOnlyList<LevelOp>? ops);
         float exterior=location.m_location.m_exteriorRadius, whole=Mathf.Max(exterior,terrainRadius);
@@ -314,7 +314,7 @@ public static class LocationPrefabLevelling
                 {
                     var parts = new Vector3[views.Length];
                     for (int i = 0; i < views.Length; i++) parts[i] = views[i].gameObject.transform.position;
-                    s_parts[location.m_prefab.Name] = parts;
+                    s_parts[location.m_prefab.name] = parts;
                     UnityEngine.Random.InitState(seed);
                     foreach (RandomSpawn spawn in spawns) spawn.Randomize(pos + rot * spawn.gameObject.transform.position, component);
                     foreach (RandomObject obj in objects) obj.Randomize(pos + rot * obj.gameObject.transform.position, component);
@@ -347,7 +347,7 @@ public static class LocationPrefabLevelling
         }
         catch (Exception e)
         {
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Could not replay {location.m_prefab.Name}'s placement: {e.GetType().Name} {e.Message}");
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogDebug($"Could not replay {location.m_prefab.name}'s placement: {e.GetType().Name} {e.Message}");
             return null;
         }
     }
@@ -359,7 +359,7 @@ public static class LocationPrefabLevelling
 
     private static IReadOnlyList<LevelOp> ForPrefab(ZoneSystem.ZoneLocation location)
     {
-        string name = location.m_prefab.Name;
+        string name = location.m_prefab.name;
         if (m_byPrefab.TryGetValue(name, out IReadOnlyList<LevelOp> cached))
             return cached;
         // Past this point lies an AssetBundle read and two writes into shared

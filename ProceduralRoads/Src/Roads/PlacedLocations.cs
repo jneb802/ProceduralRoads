@@ -251,7 +251,7 @@ public static class PlacedLocations
     public static bool NeedsPlacing(ZoneSystem.LocationInstance instance, WorldGenerator world)
     {
         Vector3 at = instance.m_position;
-        return NeedsPlacing(instance.m_location.m_prefab.Name, instance.m_location.m_slopeRotation, instance.m_location.m_randomRotation,
+        return NeedsPlacing(instance.m_location.m_prefab.name, instance.m_location.m_slopeRotation, instance.m_location.m_randomRotation,
             () => world.GetBiome(at.x, at.z), () => LocationLevelling.OpsAt(new Vector2(at.x, at.z)));
     }
 

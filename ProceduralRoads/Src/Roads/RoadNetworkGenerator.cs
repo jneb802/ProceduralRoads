@@ -421,7 +421,7 @@ public static class RoadNetworkGenerator
 
         foreach (var loc in locationInstances)
         {
-            string prefabName = loc.m_location.m_prefab.Name!;
+            string prefabName = loc.m_location.m_prefab.name!;
             float exteriorRadius = loc.m_location.m_exteriorRadius;
 
             allLocations.Add((prefabName, loc.m_position, exteriorRadius));

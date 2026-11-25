@@ -145,7 +145,7 @@ public static class ManualRoads
                 $"Waypoint {point} is inside the location at {footprint.Centre.x:F1}, {footprint.Centre.y:F1}, where {two}: no road leads to it. Mark a point outside its edge."));
         if (instance.m_location?.m_prefab == null) throw new ArgumentException(outside);
         var zoneLocation = instance.m_location;
-        var location = new Location(zoneLocation.m_prefab.Name, footprint.Centre, zoneLocation.m_exteriorRadius);
+        var location = new Location(zoneLocation.m_prefab.name, footprint.Centre, zoneLocation.m_exteriorRadius);
         if (PlacedLocations.PlayerDecides(location.Name, zoneLocation.m_unique, zoneLocation.m_iconPlaced, zoneLocation.m_iconAlways))
             throw new ArgumentException($"{location} is a location the game leaves for players to find: no road leads to it. Mark a point outside its edge.");
         if (PlacedLocations.NotPlacedWhy(location.Centre) is string why)

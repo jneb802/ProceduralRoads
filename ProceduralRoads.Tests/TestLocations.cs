@@ -14,7 +14,7 @@ internal static class TestLocations
         zones.m_locationInstances.Add(zone, location);
         // The game registers every ZoneLocation by its prefab name's hash when it sets up its locations (ZoneSystem.SetupLocations),
         // the first of a name kept; a saved LocationInstance is resolved by it.
-        int hash = location.m_location?.m_prefab.Name.GetStableHashCode() ?? 0;
+        int hash = location.m_location?.m_prefab.name.GetStableHashCode() ?? 0;
         if (location.m_location != null && !zones.m_locationsByHash.ContainsKey(hash)) zones.m_locationsByHash.Add(hash, location.m_location);
     }
 }

@@ -315,7 +315,7 @@ public static partial class ZoneSystem_Patch
             if (!__state || !__instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance)) return;
             HiddenLocationIcons.AfterPlacing(instance.m_position, __state, instance.m_placed);
             if (instance.m_placed && RoadNetworkGenerator.RoadsLog)
-                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[LOCATIONS] {instance.m_location.m_prefab.Name} at {instance.m_position} placed before its roads: off the map until a player comes near");
+                ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo($"[LOCATIONS] {instance.m_location.m_prefab.name} at {instance.m_position} placed before its roads: off the map until a player comes near");
         }
     }
 
@@ -341,7 +341,7 @@ public static partial class ZoneSystem_Patch
             if (WorldGenerator.instance == null || !__instance.m_locationInstances.TryGetValue(zoneID, out ZoneSystem.LocationInstance instance) || instance.m_placed)
                 return;
             int seed = WorldGenerator.instance.GetSeed();
-            string prefab = instance.m_location.m_prefab.Name;
+            string prefab = instance.m_location.m_prefab.name;
             UnityEngine.Random.InitState(FixedLocationYaw.Seed(seed, prefab, zoneID.x, zoneID.y));
             s_step = FixedLocationYaw.Step(seed, prefab, zoneID.x, zoneID.y);
         }

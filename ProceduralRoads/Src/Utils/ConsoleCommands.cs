@@ -452,7 +452,7 @@ public static class ConsoleCommands
         float? platform=LocationLevelling.PlatformHeight(baseHeight,LocationLevelling.OpsAt(centre));
         float? approach=LocationLevelling.ApproachHeight(baseHeight,LocationLevelling.OpsAt(centre));
         float radius=RoadLocationProtection.RadiusAt(centre,best.Value.m_location.m_exteriorRadius);
-        args.Context.AddString($"Location {best.Value.m_location.m_prefab.Name} at {centre}; savedRoot={saved?.ToString("F3") ?? "unknown"}; base={baseHeight:F3}; platform={platform?.ToString("F3") ?? "unknown"}; approach={approach?.ToString("F3") ?? "unknown"}; protectedRadius={radius:F2}");
+        args.Context.AddString($"Location {best.Value.m_location.m_prefab.name} at {centre}; savedRoot={saved?.ToString("F3") ?? "unknown"}; base={baseHeight:F3}; platform={platform?.ToString("F3") ?? "unknown"}; approach={approach?.ToString("F3") ?? "unknown"}; protectedRadius={radius:F2}");
     }
 
     private static void ReportRoadEnds(Terminal.ConsoleEventArgs args)
@@ -476,7 +476,7 @@ public static class ConsoleCommands
 
         var locations = new List<(string name, Vector3 position, float radius)>();
         foreach (var inst in ZoneSystem.instance.GetLocationList())
-            locations.Add((inst.m_location.m_prefab.Name, inst.m_position, inst.m_location.m_exteriorRadius));
+            locations.Add((inst.m_location.m_prefab.name, inst.m_position, inst.m_location.m_exteriorRadius));
 
         var rows = RoadEndReport.Compute(locations, ring, WorldGenerator.instance);
 

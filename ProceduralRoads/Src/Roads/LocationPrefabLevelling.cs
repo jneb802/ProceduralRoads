@@ -64,7 +64,7 @@ public static class LocationPrefabLevelling
             var names=new HashSet<string>();
             foreach(var location in locations)
             {
-                if(names.Add(location.m_location.m_prefab.Name)) distinct.Add(location.m_location);
+                if(names.Add(location.m_location.m_prefab.name)) distinct.Add(location.m_location);
                 if(preparation.Checkpoint()) yield return true;
             }
             preparation.BeginStage("Preparing location prefabs",distinct.Count,"prefabs"); yield return true;
@@ -140,7 +140,7 @@ public static class LocationPrefabLevelling
 
     private static RoadLocationProtection.Footprint FootprintAt(ZoneSystem.LocationInstance location)
     {
-        m_terrainRadius.TryGetValue(location.m_location.m_prefab.Name,out float terrainRadius);
+        m_terrainRadius.TryGetValue(location.m_location.m_prefab.name,out float terrainRadius);
         return new RoadLocationProtection.Footprint(new Vector2(location.m_position.x,location.m_position.z),
             Mathf.Max(location.m_location.m_exteriorRadius,terrainRadius));
     }
@@ -173,7 +173,7 @@ public static class LocationPrefabLevelling
 
     private static IReadOnlyList<LevelOp> ForPrefab(ZoneSystem.ZoneLocation location)
     {
-        string name = location.m_prefab.Name;
+        string name = location.m_prefab.name;
         if (m_byPrefab.TryGetValue(name, out IReadOnlyList<LevelOp> cached))
             return cached;
         // Past this point lies an AssetBundle read and two writes into shared

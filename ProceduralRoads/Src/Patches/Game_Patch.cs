@@ -12,8 +12,9 @@ public static class Game_Patch
     public static class Game_SpawnPlayer_Patch
     {
         [HarmonyPostfix]
-        public static void Postfix(Vector3 spawnPoint)
+        public static void Postfix(Game __instance, Vector3 spawnPoint)
         {
+            ServerTerrainBake.OnSpawn(__instance);
             RoadLifecycleManager.OnPlayerSpawn(spawnPoint);
         }
     }

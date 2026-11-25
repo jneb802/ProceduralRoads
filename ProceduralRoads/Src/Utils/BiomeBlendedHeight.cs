@@ -33,7 +33,7 @@ public static class BiomeBlendedHeight
     private const float HeightmapHalfSize = HeightmapSize / 2f;           // 32m from center
     
     // Zone size for calculating heightmap centers
-    private const float ZoneSize = 64f;
+    private const float ZoneSize = RoadConstants.ZoneSize;
     
     /// <summary>
     /// Get terrain height with biome blending that matches rendered terrain.

@@ -18,7 +18,8 @@ namespace ProceduralRoads;
 /// their roads (LocationsFirstLoad) are placed by the same game method, so they agree; what is read back from a placing
 /// (its LocationProxy's rotation) follows.
 ///
-/// The one owner of the fixed turn: offline tools may ask <see cref="Degrees"/> for a randomly turned location's turn.
+/// The one owner of the fixed turn: offline tools may ask <see cref="Degrees"/> for a randomly turned location's turn, and
+/// <see cref="SlopeDegrees"/> for one turned down its slope.
 /// </summary>
 public static class FixedLocationYaw
 {
@@ -66,6 +67,42 @@ public static class FixedLocationYaw
 
     /// <summary>The turn, in degrees (0 to 337.5), a randomly turned location takes with the switch on.</summary>
     public static float Degrees(int worldSeed, string prefab, int zoneX, int zoneY) => Step(worldSeed, prefab, zoneX, zoneY) * StepDegrees;
+
+    /// <summary>
+    /// The turn, in degrees (0 to 337.5), a location turned down its slope (ZoneLocation.m_slopeRotation) takes with the switch
+    /// on: ZoneSystem.PlaceLocations' slope turn replayed from <see cref="Seed"/> on a copy of Unity's Random
+    /// (<see cref="UnityRandom"/>), so offline tools and worker threads predict it without Unity. GetTerrainDelta's ten
+    /// Random.insideUnitCircle samples within <paramref name="radius"/> (the location's exterior radius) of the centre read
+    /// <paramref name="ground"/> (the game's raycast onto the freshly built zone; <see cref="GameGround"/>), the highest and the
+    /// lowest kept (the first of equals); the heading from the highest to the lowest (Quaternion.LookRotation's yaw), rounded to
+    /// 22.5 degrees. A flat disc (no heading) is not turned. The one owner of the seeded slope turn.
+    /// </summary>
+    public static float SlopeDegrees(int worldSeed, string prefab, int zoneX, int zoneY, float x, float z, float radius, Func<float, float, float> ground)
+    {
+        var random = new UnityRandom(Seed(worldSeed, prefab, zoneX, zoneY));
+        float high = -999999f, low = 999999f, highX = x, highZ = z, lowX = x, lowZ = z, highY = 0f, lowY = 0f;
+        for (int i = 0; i < 10; i++)
+        {
+            (float dx, float dz) = random.InsideUnitCircle();
+            float qx = x + dx * radius, qz = z + dz * radius, h = ground(qx, qz);
+            if (h < low) { low = h; lowX = qx; lowZ = qz; lowY = h; }
+            if (h > high) { high = h; highX = qx; highZ = qz; highY = h; }
+        }
+        // Vector3.Normalize(lowest - highest), then its level part normalised (Unity: no direction under 1e-5).
+        float sx = lowX - highX, sy = lowY - highY, sz = lowZ - highZ;
+        float length = (float)Math.Sqrt(sx * sx + sy * sy + sz * sz);
+        if (length <= 1e-5f) return 0f;
+        sx /= length; sz /= length;
+        if ((float)Math.Sqrt(sx * sx + sz * sz) <= 1e-5f) return 0f;
+        float yaw = (float)(Math.Atan2(sx, sz) * (180.0 / Math.PI));
+        if (yaw < 0f) yaw += 360f;
+        float turned = (float)Math.Round(yaw / StepDegrees) * StepDegrees;
+        return turned >= 360f ? turned - 360f : turned;
+    }
+
+    /// <summary>The ground the game's slope samples read: its raycast onto a freshly built zone's 1 m mesh
+    /// (<see cref="BiomeBlendedHeight.Rendered"/>).</summary>
+    public static Func<float, float, float> GameGround(WorldGenerator world) => (x, z) => BiomeBlendedHeight.Rendered(x, z, world, null);
 
     /// <summary>
     /// The random turn's draw: the game's draw is always made (the stream advances as it does without the switch), and

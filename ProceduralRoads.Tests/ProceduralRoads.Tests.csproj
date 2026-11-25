@@ -159,6 +159,7 @@
         <Compile Include="../ProceduralRoads/Src/Roads/LocationPrefabLevelling.Parts.cs" Link="ModSrc/LocationPrefabLevelling.Parts.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/PlacedLocationReader.Records.cs" Link="ModSrc/PlacedLocationReader.Records.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadRockProbe.Candidates.cs" Link="ModSrc/RoadRockProbe.Candidates.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Utils/UnityRandom.cs" Link="ModSrc/UnityRandom.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakePlanner.cs" Link="ModSrc/ServerBakePlanner.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/GhostRepairLedger.cs" Link="ModSrc/GhostRepairLedger.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeFaults.cs" Link="ModSrc/ServerBakeFaults.cs"/>

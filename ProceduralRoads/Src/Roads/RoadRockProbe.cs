@@ -12,7 +12,7 @@ namespace ProceduralRoads;
 /// geometry, never a centre radius or a bounding box. Driven by
 /// <see cref="RoadRockClearing"/>.
 /// </summary>
-public static class RoadRockProbe
+public static partial class RoadRockProbe
 {
     /// <summary>
     /// The automatic pass round <paramref name="centre"/>, the one owner of its options: applied, outside location areas, the
@@ -184,17 +184,17 @@ public static class RoadRockProbe
         // a frost cave's approach was left whole over its steps (MountainCave02 -2560,1536:
         // rocks not part of the prefab are fair game to clear).
         if (location == null) return false;
-        // A boulder of the world's in the location's footprint, not one of its parts: as on any road.
-        bool? part = LocationPrefabLevelling.IsPart(Utils.GetPrefabName(location.gameObject), location.transform.position, location.transform.rotation, at);
-        if (part == false) return false;
-        string kind = part == true ? "one of its parts" : "its parts not known";
-        // The box planning reads (a location's rocks saved with it, PlacedLocationReader.LocationRocks), of this rock as it stands, and
-        // the one rule planning asks of it (LocationRock.KeptAt): the same size, the same middle.
         var view = root.GetComponent<ZNetView>();
         var zdo = view != null && view.IsValid() ? view.GetZDO() : null;
         // Its prefab as the rock pass names it (RoadRockCarve.Prefab, from its ZDO): a fractured rock's object is renamed.
         GameObject? prefab = RoadRockCarve.Prefab(root, view);
         if (prefab == null) return false;
+        // A boulder of the world's in the location's footprint, not one of its parts (of its own prefab, where one stands): as on any road.
+        bool? part = PartOfLocation(Utils.GetPrefabName(location.gameObject), location.transform.position, location.transform.rotation, at, prefab.name);
+        if (part == false) return false;
+        string kind = part == true ? "one of its parts" : "its parts not known";
+        // The box planning reads (a location's rocks saved with it, PlacedLocationReader.LocationRocks), of this rock as it stands, and
+        // the one rule planning asks of it (LocationRock.KeptAt): the same size, the same middle.
         LocationRock box = LocationRock.Of(at, root.transform.rotation, (zdo != null ? PlacedLocationReader.SavedScale(zdo) : null) ?? Vector3.one,
             PlacedLocationReader.LocalBox(prefab), prefab.name);
         var centre = new Vector2(location.transform.position.x, location.transform.position.z);
@@ -235,14 +235,13 @@ public static class RoadRockProbe
     }
 
     /// <summary>The colliders of a Location's snapping stakes (LocationRock.ClearedAtAnyHeight: a SnapToGround on the object,
-    /// the stakes' prefab name) in <paramref name="box"/>'s footprint at any height (<see cref="RockClearance.Column"/>).
+    /// the stakes' prefab name) in <paramref name="column"/>, a box's footprint at any height (<see cref="RockClearance.Column"/>).
     /// Reused between calls.</summary>
-    private static List<Collider> SnappedStakesIn(RockClearance box)
+    private static List<Collider> SnappedStakesIn(RockClearance column)
     {
         s_atAnyHeight.Clear();
         int mask = StakeMask;
         if (mask == 0) return s_atAnyHeight;
-        RockClearance column = box.Column;
         int count = Physics.OverlapBoxNonAlloc(column.Centre, column.Half, s_column, column.Turn, mask, QueryTriggerInteraction.Ignore);
         if (count == s_column.Length)
         {
@@ -261,6 +260,27 @@ public static class RoadRockProbe
         return s_atAnyHeight;
     }
 
+    private static readonly List<Collider> s_inBox = new List<Collider>();
+    private static readonly List<Collider> s_candidates = new List<Collider>();
+
+    /// <summary>The colliders in <paramref name="box"/> on the candidate layers (<paramref name="stakesOnly"/> false), or a
+    /// Location's snapping stakes in it (true: <see cref="SnappedStakesIn"/>, asked of a box's column). Reused between calls.</summary>
+    private static List<Collider> Query(RockClearance box, bool stakesOnly)
+    {
+        if (stakesOnly) return SnappedStakesIn(box);
+        int count = Physics.OverlapBoxNonAlloc(box.Centre, box.Half, s_overlap, box.Turn, CandidateMask, QueryTriggerInteraction.Ignore);
+        if (count == s_overlap.Length)
+        {
+            // A full buffer may have dropped some: ask again with room for all.
+            s_overlap = Physics.OverlapBox(box.Centre, box.Half, box.Turn, CandidateMask, QueryTriggerInteraction.Ignore);
+            count = s_overlap.Length;
+        }
+        s_inBox.Clear();
+        for (int c = 0; c < count; c++) s_inBox.Add(s_overlap[c]);
+        return s_inBox;
+    }
+    private static readonly System.Func<RockClearance, bool, List<Collider>> s_query = Query;
+
     /// <summary>
     /// Which objects stand in one clearance box, each judged once (into
     /// <paramref name="hits"/>) by the clearing policy. Returns the objects the
@@ -275,23 +295,14 @@ public static class RoadRockProbe
     {
         var touchedHere = new List<GameObject>();
         long t = RoadRockStats.Now;
-        int count = Physics.OverlapBoxNonAlloc(box.Centre, box.Half, s_overlap, box.Turn, CandidateMask, QueryTriggerInteraction.Ignore);
-        if (count == s_overlap.Length)
-        {
-            // A full buffer may have dropped some: ask again with room for all.
-            s_overlap = Physics.OverlapBox(box.Centre, box.Half, box.Turn, CandidateMask, QueryTriggerInteraction.Ignore);
-            count = s_overlap.Length;
-        }
-        // A Location's stakes the game snaps to the ground (LocationRock.ClearedAtAnyHeight) stand where the spawn mode dropped
-        // them, on the unlevelled zone (Ghost) or the levelled one (Full): found by x and z in the box's footprint at any height
-        // (RockClearance.Column), so the one in the way goes wherever it landed.
-        List<Collider> atAnyHeight = SnappedStakesIn(box);
+        // The box's own colliders, and a Location's snapping stakes in its column (Candidates).
+        Candidates(box, s_query, s_candidates);
         RoadRockStats.QueryTicks += RoadRockStats.Now - t;
         RoadRockStats.Queries++;
-        RoadRockStats.Colliders += count;
-        for (int c = 0; c < count + atAnyHeight.Count; c++)
+        RoadRockStats.Colliders += s_inBox.Count;
+        for (int c = 0; c < s_candidates.Count; c++)
         {
-            var collider = c < count ? s_overlap[c] : atAnyHeight[c - count];
+            var collider = s_candidates[c];
             if (collider == null || collider.GetComponentInParent<Heightmap>() != null) continue;
             // The object a player would call "the rock": the nearest
             // ancestor with a network view, else the collider's root.

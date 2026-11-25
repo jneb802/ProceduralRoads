@@ -36,16 +36,6 @@ public static partial class PlacedLocationReader
             });
     }
 
-    /// <summary>Whether the location whose identity is <paramref name="centre"/> (LocationPrefabLevelling.LocationOf) keeps every
-    /// rock (<see cref="LocationRock.KeepsEveryRock"/>).</summary>
-    internal static bool KeepsEveryRock(Vector2 centre) =>
-        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) && LocationRock.KeepsEveryRock(instance.m_location.m_prefab.name);
-
-    /// <summary>The location's exterior radius (the location whose identity is <paramref name="centre"/>,
-    /// LocationPrefabLevelling.LocationOf; 0 for none): its rock, for leading a staircase round it. The one owner of which rocks a location keeps (docs/OWNERS.md).</summary>
-    internal static float RockRadius(Vector2 centre) =>
-        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) ? instance.m_location.m_exteriorRadius : 0f;
-
     private static readonly Dictionary<int, Bounds> s_rockBox = new();
 
     /// <summary>
@@ -83,27 +73,13 @@ public static partial class PlacedLocationReader
         return rocks;
     }
 
-    /// <summary>A saved object as the rocks read it: its prefab, position, turn, its saved vector scale (a building piece's box)
-    /// and its saved scale either way (<see cref="SavedScale"/>).</summary>
-    private readonly struct SavedObject
-    {
-        public readonly GameObject Prefab;
-        public readonly Vector3 Position;
-        public readonly Quaternion Rotation;
-        public readonly Vector3? PieceScale, Scale;
-        public SavedObject(GameObject prefab, Vector3 position, Quaternion rotation, Vector3? pieceScale, Vector3? scale)
-        { Prefab = prefab; Position = position; Rotation = rotation; PieceScale = pieceScale; Scale = scale; }
-    }
-
     /// <summary>The location's own boulders and building pieces among <paramref name="objects"/> (<see cref="LocationRocks"/>):
-    /// one owner for the objects a placing saved and for those a prediction draws (<see cref="Predict"/>).</summary>
+    /// one owner for the objects a placing saved and for those a prediction draws (<see cref="Predict"/>), each classed by
+    /// <see cref="Classify"/> with the one part matcher (LocationPrefabLevelling.IsPart, asked with the object's own prefab).</summary>
     private static List<LocationRock> OwnRocks(IEnumerable<SavedObject> objects, int x0, int z0, int w, int h, Vector2 centre, float root, float yaw, out int world)
     {
         world = 0;
         var rocks = new List<LocationRock>();
-        // Only the location's own parts: a boulder of the world's standing in its footprint is any
-        // road's to carve (a rock2_mountain that stayed put while the frost cave beside it turned,
-        // in game). Where the prefab's parts are not known, every boulder there, as before.
         string? location = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance)
             ? instance.m_location.m_prefab.name : null;
         var rootAt = new Vector3(centre.x, root, centre.y);
@@ -117,28 +93,23 @@ public static partial class PlacedLocationReader
             var at = new Vector2(p.x, p.z);
             if (!RoadLocationProtection.Contains(at)) continue;
             GameObject prefab = o.Prefab;
-            bool rock = RoadRockPolicy.IsClearableRock(prefab.name, RoadRockCarve.FracturedFrom());
-            // The location's own rocks of kinds no road clears, its ice above all (Hildir's cave:
-            // ice_rock1, rock3_ice, caverock_ice_*): kept and kept clear of, as its large rocks
-            // are. Left out, a staircase ran up beside and behind its great ice block.
-            // One of its parts: a part of this prefab where the placement stands it (LocationPrefabLevelling.IsPart).
-            bool ownRock = !rock && location != null && LocationRock.OwnRockName(prefab.name)
-                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p, prefab.name) == true;
-            bool piece = !rock && !ownRock && location != null && prefab.GetComponent<WearNTear>() != null
-                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p, prefab.name) == true;
-            if (piece)
+            int objectPrefab = prefab.name.GetStableHashCode();
+            Own own = Classify(prefab.name, RoadRockPolicy.IsClearableRock(prefab.name, RoadRockCarve.FracturedFrom()),
+                prefab.GetComponent<WearNTear>() != null,
+                location != null ? () => LocationPrefabLevelling.IsPart(location, rootAt, turn, p, objectPrefab) : null);
+            if (own == Own.None) continue;
+            if (own == Own.World) { world++; continue; }
+            if (own == Own.Piece)
             {
                 rocks.Add(LocationRock.Of(p, o.Rotation, o.PieceScale ?? Vector3.one, LocalBox(prefab), prefab.name, built: true));
                 continue;
             }
-            if (!rock && !ownRock) continue;
-            if (!ownRock && location != null && LocationPrefabLevelling.IsPart(location, rootAt, turn, p) == false) { world++; continue; }
             Vector3? setScale = o.Scale;
             Quaternion rotation = o.Rotation;
             LocationRock box = LocationRock.Of(p, rotation, setScale ?? Vector3.one, LocalBox(prefab), prefab.name);
             // Its real top where it counts: a rock an approach keeps clear of (large, round the
             // mouth, or at a location keeping every rock); a small one elsewhere is cleared anyway.
-            bool kept = ownRock || box.KeptAt(centre, rockRadius, keepSmall, out _);
+            bool kept = own == Own.OwnRock || box.KeptAt(centre, rockRadius, keepSmall, out _);
             rocks.Add(kept ? WithTop(box, () => Copy(prefab, p, rotation, setScale)) : box);
         }
         return rocks;
@@ -148,21 +119,18 @@ public static partial class PlacedLocationReader
     /// With the seeded turn (<see cref="SeededLocationTurn"/>): the record a placing of the not yet placed location
     /// <paramref name="instance"/> in <paramref name="zone"/> would be read as (LocationsFirstLoad.Read), without placing it: its
     /// predicted root and turn, and the game's draw replayed at them (LocationPrefabLevelling.PlacedOps, with the seed the game hands
-    /// SpawnLocation): the terrain modifiers it keeps, its prefab's own static rocks (<see cref="PrefabRocks"/>) and the networked
-    /// parts SpawnLocation would make (each enabled ZNetView still active after the draw, at root + turn x its place in the prefab,
-    /// turned by turn x its own turn, its scale saved when it syncs it; one the game snaps to the ground stood where the game stands
-    /// it, <see cref="Snapped"/>), read by the one owner (<see cref="OwnRocks"/>). Null when the prefab cannot be read. Main thread.
+    /// SpawnLocation, <see cref="FixedLocationYaw.LocationSeed"/>): the terrain modifiers it keeps, its prefab's own static rocks
+    /// (<see cref="PrefabRocks"/>) and the networked parts SpawnLocation would make (each enabled ZNetView still active after the
+    /// draw, its scale saved when it syncs it), put together by <see cref="Predicted"/>. Null when the prefab cannot be read. Main thread.
     /// </summary>
     internal static PlacedLocationRecord? Predict(Vector2 centre, Vector2s zone, ZoneSystem.LocationInstance instance, Func<float, float, float> ground)
     {
         if (WorldGenerator.instance == null || ZNetScene.instance == null) return null;
         Quaternion turn = SeededLocationTurn.Predict(instance, zone, ground, out float root);
-        float yaw = turn.eulerAngles.y;
         var at = new Vector3(instance.m_position.x, root, instance.m_position.z);
-        int seed = WorldGenerator.instance.GetSeed() + zone.x * 4271 + zone.y * 9187;
+        int seed = FixedLocationYaw.LocationSeed(WorldGenerator.instance.GetSeed(), zone.x, zone.y);
         List<LocationRock> prefabRocks = new();
-        var parts = new List<SavedObject>();
-        var snaps = new List<float?>();
+        var parts = new List<DrawnPart>();
         IReadOnlyList<LevelOp>? ops = LocationPrefabLevelling.PlacedOps(centre, seed, at, turn, (asset, views) =>
         {
             try { prefabRocks = PrefabRocks(asset, at, turn); }
@@ -184,41 +152,12 @@ public static partial class PlacedLocationReader
                     scale = s;
                     if (!(Mathf.Approximately(s.x, s.y) && Mathf.Approximately(s.x, s.z))) pieceScale = s;
                 }
-                parts.Add(new SavedObject(prefab, at + turn * t.position, turn * t.rotation, pieceScale, scale));
-                snaps.Add(LocationPrefabLevelling.Part.Of(view).Snap);
+                parts.Add(new DrawnPart(prefab, t.position, t.rotation, pieceScale, scale, LocationPrefabLevelling.PartOf(view).Snap));
             }
         });
         if (ops == null) return null;
-        float rock = RockRadius(centre);
-        float half = ReadHalf(centre, rock);
-        int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
-        var record = new PlacedLocationRecord
-        {
-            Prefab = instance.m_location.m_prefab.name,
-            Centre = centre, Yaw = yaw, Root = root, RockRadius = rock, KeepSmallRocks = KeepsEveryRock(centre),
-            Ops = new List<LevelOp>(ops), X0 = x0, Z0 = z0, W = w + 1, H = w + 1,
-        };
-        for (int i = 0; i < parts.Count; i++)
-            if (snaps[i] is float offset) parts[i] = Snapped(parts[i], ground, offset);
-        List<LocationRock> rocks = OwnRocks(parts, x0, z0, w, w, centre, root, yaw, out _);
-        rocks.AddRange(prefabRocks);
-        record.Rocks = rocks;
-        return record;
-    }
-
-    /// <summary>
-    /// A part the game snaps to the ground where the game leaves it. SpawnLocation ends with SnapToGround.SnappAll, which stands each
-    /// on the terrain raycast under it plus its m_offset and saves that to its ZDO. A zone a server generates for its peers, or a
-    /// dedicated server for anyone (SpawnMode.Ghost), has no location levelling yet at that moment: the location's own levelling
-    /// comes with its static part, which its LocationProxy spawns only once a player loads it. So the raycast hits the fresh zone's
-    /// mesh (<paramref name="ground"/>, the ground the turn is predicted on), as the check reads it back. A zone a hosting player generates for themself
-    /// (SpawnMode.Full) spawns that static part at once and snaps onto the levelled ground: the same x and z, another height.
-    /// </summary>
-    private static SavedObject Snapped(SavedObject part, Func<float, float, float> ground, float offset)
-    {
-        Vector3 p = part.Position;
-        p.y = ground(p.x, p.z) + offset;
-        return new SavedObject(part.Prefab, p, part.Rotation, part.PieceScale, part.Scale);
+        return Predicted(centre, instance.m_location.m_prefab.name, at, turn, ops, parts, prefabRocks, ground,
+            (objects, x0, z0, w, h, c, r, y) => OwnRocks(objects, x0, z0, w, h, c, r, y, out _));
     }
 
     /// <summary>

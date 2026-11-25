@@ -195,19 +195,19 @@ public class ServerBakeTests
         var logAt = new Vector2(3920.145f, -4712.148f);
         var stumpLaid = new VegetationClearing.Lean(0f, 0f, 72.097f);
         var logLaid = new VegetationClearing.Lean(340.8f, 2.6f, 72.328f);
-        List<VegetationClearing.Footprint> Crypt(System.Func<Vector3, bool?>? partAt) =>
+        List<VegetationClearing.Footprint> Crypt(System.Func<Vector3, int, bool?>? partAt) =>
             new() { new(new Vector2(3914.0f, -4726.4f), 18f, partAt) };
         VegetationClearing.Lying Judge(int prefab, Vector2 at, float yaw, VegetationClearing.Lean laid, List<VegetationClearing.Footprint> crypt) =>
             VegetationClearing.Decide(prefab, at, false, vegetation, none, crypt, nobody, CryptRoad, 1f, yaw, out _, laid);
 
-        var notItsOwn = Crypt(_ => false);
+        var notItsOwn = Crypt((_, _) => false);
         Assert.Equal(VegetationClearing.Lying.Remove, Judge(stump, stumpAt, 0f, stumpLaid, notItsOwn));
         Assert.Equal(VegetationClearing.Lying.Remove, Judge(log, logAt, 223f, logLaid, notItsOwn));
         // The crypt's parts not known (its prefab unread), or a part standing there: the crypt's.
         Assert.Equal(VegetationClearing.Lying.Clear, Judge(stump, stumpAt, 0f, stumpLaid, Crypt(null)));
-        Assert.Equal(VegetationClearing.Lying.Clear, Judge(stump, stumpAt, 0f, stumpLaid, Crypt(_ => null)));
+        Assert.Equal(VegetationClearing.Lying.Clear, Judge(stump, stumpAt, 0f, stumpLaid, Crypt((_, _) => null)));
         Assert.Equal(VegetationClearing.Lying.Clear, Judge(log, logAt, 223f, logLaid,
-            Crypt(p => Vector3.Distance(p, new Vector3(logAt.x, 72.328f, logAt.y)) < 0.1f)));
+            Crypt((p, _) => Vector3.Distance(p, new Vector3(logAt.x, 72.328f, logAt.y)) < 0.1f)));
     }
 
     /// <summary>A Black Forest road by a ruin, 4 m wide: the points the offline network lays there, moved 1.6 m east and 2.5 m
@@ -303,7 +303,7 @@ public class ServerBakeTests
         var vegetation = new HashSet<int>(entries.Select(e => e.prefab.GetStableHashCode()));
         var nobody = new List<VegetationClearing.Footprint>();
         // The location's parts are known, and none of these is one.
-        var location = new List<VegetationClearing.Footprint> { new(centre, radius, _ => false) };
+        var location = new List<VegetationClearing.Footprint> { new(centre, radius, (_, _) => false) };
         foreach (bool clearsArea in new[] { false, true })
         {
             // As ZoneSystem.PlaceLocations adds it, then the roads' as RoadClearAreaManager builds them.

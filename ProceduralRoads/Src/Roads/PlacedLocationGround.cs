@@ -8,8 +8,8 @@ namespace ProceduralRoads;
 /// The ground round a placed location as the game will draw it, rebuilt without
 /// its zone being loaded: the terrain's natural height at each 1 m vertex, the
 /// location's terrain modifiers applied as Heightmap.ApplyModifiers does, and
-/// outside every location's footprint the road's own earthwork. So a cave the server
-/// placed unseen (ZoneSystem.SpawnZone, Ghost) can have its approach staircase
+/// outside every location's footprint the road's own earthwork. So a cave whose turn and root the roads predict before its
+/// zone is ever generated (SeededLocationTurn, PlacedLocationReader.Predict), or one placed before the network, can have its approach staircase
 /// laid before anyone comes. Rebuilt from the mod's own heights,
 /// a frost cave's prefab modifiers and its turn, it matched the game's heightmap to
 /// 1 mm at all 2121 vertices within 26 m of two caves. Pure.

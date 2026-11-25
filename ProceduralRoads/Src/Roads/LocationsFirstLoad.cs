@@ -120,7 +120,8 @@ public static class LocationsFirstLoad
         return true;
     }
 
-    /// <summary>What an already placed location's placing settled, remembered for the roads (<see cref="PlacedLocations"/>). Main thread.</summary>
+    /// <summary>What an already placed location's placing settled, remembered for the roads (<see cref="PlacedLocations"/>), by the
+    /// one record builder (PlacedLocationReader.Record). Main thread.</summary>
     private static bool Read(Vector2 centre, Vector2s zone)
     {
         if (!PlacedLocationReader.Placed(zone, centre, out ZDO? proxy)) return false;
@@ -129,19 +130,10 @@ public static class LocationsFirstLoad
         // height the game stood it (PlacedLocations.FlatlessPlaced).
         IReadOnlyList<LevelOp>? ops = PlacedLocationReader.KeptOps(centre, proxy);
         if (ops == null) return false;
-        float rock = PlacedLocationReader.RockRadius(centre);
-        // The ground the road onto its landing may be laid over (PlacedLocationReader.ReadHalf).
-        float half = PlacedLocationReader.ReadHalf(centre, rock);
-        int x0 = Mathf.FloorToInt(centre.x - half), z0 = Mathf.FloorToInt(centre.y - half), w = Mathf.CeilToInt(2f * half) + 1;
         string prefab = LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance placed) ? placed.m_location.m_prefab.name : "?";
         // Its own built pieces are read with its boulders: every approach keeps clear of them (PlacedLocationShape.Refusal: the walker's own body).
-        List<LocationRock> rocks = PlacedLocationReader.LocationRocks(x0, z0, w, w, centre, root, yaw, out _);
-        PlacedLocations.Remember(new PlacedLocationRecord
-        {
-            Prefab = prefab,
-            Centre = centre, Yaw = yaw, Root = root, RockRadius = rock, KeepSmallRocks = PlacedLocationReader.KeepsEveryRock(centre),
-            Ops = new List<LevelOp>(ops), Rocks = rocks, X0 = x0, Z0 = z0, W = w + 1, H = w + 1,
-        });
+        PlacedLocations.Remember(PlacedLocationReader.Record(centre, prefab, yaw, root, ops,
+            (x0, z0, w) => PlacedLocationReader.LocationRocks(x0, z0, w, w, centre, root, yaw, out _)));
         return true;
     }
 

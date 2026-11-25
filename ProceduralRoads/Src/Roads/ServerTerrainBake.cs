@@ -1341,26 +1341,10 @@ public static class ServerTerrainBake
                 string prefab = location.m_location.m_prefab.name;
                 bool placed = location.m_placed;
                 locations.Add(new VegetationClearing.Footprint(centre, location.m_location.m_exteriorRadius,
-                    at => PartOfLocation(home, centre, prefab, placed, at)));
+                    (at, objectPrefab) => PlacedLocationReader.PartOfPlaced(home, centre, prefab, placed, at, objectPrefab)));
             }
         }
         return locations;
-    }
-
-    /// <summary>Whether an object at <paramref name="at"/> is one of the networked parts of the location at
-    /// <paramref name="centre"/> (LocationPrefabLevelling.IsPart, at its saved placement: its LocationProxy's root and turn).
-    /// A location not placed yet has none in the world. Its parts are read from its prefab once a session
-    /// (PlacedLocationReader.KeptOps, as a location placed before its roads is read); null where they cannot be.</summary>
-    private static bool? PartOfLocation(Vector2s home, Vector2 centre, string prefab, bool placed, Vector3 at)
-    {
-        if (!placed) return false;
-        if (!PlacedLocationReader.Placed(home, centre, out ZDO? proxy)) return null;
-        Vector3 root = proxy!.GetPosition();
-        Quaternion turn = proxy.GetRotation();
-        bool? part = LocationPrefabLevelling.IsPart(prefab, root, turn, at);
-        if (part == null && PlacedLocationReader.KeptOps(centre, proxy) != null)
-            part = LocationPrefabLevelling.IsPart(prefab, root, turn, at);
-        return part;
     }
 
     /// <summary>

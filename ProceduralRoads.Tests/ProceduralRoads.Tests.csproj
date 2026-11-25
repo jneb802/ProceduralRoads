@@ -155,6 +155,10 @@
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/FixedLocationYaw.cs" Link="ModSrc/FixedLocationYaw.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/SeededLocationTurn.cs" Link="ModSrc/SeededLocationTurn.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Patches/ZoneSystem.PlaceLocations.cs" Link="ModSrc/ZoneSystem.PlaceLocations.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/LocationPrefabLevelling.Parts.cs" Link="ModSrc/LocationPrefabLevelling.Parts.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/PlacedLocationReader.Records.cs" Link="ModSrc/PlacedLocationReader.Records.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/RoadRockProbe.Candidates.cs" Link="ModSrc/RoadRockProbe.Candidates.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakePlanner.cs" Link="ModSrc/ServerBakePlanner.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/GhostRepairLedger.cs" Link="ModSrc/GhostRepairLedger.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeFaults.cs" Link="ModSrc/ServerBakeFaults.cs"/>

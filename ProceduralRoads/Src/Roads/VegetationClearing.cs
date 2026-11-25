@@ -77,13 +77,13 @@ public static class VegetationClearing
     {
         public readonly Vector2 Centre;
         public readonly float Radius;
-        /// <summary>For a location: whether an object standing at a point is one of its own parts
+        /// <summary>For a location: whether an object of a prefab (its stable hash, as its ZDO names it) standing at a point is one of its own parts
         /// (LocationPrefabLevelling.IsPart), null where that is not known. Without it, or where it is not known, the server
         /// cannot tell vegetation from the location within the footprint, and judges nothing there (Decide). Not ground kept
         /// from the road: a location keeps ground only by its clear area, as in generation (ZoneAreas).</summary>
-        public readonly Func<Vector3, bool?>? PartAt;
+        public readonly Func<Vector3, int, bool?>? PartAt;
 
-        public Footprint(Vector2 centre, float radius, Func<Vector3, bool?>? partAt = null)
+        public Footprint(Vector2 centre, float radius, Func<Vector3, int, bool?>? partAt = null)
         {
             Centre = centre;
             Radius = radius;
@@ -908,7 +908,7 @@ public static class VegetationClearing
         Lying verdict = Judge(prefab, point, scale, yaw, lean, areas, road ?? Array.Empty<RoadCentre>(), out turned,
             IsLying(prefab) && playerGround.Count > 0 ? OnPlayerGround(playerGround) : null, body);
         // Asked only of what the road would take: a location's parts are read from its prefab.
-        if (verdict != Lying.Clear && (MayBePart(locations, position, lean) || Inside(playerGround, position)))
+        if (verdict != Lying.Clear && (MayBePart(locations, prefab, position, lean) || Inside(playerGround, position)))
         {
             turned = yaw;
             return Lying.Clear;
@@ -920,18 +920,18 @@ public static class VegetationClearing
     /// ground allocates nothing.</summary>
     private static Func<Vector2, bool> OnPlayerGround(IReadOnlyList<Footprint> playerGround) => p => Inside(playerGround, p);
 
-    /// <summary>Whether the object at <paramref name="position"/>, its origin at <paramref name="lean"/>'s height, may be one of
+    /// <summary>Whether the object of <paramref name="prefab"/> at <paramref name="position"/>, its origin at <paramref name="lean"/>'s height, may be one of
     /// a location's own parts (<see cref="Footprint.PartAt"/>, LocationPrefabLevelling.IsPart). Where the parts cannot be
     /// known (no test, no height, or the test does not know), the server cannot tell vegetation from the location within its
     /// exterior radius, and takes it to be the location's: this is not ground kept from the road, only an object it cannot
     /// judge.</summary>
-    private static bool MayBePart(IReadOnlyList<Footprint> locations, Vector2 position, Lean? lean)
+    private static bool MayBePart(IReadOnlyList<Footprint> locations, int prefab, Vector2 position, Lean? lean)
     {
         foreach (Footprint location in locations)
         {
             if ((position - location.Centre).sqrMagnitude >= location.Radius * location.Radius) continue;
             if (location.PartAt == null || lean is not Lean laid) return true;
-            if (location.PartAt(new Vector3(position.x, laid.Origin, position.y)) != false) return true;
+            if (location.PartAt(new Vector3(position.x, laid.Origin, position.y), prefab) != false) return true;
         }
         return false;
     }

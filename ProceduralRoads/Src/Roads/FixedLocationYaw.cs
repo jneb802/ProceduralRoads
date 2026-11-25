@@ -12,7 +12,9 @@ namespace ProceduralRoads;
 /// by ten Random.insideUnitCircle ground samples (GetTerrainDelta). Positions and the generator's terrain are the same on
 /// every run of a seed; these draws are not, so a landing, and the roads to it, moved between runs. With the switch on,
 /// the zone's placing draws from <see cref="Seed"/> (the slope's samples) and a randomly turned location takes
-/// <see cref="Step"/>; the game's location seed, handed to SpawnLocation right after, is untouched. Locations placed before
+/// <see cref="Step"/>; the game's location seed, handed to SpawnLocation right after, is untouched. The seeding is the seeded
+/// turn's (SeededLocationTurn.Begin, the one owner of seeding a turn: Random saved, seeded and put back before SpawnLocation);
+/// this switch only widens it to every location and fixes the random step. Locations placed before
 /// their roads (LocationsFirstLoad) are placed by the same game method, so they agree; what is read back from a placing
 /// (its LocationProxy's rotation) follows.
 ///
@@ -22,7 +24,8 @@ public static class FixedLocationYaw
 {
     /// <summary>The switch's name after PROCEDURALROADS_.</summary>
     public const string Switch = "FIXED_LOCATION_YAW";
-    /// <summary>The game's turns for a randomly turned location: Random.Range(0, 16) steps of 22.5 degrees.</summary>
+    /// <summary>The game's turns for a randomly turned location: Random.Range(0, 16) steps of 22.5 degrees; a slope-turned one is
+    /// rounded to the same step (ZoneSystem.PlaceLocations).</summary>
     public const int Steps = 16;
     public const float StepDegrees = 360f / Steps;
 
@@ -41,7 +44,7 @@ public static class FixedLocationYaw
         uint h;
         unchecked
         {
-            int locationSeed = worldSeed + zoneX * 4271 + zoneY * 9187;
+            int locationSeed = LocationSeed(worldSeed, zoneX, zoneY);
             h = (uint)locationSeed ^ ((uint)prefab.GetStableHashCode() * 0x9E3779B1u);
             h ^= h >> 16; h *= 0x85EBCA6Bu;
             h ^= h >> 13; h *= 0xC2B2AE35u;
@@ -50,7 +53,12 @@ public static class FixedLocationYaw
         return h;
     }
 
-    /// <summary>The seed the zone's placing draws from with the switch on (the slope's ground samples).</summary>
+    /// <summary>The game's location seed for a zone, as PlaceLocations hands SpawnLocation: WorldGenerator seed + zone.x * 4271 +
+    /// zone.y * 9187. The one copy of the game's formula (the seeded turn's prediction draws with it, PlacedLocationReader.Predict).</summary>
+    public static int LocationSeed(int worldSeed, int zoneX, int zoneY) => unchecked(worldSeed + zoneX * 4271 + zoneY * 9187);
+
+    /// <summary>The seed a seeded Location's turn draws from (SeededLocationTurn.Begin: a chosen one, and every one with the switch
+    /// on; the slope's ground samples).</summary>
     public static int Seed(int worldSeed, string prefab, int zoneX, int zoneY) => unchecked((int)Hash(worldSeed, prefab, zoneX, zoneY));
 
     /// <summary>The turn, in steps of <see cref="StepDegrees"/>, a randomly turned location takes with the switch on.</summary>

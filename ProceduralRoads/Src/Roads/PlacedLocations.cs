@@ -495,7 +495,7 @@ public static class PlacedLocations
     /// names (ManualRoads.LocationAt).
     /// </summary>
     /// <remarks>Not Hildir's quest locations while roads go to them (<see cref="RoadNetworkOptions.HildirQuestLocations"/>): placed
-    /// first like the other caves, their map icons held back until a player comes near (<see cref="HiddenLocationIcons"/>).</remarks>
+    /// first like the other caves. The game places them, and shows their icons, when a player first comes near, as it always does.</remarks>
     public static bool PlayerDecides(string prefab, bool unique, bool iconPlaced, bool iconAlways) =>
         !RoadNetworkGenerator.HildirRoads(prefab) && (unique || iconPlaced || iconAlways);
 
@@ -515,9 +515,9 @@ public static class PlacedLocations
     /// Come close to: one that turns to face downhill (the caves, the Mistlands' entrances, towers and digs), any in the
     /// Mistlands (hard ground, a staircase where a road cannot get there), or a boss's entrance (reached only on its own
     /// landing, <see cref="RoadNetworkGenerator.OwnLandingOnly"/>), and a location with a door, wherever it is: a crypt's road
-    /// ends in front of its door (<see cref="PlacedLocationShape.DoorLandings"/>), which turns with it. Placing costs loading
-    /// time, so not every location elsewhere: one turned at random elsewhere keeps the outskirts end. The load places every one, however long that takes (the
-    /// player can cancel it); one that still was not placed before its roads gets none (<see cref="NotPlaced"/>).
+    /// ends in front of its door (<see cref="PlacedLocationShape.DoorLandings"/>), which turns with it. Not
+    /// every location elsewhere: one turned at random elsewhere keeps the outskirts end. Its placing is predicted before its
+    /// roads (LocationsFirstLoad, SeededLocationTurn); one whose placing could not be predicted or read gets none (<see cref="NotPlaced"/>).
     /// </summary>
     public static bool NeedsPlacing(string prefab, bool slopeRotation, bool randomRotation, Heightmap.Biome biome, IReadOnlyList<LevelOp>? ops) =>
         NeedsPlacing(prefab, slopeRotation, randomRotation, () => biome, () => ops);

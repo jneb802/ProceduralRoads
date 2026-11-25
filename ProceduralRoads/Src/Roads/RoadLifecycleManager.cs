@@ -37,10 +37,9 @@ public static partial class RoadLifecycleManager
         ChoicePending = false;
         m_includedNote = null;
         RoadNetworkGenerator.Reset();
-        // This world's placed locations and the map icons they hide: another world's are not its. Kept through
-        // a regeneration: the locations stay placed, and nothing places them again to hide them.
+        // This world's placed locations: another world's are not its. Kept through
+        // a regeneration: the locations placed stay the world's.
         PlacedLocations.Reset();
-        HiddenLocationIcons.Reset();
         NetworkCutoff.Forget(zoneSystem);
         RoadClearAreaManager.ClearCache();
         RoadTerrainModifier.ResetForWorld();

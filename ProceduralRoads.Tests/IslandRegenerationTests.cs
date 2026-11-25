@@ -14,8 +14,8 @@ namespace ProceduralRoads.Tests;
 public class IslandRegenerationTests : System.IDisposable
 {
     private readonly ValheimWorldScope _world = new ValheimWorldScope();
-    /// <summary>LocationsFirstLoad.PlacingStage (the mod's loading-panel label; LocationsFirstLoad itself is not compiled here).</summary>
-    private const string PlacingStage = "Placing locations before their roads";
+    /// <summary>LocationsFirstLoad.PredictingStage (the mod's loading-panel label; LocationsFirstLoad itself is not compiled here).</summary>
+    private const string PredictingStage = "Predicting how the game will place locations";
 
     private static readonly (string name, float x, float z, float radius)[] StandardLocations =
     {
@@ -219,7 +219,7 @@ public class IslandRegenerationTests : System.IDisposable
             IEnumerable<bool> Hold(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
             {
                 chosen = work.AllSelected.Select(d => d.name).ToList();
-                preparation.BeginStage(PlacingStage, 1, "locations"); yield return true;
+                preparation.BeginStage(PredictingStage, 1, "locations"); yield return true;
                 while (!release) { preparation.EndSlice(); yield return true; }
                 preparation.CompleteUnit();
             }
@@ -227,13 +227,13 @@ public class IslandRegenerationTests : System.IDisposable
 
             StartLoad();
             var clock = System.Diagnostics.Stopwatch.StartNew();
-            while (RoadLifecycleManager.Progress.PreparationStage != PlacingStage && RoadLifecycleManager.IsGenerating && clock.Elapsed.TotalSeconds < 30)
+            while (RoadLifecycleManager.Progress.PreparationStage != PredictingStage && RoadLifecycleManager.IsGenerating && clock.Elapsed.TotalSeconds < 30)
                 RoadLifecycleManager.Tick();
             for (int frame = 0; frame < 10; frame++) RoadLifecycleManager.Tick();
 
             Assert.True(RoadLifecycleManager.IsGenerating);
             Assert.Equal("Preparing", RoadLifecycleManager.Progress.Phase);
-            Assert.Equal(PlacingStage, RoadLifecycleManager.Progress.PreparationStage);
+            Assert.Equal(PredictingStage, RoadLifecycleManager.Progress.PreparationStage);
             Assert.False(RoadNetworkGenerator.RoadsAvailable);
             Assert.Equal(0, RoadSpatialGrid.TotalRoadPoints);
             Assert.Contains("Eikthyrnir", chosen!);

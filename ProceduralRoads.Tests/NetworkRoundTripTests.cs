@@ -382,7 +382,7 @@ public sealed class NetworkRoundTripTests : IDisposable
 
     /// <summary>Every record the network is saved with, written by this build, reads back through the load and is written
     /// again byte for byte (write -> read parity): the points, start points, crossings, shore landings, bridge zones, owed
-    /// pieces, hidden icons, locations placed first, staircases, built bridges and staircases, and the cleared zones.</summary>
+    /// pieces, locations placed first, staircases, built bridges and staircases, and the cleared zones.</summary>
     [Fact]
     public void EveryRecordThisBuildSavesReadsBackAndSavesTheSameBytes()
     {
@@ -390,7 +390,7 @@ public sealed class NetworkRoundTripTests : IDisposable
         string[] keys =
         {
             "ProceduralRoads_GlobalData", "ProceduralRoads_StartPoints", "ProceduralRoads_Crossings", "ProceduralRoads_CoastLandings",
-            "ProceduralRoads_BridgeZones", "ProceduralRoads_AppendBridges", "ProceduralRoads_HiddenLocationIcons", "ProceduralRoads_PlacedLocations",
+            "ProceduralRoads_BridgeZones", "ProceduralRoads_AppendBridges", "ProceduralRoads_PlacedLocations",
             "ProceduralRoads_StairRuns", "ProceduralRoads_BuiltBridges", "ProceduralRoads_BuiltStairs", "ProceduralRoads_ClearedZones",
             "ProceduralRoads_LaidRoads",
         };

@@ -64,7 +64,6 @@
         <Compile Include="../ProceduralRoads/Src/Roads/PlacedLocationGround.cs" Link="ModSrc/PlacedLocationGround.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/PlacedLocations.cs" Link="ModSrc/PlacedLocations.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/PlacedLocationReader.Ground.cs" Link="ModSrc/PlacedLocationReader.Ground.cs"/>
-        <Compile Include="../ProceduralRoads/Src/Roads/HiddenLocationIcons.cs" Link="ModSrc/HiddenLocationIcons.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadLocationEntry.cs" Link="ModSrc/RoadLocationEntry.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/RoadBeside.cs" Link="ModSrc/RoadBeside.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/CrossIslandReads.cs" Link="ModSrc/CrossIslandReads.cs"/>
@@ -155,6 +154,7 @@
         <Compile Include="../ProceduralRoads/Src/Utils/IslandDetector.cs" Link="ModSrc/IslandDetector.cs"/>
         <Compile Include="../ProceduralRoads/Src/Utils/DebugSwitches.cs" Link="ModSrc/DebugSwitches.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/FixedLocationYaw.cs" Link="ModSrc/FixedLocationYaw.cs"/>
+        <Compile Include="../ProceduralRoads/Src/Roads/SeededLocationTurn.cs" Link="ModSrc/SeededLocationTurn.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakePlanner.cs" Link="ModSrc/ServerBakePlanner.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/GhostRepairLedger.cs" Link="ModSrc/GhostRepairLedger.cs"/>
         <Compile Include="../ProceduralRoads/Src/Roads/ServerBakeFaults.cs" Link="ModSrc/ServerBakeFaults.cs"/>

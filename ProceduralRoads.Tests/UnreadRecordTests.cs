@@ -76,7 +76,6 @@ public class UnreadRecordTests : System.IDisposable
     [InlineData("ProceduralRoads_StairRuns")]
     [InlineData("ProceduralRoads_BuiltBridges")]
     [InlineData("ProceduralRoads_BuiltStairs")]
-    [InlineData("ProceduralRoads_HiddenLocationIcons")]
     [InlineData("ProceduralRoads_AppendBridges")]
     [InlineData("ProceduralRoads_Crossings")]
     [InlineData("ProceduralRoads_BridgeZones")]

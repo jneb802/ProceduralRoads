@@ -180,8 +180,7 @@ public partial class LocationsFirstTests
     }
 
     /// <summary>A saved network that fails to read part way is not a network: what was read is forgotten, the locations placed
-    /// before their roads and their hidden icons with the rest. Kept, the locations stayed ready for roads that were not there and
-    /// their icons stayed off the map.</summary>
+    /// before their roads with the rest. Kept, the locations stayed ready for roads that were not there.</summary>
     [Fact]
     public void ANetworkThatCannotBeReadForgetsTheLocationsItHadRead()
     {
@@ -190,24 +189,19 @@ public partial class LocationsFirstTests
         RoadSpatialGrid.CommitLevelled(new List<Vector2> { new(100f, 100f), new(108f, 100f), new(116f, 100f) }, new List<float> { 50f, 50f, 50f }, 4f);
         RoadSpatialGrid.FinalizeRoadNetwork();
         PlacedLocations.Remember(RaisedLanding().Record);
-        HiddenLocationIcons.Hide(new Vector3(0f, 56f, 0f));
         RoadNetworkPersistence.SaveGlobalRoadData(new List<(Vector2, string)>(), new List<RoadCrossing>(), new HashSet<Vector2s>());
         RoadNetworkGenerator.Reset();
         PlacedLocations.Reset();
-        HiddenLocationIcons.Reset();
         RoadLocationProtection.Set(new[] { new RoadLocationProtection.Footprint(new Vector2(0f, 0f), Footprint) });
         try
         {
-            // The load's report of what it read throws, after the locations and icons were read.
+            // The load's report of what it read throws, after the locations were read.
             BepInEx.Logging.ManualLogSource.ThrowOnNextInfo = true;
             Assert.False(RoadNetworkGenerator.TryLoadGlobalRoadData());
         }
         finally { BepInEx.Logging.ManualLogSource.ThrowOnNextInfo = false; }
-        bool hidden = HiddenLocationIcons.IsHidden(new Vector3(0f, 56f, 0f));
-        HiddenLocationIcons.Reset();
         Assert.True(RoadNetworkPersistence.LastLoadUnreadable);
         Assert.Equal(0, PlacedLocations.Count);
         Assert.Equal(0, PlacedLocations.ReadyCount);
-        Assert.False(hidden);
     }
 }

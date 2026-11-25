@@ -7,32 +7,28 @@ namespace ProceduralRoads;
 
 /// <summary>
 /// In every generation (at world load, road_generate, road_regen_island), between choosing the network's destinations
-/// and building it: the server places the zones of the destinations whose landing only placement settles
-/// (<see cref="PlacedLocations.NeedsPlacing(ZoneSystem.LocationInstance, WorldGenerator)"/>), as Valheim does for zones near a player
-/// (ZoneSystem.SpawnZone, Ghost), reads what each placement settled, and only then builds the
-/// roads, all under the loading panel. The game turns such a
-/// location as its zone is placed, from its unseeded Random: nothing before can say which way its
-/// landing faces. A location's prefab and its zone's terrain load over frames, so the placing is
-/// spread over frames: waited for on the main thread, 21 zones never came and the load grew by
-/// 276 s. It runs as steps of the generation's preparation
-/// (<see cref="RoadNetworkGenerator.LocationsFirst"/>, <see cref="RoadPreparation"/>), each with its own
-/// stage and count on the loading panel: <see cref="ListingStage"/>, <see cref="PlacingStage"/>
-/// (one try a frame) and <see cref="ReadingStage"/>; then the generation rebuilds their ground
-/// (<see cref="PlacedLocations.PrepareSteps"/>). A location that is unique or shows a map icon once placed is never
-/// a destination (<see cref="PlacedLocations.PlayerDecides"/>), so never placed here; Hildir's quest locations are, where
-/// the roads go to them, and their icons stay off the map until a player comes near (<see cref="HiddenLocationIcons"/>).
+/// and building it: the server settles the landing of each destination whose landing only its placing settles
+/// (<see cref="PlacedLocations.NeedsPlacing(ZoneSystem.LocationInstance, WorldGenerator)"/>), and only then builds the roads,
+/// all under the loading panel. No zone is generated for it: the game places such a location when a player first comes near
+/// its zone, as it always does, and turns it then with its own turn code, seeded for it (<see cref="SeededLocationTurn"/>). So
+/// the turn, root, levelling and parts the game will give it are predicted here (<see cref="PlacedLocationReader.Predict"/>)
+/// and remembered as its record (<see cref="PlacedLocations.Remember"/>). One already placed (its zone generated with this
+/// network in place) is read as the game left it (<see cref="Read"/>), never predicted. It runs as steps of the generation's
+/// preparation (<see cref="RoadNetworkGenerator.LocationsFirst"/>, <see cref="RoadPreparation"/>), each with its own stage and
+/// count on the loading panel: <see cref="ListingStage"/> and <see cref="PredictingStage"/>; then the generation rebuilds
+/// their ground (<see cref="PlacedLocations.PrepareSteps"/>). A location that is unique or shows a map icon once placed is
+/// never a destination (<see cref="PlacedLocations.PlayerDecides"/>).
 /// </summary>
 public static class LocationsFirstLoad
 {
     /// <summary>The loading panel's stages, in order.</summary>
-    public const string ListingStage = "Finding locations to place before their roads";
-    public const string PlacingStage = "Placing locations before their roads";
-    public const string ReadingStage = "Reading placed locations";
+    public const string ListingStage = "Finding locations to predict before their roads";
+    public const string PredictingStage = "Predicting how the game will place locations";
 
+    /// <summary>Destinations not placed yet: predicted.</summary>
     private static readonly List<(Vector2 centre, Vector2s zone)> s_pending = new();
-    private static readonly List<(Vector2 centre, Vector2s zone)> s_placing = new();
-    private static double s_mainMs;
-    private static int s_frames;
+    /// <summary>Destinations already placed: read.</summary>
+    private static readonly List<(Vector2 centre, Vector2s zone)> s_placed = new();
 
     public static void Install()
     {
@@ -41,10 +37,9 @@ public static class LocationsFirstLoad
     }
 
     /// <summary>
-    /// The generation's chosen destinations that are placed first listed, placed over frames (one try a
-    /// frame for each, until every one is placed) and read, before the roads are built. No time limit (the
-    /// loading panel has a cancel button): with the 120 s cap a location still waiting was given no road, and placing every Mountain
-    /// destination takes longer; the loading panel's Cancel ends the generation.
+    /// The generation's chosen destinations whose landing turns with them listed, then each predicted (not placed yet) or read
+    /// (already placed), before the roads are built. One that can be neither gets no road (<see cref="PlacedLocations.NotPlaced"/>,
+    /// with its reason).
     /// </summary>
     internal static IEnumerable<bool> Steps(RoadNetworkGenerator.GenerationWork work, RoadPreparation preparation)
     {
@@ -52,55 +47,49 @@ public static class LocationsFirstLoad
         if (!RoadLifecycleManager.HoldsTheNetwork || ZoneSystem.instance == null || WorldGenerator.instance == null) yield break;
         var selected = work.AllSelected.ToList();
         preparation.BeginStage(ListingStage, selected.Count, "destinations"); yield return true;
-        int already = 0;
         foreach (var (_, position, _) in selected)
         {
-            List(position, ref already);
+            List(position);
             if (preparation.Checkpoint()) yield return true;
         }
         if (RoadNetworkGenerator.RoadsLog) ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
-            $"[LOCATIONS] before the roads: {s_pending.Count} location(s) to place, {already} already placed");
+            $"[LOCATIONS] before the roads: {s_pending.Count} location(s) to predict, {s_placed.Count} already placed");
+        int count = s_pending.Count + s_placed.Count;
+        if (count == 0) yield break;
 
-        if (s_pending.Count > 0)
-        {
-            preparation.BeginStage(PlacingStage, s_pending.Count, "locations"); yield return true;
-            float started = Time.realtimeSinceStartup;
-            while (true)
-            {
-                PlaceOnce(preparation);
-                if (s_pending.Count == 0) break;
-                // A location's prefab and its zone's terrain load between frames: the next try is next frame.
-                preparation.EndSlice();
-                yield return true;
-            }
-            float wall = Time.realtimeSinceStartup - started;
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
-                $"[LOCATIONS] before the roads: placed {s_placing.Count} location(s) in {wall:F1} s of placing ({s_mainMs:F0} ms of main thread over {s_frames} frame(s))"));
-        }
-
-        // Reading a location asks the location footprint index (its keep-out edge): built here over frames, not in the first
-        // read's one frame.
-        if (s_placing.Count > 0)
-            foreach (var step in RoadPreparation.Own(LocationPrefabLevelling.PrimeFootprintSteps(preparation))) yield return step;
-
+        // Predicting and reading a location ask the location footprint index (its keep-out edge): built here over frames, not in
+        // the first one's frame.
+        foreach (var step in RoadPreparation.Own(LocationPrefabLevelling.PrimeFootprintSteps(preparation))) yield return step;
+        preparation.BeginStage(PredictingStage, count, "locations"); yield return true;
         long began = System.Diagnostics.Stopwatch.GetTimestamp();
-        int read = 0, count = s_placing.Count;
-        if (count > 0) { preparation.BeginStage(ReadingStage, count, "locations"); yield return true; }
-        foreach (var (centre, zone) in s_placing.ToList())
+        int predicted = 0;
+        foreach (var (centre, zone) in s_pending)
+        {
+            if (Predict(centre, zone)) predicted++;
+            else PlacedLocations.NoteWhyNotPlaced(centre, "how the game will place it could not be predicted");
+            preparation.CompleteUnit();
+            preparation.Checkpoint(); yield return true;
+        }
+        ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
+            $"[SEEDEDTURN] before the roads: predicted {predicted} of {s_pending.Count} location(s) without placing them, in {Ms(began):F0} ms"));
+        began = System.Diagnostics.Stopwatch.GetTimestamp();
+        int read = 0;
+        foreach (var (centre, zone) in s_placed)
         {
             if (Read(centre, zone)) read++;
             else PlacedLocations.NoteWhyNotPlaced(centre, "placed, but what its placing settled could not be read");
+            preparation.CompleteUnit();
             preparation.Checkpoint(); yield return true;
         }
-        if (RoadNetworkGenerator.RoadsLog) ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
-            $"[LOCATIONS] before the roads: read {read} of {count} placed location(s) (turn, root, parts, rocks) in {Ms(began):F0} ms"));
-        s_placing.Clear();
+        if (s_placed.Count > 0 && RoadNetworkGenerator.RoadsLog) ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(FormattableString.Invariant(
+            $"[LOCATIONS] before the roads: read {read} of {s_placed.Count} placed location(s) (turn, root, parts, rocks) in {Ms(began):F0} ms"));
+        Reset();
     }
 
-    /// <summary>One destination: placed first, already placed (read only), or neither. Its location is resolved once by the one
-    /// resolver (LocationPrefabLevelling.LocationAt: none, or two there, is no location to place; PlacedLocations.FindNotPlaced
+    /// <summary>One destination: predicted (not placed yet), read (already placed), or neither. Its location is resolved once by
+    /// the one resolver (LocationPrefabLevelling.LocationAt: none, or two there, is no location; PlacedLocations.FindNotPlaced
     /// gives the second its reason) and carried from then on by its identity and its own zone.</summary>
-    private static void List(Vector3 position, ref int already)
+    private static void List(Vector3 position)
     {
         if (!LocationPrefabLevelling.LocationAt(new Vector2(position.x, position.z), out ZoneSystem.LocationInstance instance, out _)) return;
         Vector2 centre = LocationPrefabLevelling.Centre(instance);
@@ -109,7 +98,7 @@ public static class LocationsFirstLoad
         // onto a landing there, so its location gets no road (PlacedLocations.NotPlaced).
         if (NetworkCutoff.Excludes(zone)) { PlacedLocations.NoteWhyNotPlaced(centre, PlacedLocations.ZoneLeftAlone); return; }
         if (!PlacedLocations.PlacesFirst(instance, WorldGenerator.instance)) return;
-        if (PlacedLocationReader.Placed(zone, centre, out _)) { already++; s_placing.Add((centre, zone)); return; }
+        if (PlacedLocationReader.Placed(zone, centre, out _)) { s_placed.Add((centre, zone)); return; }
         if (instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone))
         {
             PlacedLocations.NoteWhyNotPlaced(centre, "its zone is generated, but no placing of it was found there to read");
@@ -118,35 +107,20 @@ public static class LocationsFirstLoad
         s_pending.Add((centre, zone));
     }
 
-    /// <summary>One frame of placing: each location not yet placed tried once.</summary>
-    private static void PlaceOnce(RoadPreparation preparation)
+    /// <summary>The record of the destination at <paramref name="centre"/> predicted, not placed (PlacedLocationReader.Predict on
+    /// the ground the game's raycast hits on a freshly built zone, <see cref="SeededLocationTurn.MeshGround"/>), and remembered for
+    /// the roads as a placed one's is.</summary>
+    private static bool Predict(Vector2 centre, Vector2s zone)
     {
-        long frame = System.Diagnostics.Stopwatch.GetTimestamp();
-        for (int i = s_pending.Count - 1; i >= 0; i--)
-        {
-            var (centre, zone) = s_pending[i];
-            // Two destinations in one zone: placed for the first, it is only read for the second.
-            // Asked again, SpawnZone makes the generated zone's root and hands it back to be taken
-            // down (7872,1920).
-            if (!ZoneSystem.instance.IsZoneGenerated(zone))
-            {
-                // Whatever the zone holds that the game shows on the map once placed stays off it until a player
-                // comes as near as the game would have placed it from (HiddenLocationIcons, at ZoneSystem.PlaceLocations).
-                bool spawned;
-                GameObject root;
-                using (HiddenLocationIcons.PlacingEarly()) spawned = ZoneSystem.instance.SpawnZone(zone, ZoneSystem.SpawnMode.Ghost, out root);
-                if (!spawned) continue;
-                if (root != null) UnityEngine.Object.Destroy(root);
-            }
-            s_pending.RemoveAt(i);
-            s_placing.Add((centre, zone));
-            preparation.CompleteUnit();
-        }
-        s_mainMs += Ms(frame);
-        s_frames++;
+        WorldGenerator world = WorldGenerator.instance;
+        if (!LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance)) return false;
+        PlacedLocationRecord? record = PlacedLocationReader.Predict(centre, zone, instance, (x, z) => SeededLocationTurn.MeshGround(x, z, world));
+        if (record == null) return false;
+        PlacedLocations.Remember(record);
+        return true;
     }
 
-    /// <summary>What a placement settled, remembered for the roads (<see cref="PlacedLocations"/>). Main thread.</summary>
+    /// <summary>What an already placed location's placing settled, remembered for the roads (<see cref="PlacedLocations"/>). Main thread.</summary>
     private static bool Read(Vector2 centre, Vector2s zone)
     {
         if (!PlacedLocationReader.Placed(zone, centre, out ZDO? proxy)) return false;
@@ -174,9 +148,7 @@ public static class LocationsFirstLoad
     public static void Reset()
     {
         s_pending.Clear();
-        s_placing.Clear();
-        s_mainMs = 0;
-        s_frames = 0;
+        s_placed.Clear();
     }
 
     private static double Ms(long began) => (System.Diagnostics.Stopwatch.GetTimestamp() - began) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;

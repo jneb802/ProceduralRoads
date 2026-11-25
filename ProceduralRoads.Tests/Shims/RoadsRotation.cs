@@ -9,6 +9,15 @@ public partial struct Vector3
 
     /// <summary>Unity's cross product (left-handed: Cross(up, forward) is right).</summary>
     public static Vector3 Cross(Vector3 a, Vector3 b) => new(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+
+    /// <summary>Unity's Normalize: the unit vector, or zero for one shorter than 1e-5 (the slope turn's direction, SeededLocationTurn).</summary>
+    public static Vector3 Normalize(Vector3 value)
+    {
+        float magnitude = (float)System.Math.Sqrt(value.x * value.x + value.y * value.y + value.z * value.z);
+        return magnitude > 1E-05f ? new Vector3(value.x / magnitude, value.y / magnitude, value.z / magnitude) : zero;
+    }
+
+    public void Normalize() => this = Normalize(this);
 }
 
 public partial struct Quaternion
@@ -51,4 +60,7 @@ public partial struct Quaternion
     }
 
     public static float Dot(Quaternion a, Quaternion b) => a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+
+    /// <summary>Unity's LookRotation with the world's up.</summary>
+    public static Quaternion LookRotation(Vector3 forward) => LookRotation(forward, Vector3.up);
 }

@@ -55,9 +55,6 @@ public static class RoadNetworkPersistence
     /// <summary>Hash key for the bridge pieces owed by manual roads (StructureAppendQueue).</summary>
     private static readonly int AppendBridgesHash = "ProceduralRoads_AppendBridges".GetStableHashCode();
 
-    /// <summary>Map icons of locations placed before their roads, kept off the map until a player comes near (<see cref="HiddenLocationIcons"/>).</summary>
-    private static readonly int HiddenLocationIconsHash = "ProceduralRoads_HiddenLocationIcons".GetStableHashCode();
-
     /// <summary>The locations placed before their roads: their placings, which a load makes ready again (PlacedLocations).</summary>
     private static readonly int PlacedLocationsHash = "ProceduralRoads_PlacedLocations".GetStableHashCode();
 
@@ -164,7 +161,7 @@ public static class RoadNetworkPersistence
     /// cannot read, generating another over the world. A released network therefore gets no full save, crossing rewrite,
     /// added road, built bridge or staircase piece record, or terrain writer stamp.
     /// Bookkeeping is still saved: <see cref="WriteStructureRecords"/> writes bridge zones, pending appends, staircase
-    /// plans, hidden icons and placed locations; the clearing, generated-zone and applied-stamp records have their own save
+    /// plans and placed locations; the clearing, generated-zone and applied-stamp records have their own save
     /// paths. Unread records are written back as they were (<see cref="WriteRecord"/>).
     /// </summary>
     internal static bool AllowsNetworkChanges => !RoadSpatialGrid.LoadedFromReleasedFormat;
@@ -299,7 +296,6 @@ public static class RoadNetworkPersistence
             WriteRecord(metadataZdo, BuiltBridgesHash, BuiltBridges.Serialize);
             WriteRecord(metadataZdo, BuiltStairsHash, BuiltStairs.Serialize);
         }
-        WriteRecord(metadataZdo, HiddenLocationIconsHash, HiddenLocationIcons.Serialize);
         WriteRecord(metadataZdo, PlacedLocationsHash, PlacedLocations.Serialize);
     }
 
@@ -491,8 +487,6 @@ public static class RoadNetworkPersistence
                     ReadOrKeep(source, CoastLandingsHash, "shore landings", b => ReadCoastalLandings(b, coastalLandings), coastalLandings.Clear);
                 ReadOrKeep(source, BridgeZonesHash, "bridge zones", b => ReadBridgeZonesOrStartAfresh(b, bridgeZones), bridgeZones.Clear);
                 ReadOrKeep(source, AppendBridgesHash, "bridge pieces owed by manual roads", StructureAppendQueue.Load, StructureAppendQueue.Reset);
-                // Unread, the locations' icons show: the map as the game would have it once they are placed.
-                ReadOrKeep(source, HiddenLocationIconsHash, "hidden location icons", HiddenLocationIcons.Load, HiddenLocationIcons.Reset);
                 // Unread, the locations are not ready for the roads: as a network saved before they were.
                 ReadOrKeep(source, PlacedLocationsHash, "locations placed before their roads", PlacedLocations.Restore, PlacedLocations.Reset);
                 var read = System.Diagnostics.Stopwatch.StartNew();
@@ -523,7 +517,6 @@ public static class RoadNetworkPersistence
                 coastalLandings?.Clear();
                 bridgeZones.Clear();
                 StructureAppendQueue.Reset();
-                HiddenLocationIcons.Reset();
                 PlacedLocations.Reset();
                 StairStructures.Reset();
                 BuiltBridges.Reset();

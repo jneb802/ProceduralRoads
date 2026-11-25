@@ -434,11 +434,11 @@ public class SeededLocationTurnTests : IDisposable
     {
         Add("Crypt4", 300f, -200f, slope: false, chosen: true);
         Add("GoblinCamp2", -120f, -410f, slope: false, chosen: false);
-        Assert.Null(SeededLocationTurn.SayMoved(PlacedLocations.Records));
+        Assert.Null(SeededLocationTurn.SayMissing(PlacedLocations.Records));
         // Moved away: no instance at its centre any more. Another Location now at the centre: not this destination.
         PlacedLocations.Remember(new PlacedLocationRecord { Prefab = "Crypt2", Centre = new Vector2(700f, 900f) });
         PlacedLocations.Remember(new PlacedLocationRecord { Prefab = "Crypt3", Centre = new Vector2(-120f, -410f) });
-        string? line = SeededLocationTurn.SayMoved(PlacedLocations.Records);
+        string? line = SeededLocationTurn.SayMissing(PlacedLocations.Records);
         Assert.NotNull(line);
         Assert.StartsWith("[SEEDEDTURN] 2 saved destination(s) have no LocationInstance where the network expects them", line);
         Assert.Contains("Crypt3 (-120.0, -410.0), Crypt2 (700.0, 900.0)", line);
@@ -447,7 +447,7 @@ public class SeededLocationTurnTests : IDisposable
         // Log only: the records stay, roads and all.
         Assert.Equal(3, PlacedLocations.Count);
         Assert.Equal(new[] { "Crypt3", "Crypt2" },
-            SeededLocationTurn.Moved(PlacedLocations.Records, SeededLocationTurn.InstancePrefabAt).Select(r => r.Prefab));
+            SeededLocationTurn.Missing(PlacedLocations.Records, SeededLocationTurn.InstancePrefabAt).Select(r => r.Prefab));
     }
 
     /// <summary>

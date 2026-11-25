@@ -8981,9 +8981,10 @@ public static partial class RoadNetworkGenerator
             // The locations placed before the roads ready again, on the ground the generation made them ready on: a staircase
             // whose first zone is built this session is dressed as it would have been in the session that generated it.
             if (WorldGenerator.instance != null) PlacedLocations.Prepare(LevellingGround(WorldGenerator.instance));
-            // A saved destination the game has moved since (ClearNonPlacedLocations) is only logged, once: its road stays as saved.
-            if (RoadLifecycleManager.HoldsTheNetwork && SeededLocationTurn.SayMoved(PlacedLocations.Records) is string moved)
-                Log.LogWarning(moved);
+            // A saved destination the world no longer has where the network expects it (moved by ClearNonPlacedLocations, or
+            // removed) is only logged, each time a saved network is read: its road stays as saved.
+            if (RoadLifecycleManager.HoldsTheNetwork && SeededLocationTurn.SayMissing(PlacedLocations.Records) is string missing)
+                Log.LogWarning(missing);
             if (WorldGenerator.instance == null && PlacedLocations.Count > 0)
                 Log.LogWarning($"[LOAD] {PlacedLocations.Count} location(s) placed before their roads not made ready: no world generator yet; their staircases are dressed on the natural ground");
             // Before anything may write: which zones this network must leave alone. Only on the peer that holds the network:

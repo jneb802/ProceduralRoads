@@ -181,14 +181,15 @@ public static class SeededLocationTurn
     /// LocationInstance of its prefab at its centre (<paramref name="prefabAt"/>: the prefab of the instance whose identity is that
     /// centre, LocationPrefabLevelling.LocationOf, or null). The game moves a LocationInstance it has not placed yet when it
     /// generates its locations again (ZoneSystem.ClearNonPlacedLocations: a location list or version change, genloc, Upgrade
-    /// World). Such a destination is only logged (<see cref="SayMoved"/>): its road stays as saved, and the game places the moved
+    /// World), and a mod or a location-list change can remove one. Such a destination is only logged (<see cref="SayMissing"/>): its road stays as saved, and the game places the moved
     /// location with its own unseeded turn, since no record stands at its new centre.
     /// </summary>
-    internal static System.Collections.Generic.List<PlacedLocationRecord> Moved(
+    internal static System.Collections.Generic.List<PlacedLocationRecord> Missing(
         System.Collections.Generic.IEnumerable<PlacedLocationRecord> records, Func<Vector2, string?> prefabAt)
     {
         var moved = new System.Collections.Generic.List<PlacedLocationRecord>();
         foreach (PlacedLocationRecord record in records)
+            // The record stores the prefab name as the save writes it, commas as underscores.
             if (prefabAt(record.Centre) is not string prefab || prefab.Replace(',', '_') != record.Prefab) moved.Add(record);
         moved.Sort((a, b) => a.Centre.x != b.Centre.x ? a.Centre.x.CompareTo(b.Centre.x) : a.Centre.y.CompareTo(b.Centre.y));
         return moved;
@@ -196,20 +197,25 @@ public static class SeededLocationTurn
 
     /// <summary>The prefab of the LocationInstance whose identity is <paramref name="centre"/> (LocationPrefabLevelling.LocationOf), or null.</summary>
     internal static string? InstancePrefabAt(Vector2 centre) =>
-        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) ? instance.m_location?.m_prefab.Name : null;
+        LocationPrefabLevelling.LocationOf(centre, out ZoneSystem.LocationInstance instance) ? instance.m_location?.m_prefab.name : null;
+
+    /// <summary>How many missing destinations the load's warning names before "+N more" (a log line, not a rule).</summary>
+    internal const int SayMissingNamed = 10;
 
     /// <summary>The warning a load logs for the saved destinations the world no longer has where the network expects them
-    /// (<see cref="Moved"/>): null when every one is there, else one line naming each. Logged once, as the saved network is read
+    /// (<see cref="Missing"/>): null when every one is there, else one line naming the first <see cref="SayMissingNamed"/>. Logged
+    /// once each time a saved network is read
     /// (RoadNetworkGenerator.UseReadNetwork). The roads are left as saved.</summary>
-    internal static string? SayMoved(System.Collections.Generic.IEnumerable<PlacedLocationRecord> records)
+    internal static string? SayMissing(System.Collections.Generic.IEnumerable<PlacedLocationRecord> records)
     {
-        var moved = Moved(records, InstancePrefabAt);
-        if (moved.Count == 0) return null;
+        var missing = Missing(records, InstancePrefabAt);
+        if (missing.Count == 0) return null;
         var names = new System.Text.StringBuilder();
-        foreach (PlacedLocationRecord r in moved)
-            names.Append(names.Length == 0 ? "" : ", ").Append(FormattableString.Invariant($"{r.Prefab} ({r.Centre.x:F1}, {r.Centre.y:F1})"));
+        for (int i = 0; i < missing.Count && i < SayMissingNamed; i++)
+            names.Append(i == 0 ? "" : ", ").Append(FormattableString.Invariant($"{missing[i].Prefab} ({missing[i].Centre.x:F1}, {missing[i].Centre.y:F1})"));
+        if (missing.Count > SayMissingNamed) names.Append(FormattableString.Invariant($", +{missing.Count - SayMissingNamed} more"));
         return FormattableString.Invariant(
-            $"[SEEDEDTURN] {moved.Count} saved destination(s) have no LocationInstance where the network expects them (the game moved them when it generated its locations again); their roads are left as saved: {names}");
+            $"[SEEDEDTURN] {missing.Count} saved destination(s) have no LocationInstance where the network expects them (moved when the game generated its locations again, or removed); their roads are left as saved: {names}");
     }
 
     /// <summary>The mismatch guard: the chosen location just placed in <paramref name="zone"/> against its record (turn and root

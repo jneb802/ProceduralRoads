@@ -100,7 +100,7 @@ public static class LocationsFirstLoad
         if (!PlacedLocations.PlacesFirst(instance, WorldGenerator.instance)) return;
         // Already placed: read; not placed yet: predicted (SeededLocationTurn.Settle, the one decision).
         bool found = PlacedLocationReader.Placed(zone, centre, out _);
-        switch (SeededLocationTurn.Settle(found, !found && (instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone))))
+        switch (SeededLocationTurn.Settle(found, instance.m_placed || ZoneSystem.instance.IsZoneGenerated(zone)))
         {
             case SeededLocationTurn.Settling.Read: s_placed.Add((centre, zone)); return;
             case SeededLocationTurn.Settling.Predicted: s_pending.Add((centre, zone)); return;

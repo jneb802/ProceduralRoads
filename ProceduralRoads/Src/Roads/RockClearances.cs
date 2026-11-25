@@ -107,8 +107,10 @@ public static class RockClearances
     /// lower (<paramref name="low"/>) to the higher (<paramref name="high"/>) of the levelled and the unlevelled ground
     /// (<paramref name="grounds"/>) over the box's footprint (its middle and its four corners); <see cref="RockClearance.Column"/>
     /// adds the walker's headroom over it. The game snaps a stake onto one of the two: the unlevelled zone in Ghost mode, the
-    /// levelled one in Full mode. False where no Location's levelling is known under the box, or where the box's walk does not
-    /// reach into that band (a viaduct's deck, or a flight standing over the ground): a stake under it is not in its way.
+    /// levelled one in Full mode. False where no Location's levelling is known under the box, or where the box's walk stands
+    /// over that band (a viaduct's deck, or a flight standing over the ground): a stake under it is not in its way. A box under
+    /// the band (a road cut deeper than its headroom under both grounds) still asks: a stake whose ground the cut took would
+    /// hang over the road in the band, so it is cleared (RoadRockProbe.Candidates).
     /// </summary>
     internal static bool Band(RockClearance box, GroundsAt grounds, out float low, out float high)
     {
@@ -124,7 +126,7 @@ public static class RockClearances
             high = Mathf.Max(high, Mathf.Max(levelled, unlevelled));
         }
         if (low > high) return false;
-        return box.Centre.y - box.Half.y <= Top(high) && box.Top >= Bottom(low);
+        return box.Centre.y - box.Half.y <= Top(high);
     }
 
     /// <summary>How much further out than a clearance's reach its headings read road points.</summary>

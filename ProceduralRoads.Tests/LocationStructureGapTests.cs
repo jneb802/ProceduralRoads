@@ -225,6 +225,26 @@ public class LocationStructureGapTests
         Assert.Single(Asked(RoadBox(at), (Vector2 _, out float l, out float u) => { l = u = float.NaN; return false; }));
     }
 
+    /// <summary>A road cut deeper than its headroom under both grounds: a stake whose ground the cut took hangs over the road in
+    /// the band, and the road's box still asks for the column, so the stake is cleared (RockClearances.Band checks only that the
+    /// box's walk does not stand over the band).</summary>
+    [Fact]
+    public void AStakeOverARoadCutDeepUnderBothGroundsIsStillCleared()
+    {
+        Vector2 at = At(-8f, 26f);
+        float road = Level - 6f;
+        var cutBox = new RockClearance(new Vector3(at.x, RockClearances.Bottom(road) + 1f, at.y), new Vector3(2f, 1f, RockClearances.ClearanceHalfLength),
+            Quaternion.Euler(0f, 30f, 0f), road, wholeOnly: false, keepsLocationRocks: true);
+        var hanging = new Vector3(at.x, Level + 0.5f, at.y);
+        foreach (float ghost in new[] { 0f, -3f, 3f })
+        {
+            Assert.True(RockClearances.Band(cutBox, Grounds(Level, Level + ghost), out _, out _), $"a deep cut asks no column {ghost} m off");
+            List<RockClearance> asked = Asked(cutBox, Grounds(Level, Level + ghost));
+            Assert.Equal(2, asked.Count);
+            Assert.True(Holds(asked[1], hanging));
+        }
+    }
+
     private static RockClearance RoadBox(Vector2 at) =>
         new(new Vector3(at.x, RockClearances.Bottom(Level) + 1f, at.y), new Vector3(2f, 1f, RockClearances.ClearanceHalfLength),
             Quaternion.Euler(0f, 30f, 0f), Level, wholeOnly: false, keepsLocationRocks: true);

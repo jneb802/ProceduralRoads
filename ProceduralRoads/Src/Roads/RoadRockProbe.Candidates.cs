@@ -13,7 +13,8 @@ public static partial class RoadRockProbe
     /// <paramref name="grounds"/>, asked with true: only those stakes, LocationRock.ClearedOnEitherGround). The stakes stand where
     /// the spawn mode dropped them, on the unlevelled zone (Ghost) or the levelled one (Full), up to 17 m apart at the same x and
     /// z: found by x and z in the box's footprint between the two grounds, the one in the way goes wherever it landed. A box with
-    /// no band (no Location's levelling under it, or a walk over the band, as a deck's) asks for no column.
+    /// no band (no Location's levelling under it, or a walk over the band, as a deck's) asks for no column; a box under the band
+    /// (a deep cut) asks for it, so a stake left hanging over the cut is cleared.
     /// </summary>
     internal static void Candidates<T>(RockClearance box, RockClearances.GroundsAt grounds, Func<RockClearance, bool, List<T>> query, List<T> into)
     {

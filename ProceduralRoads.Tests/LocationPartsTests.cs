@@ -201,6 +201,16 @@ public class LocationPartsTests : IDisposable
         Assert.Equal(new[] { "boulder", "stake wall" }, into);
         Assert.Equal(5, read.Count);
         Assert.Equal(new Vector2(box.Centre.x, box.Centre.z), read[0]);
+        // The four corners of the box's footprint, turned with it: each read once.
+        var corners = new List<Vector2>();
+        foreach (float sx in new[] { -1f, 1f })
+            foreach (float sz in new[] { -1f, 1f })
+            {
+                Vector3 c = box.Centre + box.Turn * new Vector3(sx * box.Half.x, 0f, sz * box.Half.z);
+                corners.Add(new Vector2(c.x, c.z));
+            }
+        foreach (Vector2 c in corners)
+            Assert.Single(read.Skip(1), p => Vector2.Distance(p, c) < 1e-3f);
         Assert.Equal(2, asked.Count);
         Assert.False(asked[0].stakesOnly);
         Assert.Equal(box.Centre, asked[0].box.Centre);

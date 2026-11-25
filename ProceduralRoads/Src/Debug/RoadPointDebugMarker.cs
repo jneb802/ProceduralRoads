@@ -140,11 +140,12 @@ public class RoadPointDebugMarker : MonoBehaviour, Interactable, Hoverable
         
         sb.AppendLine();
         
-        // Compare with current WorldGenerator height (raw vs what we used)
+        // Compare with current WorldGenerator height (raw vs what we used). Raw on purpose: the marker shows the point
+        // biome's height beside the rendered one.
         if (WorldGenerator.instance != null)
         {
-            float rawHeight = WorldGenerator.instance.GetHeight(RoadPointPosition.x, RoadPointPosition.y);
-            float blendedHeight = BiomeBlendedHeight.GetBlendedHeight(RoadPointPosition.x, RoadPointPosition.y, WorldGenerator.instance);
+            float rawHeight = NaturalGround.PointBiomeFormula(RoadPointPosition.x, RoadPointPosition.y, WorldGenerator.instance);
+            float blendedHeight = NaturalGround.ForDiagnostics(RoadPointPosition.x, RoadPointPosition.y, WorldGenerator.instance);
             
             sb.AppendLine("Height Comparison:");
             sb.AppendLine($"  Raw WorldGen height: {rawHeight:F2}m");

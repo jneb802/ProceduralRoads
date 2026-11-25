@@ -31,16 +31,27 @@ namespace ProceduralRoads
     {
         private static bool Prefix(ZRpc rpc, ZPackage pkg, ref ZNet __instance)
         {
-            if (!__instance.IsServer() || RpcHandlers.ValidatedPeers.Contains(rpc)) return true;
-            // Disconnect peer if they didn't send mod version at all
-            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
-                $"Peer ({rpc.m_socket.GetHostName()}) never sent version or couldn't due to previous disconnect, disconnecting");
-            rpc.Invoke("Error", 3);
-            return false; // Prevent calling underlying method
+            if (!__instance.IsServer()) return true;
+            // While the road network is being generated, every joining peer, modded or not, waits.
+            if (JoinHold.Refuse(rpc)) return false;
+            if (RpcHandlers.ValidatedPeers.Contains(rpc)) return true;
+            // A modded client's version answer is queued on its socket before
+            // its PeerInfo, so by now the server has recorded a match, another
+            // version, or nothing. Nothing means no ProceduralRoads on the
+            // client. Every peer is let in: only the server writes the roads,
+            // and they reach every client as vanilla terrain and vanilla pieces.
+            string mod = ProceduralRoadsPlugin.ModName;
+            ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(RpcHandlers.OtherVersionPeers.Contains(rpc)
+                ? $"A peer with another {mod} version joined: it writes no roads and receives them as vanilla terrain"
+                : $"A peer without {mod} joined: it receives the roads as vanilla terrain");
+            return true;
         }
 
-        private static void Postfix(ZNet __instance)
+        private static void Postfix(ZRpc rpc, ZNet __instance)
         {
+            // A validated peer whose PeerInfo the game took (it has its id and is routed to): sent the network, once.
+            if (__instance.IsServer() && RpcHandlers.ValidatedPeers.Contains(rpc) && __instance.GetPeer(rpc) is { } joined && joined.IsReady())
+                RoadNetworkSync.Publish();
             ZRoutedRpc.instance.InvokeRoutedRPC(ZRoutedRpc.instance.GetServerPeerID(),
                 $"{ProceduralRoadsPlugin.ModName}RequestAdminSync",
                 new ZPackage());
@@ -71,12 +82,16 @@ namespace ProceduralRoads
             ProceduralRoadsPlugin.ProceduralRoadsLogger.LogInfo(
                 $"Peer ({peer.m_rpc.m_socket.GetHostName()}) disconnected, removing from validated list");
             _ = RpcHandlers.ValidatedPeers.Remove(peer.m_rpc);
+            RoadNetworkSync.PeerLeft(peer.m_uid);
+            _ = RpcHandlers.OtherVersionPeers.Remove(peer.m_rpc);
         }
     }
 
     public static class RpcHandlers
     {
         public static readonly List<ZRpc> ValidatedPeers = new();
+        /// <summary>Peers that answered the version check with another version.</summary>
+        public static readonly List<ZRpc> OtherVersionPeers = new();
 
         public static void RPC_ProceduralRoads_Version(ZRpc rpc, ZPackage pkg)
         {
@@ -90,10 +105,10 @@ namespace ProceduralRoads
                 ProceduralRoadsPlugin.ConnectionError =
                     $"{ProceduralRoadsPlugin.ModName} Installed: {ProceduralRoadsPlugin.ModVersion}\n Needed: {version}";
                 if (!ZNet.instance.IsServer()) return;
-                // Different versions - force disconnect client from server
+                // Another version is let in: it writes no roads, only the server does.
                 ProceduralRoadsPlugin.ProceduralRoadsLogger.LogWarning(
-                    $"Peer ({rpc.m_socket.GetHostName()}) has incompatible version, disconnecting...");
-                rpc.Invoke("Error", 3);
+                    $"Peer ({rpc.m_socket.GetHostName()}) has another version; admitted, it writes no roads");
+                if (!OtherVersionPeers.Contains(rpc)) OtherVersionPeers.Add(rpc);
             }
             else
             {

@@ -26,6 +26,14 @@ public readonly struct RockClearance
 
     /// <summary>The box's top.</summary>
     public float Top => Centre.y + Half.y;
+
+    /// <summary>This box's footprint at any height: the same middle, turn and width seen from above, standing through the
+    /// whole world (<see cref="RockClearances.AnyHeight"/> either side of the box's middle). The rock pass looks in it only
+    /// for a Location's stakes the game snaps to the ground (LocationRock.ClearedAtAnyHeight): where those stand depends on
+    /// the spawn mode (Ghost: on the unlevelled zone, Full: on the levelled one, up to 17 m apart at the same x and z), so
+    /// one in a way is found by its x and z and removed wherever it landed.</summary>
+    public RockClearance Column => new RockClearance(Centre, new Vector3(Half.x, RockClearances.AnyHeight, Half.z), Turn, Surface,
+        WholeOnly, KeepsLocationRocks);
 }
 
 /// <summary>
@@ -83,6 +91,11 @@ public static class RockClearances
 
     /// <summary>The ground under a point, if any answers there.</summary>
     public delegate bool GroundAt(Vector3 at, out float height);
+
+    /// <summary>Half a <see cref="RockClearance.Column"/>'s height: more than the world's whole height range (the deepest sea
+    /// floor to the highest peak), so a column of a box is its footprint at any height. Not a tuning value: any height past
+    /// the world's own finds the same objects.</summary>
+    public const float AnyHeight = 2000f;
 
     /// <summary>How much further out than a clearance's reach its headings read road points.</summary>
     public const float HeadingReach = 3f;

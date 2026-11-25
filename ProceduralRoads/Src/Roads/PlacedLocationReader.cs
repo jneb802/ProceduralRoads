@@ -24,7 +24,7 @@ public static partial class PlacedLocationReader
         Vector3 at = proxy.GetPosition();
         Quaternion turn = proxy.GetRotation();
         return LocationPrefabLevelling.PlacedOps(centre, proxy.GetInt(ZDOVars.s_seed), at, turn,
-            asset =>
+            (asset, _) =>
             {
                 // A prefab whose rocks cannot be read keeps its parts' draw; the log says its rocks are missing.
                 try { s_prefabRocks[centre] = PrefabRocks(asset, at, turn); }
@@ -91,9 +91,9 @@ public static partial class PlacedLocationReader
             // ice_rock1, rock3_ice, caverock_ice_*): kept and kept clear of, as its large rocks
             // are. Left out, a staircase ran up beside and behind its great ice block.
             bool ownRock = !rock && location != null && LocationRock.OwnRockName(prefab.name)
-                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p) == true;
+                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p, prefab.name) == true;
             bool piece = !rock && !ownRock && location != null && prefab.GetComponent<WearNTear>() != null
-                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p) == true;
+                && LocationPrefabLevelling.IsPart(location, rootAt, turn, p, prefab.name) == true;
             if (piece)
             {
                 Vector3 pieceScale = zdo.GetVec3(ZDOVars.s_scaleHash, Vector3.zero);

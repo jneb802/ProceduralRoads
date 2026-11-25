@@ -196,11 +196,22 @@ public readonly struct LocationRock
     /// Whether a Location's own built piece named <paramref name="name"/> is one a road or staircase clears out of its way: a Dvergr
     /// stake wall's stakes (dvergrprops_wood_stakewall and the like). The one owner of which Location pieces a way may clear
     /// (docs/OWNERS.md). Planning does not keep off them (PlacedLocationShape.Refusal), and the rock pass removes, whole, every one a
-    /// walk's clearance box meets (RoadRockHit.Judged, RoadRockPolicy.HowTaken), the server bake and a client's pass alike, so the
+    /// walk's clearance box meets (RoadRockHit.Judged, RoadRockPolicy.HowTaken; a snapping one by x and z at any height,
+    /// <see cref="ClearedAtAnyHeight"/>), the server bake and a client's pass alike, so the
     /// bake takes exactly the stakes the generated network's walks pass through: where a road or staircase goes through the
     /// spikes, the spikes go. Every other piece is kept off by the walker's own body.
     /// </summary>
     public static bool ClearedForAWay(string? name) => LocationRules.ClearedForAWay(name);
+
+    /// <summary>
+    /// Whether a Location's stakes (<see cref="ClearedForAWay"/>) are found in a way by their x and z at any height: the stakes
+    /// the game snaps to the ground (<paramref name="snaps"/>: a SnapToGround on the live object, LocationPrefabLevelling.Part.Snap),
+    /// which land on the unlevelled zone in Ghost mode and on the levelled one in Full mode, up to 17 m apart at the same x and
+    /// z. The rock pass (RoadRockProbe) looks for them in each walk's box's footprint at any height
+    /// (<see cref="RockClearance.Column"/>) and removes those it finds, wherever they landed; stakes that do not snap are found
+    /// in the box itself. Snapping or not, they are no obstacle to planning.
+    /// </summary>
+    public static bool ClearedAtAnyHeight(string? name, bool snaps) => snaps && ClearedForAWay(name);
 
     /// <summary>Whether a Location's own part named <paramref name="name"/> (a saved object's prefab, a static collider's object
     /// or mesh) is one of its rocks: the name says rock (Hildir's cave's ice_rock1, a crypt's stones on their Rock_3 mesh). The

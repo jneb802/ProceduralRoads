@@ -27,7 +27,29 @@ public static partial class LocationPrefabLevelling
 
     /// <summary>Where each location prefab's networked objects stand, from its root, by prefab
     /// name: read as its parts are replayed (<see cref="PlacedOps"/>).</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Vector3[]> s_parts = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Part[]> s_parts = new();
+
+    /// <summary>
+    /// One networked part of a location prefab: where it stands from the root, its own prefab name, and the height its
+    /// SnapToGround puts it over the ground (null when it has none). The game drops a snapping part onto the ground once the
+    /// location is spawned (ZoneSystem.SpawnLocation ends with SnapToGround.SnappAll: the terrain raycast under it plus m_offset,
+    /// saved to its ZDO; which ground depends on the spawn mode, PlacedLocationReader.Snapped), so of a snapping part only x and z
+    /// are where the prefab put it.
+    /// </summary>
+    public readonly struct Part
+    {
+        public readonly Vector3 Local;
+        public readonly string Name;
+        public readonly float? Snap;
+        public Part(Vector3 local, string name, float? snap) { Local = local; Name = name; Snap = snap; }
+
+        /// <summary>The part <paramref name="view"/> of a prefab standing at the origin, unturned.</summary>
+        public static Part Of(ZNetView view)
+        {
+            SnapToGround snap = view.GetComponent<SnapToGround>();
+            return new Part(view.gameObject.transform.position, Utils.GetPrefabName(view.gameObject), snap != null ? snap.m_offset : null);
+        }
+    }
 
     /// <summary>How far an object may stand from one of its location's part spots and be that part.</summary>
     public const float PartTolerance = 0.5f;
@@ -38,14 +60,29 @@ public static partial class LocationPrefabLevelling
     /// the game spawns each at root + rotation x its offset in the prefab (ZoneSystem.SpawnLocation).
     /// Null while that prefab's parts are unknown (not yet replayed this session). A
     /// rock2_mountain in a frost cave's footprint that stays put while the cave turns between
-    /// runs is not the cave's.
+    /// runs is not the cave's. A part the game snaps to the ground (<see cref="Part.Snap"/>: a Dvergr
+    /// stake wall) is matched on x and z only (<see cref="PartOffset"/>). With <paramref name="objectName"/>
+    /// (the object's own prefab name), only a part of that prefab counts: a vegetation stone beside one of
+    /// a crypt's parts is not the crypt's.
     /// </summary>
-    public static bool? IsPart(string prefabName, Vector3 root, Quaternion rotation, Vector3 at)
+    public static bool? IsPart(string prefabName, Vector3 root, Quaternion rotation, Vector3 at, string? objectName = null)
     {
-        if (!s_parts.TryGetValue(prefabName, out Vector3[]? parts)) return null;
-        foreach (Vector3 local in parts)
-            if ((root + rotation * local - at).sqrMagnitude <= PartTolerance * PartTolerance) return true;
+        if (!s_parts.TryGetValue(prefabName, out Part[]? parts)) return null;
+        foreach (Part part in parts)
+        {
+            if (objectName != null && part.Name != objectName) continue;
+            if (PartOffset(part, root, rotation, at).sqrMagnitude <= PartTolerance * PartTolerance) return true;
+        }
         return false;
+    }
+
+    /// <summary>How far the object at <paramref name="at"/> stands from <paramref name="part"/> of a location at
+    /// <paramref name="root"/> turned by <paramref name="rotation"/>; level only for a part the game snaps to the ground.</summary>
+    public static Vector3 PartOffset(Part part, Vector3 root, Quaternion rotation, Vector3 at)
+    {
+        Vector3 d = root + rotation * part.Local - at;
+        if (part.Snap.HasValue) d.y = 0f;
+        return d;
     }
 
     /// <summary>Wire this up as LocationLevelling's source. Called from the plugin.</summary>
@@ -247,7 +284,7 @@ public static partial class LocationPrefabLevelling
     /// origin, unturned, the placement's parts active), before it is put back: the reader's own static rocks
     /// (PlacedLocationReader.LocationRocks).
     /// </summary>
-    public static IReadOnlyList<LevelOp>? PlacedOps(Vector2 centre, int seed, Vector3 pos, Quaternion rot, Action<GameObject>? whileDrawn = null)
+    public static IReadOnlyList<LevelOp>? PlacedOps(Vector2 centre, int seed, Vector3 pos, Quaternion rot, Action<GameObject, ZNetView[]>? whileDrawn = null)
     {
         if (ZoneSystem.instance == null) return null;
         if (!LocationOf(centre, out ZoneSystem.LocationInstance placedAt)) return null;
@@ -286,8 +323,8 @@ public static partial class LocationPrefabLevelling
                 asset.transform.rotation = Quaternion.identity;
                 try
                 {
-                    var parts = new Vector3[views.Length];
-                    for (int i = 0; i < views.Length; i++) parts[i] = views[i].gameObject.transform.position;
+                    var parts = new Part[views.Length];
+                    for (int i = 0; i < views.Length; i++) parts[i] = Part.Of(views[i]);
                     s_parts[location.m_prefab.name] = parts;
                     UnityEngine.Random.InitState(seed);
                     foreach (RandomSpawn spawn in spawns) spawn.Randomize(pos + rot * spawn.gameObject.transform.position, component);
@@ -300,7 +337,7 @@ public static partial class LocationPrefabLevelling
                             modifier.m_level ? modifier.m_levelRadius : 0f, modifier.m_square,
                             modifier.m_smooth ? modifier.m_smoothRadius : 0f, modifier.m_smoothPower, modifier.m_sortOrder));
                     }
-                    whileDrawn?.Invoke(asset);
+                    whileDrawn?.Invoke(asset, views);
                 }
                 finally
                 {

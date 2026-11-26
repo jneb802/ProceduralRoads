@@ -107,11 +107,11 @@ public static class SeededLocationTurn
     /// <summary>
     /// The turn and root the game will give the location in <paramref name="zone"/> with the turn seeded: ZoneSystem.PlaceLocations
     /// replayed on <paramref name="ground"/> (the ground the game's raycast hits on a freshly built zone: its 1 m mesh,
-    /// <see cref="MeshGround"/>), Random seeded as <see cref="Begin"/> seeds it and put back. The root is the ground at its
-    /// position (GetGroundData), sea level for one that snaps to water (the game writes 30); a slope's ten samples (GetTerrainDelta) read the same ground, the
-    /// highest and lowest kept (first of equals), and the heading from the highest to the lowest rounded to the game's step
-    /// (<see cref="FixedLocationYaw.StepDegrees"/>); a random turn is the game's draw of a step (<see cref="FixedLocationYaw.Draw"/>,
-    /// the test switch's fixed step in its place when it is on).
+    /// <see cref="MeshGround"/>), drawn from a copy of Unity's Random (<see cref="UnityRandom"/>) seeded as <see cref="Begin"/>
+    /// seeds the game's, so the game's global Random is never touched and any thread may ask. The root is the ground at its
+    /// position (GetGroundData), sea level for one that snaps to water (the game writes 30); a slope turn is the one owner's
+    /// (<see cref="FixedLocationYaw.SlopeDegrees"/>: GetTerrainDelta's ten samples on the same ground, from the same seed); a random
+    /// turn is the game's draw of a step (<see cref="FixedLocationYaw.Draw"/>, the test switch's fixed step in its place when it is on).
     /// </summary>
     internal static Quaternion Predict(ZoneSystem.LocationInstance instance, Vector2s zone, Func<float, float, float> ground, out float root)
     {
@@ -120,39 +120,17 @@ public static class SeededLocationTurn
         p.y = ground(p.x, p.z);
         if (location.m_snapToWater) p.y = RoadWater.Surface;
         root = p.y;
-        UnityEngine.Random.State state = UnityEngine.Random.state;
-        UnityEngine.Random.InitState(TurnSeed(WorldGenerator.instance!.GetSeed(), location.m_prefab.name, zone));
-        try
+        int worldSeed = WorldGenerator.instance!.GetSeed();
+        string prefab = location.m_prefab.name!;
+        if (location.m_slopeRotation)
+            return Quaternion.Euler(0f, FixedLocationYaw.SlopeDegrees(worldSeed, prefab, zone.x, zone.y, p.x, p.z, location.m_exteriorRadius, ground), 0f);
+        if (location.m_randomRotation)
         {
-            Quaternion rot = Quaternion.identity;
-            if (location.m_slopeRotation)
-            {
-                float radius = location.m_exteriorRadius, high = -999999f, low = 999999f;
-                Vector3 highest = p, lowest = p;
-                for (int i = 0; i < 10; i++)
-                {
-                    Vector2 d = UnityEngine.Random.insideUnitCircle * radius;
-                    Vector3 q = p + new Vector3(d.x, 0f, d.y);
-                    float h = ground(q.x, q.z);
-                    if (h < low) { low = h; lowest = q; }
-                    if (h > high) { high = h; highest = q; }
-                }
-                Vector3 slope = Vector3.Normalize(lowest - highest);
-                Vector3 forward = new Vector3(slope.x, 0f, slope.z);
-                forward.Normalize();
-                rot = Quaternion.LookRotation(forward);
-                Vector3 euler = rot.eulerAngles;
-                euler.y = Mathf.Round(euler.y / FixedLocationYaw.StepDegrees) * FixedLocationYaw.StepDegrees;
-                rot.eulerAngles = euler;
-            }
-            else if (location.m_randomRotation)
-            {
-                int step = FixedLocationYaw.Draw(0, FixedLocationYaw.Steps, FixedStep(WorldGenerator.instance.GetSeed(), location.m_prefab.name, zone), UnityEngine.Random.Range);
-                rot = Quaternion.Euler(0f, step * FixedLocationYaw.StepDegrees, 0f);
-            }
-            return rot;
+            var random = new UnityRandom(TurnSeed(worldSeed, prefab, zone));
+            int step = FixedLocationYaw.Draw(0, FixedLocationYaw.Steps, FixedStep(worldSeed, prefab, zone), random.Range);
+            return Quaternion.Euler(0f, step * FixedLocationYaw.StepDegrees, 0f);
         }
-        finally { UnityEngine.Random.state = state; }
+        return Quaternion.identity;
     }
 
     /// <summary>How a generation settles a chosen destination's landing (LocationsFirstLoad, at world load, road_generate and

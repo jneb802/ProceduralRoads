@@ -19,7 +19,8 @@ namespace ProceduralRoads;
 /// (its LocationProxy's rotation) follows.
 ///
 /// The one owner of the fixed turn: offline tools may ask <see cref="Degrees"/> for a randomly turned location's turn, and
-/// <see cref="SlopeDegrees"/> for one turned down its slope.
+/// <see cref="SlopeDegrees"/> for one turned down its slope, the same owner the seeded turn's prediction asks
+/// (SeededLocationTurn.Predict), on the same ground (<see cref="GameGround"/>, SeededLocationTurn.MeshGround).
 /// </summary>
 public static class FixedLocationYaw
 {
@@ -75,7 +76,8 @@ public static class FixedLocationYaw
     /// Random.insideUnitCircle samples within <paramref name="radius"/> (the location's exterior radius) of the centre read
     /// <paramref name="ground"/> (the game's raycast onto the freshly built zone; <see cref="GameGround"/>), the highest and the
     /// lowest kept (the first of equals); the heading from the highest to the lowest (Quaternion.LookRotation's yaw), rounded to
-    /// 22.5 degrees. A flat disc (no heading) is not turned. The one owner of the seeded slope turn.
+    /// 22.5 degrees. A flat disc (no heading) is not turned. The one owner of the seeded slope turn: the game's prediction of a
+    /// chosen Location (SeededLocationTurn.Predict) and the offline tools ask it alike.
     /// </summary>
     public static float SlopeDegrees(int worldSeed, string prefab, int zoneX, int zoneY, float x, float z, float radius, Func<float, float, float> ground)
     {
@@ -100,9 +102,9 @@ public static class FixedLocationYaw
         return turned >= 360f ? turned - 360f : turned;
     }
 
-    /// <summary>The ground the game's slope samples read: its raycast onto a freshly built zone's 1 m mesh
-    /// (<see cref="BiomeBlendedHeight.Rendered"/>).</summary>
-    public static Func<float, float, float> GameGround(WorldGenerator world) => (x, z) => BiomeBlendedHeight.Rendered(x, z, world, null);
+    /// <summary>The ground the game's slope samples read: its raycast onto a freshly built zone's 1 m mesh, the seeded turn's own
+    /// (SeededLocationTurn.MeshGround), for offline tools that ask <see cref="SlopeDegrees"/>.</summary>
+    public static Func<float, float, float> GameGround(WorldGenerator world) => (x, z) => SeededLocationTurn.MeshGround(x, z, world);
 
     /// <summary>
     /// The random turn's draw: the game's draw is always made (the stream advances as it does without the switch), and

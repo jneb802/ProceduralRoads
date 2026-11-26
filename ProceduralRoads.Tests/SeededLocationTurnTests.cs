@@ -13,7 +13,9 @@ namespace ProceduralRoads.Tests;
 /// record, not yet placed) is turned by the game's own turn code from Random seeded by world seed, prefab and zone, so its turn
 /// is the same whatever Random held before; Random is put back exactly before SpawnLocation, with the test switch
 /// PROCEDURALROADS_FIXED_LOCATION_YAW on too, and by the finalizer when PlaceLocations throws; a location that is not chosen keeps
-/// the game's unseeded draw; the turn and root the roads predict are the ones the replay below gives it; the mismatch guard warns
+/// the game's unseeded draw; the turn and root the roads predict are the ones the replay below gives it on Unity's Random seeded
+/// as the game's is (the prediction draws from a copy of it, <see cref="UnityRandom"/>; the doubles' Random is not Unity's
+/// generator, so the replay's own placing draws other numbers); the mismatch guard warns
 /// when the placed turn differs from the record; and the Harmony wiring (the prefix last, the transpiler's one call right before
 /// SpawnLocation, the finalizer).
 ///
@@ -96,15 +98,33 @@ public class SeededLocationTurnTests : IDisposable
         Vector3 p = value.m_position;
         p.y = Ground(p.x, p.z);                                     // GetGroundData
         if (value.m_location.m_snapToWater) p.y = 30f;
+        // The transpiler takes the random turn's one draw through SeededLocationTurn.RandomTurn with the test switch on, and leaves it with it off.
+        Quaternion rot = GameTurn(value.m_location, p, () => UnityEngine.Random.insideUnitCircle,
+            FixedLocationYaw.On ? (Func<int, int, int>)SeededLocationTurn.RandomTurn : UnityEngine.Random.Range);
+        int seed = FixedLocationYaw.LocationSeed(WorldGenerator.instance!.GetSeed(), zone.x, zone.y);
+        SeededLocationTurn.End();                                   // the transpiler's call, right before SpawnLocation
+        UnityEngine.Random.InitState(seed);                         // SpawnLocation
+        ZDO proxy = ZDOMan.instance!.CreateNewZDO(p, ProxyHash);   // its LocationProxy
+        proxy.SetRotation(rot);
+        value.m_placed = true;
+        zones.m_locationInstances[zone] = value;
+        SeededLocationTurn.AfterPlacing(zones, zone, chosen);
+        return (proxy.GetRotation().eulerAngles.y, proxy.GetPosition().y);
+    }
+
+    /// <summary>PlaceLocations' turn of <paramref name="location"/> rooted at <paramref name="p"/>, as the game runs it, drawing from
+    /// <paramref name="insideUnitCircle"/> and <paramref name="range"/> (the game's Random.insideUnitCircle and Random.Range(int, int)).</summary>
+    private Quaternion GameTurn(ZoneSystem.ZoneLocation location, Vector3 p, Func<Vector2> insideUnitCircle, Func<int, int, int> range)
+    {
         Quaternion rot = Quaternion.identity;
-        if (value.m_location.m_slopeRotation)
+        if (location.m_slopeRotation)
         {
             // GetTerrainDelta
             float high = -999999f, low = 999999f;
             Vector3 highest = p, lowest = p;
             for (int i = 0; i < 10; i++)
             {
-                Vector2 d = UnityEngine.Random.insideUnitCircle * value.m_location.m_exteriorRadius;
+                Vector2 d = insideUnitCircle() * location.m_exteriorRadius;
                 Vector3 q = p + new Vector3(d.x, 0f, d.y);
                 float h = Ground(q.x, q.z);
                 if (h < low) { low = h; lowest = q; }
@@ -118,18 +138,9 @@ public class SeededLocationTurnTests : IDisposable
             euler.y = Mathf.Round(euler.y / FixedLocationYaw.StepDegrees) * FixedLocationYaw.StepDegrees;
             rot.eulerAngles = euler;
         }
-        else if (value.m_location.m_randomRotation)
-            // The transpiler takes this one draw through SeededLocationTurn.RandomTurn with the test switch on, and leaves it with it off.
-            rot = Quaternion.Euler(0f, (FixedLocationYaw.On ? SeededLocationTurn.RandomTurn(0, FixedLocationYaw.Steps) : UnityEngine.Random.Range(0, FixedLocationYaw.Steps)) * FixedLocationYaw.StepDegrees, 0f);
-        int seed = FixedLocationYaw.LocationSeed(WorldGenerator.instance!.GetSeed(), zone.x, zone.y);
-        SeededLocationTurn.End();                                   // the transpiler's call, right before SpawnLocation
-        UnityEngine.Random.InitState(seed);                         // SpawnLocation
-        ZDO proxy = ZDOMan.instance!.CreateNewZDO(p, ProxyHash);   // its LocationProxy
-        proxy.SetRotation(rot);
-        value.m_placed = true;
-        zones.m_locationInstances[zone] = value;
-        SeededLocationTurn.AfterPlacing(zones, zone, chosen);
-        return (proxy.GetRotation().eulerAngles.y, proxy.GetPosition().y);
+        else if (location.m_randomRotation)
+            rot = Quaternion.Euler(0f, range(0, FixedLocationYaw.Steps) * FixedLocationYaw.StepDegrees, 0f);
+        return rot;
     }
 
     /// <summary>The location in <paramref name="zone"/> back to not placed, its proxy gone: placed again from scratch.</summary>
@@ -238,17 +249,30 @@ public class SeededLocationTurnTests : IDisposable
     {
         Vector2s zone = Add(prefab, x, z, slope, chosen: true);
         Assert.True(PlacedLocations.TryGet(new Vector2(x, z), out PlacedLocationRecord record));
-        var lines = new List<string>();
-        BepInEx.Logging.ManualLogSource.Captured = lines;
-        try
-        {
-            UnityEngine.Random.InitState(x > 0 ? 77 : 78);
-            var (yaw, root) = PlaceAsTheGame(zone);
-            Assert.Equal(record.Yaw, yaw, 3);
-            Assert.Equal(record.Root, root, 4);
-            Assert.DoesNotContain(lines, l => l.Contains("MISMATCH"));
-        }
-        finally { BepInEx.Logging.ManualLogSource.Captured = null; }
+        ZoneSystem zones = ZoneSystem.instance!;
+        ZoneSystem.LocationInstance instance = zones.m_locationInstances[zone];
+        int turnSeed = SeededLocationTurn.TurnSeed(WorldSeed, prefab, zone);
+        // The game's Random, seeded for the turn (the prefix), is seeded with the seed the prediction draws from, whatever it held.
+        UnityEngine.Random.InitState(x > 0 ? 77 : 78);
+        Assert.NotNull(SeededLocationTurn.BeforePlacing(zones, zone));
+        float[] seeded = Draws(24);
+        SeededLocationTurn.End();
+        UnityEngine.Random.InitState(turnSeed);
+        Assert.Equal(Draws(24), seeded);
+        // The game's turn code on Unity's Random so seeded (UnityRandom, Unity's own draws: UnityRandomTests) gives the record.
+        var unity = new UnityRandom(turnSeed);
+        Vector3 p = instance.m_position;
+        p.y = Ground(p.x, p.z);                                     // GetGroundData
+        Quaternion rot = GameTurn(instance.m_location, p, () => { (float cx, float cy) = unity.InsideUnitCircle(); return new Vector2(cx, cy); },
+            (min, max) => unity.Range(min, max));
+        Assert.Equal(record.Yaw, rot.eulerAngles.y, 3);
+        Assert.Equal(record.Root, p.y, 4);
+        // The prediction leaves the game's Random as it was.
+        UnityEngine.Random.InitState(9);
+        float[] before = Draws(3);
+        UnityEngine.Random.InitState(9);
+        SeededLocationTurn.Predict(instance, zone, Ground, out _);
+        Assert.Equal(before, Draws(3));
     }
 
     [Fact]
@@ -256,8 +280,11 @@ public class SeededLocationTurnTests : IDisposable
     {
         Vector2s zone = Add("Crypt4", 300f, -200f, slope: false, chosen: true);
         Assert.True(PlacedLocations.TryGet(new Vector2(300f, -200f), out PlacedLocationRecord record));
+        // The turn this replay gives it (its own draws: the doubles' Random is not Unity's, so not the prediction's).
+        (float placed, float root) = PlaceAsTheGame(zone);
+        Unplace(zone);
         // A record that no longer says what the game will do (another mod turning locations, say).
-        PlacedLocations.Remember(new PlacedLocationRecord { Prefab = record.Prefab, Centre = record.Centre, Yaw = (record.Yaw + 90f) % 360f, Root = record.Root });
+        PlacedLocations.Remember(new PlacedLocationRecord { Prefab = record.Prefab, Centre = record.Centre, Yaw = (placed + 90f) % 360f, Root = root });
         var lines = new List<string>();
         BepInEx.Logging.ManualLogSource.Captured = lines;
         try { PlaceAsTheGame(zone); }

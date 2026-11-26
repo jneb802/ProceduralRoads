@@ -4,15 +4,33 @@ A Valheim mod that generates procedural roads connecting locations across your w
 
 ## Features
 
-- Automatically generates roads from spawn to nearby points of interest
-- Terrain-aware pathfinding that follows natural contours
-- Configurable road width, length, and count
+- Connects a seeded mix of dungeons, settlements, ruins, bosses and quest locations across selected islands
+- Terrain-aware routing that holds a maximum grade and protects the terrain of locations
+- River fords and ruined wooden and stone bridges; Dvergr viaducts and bridges in the Mistlands
+- Staircases where the ground is too steep for a road
+- Bridges and staircases are built from vanilla pieces, so players can repair them
+- Server-side: players without the mod see and walk the same roads
 
 ## Installation
 
 1. Install [BepInEx](https://valheim.thunderstore.io/package/denikson/BepInExPack_Valheim/)
 2. Install [Jotunn](https://valheim.thunderstore.io/package/ValheimModding/Jotunn/)
 3. Drop `ProceduralRoads.dll` into `BepInEx/plugins/`
+
+On a dedicated server, install it on the server only. Players do not need it, and players who have it are let in whatever version they run.
+
+## Generation
+
+A world's road network is generated once, the first time the world loads, behind the loading screen. **This takes a while:** about 10 minutes on a Ryzen 7 9800X3D using 15 threads, longer on slower machines. It happens only once per world; road quality was given priority over generation time. Use **Cancel and return to menu** to stop it; the next load starts again. Saved networks load without generating. On a dedicated server, players can join once generation has finished.
+
+Roads are best on a fresh world. A world explored before it had roads asks once, on its first load with the mod, what to do with the land explored so far:
+
+- **Build roads through explored land too** (recommended): the world is backed up first (`<world>_backup_<date>`, restored from Manage saves). Zones with your buildings or terrain edits are left exactly as they are, and the roads go round them; use `road_connect` to join your builds to the network.
+- **Build roads in new land only**: everything explored so far stays as it is.
+- **Skip road building**: no roads, and the world stays as it is. Not asked again; `road_generate` can still build them.
+- **Back to the menu**: nothing is decided; the next load asks again.
+
+A dedicated server, which has no screen, takes the recommended answer. `ExistingWorldFirstLoadRoads` gives the answer instead of asking.
 
 ## Configuration
 
@@ -21,8 +39,17 @@ Edit `warpalicious.ProceduralRoads.cfg` in `BepInEx/config/`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | RoadWidth | 4 | Road width in meters (2-10) |
-| IslandRoadPercentage | 50 | Percentage of islands that will have roads (0-100). Largest islands selected first. |
+| IslandRoadPercentage | 33 | Percentage of islands selected for roads (0 disables generation) |
+| MaxLocationsPerIsland | 48 | Destinations selected per island (2-128) |
+| ReplaceUnreachableLocations | true | Not every location can be reached by road (water, cliffs, protected zones). On, a chosen location no road reaches is replaced by another on its island, so islands keep their density and stay better connected; on our test worlds a quarter to a third more locations got a road, for about 15-30% longer generation (up to about twice as long on the busiest island). Off, each island keeps its first picks |
+| PathfindingMaxIterations | 30000 | Search budget per road; higher finds more roads, slower |
 | CustomLocations | (empty) | Comma-separated list of location names to include in road generation |
+| ExcludedRoadBiomes | AshLands, DeepNorth | Biomes with no destinations (roads may still pass through) |
+| ExistingWorldFirstLoadRoads | Ask | First load of a world explored before it had roads: Ask, IncludeExplored, NewZonesOnly or Skip |
+| AttemptRoadsToHildirQuestLocations | false | Roads to Hildir's cave, crypt and tower |
+| Weathered (section Structures) | Bridges, Stairs | Structures laid as an old ruin a player can repair (some pieces missing, every piece worn); one not listed is laid whole and at full health |
+
+Settings apply when a network is generated, not to a saved one, except Weathered: it is read when a structure's first zone is built, so it applies to the structures of a saved network not built yet. Not every selected destination gets a road: some cannot be reached within the grade and location rules.
 
 ### Custom Locations via Config
 
@@ -31,6 +58,17 @@ Use the `CustomLocations` setting to add locations from other mods (e.g., Expand
 ```
 CustomLocations = Runestone_Boars,Runestone_Greydwarfs,MerchantCamp
 ```
+
+## Console Commands
+
+Host or admin only:
+
+| Command | Description |
+|---------|-------------|
+| `road_progress` | Generation phase and island count |
+| `road_connect`, `road_path`, `road_mark` | Add your own roads, round zones players changed unless asked; see [manual roads](docs/manual-roads.md) |
+| `road_generate [NewZonesOnly\|IncludeExplored\|Skip] [force]` | Regenerate the whole network; it can take many minutes. Over a network it replaces, the land explored so far is treated as you choose: `NewZonesOnly` (the default over a network) builds only in land explored from now on, the old roads there staying as they are; `IncludeExplored` (the default on a world with no network) saves and backs up the world, then builds through the explored land too, round your buildings and terrain edits, and the old roads it does not follow stay as levelled, painted ground (the backup is the undo); `Skip` runs nothing. Over a generated network it first lists these and what it would replace; run it again within 2 minutes, or add `force` |
+| `road_regen_island [x z] [NewZonesOnly\|IncludeExplored\|Skip] [force]` | Clear all roads and regenerate only the island you are on, with the same choices as `road_generate`; land off the island is left as it is. Asks first like `road_generate`; the repeat may be anywhere on the same island |
 
 ## API for Mod Authors
 
@@ -82,6 +120,10 @@ private static void RegisterRoadLocation(string locationName)
 - Register locations during mod initialization (Awake/Start)
 - Location names must match the prefab name exactly (e.g., `Runestone_Boars`, not `Runestone Boars`)
 - Both API registrations and config entries are merged at generation time
+
+## Development
+
+Unit tests: `dotnet test ProceduralRoads.Tests`.
 
 ## License
 
